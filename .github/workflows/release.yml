@@ -1,0 +1,95 @@
+name: Release Binaries
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.continue_on_error }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            continue_on_error: false
+          - os: windows-latest
+            platform: windows
+            continue_on_error: false
+          - os: macos-latest
+            platform: macos
+            continue_on_error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin ah
+
+      - name: Compute archive name
+        id: meta
+        shell: bash
+        run: |
+          arch="$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')"
+          archive="ah-${{ matrix.platform }}-${arch}.zip"
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = "${{ steps.meta.outputs.archive }}"
+          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          Copy-Item -LiteralPath "target/release/ah.exe" -Destination "dist/ah.exe" -Force
+          Compress-Archive -Path "dist/ah.exe" -DestinationPath $archive -Force
+
+      - name: Package archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/release/ah" "dist/ah"
+          chmod +x "dist/ah"
+          (
+            cd dist
+            zip -9 "../${{ steps.meta.outputs.archive }}" "ah"
+          )
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.archive }}
+          path: ${{ steps.meta.outputs.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release Assets
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ah-*.zip
+          path: release-assets
+          merge-multiple: true
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.zip
+          overwrite_files: true

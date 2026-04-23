@@ -46,6 +46,29 @@ pub trait BuiltinPlugin: Send + Sync {
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse;
 }
 
+#[derive(Debug, Clone)]
+pub struct PluginLoadWarning {
+    pub path: PathBuf,
+    pub error: String,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct PluginLoadReport {
+    pub loaded: usize,
+    pub skipped: usize,
+    pub warnings: Vec<PluginLoadWarning>,
+}
+
+impl PluginLoadReport {
+    fn push_warning(&mut self, path: PathBuf, error: impl Into<String>) {
+        self.skipped += 1;
+        self.warnings.push(PluginLoadWarning {
+            path,
+            error: error.into(),
+        });
+    }
+}
+
 pub struct PluginManager {
     dynamic_plugins: HashMap<String, DynamicPlugin>,
     builtin_plugins: HashMap<String, Arc<dyn BuiltinPlugin>>,
@@ -64,27 +87,50 @@ impl PluginManager {
             .insert(plugin.metadata().domain.clone(), plugin);
     }
 
-    pub fn load_dynamic_plugins_from_dir(&mut self, dir: &Path) -> Result<usize, RuntimeError> {
+    pub fn load_dynamic_plugins_from_dir(&mut self, dir: &Path) -> PluginLoadReport {
+        let mut report = PluginLoadReport::default();
         if !dir.exists() {
-            return Ok(0);
+            return report;
         }
-        let mut loaded = 0usize;
+        let entries = match fs::read_dir(dir) {
+            Ok(value) => value,
+            Err(error) => {
+                report.push_warning(
+                    dir.to_path_buf(),
+                    format!("failed to read plugin directory: {error}"),
+                );
+                return report;
+            }
+        };
 
-        for entry in
-            fs::read_dir(dir).map_err(|error| RuntimeError::Invocation(error.to_string()))?
-        {
-            let entry = entry.map_err(|error| RuntimeError::Invocation(error.to_string()))?;
+        for entry in entries {
+            let entry = match entry {
+                Ok(value) => value,
+                Err(error) => {
+                    report.push_warning(
+                        dir.to_path_buf(),
+                        format!("failed to read plugin directory entry: {error}"),
+                    );
+                    continue;
+                }
+            };
             let path = entry.path();
             if !path.is_file() || !is_dynamic_lib_file(&path) {
                 continue;
             }
-            let plugin = DynamicPlugin::load(path.clone())?;
-            self.dynamic_plugins
-                .insert(plugin.metadata.domain.clone(), plugin);
-            loaded += 1;
+            match DynamicPlugin::load(path.clone()) {
+                Ok(plugin) => {
+                    self.dynamic_plugins
+                        .insert(plugin.metadata.domain.clone(), plugin);
+                    report.loaded += 1;
+                }
+                Err(error) => {
+                    report.push_warning(path, error.to_string());
+                }
+            }
         }
 
-        Ok(loaded)
+        report
     }
 
     pub fn invoke(
@@ -210,9 +256,12 @@ impl DynamicPlugin {
                 "plugin returned null response".to_owned(),
             ));
         }
-        let response_raw =
-            unsafe { c_ptr_to_string(response_ptr) }.map_err(RuntimeError::ResponseParse)?;
-        unsafe { (self.free_c_string)(response_ptr) };
+        let response_raw = unsafe {
+            let decoded = c_ptr_to_string(response_ptr);
+            (self.free_c_string)(response_ptr);
+            decoded
+        }
+        .map_err(RuntimeError::ResponseParse)?;
 
         serde_json::from_str::<InvocationResponse>(&response_raw)
             .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
@@ -223,5 +272,116 @@ fn is_dynamic_lib_file(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("dll") | Some("so") | Some("dylib") => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use ah_plugin_api::GlobalOptionsWire;
+
+    use super::*;
+
+    struct EchoBuiltinPlugin;
+
+    impl BuiltinPlugin for EchoBuiltinPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                plugin_name: "builtin-echo".to_owned(),
+                domain: "echo".to_owned(),
+                description: "echo test plugin".to_owned(),
+                abi_version: AH_PLUGIN_ABI_VERSION,
+            }
+        }
+
+        fn invoke(&self, _request: &InvocationRequest) -> InvocationResponse {
+            InvocationResponse::ok(Some("ok".to_owned()))
+        }
+    }
+
+    #[test]
+    fn load_dynamic_plugins_missing_dir_returns_empty_report() {
+        let mut manager = PluginManager::new();
+        let missing = unique_temp_path("missing");
+        let report = manager.load_dynamic_plugins_from_dir(&missing);
+
+        assert_eq!(report.loaded, 0);
+        assert_eq!(report.skipped, 0);
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn load_dynamic_plugins_skips_invalid_library_file() {
+        let mut manager = PluginManager::new();
+        let dir = unique_temp_path("invalid-plugin");
+        fs::create_dir_all(&dir).expect("temp plugin dir should be created");
+        let lib_path = dir.join(format!("broken.{}", dynamic_lib_extension()));
+        fs::write(&lib_path, "not a dynamic library").expect("test plugin file should be written");
+
+        let report = manager.load_dynamic_plugins_from_dir(&dir);
+        assert_eq!(report.loaded, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(report.warnings.len(), 1);
+        assert_eq!(report.warnings[0].path, lib_path);
+        assert!(manager.list_plugins().is_empty());
+
+        fs::remove_dir_all(&dir).expect("temp plugin dir should be removed");
+    }
+
+    #[test]
+    fn builtin_invocation_works_after_skipped_dynamic_plugin() {
+        let mut manager = PluginManager::new();
+        manager.register_builtin(Arc::new(EchoBuiltinPlugin));
+
+        let dir = unique_temp_path("invalid-plugin-with-builtin");
+        fs::create_dir_all(&dir).expect("temp plugin dir should be created");
+        let lib_path = dir.join(format!("broken.{}", dynamic_lib_extension()));
+        fs::write(&lib_path, "not a dynamic library").expect("test plugin file should be written");
+
+        let report = manager.load_dynamic_plugins_from_dir(&dir);
+        assert_eq!(report.loaded, 0);
+        assert_eq!(report.skipped, 1);
+
+        let response = manager
+            .invoke(
+                "echo",
+                Vec::new(),
+                GlobalOptionsWire {
+                    json: false,
+                    quiet: false,
+                    limit: None,
+                },
+            )
+            .expect("builtin plugin should still be invokable");
+        assert!(response.success);
+        assert_eq!(response.message.as_deref(), Some("ok"));
+
+        fs::remove_dir_all(&dir).expect("temp plugin dir should be removed");
+    }
+
+    fn unique_temp_path(suffix: &str) -> PathBuf {
+        let ticks = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ah-runtime-{suffix}-{ticks}-{}",
+            std::process::id()
+        ))
+    }
+
+    fn dynamic_lib_extension() -> &'static str {
+        if cfg!(windows) {
+            "dll"
+        } else if cfg!(target_os = "macos") {
+            "dylib"
+        } else {
+            "so"
+        }
     }
 }

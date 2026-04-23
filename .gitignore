@@ -1,3 +1,4 @@
 /target
+.release/
 .idea/
 benchmarks/latest.md

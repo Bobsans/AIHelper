@@ -35,6 +35,7 @@ cargo run --bin ah -- file read roadmap.md -n --from 1 --to 40
 - [Agents guide](docs/agents/README.md)
 - [Developer guide](docs/developers/README.md)
 - [Command reference](docs/reference/README.md)
+- [Changelog](CHANGELOG.md)
 
 ## Roadmap
 See [roadmap.md](roadmap.md).

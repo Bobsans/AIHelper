@@ -16,6 +16,7 @@ At startup, runtime scans:
 - `.ah/plugins/*.dylib` (macOS)
 
 Plugins with duplicate domain names override built-in plugins.
+If a dynamic plugin fails to load, the runtime skips it and continues with remaining plugins.
 
 ## ABI Contract
 

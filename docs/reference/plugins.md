@@ -13,3 +13,6 @@ ah plugins list [--json]
 Output:
 - text mode: `<domain> (<plugin-name>) - <description>`
 - json mode: array of plugin metadata objects
+
+Notes:
+- invalid dynamic plugins are skipped at startup; built-in plugins remain available

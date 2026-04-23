@@ -27,9 +27,16 @@ pub fn run() -> Result<(), AppError> {
     }
 
     let plugin_dir = PathBuf::from(".ah/plugins");
-    manager
-        .load_dynamic_plugins_from_dir(&plugin_dir)
-        .map_err(map_runtime_error)?;
+    let load_report = manager.load_dynamic_plugins_from_dir(&plugin_dir);
+    if !command_is_quiet(&command) {
+        for warning in &load_report.warnings {
+            eprintln!(
+                "warning: skipped plugin {}: {}",
+                warning.path.display(),
+                warning.error
+            );
+        }
+    }
 
     match command {
         RuntimeCommand::PluginsList { options } => {
@@ -101,4 +108,11 @@ fn handle_response(
 
 fn map_runtime_error(error: RuntimeError) -> AppError {
     AppError::invalid_argument(error.to_string())
+}
+
+fn command_is_quiet(command: &RuntimeCommand) -> bool {
+    match command {
+        RuntimeCommand::PluginsList { options } => options.quiet,
+        RuntimeCommand::Invoke { options, .. } => options.quiet,
+    }
 }
