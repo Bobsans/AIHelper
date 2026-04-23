@@ -1,0 +1,15 @@
+[package]
+name = "ah-plugin-ollama"
+version = "0.2.0"
+edition = "2024"
+description = "Dynamic AIHelper plugin for Ollama Local API"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ah-plugin-api = { path = "../../crates/ah-plugin-api" }
+clap = { version = "4.5.39", features = ["derive"] }
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"

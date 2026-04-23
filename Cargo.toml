@@ -1,16 +1,20 @@
 [package]
 name = "aihelper"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "AIHelper CLI toolbox for AI agents and developers"
 default-run = "ah"
 
 [workspace]
-members = ["crates/ah-plugin-api", "crates/ah-runtime"]
+members = [
+    "crates/ah-plugin-api",
+    "crates/ah-runtime",
+    "plugins/ah-plugin-ollama",
+]
 resolver = "2"
 
 [dependencies]
-clap = { version = "4.5.39", features = ["derive"] }
+clap = { version = "4.5.39", features = ["derive", "string"] }
 globset = "0.4.16"
 regex = "1.12.2"
 serde = { version = "1.0.219", features = ["derive"] }

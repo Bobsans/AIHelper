@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.2.0] - 2026-04-23
+
+### Added
+- `ah ai info` command with machine-readable and text manuals aggregated from host commands and plugin-provided metadata.
+- Optional plugin manual ABI symbol (`ah_plugin_manual_json_v1`) and manual schema support in `ah-plugin-api`/runtime.
+- External dynamic plugin source `plugins/ah-plugin-ollama` with commands:
+  - `ah ollama ask` (`/api/generate`)
+  - `ah ollama chat` (`/api/chat`)
+- Dynamic top-level CLI command registry: plugin domains now appear in `ah help`.
+- Release archives now include runtime plugin layout:
+  - `ah` / `ah.exe`
+  - `plugins/ah-plugin-<name>.<ext>`
+
+### Changed
+- Dynamic plugin discovery path moved to `plugins` directory next to executable (`<exe-dir>/plugins`).
+- Release workflow now builds both `ah` and `ah-plugin-ollama` and packages them together.
+- Top-level command parsing switched to runtime `clap::Command` construction based on loaded plugins.
+
+### Removed
+- Local publish script `scripts/publish-release.ps1`.
+- Legacy `.release` output convention.
+
+### Documentation
+- Added `docs/reference/ollama.md`.
+- Updated architecture/plugin/reference docs for executable-relative plugin layout and release artifact structure.
+
+### Tests
+- Added/updated tests for:
+  - dynamic help domain visibility
+  - executable-relative plugin directory resolution
+  - manual example parsing in external plugin
+  - startup resilience with invalid plugins in runtime plugin directory
+
 ## [0.1.0] - 2026-04-23
 
 ### Added

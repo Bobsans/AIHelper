@@ -5,15 +5,15 @@ This guide describes how AIHelper plugins integrate with the in-process runtime.
 ## Plugin Types
 
 - Built-in plugins: compiled into `ah` (current domains use this mode).
-- Dynamic plugins: shared libraries loaded at runtime from `.ah/plugins`.
+- Dynamic plugins: shared libraries loaded at runtime from `plugins` directory next to `ah` executable.
 
 ## Runtime Discovery
 
 At startup, runtime scans:
 
-- `.ah/plugins/*.dll` (Windows)
-- `.ah/plugins/*.so` (Linux)
-- `.ah/plugins/*.dylib` (macOS)
+- `<exe-dir>/plugins/*.dll` (Windows)
+- `<exe-dir>/plugins/*.so` (Linux)
+- `<exe-dir>/plugins/*.dylib` (macOS)
 
 Plugins with duplicate domain names override built-in plugins.
 If a dynamic plugin fails to load, the runtime skips it and continues with remaining plugins.
@@ -68,3 +68,33 @@ Plugin returns JSON response:
 - Do not print partial/broken output on parse failures.
 - Use stable error codes for machine handling.
 - Treat ABI changes as versioned events (bump API version intentionally).
+
+## Example Dynamic Plugin: Ollama
+
+Repository includes dynamic plugin source at:
+
+- `plugins/ah-plugin-ollama`
+
+Build and install (Windows):
+
+```powershell
+cargo build --release -p ah-plugin-ollama
+New-Item -ItemType Directory -Force plugins | Out-Null
+Copy-Item target/release/ah_plugin_ollama.dll plugins/ah-plugin-ollama.dll
+```
+
+Build and install (Linux):
+
+```bash
+cargo build --release -p ah-plugin-ollama
+mkdir -p plugins
+cp target/release/libah_plugin_ollama.so plugins/ah-plugin-ollama.so
+```
+
+Build and install (macOS):
+
+```bash
+cargo build --release -p ah-plugin-ollama
+mkdir -p plugins
+cp target/release/libah_plugin_ollama.dylib plugins/ah-plugin-ollama.dylib
+```

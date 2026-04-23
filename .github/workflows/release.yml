@@ -33,7 +33,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build release binary
-        run: cargo build --release --locked --bin ah
+        run: |
+          cargo build --release --locked --bin ah
+          cargo build --release --locked -p ah-plugin-ollama
 
       - name: Compute archive name
         id: meta
@@ -48,20 +50,28 @@ jobs:
         shell: pwsh
         run: |
           $archive = "${{ steps.meta.outputs.archive }}"
-          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          New-Item -ItemType Directory -Path "dist/plugins" -Force | Out-Null
           Copy-Item -LiteralPath "target/release/ah.exe" -Destination "dist/ah.exe" -Force
-          Compress-Archive -Path "dist/ah.exe" -DestinationPath $archive -Force
+          Copy-Item -LiteralPath "target/release/ah_plugin_ollama.dll" -Destination "dist/plugins/ah-plugin-ollama.dll" -Force
+          Push-Location "dist"
+          Compress-Archive -Path "ah.exe", "plugins" -DestinationPath "..\$archive" -Force
+          Pop-Location
 
       - name: Package archive (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p dist
+          mkdir -p dist/plugins
           cp "target/release/ah" "dist/ah"
           chmod +x "dist/ah"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp "target/release/libah_plugin_ollama.so" "dist/plugins/ah-plugin-ollama.so"
+          else
+            cp "target/release/libah_plugin_ollama.dylib" "dist/plugins/ah-plugin-ollama.dylib"
+          fi
           (
             cd dist
-            zip -9 "../${{ steps.meta.outputs.archive }}" "ah"
+            zip -9 -r "../${{ steps.meta.outputs.archive }}" "ah" "plugins"
           )
 
       - name: Upload build artifact

@@ -17,3 +17,4 @@ Output:
 Notes:
 - invalid dynamic plugins are skipped at startup; built-in plugins remain available
 - dynamic plugins can optionally expose manual data consumed by `ah ai info`
+- example dynamic domain: `ollama` from `ah-plugin-ollama` (when installed in `plugins` next to `ah`)

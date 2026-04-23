@@ -668,7 +668,12 @@ fn plugins_list_reports_builtin_domains() {
 #[test]
 fn startup_skips_invalid_dynamic_plugin_and_runs_builtin_command() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let plugins_dir = temp_dir.path().join(".ah").join("plugins");
+    let source_binary = assert_cmd::cargo::cargo_bin("ah");
+    let binary_name = if cfg!(windows) { "ah.exe" } else { "ah" };
+    let copied_binary = temp_dir.path().join(binary_name);
+    fs::copy(&source_binary, &copied_binary).expect("binary should be copied for isolated runtime");
+
+    let plugins_dir = temp_dir.path().join("plugins");
     fs::create_dir_all(&plugins_dir).expect("plugin directory should be created");
     let extension = if cfg!(windows) {
         "dll"
@@ -687,7 +692,7 @@ fn startup_skips_invalid_dynamic_plugin_and_runs_builtin_command() {
         .expect("sample file should be written");
 
     let cwd = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let mut cmd = Command::new(copied_binary);
     cmd.args(["--cwd", &cwd, "file", "head", "sample.txt", "--lines", "1"])
         .assert()
         .success()

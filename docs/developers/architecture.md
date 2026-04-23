@@ -23,7 +23,7 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
 1. CLI parses global options and domain argv.
 2. Runtime initializes plugin manager.
 3. Built-in plugins are registered (`file/search/ctx/git/task`).
-4. Dynamic plugins are loaded from `.ah/plugins` (if present).
+4. Dynamic plugins are loaded from `plugins` directory next to `ah` executable (if present).
 5. Domain invocation is routed to plugin:
    - dynamic plugin takes precedence for same domain
    - otherwise built-in plugin handles request

@@ -10,3 +10,4 @@ Reference docs for all command domains and flags.
 - [git](git.md)
 - [task](task.md)
 - [plugins](plugins.md)
+- [ollama (dynamic plugin)](ollama.md)

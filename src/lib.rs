@@ -6,29 +6,33 @@ pub mod output;
 pub mod plugins;
 pub mod safety;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ah_plugin_api::InvocationResponse;
 use ah_runtime::{PluginManager, RuntimeError};
-use clap::Parser;
 
 use crate::{
-    cli::{Cli, RuntimeCommand},
+    cli::{CliParseResult, RuntimeCommand},
     error::AppError,
     output::OutputMode,
 };
 
 pub fn run() -> Result<(), AppError> {
-    let cli = Cli::parse();
-    let command = cli.into_runtime_command()?;
+    let raw_args = std::env::args_os().collect::<Vec<_>>();
+    cli::apply_initial_cwd_from_raw_args(&raw_args)?;
 
     let mut manager = PluginManager::new();
     for plugin in plugins::builtins() {
         manager.register_builtin(plugin);
     }
 
-    let plugin_dir = PathBuf::from(".ah/plugins");
+    let plugin_dir = resolve_plugin_dir()?;
     let load_report = manager.load_dynamic_plugins_from_dir(&plugin_dir);
+    let plugin_metadata = manager.list_plugins();
+    let command = match cli::parse_runtime_command(raw_args, &plugin_metadata)? {
+        CliParseResult::ExitSuccess => return Ok(()),
+        CliParseResult::Command(command) => command,
+    };
     if !command_is_quiet(&command) {
         for warning in &load_report.warnings {
             eprintln!(
@@ -119,5 +123,38 @@ fn command_is_quiet(command: &RuntimeCommand) -> bool {
         RuntimeCommand::PluginsList { options } => options.quiet,
         RuntimeCommand::AiInfo { options, .. } => options.quiet,
         RuntimeCommand::Invoke { options, .. } => options.quiet,
+    }
+}
+
+fn resolve_plugin_dir() -> Result<PathBuf, AppError> {
+    let executable_path = std::env::current_exe().map_err(|source| {
+        AppError::invalid_argument(format!("failed to resolve executable path: {source}"))
+    })?;
+    plugin_dir_from_executable_path(&executable_path)
+}
+
+fn plugin_dir_from_executable_path(executable_path: &Path) -> Result<PathBuf, AppError> {
+    let executable_dir = executable_path.parent().ok_or_else(|| {
+        AppError::invalid_argument(format!(
+            "failed to resolve executable directory for '{}'",
+            executable_path.display()
+        ))
+    })?;
+    Ok(executable_dir.join("plugins"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_dir_is_next_to_executable() {
+        let executable = PathBuf::from_iter(["opt", "aihelper", "ah"]);
+        let plugin_dir =
+            plugin_dir_from_executable_path(&executable).expect("plugin dir should resolve");
+        assert_eq!(
+            plugin_dir,
+            PathBuf::from_iter(["opt", "aihelper", "plugins"])
+        );
     }
 }

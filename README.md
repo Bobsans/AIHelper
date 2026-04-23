@@ -14,6 +14,7 @@ The binary command is `ah`.
 - `git` (`changed`, `diff`, `blame`)
 - `task` (`save`, `list`, `run`)
 - Plugin registry command is available: `ah plugins list`.
+- Example external dynamic plugin source is included: `plugins/ah-plugin-ollama`.
 
 ## Quick Start
 ```bash
@@ -22,6 +23,13 @@ cargo run --bin ah -- --help
 cargo run --bin ah -- plugins list
 cargo run --bin ah -- file read roadmap.md -n --from 1 --to 40
 ```
+
+## Runtime Layout
+- `ah` (or `ah.exe`) in root directory
+- dynamic plugins in `plugins/` next to executable:
+  - `plugins/ah-plugin-<name>.dll` (Windows)
+  - `plugins/ah-plugin-<name>.so` (Linux)
+  - `plugins/ah-plugin-<name>.dylib` (macOS)
 
 ## Project Layout
 - `src/` application source code

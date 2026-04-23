@@ -1,98 +1,31 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
-use ah_plugin_api::GlobalOptionsWire;
-use clap::{Args, Parser, Subcommand};
+use ah_plugin_api::{GlobalOptionsWire, PluginMetadata};
+use clap::{Arg, ArgAction, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser};
 
 use crate::{error::AppError, output::OutputMode};
 
-#[derive(Debug, Parser)]
-#[command(
-    name = "ah",
-    version,
-    about = "AIHelper CLI toolbox for AI agents and developers"
-)]
-pub struct Cli {
-    #[arg(long, global = true, help = "Return machine-readable JSON output")]
-    pub json: bool,
-    #[arg(long, global = true, help = "Suppress command output")]
-    pub quiet: bool,
-    #[arg(
-        long,
-        global = true,
-        value_name = "PATH",
-        help = "Set working directory"
-    )]
-    pub cwd: Option<PathBuf>,
-    #[arg(
-        long,
-        global = true,
-        value_name = "N",
-        help = "Cap output lines/items when supported"
-    )]
-    pub limit: Option<usize>,
-    #[command(subcommand)]
-    pub command: Option<CliCommand>,
+const HOST_COMMAND_AI: &str = "ai";
+const HOST_COMMAND_PLUGINS: &str = "plugins";
+
+pub enum RuntimeCommand {
+    PluginsList {
+        options: GlobalOptions,
+    },
+    AiInfo {
+        domain: Option<String>,
+        options: GlobalOptions,
+    },
+    Invoke {
+        domain: String,
+        argv: Vec<String>,
+        options: GlobalOptions,
+    },
 }
 
-#[derive(Debug, Subcommand)]
-pub enum CliCommand {
-    /// AI-agent focused command manual
-    Ai(AiArgs),
-    /// File utilities
-    File(DomainInvokeArgs),
-    /// Search utilities
-    Search(DomainInvokeArgs),
-    /// Context-reduction utilities
-    Ctx(DomainInvokeArgs),
-    /// Git-focused utilities
-    Git(DomainInvokeArgs),
-    /// Task recipe utilities
-    Task(DomainInvokeArgs),
-    /// Plugin management commands
-    Plugins(PluginsArgs),
-    #[command(external_subcommand)]
-    External(Vec<String>),
-}
-
-#[derive(Debug, Args)]
-#[command(disable_help_flag = true, disable_help_subcommand = true)]
-pub struct DomainInvokeArgs {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    pub argv: Vec<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct PluginsArgs {
-    #[command(subcommand)]
-    pub command: PluginsCommand,
-}
-
-#[derive(Debug, Args)]
-pub struct AiArgs {
-    #[command(subcommand)]
-    pub command: AiCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum AiCommand {
-    #[command(about = "Show full AI-agent manual for available commands")]
-    Info(AiInfoArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct AiInfoArgs {
-    #[arg(
-        long,
-        value_name = "DOMAIN",
-        help = "Show manual only for a single command domain"
-    )]
-    pub domain: Option<String>,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum PluginsCommand {
-    #[command(about = "List registered plugins")]
-    List,
+pub enum CliParseResult {
+    Command(RuntimeCommand),
+    ExitSuccess,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -126,127 +59,231 @@ impl From<GlobalOptionsWire> for GlobalOptions {
     }
 }
 
-pub enum RuntimeCommand {
-    PluginsList {
-        options: GlobalOptions,
-    },
-    AiInfo {
-        domain: Option<String>,
-        options: GlobalOptions,
-    },
-    Invoke {
-        domain: String,
-        argv: Vec<String>,
-        options: GlobalOptions,
-    },
+pub fn apply_initial_cwd_from_raw_args(raw_args: &[OsString]) -> Result<(), AppError> {
+    if let Some(cwd) = extract_last_cwd(raw_args)? {
+        std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
+    }
+    Ok(())
 }
 
-impl Cli {
-    pub fn into_runtime_command(self) -> Result<RuntimeCommand, AppError> {
-        let mut deferred_cwd = self.cwd;
-        let mut options = GlobalOptions {
-            output: if self.json {
-                OutputMode::Json
-            } else {
-                OutputMode::Text
-            },
-            quiet: self.quiet,
-            limit: self.limit,
-        };
+pub fn parse_runtime_command(
+    raw_args: Vec<OsString>,
+    plugins: &[PluginMetadata],
+) -> Result<CliParseResult, AppError> {
+    let mut command = build_cli_command(plugins);
+    let matches = match command.try_get_matches_from_mut(raw_args) {
+        Ok(matches) => matches,
+        Err(error) => match error.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                error
+                    .print()
+                    .map_err(|io_error| AppError::invalid_argument(io_error.to_string()))?;
+                return Ok(CliParseResult::ExitSuccess);
+            }
+            _ => return Err(AppError::invalid_argument(error.to_string())),
+        },
+    };
 
-        if options.limit == Some(0) {
-            return Err(AppError::invalid_argument("--limit must be >= 1"));
-        }
-
-        if let Some(cwd) = deferred_cwd.take() {
-            std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-        }
-
-        match self.command {
-            Some(CliCommand::Ai(args)) => match args.command {
-                AiCommand::Info(info_args) => Ok(RuntimeCommand::AiInfo {
-                    domain: info_args.domain,
-                    options,
-                }),
-            },
-            Some(CliCommand::File(args)) => {
-                let argv =
-                    strip_trailing_global_flags(&args.argv, &mut options, &mut deferred_cwd)?;
-                if let Some(cwd) = deferred_cwd {
-                    std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-                }
-                Ok(RuntimeCommand::Invoke {
-                    domain: "file".to_owned(),
-                    argv,
-                    options,
-                })
-            }
-            Some(CliCommand::Search(args)) => {
-                let argv =
-                    strip_trailing_global_flags(&args.argv, &mut options, &mut deferred_cwd)?;
-                if let Some(cwd) = deferred_cwd {
-                    std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-                }
-                Ok(RuntimeCommand::Invoke {
-                    domain: "search".to_owned(),
-                    argv,
-                    options,
-                })
-            }
-            Some(CliCommand::Ctx(args)) => {
-                let argv =
-                    strip_trailing_global_flags(&args.argv, &mut options, &mut deferred_cwd)?;
-                if let Some(cwd) = deferred_cwd {
-                    std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-                }
-                Ok(RuntimeCommand::Invoke {
-                    domain: "ctx".to_owned(),
-                    argv,
-                    options,
-                })
-            }
-            Some(CliCommand::Git(args)) => {
-                let argv =
-                    strip_trailing_global_flags(&args.argv, &mut options, &mut deferred_cwd)?;
-                if let Some(cwd) = deferred_cwd {
-                    std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-                }
-                Ok(RuntimeCommand::Invoke {
-                    domain: "git".to_owned(),
-                    argv,
-                    options,
-                })
-            }
-            Some(CliCommand::Task(args)) => {
-                let argv =
-                    strip_trailing_global_flags(&args.argv, &mut options, &mut deferred_cwd)?;
-                if let Some(cwd) = deferred_cwd {
-                    std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-                }
-                Ok(RuntimeCommand::Invoke {
-                    domain: "task".to_owned(),
-                    argv,
-                    options,
-                })
-            }
-            Some(CliCommand::Plugins(_)) => Ok(RuntimeCommand::PluginsList { options }),
-            Some(CliCommand::External(args)) => {
-                let Some((domain, argv)) = args.split_first() else {
-                    return Err(AppError::invalid_argument("missing command domain"));
-                };
-                let argv = strip_trailing_global_flags(argv, &mut options, &mut deferred_cwd)?;
-                if let Some(cwd) = deferred_cwd {
-                    std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-                }
-                Ok(RuntimeCommand::Invoke {
-                    domain: domain.to_owned(),
-                    argv,
-                    options,
-                })
-            }
-            None => Err(AppError::invalid_argument("missing command domain")),
-        }
+    let mut options = GlobalOptions {
+        output: if matches.get_flag("json") {
+            OutputMode::Json
+        } else {
+            OutputMode::Text
+        },
+        quiet: matches.get_flag("quiet"),
+        limit: matches.get_one::<usize>("limit").copied(),
+    };
+    if options.limit == Some(0) {
+        return Err(AppError::invalid_argument("--limit must be >= 1"));
     }
+    let mut deferred_cwd = matches.get_one::<PathBuf>("cwd").cloned();
+
+    let runtime_command = match matches.subcommand() {
+        Some((HOST_COMMAND_AI, ai_matches)) => {
+            let Some((subcommand, ai_submatches)) = ai_matches.subcommand() else {
+                return Err(AppError::invalid_argument("missing ai subcommand"));
+            };
+            match subcommand {
+                "info" => RuntimeCommand::AiInfo {
+                    domain: ai_submatches.get_one::<String>("domain").cloned(),
+                    options,
+                },
+                _ => return Err(AppError::invalid_argument("unsupported ai subcommand")),
+            }
+        }
+        Some((HOST_COMMAND_PLUGINS, plugins_matches)) => {
+            let Some((subcommand, _)) = plugins_matches.subcommand() else {
+                return Err(AppError::invalid_argument("missing plugins subcommand"));
+            };
+            match subcommand {
+                "list" => RuntimeCommand::PluginsList { options },
+                _ => return Err(AppError::invalid_argument("unsupported plugins subcommand")),
+            }
+        }
+        Some((domain, domain_matches)) => {
+            let mut argv = collect_domain_argv(domain_matches)?;
+            argv = strip_trailing_global_flags(&argv, &mut options, &mut deferred_cwd)?;
+            RuntimeCommand::Invoke {
+                domain: domain.to_owned(),
+                argv,
+                options,
+            }
+        }
+        None => return Err(AppError::invalid_argument("missing command domain")),
+    };
+
+    if let Some(cwd) = deferred_cwd {
+        std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
+    }
+
+    Ok(CliParseResult::Command(runtime_command))
+}
+
+fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
+    let mut command = Command::new("ah")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("AIHelper CLI toolbox for AI agents and developers")
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Return machine-readable JSON output"),
+        )
+        .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Suppress command output"),
+        )
+        .arg(
+            Arg::new("cwd")
+                .long("cwd")
+                .value_name("PATH")
+                .value_hint(ValueHint::DirPath)
+                .value_parser(value_parser!(PathBuf))
+                .global(true)
+                .help("Set working directory"),
+        )
+        .arg(
+            Arg::new("limit")
+                .long("limit")
+                .value_name("N")
+                .value_parser(value_parser!(usize))
+                .global(true)
+                .help("Cap output lines/items when supported"),
+        )
+        .subcommand(build_ai_command())
+        .subcommand(build_plugins_command())
+        .allow_external_subcommands(true);
+
+    for (domain, description) in plugin_domains_for_help(plugins) {
+        if domain == HOST_COMMAND_AI || domain == HOST_COMMAND_PLUGINS {
+            continue;
+        }
+        command = command.subcommand(build_domain_command(&domain, &description));
+    }
+
+    command
+}
+
+fn build_ai_command() -> Command {
+    Command::new(HOST_COMMAND_AI)
+        .about("AI-agent focused command manual")
+        .subcommand(
+            Command::new("info")
+                .about("Show full AI-agent manual for available commands")
+                .arg(
+                    Arg::new("domain")
+                        .long("domain")
+                        .value_name("DOMAIN")
+                        .value_parser(value_parser!(String))
+                        .help("Show manual only for a single command domain"),
+                ),
+        )
+}
+
+fn build_plugins_command() -> Command {
+    Command::new(HOST_COMMAND_PLUGINS)
+        .about("Plugin management commands")
+        .subcommand(Command::new("list").about("List registered plugins"))
+}
+
+fn build_domain_command(domain: &str, description: &str) -> Command {
+    Command::new(domain.to_owned())
+        .about(description.to_owned())
+        .disable_help_flag(true)
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("argv")
+                .num_args(0..)
+                .action(ArgAction::Append)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .value_parser(value_parser!(String)),
+        )
+}
+
+fn plugin_domains_for_help(plugins: &[PluginMetadata]) -> Vec<(String, String)> {
+    let mut by_domain = BTreeMap::new();
+    for plugin in plugins {
+        by_domain.insert(
+            plugin.domain.clone(),
+            top_level_domain_summary(&plugin.domain, &plugin.description),
+        );
+    }
+    by_domain.into_iter().collect()
+}
+
+fn top_level_domain_summary(domain: &str, fallback: &str) -> String {
+    match domain {
+        "file" => "File utilities".to_owned(),
+        "search" => "Search utilities".to_owned(),
+        "ctx" => "Context-reduction utilities".to_owned(),
+        "git" => "Git-focused utilities".to_owned(),
+        "task" => "Task recipe utilities".to_owned(),
+        _ => fallback.to_owned(),
+    }
+}
+
+fn collect_domain_argv(matches: &ArgMatches) -> Result<Vec<String>, AppError> {
+    if let Some(values) = matches.get_many::<String>("argv") {
+        return Ok(values.cloned().collect());
+    }
+    if let Some(values) = matches.get_many::<OsString>("") {
+        return values
+            .map(|value| {
+                value.to_str().map(str::to_owned).ok_or_else(|| {
+                    AppError::invalid_argument("external subcommand contains non-UTF8 argument")
+                })
+            })
+            .collect();
+    }
+    Ok(Vec::new())
+}
+
+fn extract_last_cwd(raw_args: &[OsString]) -> Result<Option<PathBuf>, AppError> {
+    let mut cwd = None;
+    let mut index = 1usize;
+    while index < raw_args.len() {
+        let arg = &raw_args[index];
+        if arg == "--cwd" {
+            let Some(value) = raw_args.get(index + 1) else {
+                return Err(AppError::invalid_argument(
+                    "missing value for trailing --cwd",
+                ));
+            };
+            cwd = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.to_str().and_then(|raw| raw.strip_prefix("--cwd=")) {
+            cwd = Some(PathBuf::from(value));
+        }
+        index += 1;
+    }
+    Ok(cwd)
 }
 
 fn strip_trailing_global_flags(
@@ -289,10 +326,94 @@ fn strip_trailing_global_flags(
                 index += 2;
             }
             _ => {
-                filtered.push(argv[index].clone());
+                if let Some(value) = argv[index].strip_prefix("--cwd=") {
+                    *deferred_cwd = Some(PathBuf::from(value));
+                } else if let Some(value) = argv[index].strip_prefix("--limit=") {
+                    let parsed = value.parse::<usize>().map_err(|_| {
+                        AppError::invalid_argument(format!(
+                            "invalid value for trailing --limit: {value}"
+                        ))
+                    })?;
+                    if parsed == 0 {
+                        return Err(AppError::invalid_argument("--limit must be >= 1"));
+                    }
+                    options.limit = Some(parsed);
+                } else {
+                    filtered.push(argv[index].clone());
+                }
                 index += 1;
             }
         }
     }
     Ok(filtered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_includes_dynamic_plugin_domain() {
+        let plugins = vec![
+            PluginMetadata {
+                plugin_name: "builtin-file".to_owned(),
+                domain: "file".to_owned(),
+                description: "File operations plugin (built-in)".to_owned(),
+                abi_version: 1,
+            },
+            PluginMetadata {
+                plugin_name: "external-ollama".to_owned(),
+                domain: "ollama".to_owned(),
+                description: "Ollama Local API plugin (dynamic)".to_owned(),
+                abi_version: 1,
+            },
+        ];
+        let mut command = build_cli_command(&plugins);
+        let mut out = Vec::new();
+        command
+            .write_long_help(&mut out)
+            .expect("long help should render");
+        let help_text = String::from_utf8(out).expect("help must be valid utf8");
+        assert!(help_text.contains("file"));
+        assert!(help_text.contains("ollama"));
+        assert!(help_text.contains("Ollama Local API plugin (dynamic)"));
+    }
+
+    #[test]
+    fn parser_routes_dynamic_domain_to_invoke() {
+        let plugins = vec![PluginMetadata {
+            plugin_name: "external-ollama".to_owned(),
+            domain: "ollama".to_owned(),
+            description: "Ollama Local API plugin (dynamic)".to_owned(),
+            abi_version: 1,
+        }];
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("ollama"),
+            OsString::from("ask"),
+            OsString::from("--model"),
+            OsString::from("llama3.2"),
+            OsString::from("--prompt"),
+            OsString::from("ping"),
+        ];
+        let parsed = parse_runtime_command(raw_args, &plugins).expect("parse should succeed");
+        let CliParseResult::Command(RuntimeCommand::Invoke { domain, argv, .. }) = parsed else {
+            panic!("unexpected parse result")
+        };
+        assert_eq!(domain, "ollama");
+        assert_eq!(argv, vec!["ask", "--model", "llama3.2", "--prompt", "ping"]);
+    }
+
+    #[test]
+    fn extract_last_cwd_supports_equals_form() {
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("file"),
+            OsString::from("read"),
+            OsString::from("a.txt"),
+            OsString::from("--cwd=C:\\\\tmp"),
+        ];
+        let cwd = extract_last_cwd(&raw_args).expect("cwd extraction should succeed");
+        assert_eq!(cwd, Some(PathBuf::from("C:\\tmp")));
+    }
 }
