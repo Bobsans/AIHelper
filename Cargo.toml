@@ -5,6 +5,10 @@ edition = "2024"
 description = "AIHelper CLI toolbox for AI agents and developers"
 default-run = "ah"
 
+[workspace]
+members = ["crates/ah-plugin-api", "crates/ah-runtime"]
+resolver = "2"
+
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
 globset = "0.4.16"
@@ -13,6 +17,8 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"
 walkdir = "2.5.0"
+ah-plugin-api = { path = "crates/ah-plugin-api" }
+ah-runtime = { path = "crates/ah-runtime" }
 
 [dev-dependencies]
 assert_cmd = "2.0.17"

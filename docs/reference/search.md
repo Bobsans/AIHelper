@@ -7,7 +7,7 @@ Search utilities (text and file discovery).
 Search by content in files.
 
 ```bash
-ah search text <pattern> [path] [--glob ...] [--ignore-case] [--context N] [--regex] [--limit N] [--json]
+ah search text <pattern> [path] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks] [--limit N] [--json]
 ```
 
 Behavior:
@@ -19,12 +19,19 @@ Flags:
 - `--ignore-case`: case-insensitive matching
 - `--context N`: include N lines before/after each match
 - `--regex`: enable regex matching mode
+- `--max-bytes BYTES`: skip files larger than limit while scanning (default: `8388608`)
+- `--follow-symlinks`: follow symlink directories/files during traversal
 - `--limit N`: cap number of returned matches
 - `--json`: machine-readable output
 
+Safety behavior:
+- binary/non-UTF8 files are skipped
+- large files are skipped by `--max-bytes`
+- symlinks are skipped unless `--follow-symlinks` is set
+
 Output:
 - text mode: one line per hit (`path:line:text`) and optional context lines
-- json mode: includes backend, match count, file count, and full match objects
+- json mode: includes backend, match count, file count, full match objects, and skip counters
 
 Status: implemented.
 
@@ -33,8 +40,11 @@ Status: implemented.
 Search file paths by query substring.
 
 ```bash
-ah search files <query> [path] [--limit N] [--json]
+ah search files <query> [path] [--follow-symlinks] [--limit N] [--json]
 ```
+
+Flags:
+- `--follow-symlinks`: follow symlink directories/files during traversal
 
 Output:
 - text mode: one matched path per line

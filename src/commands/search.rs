@@ -11,7 +11,12 @@ use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use walkdir::WalkDir;
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
+use crate::{
+    cli::GlobalOptions,
+    error::AppError,
+    output::OutputMode,
+    safety::{self, TextFileDecision, TextFilePolicy, TextFileSkipReason},
+};
 
 #[derive(Debug, Args)]
 pub struct SearchArgs {
@@ -21,7 +26,9 @@ pub struct SearchArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum SearchCommand {
+    #[command(about = "Search text in files")]
     Text(TextArgs),
+    #[command(about = "Find file paths by substring query")]
     Files(FilesArgs),
 }
 
@@ -40,12 +47,23 @@ pub struct TextArgs {
         help = "Interpret pattern as regex (default: literal/plain search)"
     )]
     pub regex: bool,
+    #[arg(
+        long,
+        value_name = "BYTES",
+        default_value_t = safety::DEFAULT_MAX_TEXT_BYTES,
+        help = "Skip files larger than this size while scanning"
+    )]
+    pub max_bytes: u64,
+    #[arg(long, help = "Follow symlink directories during traversal")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct FilesArgs {
     pub query: String,
     pub path: Option<PathBuf>,
+    #[arg(long, help = "Follow symlink directories during traversal")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +93,9 @@ struct SearchTextOutput {
     context: usize,
     match_count: usize,
     file_count: usize,
+    skipped_binary_files: usize,
+    skipped_large_files: usize,
+    skipped_symlink_files: usize,
     truncated: bool,
     matches: Vec<TextMatch>,
 }
@@ -101,6 +122,13 @@ enum PatternMatcher {
     },
 }
 
+#[derive(Default)]
+struct TextCollectStats {
+    skipped_binary_files: usize,
+    skipped_large_files: usize,
+    skipped_symlink_files: usize,
+}
+
 pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         SearchCommand::Text(text_args) => execute_text(text_args, options),
@@ -109,7 +137,14 @@ pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError
 }
 
 fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    safety::validate_max_bytes(args.max_bytes)?;
     let root = resolve_root(args.path.as_ref())?;
+    if !args.follow_symlinks && is_symlink_path(&root)? {
+        return Err(AppError::invalid_argument(format!(
+            "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
+            root.to_string_lossy()
+        )));
+    }
     let context_lines = args.context.unwrap_or(0);
     let matcher = build_matcher(&args.pattern, args.regex, args.ignore_case)?;
     let globset = build_globset(&args.globs)?;
@@ -118,10 +153,10 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
     let candidate_files = if backend_supports_rg {
         match candidate_files_with_rg(&args, &root) {
             Some(files) => files,
-            None => collect_files_fallback(&root, globset.as_ref())?,
+            None => collect_files_fallback(&root, globset.as_ref(), args.follow_symlinks)?,
         }
     } else {
-        collect_files_fallback(&root, globset.as_ref())?
+        collect_files_fallback(&root, globset.as_ref(), args.follow_symlinks)?
     };
 
     let backend = if backend_supports_rg {
@@ -130,11 +165,13 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
         "rust"
     };
 
-    let (matches, truncated) = collect_text_matches(
+    let (matches, stats, truncated) = collect_text_matches(
         candidate_files,
         &root,
         &matcher,
         context_lines,
+        args.max_bytes,
+        args.follow_symlinks,
         options.limit,
     )?;
 
@@ -169,6 +206,9 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
                 context: context_lines,
                 match_count: matches.len(),
                 file_count,
+                skipped_binary_files: stats.skipped_binary_files,
+                skipped_large_files: stats.skipped_large_files,
+                skipped_symlink_files: stats.skipped_symlink_files,
                 truncated,
                 matches,
             };
@@ -181,15 +221,27 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
 
 fn execute_files(args: FilesArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let root = resolve_root(args.path.as_ref())?;
+    if !args.follow_symlinks && is_symlink_path(&root)? {
+        return Err(AppError::invalid_argument(format!(
+            "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
+            root.to_string_lossy()
+        )));
+    }
     let query = args.query;
 
     let (all_files, backend) = if rg_is_available() {
-        match files_with_rg(&root) {
+        match files_with_rg(&root, args.follow_symlinks) {
             Some(files) => (files, "rg+rust"),
-            None => (collect_files_fallback(&root, None)?, "rust"),
+            None => (
+                collect_files_fallback(&root, None, args.follow_symlinks)?,
+                "rust",
+            ),
         }
     } else {
-        (collect_files_fallback(&root, None)?, "rust")
+        (
+            collect_files_fallback(&root, None, args.follow_symlinks)?,
+            "rust",
+        )
     };
 
     let mut matched = Vec::new();
@@ -314,6 +366,9 @@ fn candidate_files_with_rg(args: &TextArgs, root: &Path) -> Option<Vec<PathBuf>>
     command.arg("-l");
     command.arg("--color").arg("never");
     command.arg("--no-messages");
+    if args.follow_symlinks {
+        command.arg("-L");
+    }
     if args.ignore_case {
         command.arg("-i");
     }
@@ -341,8 +396,14 @@ fn candidate_files_with_rg(args: &TextArgs, root: &Path) -> Option<Vec<PathBuf>>
     Some(files)
 }
 
-fn files_with_rg(root: &Path) -> Option<Vec<PathBuf>> {
-    let output = Command::new("rg").arg("--files").arg(root).output().ok()?;
+fn files_with_rg(root: &Path, follow_symlinks: bool) -> Option<Vec<PathBuf>> {
+    let mut command = Command::new("rg");
+    command.arg("--files");
+    if follow_symlinks {
+        command.arg("-L");
+    }
+    command.arg(root);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -361,8 +422,12 @@ fn files_with_rg(root: &Path) -> Option<Vec<PathBuf>> {
 fn collect_files_fallback(
     root: &Path,
     globset: Option<&GlobSet>,
+    follow_symlinks: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
     if root.is_file() {
+        if is_symlink_path(root)? && !follow_symlinks {
+            return Ok(Vec::new());
+        }
         if file_matches_globs(root, root, globset) {
             return Ok(vec![root.to_path_buf()]);
         }
@@ -376,10 +441,17 @@ fn collect_files_fallback(
     }
 
     let mut files = Vec::new();
-    for entry in WalkDir::new(root) {
-        let entry = entry.map_err(|error| {
-            AppError::directory_read(root.to_path_buf(), std::io::Error::other(error))
-        })?;
+    for entry in WalkDir::new(root).follow_links(follow_symlinks) {
+        let entry = match entry {
+            Ok(value) => value,
+            Err(error) if error.loop_ancestor().is_some() => continue,
+            Err(error) => {
+                return Err(AppError::directory_read(
+                    root.to_path_buf(),
+                    std::io::Error::other(error),
+                ));
+            }
+        };
         if entry.file_type().is_file() && file_matches_globs(entry.path(), root, globset) {
             files.push(entry.path().to_path_buf());
         }
@@ -407,15 +479,26 @@ fn collect_text_matches(
     root: &Path,
     matcher: &PatternMatcher,
     context_lines: usize,
+    max_bytes: u64,
+    follow_symlinks: bool,
     limit: Option<usize>,
-) -> Result<(Vec<TextMatch>, bool), AppError> {
+) -> Result<(Vec<TextMatch>, TextCollectStats, bool), AppError> {
     let max_count = limit.unwrap_or(usize::MAX);
     let mut matches = Vec::new();
+    let mut stats = TextCollectStats::default();
     let mut truncated = false;
     let mut seen: HashSet<(String, usize)> = HashSet::new();
 
     'file_loop: for path in files {
-        let file_matches = match_file(&path, root, matcher, context_lines)?;
+        let file_matches = match_file(
+            &path,
+            root,
+            matcher,
+            context_lines,
+            max_bytes,
+            follow_symlinks,
+            &mut stats,
+        )?;
         for item in file_matches {
             let key = (item.path.clone(), item.line);
             if seen.contains(&key) {
@@ -431,7 +514,7 @@ fn collect_text_matches(
         }
     }
 
-    Ok((matches, truncated))
+    Ok((matches, stats, truncated))
 }
 
 fn match_file(
@@ -439,13 +522,34 @@ fn match_file(
     root: &Path,
     matcher: &PatternMatcher,
     context_lines: usize,
+    max_bytes: u64,
+    follow_symlinks: bool,
+    stats: &mut TextCollectStats,
 ) -> Result<Vec<TextMatch>, AppError> {
+    let policy = TextFilePolicy {
+        max_bytes,
+        follow_symlinks,
+    };
+    match safety::inspect_text_file(path, policy)? {
+        TextFileDecision::Allow(_) => {}
+        TextFileDecision::Skip(reason) => {
+            register_skip_reason(stats, reason);
+            return Ok(Vec::new());
+        }
+    }
+
     let bytes = fs::read(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
-    if bytes.contains(&0) {
+    let text = match String::from_utf8(bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            stats.skipped_binary_files += 1;
+            return Ok(Vec::new());
+        }
+    };
+    if text.is_empty() {
         return Ok(Vec::new());
     }
 
-    let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<String> = text.lines().map(|line| line.to_owned()).collect();
 
     let mut matches = Vec::new();
@@ -532,6 +636,27 @@ fn render_text_matches(matches: &[TextMatch], context_lines: usize) -> String {
     }
 
     lines.join("\n")
+}
+
+fn register_skip_reason(stats: &mut TextCollectStats, reason: TextFileSkipReason) {
+    match reason {
+        TextFileSkipReason::Binary => {
+            stats.skipped_binary_files += 1;
+        }
+        TextFileSkipReason::TooLarge { .. } => {
+            stats.skipped_large_files += 1;
+        }
+        TextFileSkipReason::SymlinkBlocked => {
+            stats.skipped_symlink_files += 1;
+        }
+        TextFileSkipReason::NotAFile => {}
+    }
+}
+
+fn is_symlink_path(path: &Path) -> Result<bool, AppError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| AppError::file_metadata(path.to_path_buf(), source))?;
+    Ok(metadata.file_type().is_symlink())
 }
 
 fn normalize_path_for_match(path: &Path) -> String {

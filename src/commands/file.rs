@@ -1,7 +1,7 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     fs::{self, File, Metadata},
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, ErrorKind},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -9,7 +9,12 @@ use std::{
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
+use crate::{
+    cli::GlobalOptions,
+    error::AppError,
+    output::OutputMode,
+    safety::{self, TextFileDecision, TextFilePolicy},
+};
 
 #[derive(Debug, Args)]
 pub struct FileArgs {
@@ -19,10 +24,15 @@ pub struct FileArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum FileCommand {
+    #[command(about = "Read file content (supports line range and numbering)")]
     Read(ReadArgs),
+    #[command(about = "Show first N lines of a file")]
     Head(HeadArgs),
+    #[command(about = "Show last N lines of a file")]
     Tail(TailArgs),
+    #[command(about = "Show file metadata")]
     Stat(StatArgs),
+    #[command(about = "Show directory tree")]
     Tree(TreeArgs),
 }
 
@@ -35,6 +45,15 @@ pub struct ReadArgs {
     pub from: Option<usize>,
     #[arg(long, value_name = "N", help = "End line (1-based)")]
     pub to: Option<usize>,
+    #[arg(
+        long,
+        value_name = "BYTES",
+        default_value_t = safety::DEFAULT_MAX_TEXT_BYTES,
+        help = "Fail when file size exceeds this limit"
+    )]
+    pub max_bytes: u64,
+    #[arg(long, help = "Allow reading through symlink paths")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Args)]
@@ -44,6 +63,15 @@ pub struct HeadArgs {
     pub lines: usize,
     #[arg(short = 'n', long = "number-lines", help = "Show line numbers")]
     pub number_lines: bool,
+    #[arg(
+        long,
+        value_name = "BYTES",
+        default_value_t = safety::DEFAULT_MAX_TEXT_BYTES,
+        help = "Fail when file size exceeds this limit"
+    )]
+    pub max_bytes: u64,
+    #[arg(long, help = "Allow reading through symlink paths")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Args)]
@@ -53,6 +81,15 @@ pub struct TailArgs {
     pub lines: usize,
     #[arg(short = 'n', long = "number-lines", help = "Show line numbers")]
     pub number_lines: bool,
+    #[arg(
+        long,
+        value_name = "BYTES",
+        default_value_t = safety::DEFAULT_MAX_TEXT_BYTES,
+        help = "Fail when file size exceeds this limit"
+    )]
+    pub max_bytes: u64,
+    #[arg(long, help = "Allow reading through symlink paths")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Args)]
@@ -65,6 +102,8 @@ pub struct TreeArgs {
     pub path: Option<PathBuf>,
     #[arg(long)]
     pub depth: Option<usize>,
+    #[arg(long, help = "Follow symlink directories during traversal")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,6 +162,7 @@ fn execute_read(args: ReadArgs, options: &GlobalOptions) -> Result<(), AppError>
     let to = args.to.unwrap_or(usize::MAX);
 
     validate_line_range(from, to)?;
+    enforce_text_read_policy(&args.path, args.max_bytes, args.follow_symlinks)?;
 
     let (raw_lines, truncated) = read_lines_in_range(&args.path, from, to, line_cap(options))?;
     emit_lines_output(
@@ -139,6 +179,7 @@ fn execute_read(args: ReadArgs, options: &GlobalOptions) -> Result<(), AppError>
 
 fn execute_head(args: HeadArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let lines = args.lines;
+    enforce_text_read_policy(&args.path, args.max_bytes, args.follow_symlinks)?;
 
     let (raw_lines, truncated) = read_lines_in_range(&args.path, 1, lines, line_cap(options))?;
     let from = if raw_lines.is_empty() { None } else { Some(1) };
@@ -156,6 +197,7 @@ fn execute_head(args: HeadArgs, options: &GlobalOptions) -> Result<(), AppError>
 }
 
 fn execute_tail(args: TailArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    enforce_text_read_policy(&args.path, args.max_bytes, args.follow_symlinks)?;
     let (raw_lines, truncated) = read_tail_lines(&args.path, args.lines, line_cap(options))?;
     let from = raw_lines.first().map(|(line_number, _)| *line_number);
     let to = raw_lines.last().map(|(line_number, _)| *line_number);
@@ -221,7 +263,15 @@ fn execute_stat(args: StatArgs, options: &GlobalOptions) -> Result<(), AppError>
 fn execute_tree(args: TreeArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let path = args.path.unwrap_or_else(|| PathBuf::from("."));
     let mut entries = Vec::new();
-    collect_tree_entries(&path, 0, args.depth, &mut entries)?;
+    let mut visited_dirs = HashSet::new();
+    collect_tree_entries(
+        &path,
+        0,
+        args.depth,
+        args.follow_symlinks,
+        &mut visited_dirs,
+        &mut entries,
+    )?;
 
     let truncated = apply_limit(&mut entries, options.limit);
 
@@ -335,7 +385,7 @@ fn read_lines_in_range(
             break;
         }
 
-        let line = line_result.map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+        let line = line_result.map_err(|source| map_text_line_error(path, source))?;
         if selected.len() < line_cap {
             selected.push((line_number, line));
         } else {
@@ -363,7 +413,7 @@ fn read_tail_lines(
 
     for (index, line_result) in reader.lines().enumerate() {
         let line_number = index + 1;
-        let line = line_result.map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+        let line = line_result.map_err(|source| map_text_line_error(path, source))?;
         if queue.len() == requested_lines {
             queue.pop_front();
         }
@@ -379,6 +429,8 @@ fn collect_tree_entries(
     path: &Path,
     depth: usize,
     max_depth: Option<usize>,
+    follow_symlinks: bool,
+    visited_dirs: &mut HashSet<PathBuf>,
     entries: &mut Vec<TreeEntry>,
 ) -> Result<(), AppError> {
     let metadata = fs::symlink_metadata(path)
@@ -391,12 +443,28 @@ fn collect_tree_entries(
         path: path.to_string_lossy().into_owned(),
     });
 
-    if kind != "directory" {
+    let should_descend_as_directory = if metadata.is_dir() {
+        true
+    } else if metadata.file_type().is_symlink() && follow_symlinks {
+        fs::metadata(path)
+            .map(|target| target.is_dir())
+            .map_err(|source| AppError::file_metadata(path.to_path_buf(), source))?
+    } else {
+        false
+    };
+
+    if !should_descend_as_directory {
         return Ok(());
     }
 
     let should_descend = max_depth.map(|limit| depth < limit).unwrap_or(true);
     if !should_descend {
+        return Ok(());
+    }
+
+    let canonical_dir = fs::canonicalize(path)
+        .map_err(|source| AppError::directory_read(path.to_path_buf(), source))?;
+    if !visited_dirs.insert(canonical_dir) {
         return Ok(());
     }
 
@@ -415,7 +483,14 @@ fn collect_tree_entries(
     });
 
     for child_path in children {
-        collect_tree_entries(&child_path, depth + 1, max_depth, entries)?;
+        collect_tree_entries(
+            &child_path,
+            depth + 1,
+            max_depth,
+            follow_symlinks,
+            visited_dirs,
+            entries,
+        )?;
     }
 
     Ok(())
@@ -469,6 +544,31 @@ fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
         }
     }
     false
+}
+
+fn enforce_text_read_policy(
+    path: &Path,
+    max_bytes: u64,
+    follow_symlinks: bool,
+) -> Result<(), AppError> {
+    let policy = TextFilePolicy {
+        max_bytes,
+        follow_symlinks,
+    };
+    match safety::inspect_text_file(path, policy)? {
+        TextFileDecision::Allow(_) => Ok(()),
+        TextFileDecision::Skip(reason) => Err(safety::skip_reason_to_error(path, reason)),
+    }
+}
+
+fn map_text_line_error(path: &Path, source: std::io::Error) -> AppError {
+    if source.kind() == ErrorKind::InvalidData {
+        return AppError::invalid_argument(format!(
+            "binary or non-UTF8 file is not supported: {}",
+            path.to_string_lossy()
+        ));
+    }
+    AppError::file_read(path.to_path_buf(), source)
 }
 
 fn validate_line_range(from: usize, to: usize) -> Result<(), AppError> {

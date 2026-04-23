@@ -36,6 +36,17 @@ fn try_git(cwd: &std::path::Path, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn create_file_symlink(link: &std::path::Path, target: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+}
+
 fn init_git_repo_with_one_commit() -> TempDir {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     let cwd = temp_dir.path();
@@ -54,12 +65,70 @@ fn init_git_repo_with_one_commit() -> TempDir {
 }
 
 #[test]
+fn file_read_rejects_binary_file() {
+    let temp = NamedTempFile::new().expect("temporary file should be created");
+    fs::write(temp.path(), [0u8, b'a', b'b', b'c']).expect("binary content should be written");
+
+    let file_path = temp.path().to_string_lossy().to_string();
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["file", "read", &file_path])
+        .assert()
+        .failure()
+        .stderr(contains("binary or non-UTF8 file is not supported"));
+}
+
+#[test]
+fn file_read_respects_max_bytes() {
+    let temp = NamedTempFile::new().expect("temporary file should be created");
+    fs::write(temp.path(), "0123456789\n").expect("content should be written");
+
+    let file_path = temp.path().to_string_lossy().to_string();
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["file", "read", &file_path, "--max-bytes", "4"])
+        .assert()
+        .failure()
+        .stderr(contains("file is too large"));
+}
+
+#[test]
+fn file_read_symlink_requires_follow_flag() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let target_path = temp_dir.path().join("target.txt");
+    let link_path = temp_dir.path().join("link.txt");
+    fs::write(&target_path, "hello via symlink\n").expect("target file should be written");
+
+    if !create_file_symlink(&link_path, &target_path) {
+        return;
+    }
+
+    let link = link_path.to_string_lossy().to_string();
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["file", "read", &link])
+        .assert()
+        .failure()
+        .stderr(contains("symlink traversal is disabled"));
+
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["file", "read", &link, "--follow-symlinks"])
+        .assert()
+        .success()
+        .stdout(contains("hello via symlink"));
+}
+
+#[test]
 fn shows_top_level_help() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(contains("AIHelper CLI toolbox"));
+        .stdout(contains("AIHelper CLI toolbox"))
+        .stdout(contains("file"))
+        .stdout(contains("search"))
+        .stdout(contains("ctx"))
+        .stdout(contains("git"))
+        .stdout(contains("task"));
 }
 
 #[test]
@@ -235,6 +304,44 @@ fn search_text_json_contains_mode_fields() {
 }
 
 #[test]
+fn search_text_json_reports_skipped_binary_and_large_files() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    fs::write(temp_dir.path().join("ok.txt"), "match here\n").expect("text file should be written");
+    fs::write(
+        temp_dir.path().join("bin.dat"),
+        [0u8, b'm', b'a', b't', b'c', b'h'],
+    )
+    .expect("binary file should be written");
+    fs::write(temp_dir.path().join("huge.txt"), "match ".repeat(200))
+        .expect("large file should be written");
+
+    let root = temp_dir.path().to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args([
+            "--json",
+            "search",
+            "text",
+            "match",
+            &root,
+            "--max-bytes",
+            "32",
+        ])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["command"], "search.text");
+    assert_eq!(payload["match_count"], 1);
+    let skipped_binary = payload["skipped_binary_files"]
+        .as_u64()
+        .expect("skipped_binary_files should be a number");
+    assert!(skipped_binary <= 1);
+    assert_eq!(payload["skipped_large_files"], 1);
+}
+
+#[test]
 fn search_files_returns_matching_paths() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     fs::write(temp_dir.path().join("alpha.txt"), "a").expect("file should be written");
@@ -289,6 +396,33 @@ fn ctx_pack_emits_json_summary() {
 }
 
 #[test]
+fn ctx_symbols_json_reports_skipped_binary_and_large_files() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    fs::write(temp_dir.path().join("ok.rs"), "fn good() {}\n")
+        .expect("rust file should be written");
+    fs::write(temp_dir.path().join("bin.bin"), [0u8, 1u8, 2u8])
+        .expect("binary file should be written");
+    fs::write(
+        temp_dir.path().join("huge.rs"),
+        "fn huge() {}\n".repeat(200),
+    )
+    .expect("large file should be written");
+
+    let root = temp_dir.path().to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "ctx", "symbols", &root, "--max-bytes", "64"])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["command"], "ctx.symbols");
+    assert_eq!(payload["skipped_binary_files"], 1);
+    assert_eq!(payload["skipped_large_files"], 1);
+}
+
+#[test]
 fn ctx_changed_reports_non_git_directory() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     let cwd = temp_dir.path().to_string_lossy().to_string();
@@ -300,6 +434,78 @@ fn ctx_changed_reports_non_git_directory() {
         .stdout(contains("\"command\": \"ctx.changed\""))
         .stdout(contains("\"in_git_repo\": false"))
         .stdout(contains("\"changed_count\": 0"));
+}
+
+#[test]
+fn ctx_symbols_summary_preset_limits_symbols_per_file() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let file_path = temp_dir.path().join("symbols.rs");
+    let content = (1..=30)
+        .map(|index| format!("fn func_{index}() {{}}\n"))
+        .collect::<String>();
+    fs::write(&file_path, content).expect("test file should be written");
+
+    let file_path_str = file_path.to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args([
+            "--json",
+            "ctx",
+            "symbols",
+            &file_path_str,
+            "--preset",
+            "summary",
+        ])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["command"], "ctx.symbols");
+    assert_eq!(payload["preset"], "summary");
+    let files = payload["files"]
+        .as_array()
+        .expect("files should be array in ctx symbols output");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["symbol_count"], 20);
+}
+
+#[test]
+fn ctx_pack_summary_preset_limits_symbol_preview() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let file_path = temp_dir.path().join("pack.rs");
+    let content = (1..=10)
+        .map(|index| format!("fn pack_func_{index}() {{}}\n"))
+        .collect::<String>();
+    fs::write(&file_path, content).expect("test file should be written");
+
+    let file_path_str = file_path.to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args([
+            "--json",
+            "ctx",
+            "pack",
+            &file_path_str,
+            "--preset",
+            "summary",
+        ])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["command"], "ctx.pack");
+    assert_eq!(payload["preset"], "summary");
+    let items = payload["items"]
+        .as_array()
+        .expect("items should be array in ctx pack output");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["symbol_count"], 10);
+    let symbols = items[0]["symbols"]
+        .as_array()
+        .expect("symbols should be array for pack item");
+    assert_eq!(symbols.len(), 4);
 }
 
 #[test]
@@ -422,4 +628,17 @@ fn task_run_unknown_task_fails() {
         .assert()
         .failure()
         .stderr(contains("task not found: missing"));
+}
+
+#[test]
+fn plugins_list_reports_builtin_domains() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["plugins", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"domain\": \"file\""))
+        .stdout(contains("\"domain\": \"search\""))
+        .stdout(contains("\"domain\": \"ctx\""))
+        .stdout(contains("\"domain\": \"git\""))
+        .stdout(contains("\"domain\": \"task\""));
 }

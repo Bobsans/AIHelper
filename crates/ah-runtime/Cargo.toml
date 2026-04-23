@@ -1,0 +1,11 @@
+[package]
+name = "ah-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "Plugin runtime and dynamic loader for AIHelper"
+
+[dependencies]
+ah-plugin-api = { path = "../ah-plugin-api" }
+libloading = "0.8.6"
+serde_json = "1.0"
+thiserror = "2.0"

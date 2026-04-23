@@ -2,14 +2,20 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::OnceLock,
 };
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use regex::Regex;
 use serde::Serialize;
 use walkdir::WalkDir;
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
+use crate::{
+    cli::GlobalOptions,
+    error::AppError,
+    output::OutputMode,
+    safety::{self, TextFileDecision, TextFilePolicy, TextFileSkipReason},
+};
 
 #[derive(Debug, Args)]
 pub struct CtxArgs {
@@ -19,19 +25,51 @@ pub struct CtxArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CtxCommand {
+    #[command(about = "Pack files/directories into compact context metadata")]
     Pack(PackArgs),
+    #[command(about = "Extract symbols from file(s)")]
     Symbols(SymbolsArgs),
+    #[command(about = "Show changed paths from git status")]
     Changed(ChangedArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CtxPreset {
+    Summary,
+    Review,
+    Debug,
 }
 
 #[derive(Debug, Args)]
 pub struct PackArgs {
     pub paths: Vec<PathBuf>,
+    #[arg(long, value_enum, default_value_t = CtxPreset::Review)]
+    pub preset: CtxPreset,
+    #[arg(
+        long,
+        value_name = "BYTES",
+        default_value_t = safety::DEFAULT_MAX_TEXT_BYTES,
+        help = "Skip files larger than this size while extracting symbols"
+    )]
+    pub max_bytes: u64,
+    #[arg(long, help = "Follow symlink directories during traversal")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct SymbolsArgs {
     pub path: PathBuf,
+    #[arg(long, value_enum, default_value_t = CtxPreset::Review)]
+    pub preset: CtxPreset,
+    #[arg(
+        long,
+        value_name = "BYTES",
+        default_value_t = safety::DEFAULT_MAX_TEXT_BYTES,
+        help = "Skip files larger than this size while extracting symbols"
+    )]
+    pub max_bytes: u64,
+    #[arg(long, help = "Follow symlink directories during traversal")]
+    pub follow_symlinks: bool,
 }
 
 #[derive(Debug, Args)]
@@ -54,9 +92,13 @@ struct SymbolsFileOutput {
 #[derive(Debug, Serialize)]
 struct CtxSymbolsOutput {
     command: &'static str,
+    preset: String,
     root: String,
     file_count: usize,
     symbol_count: usize,
+    skipped_binary_files: usize,
+    skipped_large_files: usize,
+    skipped_symlink_files: usize,
     truncated: bool,
     files: Vec<SymbolsFileOutput>,
 }
@@ -74,11 +116,15 @@ struct PackItem {
 #[derive(Debug, Serialize)]
 struct CtxPackOutput {
     command: &'static str,
+    preset: String,
     roots: Vec<String>,
     item_count: usize,
     file_count: usize,
     directory_count: usize,
     symbol_count: usize,
+    skipped_binary_files: usize,
+    skipped_large_files: usize,
+    skipped_symlink_files: usize,
     truncated: bool,
     items: Vec<PackItem>,
 }
@@ -98,6 +144,50 @@ struct CtxChangedOutput {
     entries: Vec<ChangedEntry>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PresetSettings {
+    default_limit: usize,
+    pack_symbol_preview_limit: usize,
+    symbols_per_file_limit: usize,
+}
+
+#[derive(Default)]
+struct SkipStats {
+    binary_files: usize,
+    large_files: usize,
+    symlink_files: usize,
+}
+
+impl CtxPreset {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Review => "review",
+            Self::Debug => "debug",
+        }
+    }
+
+    fn settings(self) -> PresetSettings {
+        match self {
+            Self::Summary => PresetSettings {
+                default_limit: 80,
+                pack_symbol_preview_limit: 4,
+                symbols_per_file_limit: 20,
+            },
+            Self::Review => PresetSettings {
+                default_limit: 200,
+                pack_symbol_preview_limit: 8,
+                symbols_per_file_limit: 80,
+            },
+            Self::Debug => PresetSettings {
+                default_limit: 500,
+                pack_symbol_preview_limit: 16,
+                symbols_per_file_limit: 200,
+            },
+        }
+    }
+}
+
 pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         CtxCommand::Pack(pack_args) => execute_pack(pack_args, options),
@@ -107,55 +197,74 @@ pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
 }
 
 fn execute_pack(args: PackArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    safety::validate_max_bytes(args.max_bytes)?;
+    let preset_settings = args.preset.settings();
     let roots = if args.paths.is_empty() {
         vec![PathBuf::from(".")]
     } else {
         args.paths
     };
-    let max_items = options.limit.unwrap_or(200);
+    let max_items = options.limit.unwrap_or(preset_settings.default_limit);
 
     let mut items = Vec::new();
     let mut file_count = 0usize;
     let mut directory_count = 0usize;
     let mut symbol_total = 0usize;
+    let mut skip_stats = SkipStats::default();
     let mut truncated = false;
 
     'roots: for root in &roots {
-        let entries = enumerate_entries(root)?;
-        for path in entries {
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|source| AppError::file_metadata(path.clone(), source))?;
-            let kind = if metadata.is_dir() {
-                directory_count += 1;
-                "directory".to_owned()
-            } else if metadata.is_file() {
-                file_count += 1;
-                "file".to_owned()
-            } else {
-                "other".to_owned()
+        if !root.exists() {
+            return Err(AppError::invalid_argument(format!(
+                "path does not exist: {}",
+                root.to_string_lossy()
+            )));
+        }
+
+        if root.is_file() {
+            process_pack_entry(
+                root,
+                &preset_settings,
+                args.max_bytes,
+                args.follow_symlinks,
+                &mut items,
+                &mut file_count,
+                &mut directory_count,
+                &mut symbol_total,
+                &mut skip_stats,
+            )?;
+            if items.len() >= max_items {
+                truncated = true;
+                break 'roots;
+            }
+            continue;
+        }
+
+        for entry in WalkDir::new(root)
+            .follow_links(args.follow_symlinks)
+            .sort_by_file_name()
+        {
+            let entry = match entry {
+                Ok(value) => value,
+                Err(error) if error.loop_ancestor().is_some() => continue,
+                Err(error) => {
+                    return Err(AppError::directory_read(
+                        root.to_path_buf(),
+                        std::io::Error::other(error),
+                    ));
+                }
             };
-
-            let (line_count, symbols) =
-                if metadata.is_file() && is_text_candidate(&path, metadata.len()) {
-                    let content = fs::read_to_string(&path)
-                        .map_err(|source| AppError::file_read(path.clone(), source))?;
-                    let line_count = content.lines().count();
-                    let symbols = extract_symbols(&path, &content);
-                    (line_count, symbols)
-                } else {
-                    (0usize, Vec::new())
-                };
-            symbol_total += symbols.len();
-
-            items.push(PackItem {
-                path: normalize_path(path.as_path()),
-                kind,
-                size_bytes: metadata.len(),
-                line_count,
-                symbol_count: symbols.len(),
-                symbols: symbols.into_iter().take(8).collect(),
-            });
-
+            process_pack_entry(
+                entry.path(),
+                &preset_settings,
+                args.max_bytes,
+                args.follow_symlinks,
+                &mut items,
+                &mut file_count,
+                &mut directory_count,
+                &mut symbol_total,
+                &mut skip_stats,
+            )?;
             if items.len() >= max_items {
                 truncated = true;
                 break 'roots;
@@ -170,12 +279,17 @@ fn execute_pack(args: PackArgs, options: &GlobalOptions) -> Result<(), AppError>
     match options.output {
         OutputMode::Text => {
             if !items.is_empty() {
+                println!("preset: {}", args.preset.as_str());
                 println!(
                     "items: {} (files: {}, directories: {}, symbols: {})",
                     items.len(),
                     file_count,
                     directory_count,
                     symbol_total
+                );
+                println!(
+                    "skipped: binary={} large={} symlink={}",
+                    skip_stats.binary_files, skip_stats.large_files, skip_stats.symlink_files
                 );
                 for item in &items {
                     println!(
@@ -194,6 +308,7 @@ fn execute_pack(args: PackArgs, options: &GlobalOptions) -> Result<(), AppError>
         OutputMode::Json => {
             let payload = CtxPackOutput {
                 command: "ctx.pack",
+                preset: args.preset.as_str().to_owned(),
                 roots: roots
                     .iter()
                     .map(|path| normalize_path(path.as_path()))
@@ -202,6 +317,9 @@ fn execute_pack(args: PackArgs, options: &GlobalOptions) -> Result<(), AppError>
                 file_count,
                 directory_count,
                 symbol_count: symbol_total,
+                skipped_binary_files: skip_stats.binary_files,
+                skipped_large_files: skip_stats.large_files,
+                skipped_symlink_files: skip_stats.symlink_files,
                 truncated,
                 items,
             };
@@ -212,42 +330,137 @@ fn execute_pack(args: PackArgs, options: &GlobalOptions) -> Result<(), AppError>
     Ok(())
 }
 
+fn process_pack_entry(
+    path: &Path,
+    preset_settings: &PresetSettings,
+    max_bytes: u64,
+    follow_symlinks: bool,
+    items: &mut Vec<PackItem>,
+    file_count: &mut usize,
+    directory_count: &mut usize,
+    symbol_total: &mut usize,
+    skip_stats: &mut SkipStats,
+) -> Result<(), AppError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| AppError::file_metadata(path.to_path_buf(), source))?;
+    let kind = if metadata.file_type().is_symlink() {
+        "symlink".to_owned()
+    } else if metadata.is_dir() {
+        *directory_count += 1;
+        "directory".to_owned()
+    } else if metadata.is_file() {
+        *file_count += 1;
+        "file".to_owned()
+    } else {
+        "other".to_owned()
+    };
+
+    let (line_count, symbols) = match safety::inspect_text_file(
+        path,
+        TextFilePolicy {
+            max_bytes,
+            follow_symlinks,
+        },
+    )? {
+        TextFileDecision::Allow(file_info) => {
+            if !is_text_candidate(path, file_info.size_bytes) {
+                (0usize, Vec::new())
+            } else {
+                let content = fs::read_to_string(path)
+                    .map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+                let line_count = content.lines().count();
+                let symbols = extract_symbols(path, &content);
+                (line_count, symbols)
+            }
+        }
+        TextFileDecision::Skip(reason) => {
+            register_skip_reason(skip_stats, reason);
+            (0usize, Vec::new())
+        }
+    };
+    *symbol_total += symbols.len();
+
+    items.push(PackItem {
+        path: normalize_path(path),
+        kind,
+        size_bytes: metadata.len(),
+        line_count,
+        symbol_count: symbols.len(),
+        symbols: symbols
+            .into_iter()
+            .take(preset_settings.pack_symbol_preview_limit)
+            .collect(),
+    });
+
+    Ok(())
+}
+
 fn execute_symbols(args: SymbolsArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    safety::validate_max_bytes(args.max_bytes)?;
     if !args.path.exists() {
         return Err(AppError::invalid_argument(format!(
             "path does not exist: {}",
             args.path.to_string_lossy()
         )));
     }
+    if !args.follow_symlinks && is_symlink_path(args.path.as_path())? {
+        return Err(AppError::invalid_argument(format!(
+            "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
+            args.path.to_string_lossy()
+        )));
+    }
 
-    let max_files = options.limit.unwrap_or(200);
-    let candidate_files = enumerate_files_for_symbols(&args.path)?;
+    let preset_settings = args.preset.settings();
+    let max_files = options.limit.unwrap_or(preset_settings.default_limit);
     let mut files = Vec::new();
     let mut symbol_total = 0usize;
+    let mut skip_stats = SkipStats::default();
     let mut truncated = false;
+    let mut scanned_files = 0usize;
 
-    for (index, path) in candidate_files.iter().enumerate() {
-        if index >= max_files {
-            truncated = true;
-            break;
+    if args.path.is_file() {
+        collect_symbols_for_file(
+            args.path.as_path(),
+            &preset_settings,
+            args.max_bytes,
+            args.follow_symlinks,
+            &mut files,
+            &mut symbol_total,
+            &mut skip_stats,
+        )?;
+    } else {
+        for entry in WalkDir::new(&args.path)
+            .follow_links(args.follow_symlinks)
+            .sort_by_file_name()
+        {
+            let entry = match entry {
+                Ok(value) => value,
+                Err(error) if error.loop_ancestor().is_some() => continue,
+                Err(error) => {
+                    return Err(AppError::directory_read(
+                        args.path.to_path_buf(),
+                        std::io::Error::other(error),
+                    ));
+                }
+            };
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if scanned_files >= max_files {
+                truncated = true;
+                break;
+            }
+            scanned_files += 1;
+            collect_symbols_for_file(
+                entry.path(),
+                &preset_settings,
+                args.max_bytes,
+                args.follow_symlinks,
+                &mut files,
+                &mut symbol_total,
+                &mut skip_stats,
+            )?;
         }
-        let metadata = fs::metadata(path)
-            .map_err(|source| AppError::file_metadata(path.to_path_buf(), source))?;
-        if !is_text_candidate(path, metadata.len()) {
-            continue;
-        }
-        let content = fs::read_to_string(path)
-            .map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
-        let symbols = extract_symbols(path, &content);
-        symbol_total += symbols.len();
-        if symbols.is_empty() {
-            continue;
-        }
-        files.push(SymbolsFileOutput {
-            path: normalize_path(path.as_path()),
-            symbol_count: symbols.len(),
-            symbols,
-        });
     }
 
     if options.quiet {
@@ -256,6 +469,11 @@ fn execute_symbols(args: SymbolsArgs, options: &GlobalOptions) -> Result<(), App
 
     match options.output {
         OutputMode::Text => {
+            println!("preset: {}", args.preset.as_str());
+            println!(
+                "skipped: binary={} large={} symlink={}",
+                skip_stats.binary_files, skip_stats.large_files, skip_stats.symlink_files
+            );
             for file in &files {
                 println!("{}", file.path);
                 for symbol in &file.symbols {
@@ -269,15 +487,66 @@ fn execute_symbols(args: SymbolsArgs, options: &GlobalOptions) -> Result<(), App
         OutputMode::Json => {
             let payload = CtxSymbolsOutput {
                 command: "ctx.symbols",
+                preset: args.preset.as_str().to_owned(),
                 root: normalize_path(args.path.as_path()),
                 file_count: files.len(),
                 symbol_count: symbol_total,
+                skipped_binary_files: skip_stats.binary_files,
+                skipped_large_files: skip_stats.large_files,
+                skipped_symlink_files: skip_stats.symlink_files,
                 truncated,
                 files,
             };
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
     }
+
+    Ok(())
+}
+
+fn collect_symbols_for_file(
+    path: &Path,
+    preset_settings: &PresetSettings,
+    max_bytes: u64,
+    follow_symlinks: bool,
+    files: &mut Vec<SymbolsFileOutput>,
+    symbol_total: &mut usize,
+    skip_stats: &mut SkipStats,
+) -> Result<(), AppError> {
+    let inspect = safety::inspect_text_file(
+        path,
+        TextFilePolicy {
+            max_bytes,
+            follow_symlinks,
+        },
+    )?;
+    let file_info = match inspect {
+        TextFileDecision::Allow(value) => value,
+        TextFileDecision::Skip(reason) => {
+            register_skip_reason(skip_stats, reason);
+            return Ok(());
+        }
+    };
+    if !is_text_candidate(path, file_info.size_bytes) {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(path)
+        .map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+    let mut symbols = extract_symbols(path, &content);
+    if symbols.len() > preset_settings.symbols_per_file_limit {
+        symbols.truncate(preset_settings.symbols_per_file_limit);
+    }
+    *symbol_total += symbols.len();
+    if symbols.is_empty() {
+        return Ok(());
+    }
+
+    files.push(SymbolsFileOutput {
+        path: normalize_path(path),
+        symbol_count: symbols.len(),
+        symbols,
+    });
 
     Ok(())
 }
@@ -325,50 +594,28 @@ fn execute_changed(_args: ChangedArgs, options: &GlobalOptions) -> Result<(), Ap
     Ok(())
 }
 
-fn enumerate_entries(root: &Path) -> Result<Vec<PathBuf>, AppError> {
-    if !root.exists() {
-        return Err(AppError::invalid_argument(format!(
-            "path does not exist: {}",
-            root.to_string_lossy()
-        )));
-    }
-    if root.is_file() {
-        return Ok(vec![root.to_path_buf()]);
-    }
-
-    let mut entries = Vec::new();
-    for entry in WalkDir::new(root) {
-        let entry = entry.map_err(|error| {
-            AppError::directory_read(root.to_path_buf(), std::io::Error::other(error))
-        })?;
-        entries.push(entry.path().to_path_buf());
-    }
-    entries.sort();
-    Ok(entries)
-}
-
-fn enumerate_files_for_symbols(path: &Path) -> Result<Vec<PathBuf>, AppError> {
-    if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
-    }
-
-    let mut files = Vec::new();
-    for entry in WalkDir::new(path) {
-        let entry = entry.map_err(|error| {
-            AppError::directory_read(path.to_path_buf(), std::io::Error::other(error))
-        })?;
-        if entry.file_type().is_file() {
-            files.push(entry.path().to_path_buf());
+fn register_skip_reason(skip_stats: &mut SkipStats, reason: TextFileSkipReason) {
+    match reason {
+        TextFileSkipReason::Binary => {
+            skip_stats.binary_files += 1;
         }
+        TextFileSkipReason::TooLarge { .. } => {
+            skip_stats.large_files += 1;
+        }
+        TextFileSkipReason::SymlinkBlocked => {
+            skip_stats.symlink_files += 1;
+        }
+        TextFileSkipReason::NotAFile => {}
     }
-    files.sort();
-    Ok(files)
 }
 
-fn is_text_candidate(path: &Path, size_bytes: u64) -> bool {
-    if size_bytes > 2_000_000 {
-        return false;
-    }
+fn is_symlink_path(path: &Path) -> Result<bool, AppError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| AppError::file_metadata(path.to_path_buf(), source))?;
+    Ok(metadata.file_type().is_symlink())
+}
+
+fn is_text_candidate(path: &Path, _size_bytes: u64) -> bool {
     let Some(ext) = path.extension() else {
         return true;
     };
@@ -418,17 +665,9 @@ fn extract_symbols(path: &Path, content: &str) -> Vec<Symbol> {
 }
 
 fn extract_rust_symbols(content: &str) -> Vec<Symbol> {
-    let fn_re =
-        Regex::new(r"^\s*(pub\s+)?(async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
-    let type_re = Regex::new(r"^\s*(pub\s+)?(struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)")
-        .expect("valid regex");
-    let impl_re =
-        Regex::new(r"^\s*impl(\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_:<>]*)").expect("valid regex");
-    let mod_re = Regex::new(r"^\s*(pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
-
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = fn_re.captures(line) {
+        if let Some(captures) = rust_fn_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "fn".to_owned(),
@@ -436,7 +675,7 @@ fn extract_rust_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = type_re.captures(line) {
+        if let Some(captures) = rust_type_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: captures[2].to_owned(),
@@ -444,7 +683,7 @@ fn extract_rust_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = impl_re.captures(line) {
+        if let Some(captures) = rust_impl_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "impl".to_owned(),
@@ -452,7 +691,7 @@ fn extract_rust_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = mod_re.captures(line) {
+        if let Some(captures) = rust_mod_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "mod".to_owned(),
@@ -485,11 +724,9 @@ fn extract_markdown_symbols(content: &str) -> Vec<Symbol> {
 }
 
 fn extract_python_symbols(content: &str) -> Vec<Symbol> {
-    let class_re = Regex::new(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
-    let fn_re = Regex::new(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = class_re.captures(line) {
+        if let Some(captures) = python_class_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "class".to_owned(),
@@ -497,7 +734,7 @@ fn extract_python_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = fn_re.captures(line) {
+        if let Some(captures) = python_fn_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "def".to_owned(),
@@ -509,21 +746,9 @@ fn extract_python_symbols(content: &str) -> Vec<Symbol> {
 }
 
 fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
-    let class_re =
-        Regex::new(r"^\s*(export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
-    let function_re = Regex::new(r"^\s*(export\s+)?(async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)")
-        .expect("valid regex");
-    let interface_re =
-        Regex::new(r"^\s*(export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
-    let type_re =
-        Regex::new(r"^\s*(export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=").expect("valid regex");
-    let const_fn_re =
-        Regex::new(r"^\s*(export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(async\s*)?\(")
-            .expect("valid regex");
-
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = class_re.captures(line) {
+        if let Some(captures) = js_class_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "class".to_owned(),
@@ -531,7 +756,7 @@ fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = function_re.captures(line) {
+        if let Some(captures) = js_function_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "function".to_owned(),
@@ -539,7 +764,7 @@ fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = interface_re.captures(line) {
+        if let Some(captures) = js_interface_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "interface".to_owned(),
@@ -547,7 +772,7 @@ fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = type_re.captures(line) {
+        if let Some(captures) = js_type_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "type".to_owned(),
@@ -555,7 +780,7 @@ fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = const_fn_re.captures(line) {
+        if let Some(captures) = js_const_fn_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "const-fn".to_owned(),
@@ -567,11 +792,9 @@ fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
 }
 
 fn extract_go_symbols(content: &str) -> Vec<Symbol> {
-    let func_re = Regex::new(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid regex");
-    let type_re = Regex::new(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+").expect("valid regex");
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = func_re.captures(line) {
+        if let Some(captures) = go_func_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "func".to_owned(),
@@ -579,7 +802,7 @@ fn extract_go_symbols(content: &str) -> Vec<Symbol> {
             });
             continue;
         }
-        if let Some(captures) = type_re.captures(line) {
+        if let Some(captures) = go_type_re().captures(line) {
             symbols.push(Symbol {
                 line: index + 1,
                 kind: "type".to_owned(),
@@ -607,6 +830,79 @@ fn extract_generic_symbols(content: &str) -> Vec<Symbol> {
         }
     }
     symbols
+}
+
+fn rust_fn_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?(async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn rust_type_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?(struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn rust_impl_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*impl(\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_:<>]*)"))
+}
+
+fn rust_mod_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn python_class_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn python_fn_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn js_class_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn js_function_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        compile_regex(r"^\s*(export\s+)?(async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)")
+    })
+}
+
+fn js_interface_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn js_type_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*="))
+}
+
+fn js_const_fn_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        compile_regex(r"^\s*(export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(async\s*)?\(")
+    })
+}
+
+fn go_func_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)"))
+}
+
+fn go_type_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+"))
+}
+
+fn compile_regex(pattern: &str) -> Regex {
+    Regex::new(pattern).expect("valid ctx symbol regex")
 }
 
 fn is_inside_git_repo() -> Result<bool, AppError> {

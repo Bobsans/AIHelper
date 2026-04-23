@@ -14,8 +14,11 @@ pub struct GitArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum GitCommand {
+    #[command(about = "Show working tree changes")]
     Changed(ChangedArgs),
+    #[command(about = "Show local git diff (optionally filtered by path)")]
     Diff(DiffArgs),
+    #[command(about = "Show blame information for a file or a single line")]
     Blame(BlameArgs),
 }
 

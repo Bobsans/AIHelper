@@ -21,8 +21,11 @@ pub struct TaskArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum TaskCommand {
+    #[command(about = "Save a reusable shell command")]
     Save(SaveArgs),
+    #[command(about = "Run a saved task by name")]
     Run(RunArgs),
+    #[command(about = "List saved tasks")]
     List(ListArgs),
 }
 

@@ -5,16 +5,16 @@ Produce a compact repo/file digest with symbols instead of raw full-file dumps.
 
 ## Commands
 ```bash
-ah ctx pack <path...> --limit 120 --json
-ah ctx symbols <path> --limit 80
+ah ctx pack <path...> --preset review --limit 120 --json
+ah ctx symbols <path> --preset summary --limit 80
 ah ctx changed --json
 ```
 
 ## Example Workflow
 ```bash
 ah ctx changed --json
-ah ctx pack src docs --limit 100 --json
-ah ctx symbols src/commands --limit 50
+ah ctx pack src docs --preset review --limit 100 --json
+ah ctx symbols src/commands --preset summary --limit 50
 ```
 
 ## Output Shape

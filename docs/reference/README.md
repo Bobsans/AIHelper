@@ -8,3 +8,4 @@ Reference docs for all command domains and flags.
 - [ctx](ctx.md)
 - [git](git.md)
 - [task](task.md)
+- [plugins](plugins.md)

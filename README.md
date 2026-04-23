@@ -6,16 +6,20 @@ The binary command is `ah`.
 
 ## Status
 - Project is in bootstrap stage.
-- `file` domain baseline is implemented (`read`, `head`, `tail`, `stat`, `tree`).
-- `search` domain baseline is implemented (`text`, `files`).
-- `ctx` domain baseline is implemented (`pack`, `symbols`, `changed`).
-- `git` domain baseline is implemented (`changed`, `diff`, `blame`).
-- `task` domain baseline is implemented (`save`, `list`, `run`).
+- Plugin-oriented runtime architecture is in place.
+- Built-in domains are implemented as plugins:
+- `file` (`read`, `head`, `tail`, `stat`, `tree`)
+- `search` (`text`, `files`)
+- `ctx` (`pack`, `symbols`, `changed`)
+- `git` (`changed`, `diff`, `blame`)
+- `task` (`save`, `list`, `run`)
+- Plugin registry command is available: `ah plugins list`.
 
 ## Quick Start
 ```bash
 cargo build
 cargo run --bin ah -- --help
+cargo run --bin ah -- plugins list
 cargo run --bin ah -- file read roadmap.md -n --from 1 --to 40
 ```
 
