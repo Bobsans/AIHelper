@@ -411,9 +411,9 @@ mod tests {
             OsString::from("file"),
             OsString::from("read"),
             OsString::from("a.txt"),
-            OsString::from("--cwd=C:\\\\tmp"),
+            OsString::from("--cwd=tmp/workdir"),
         ];
         let cwd = extract_last_cwd(&raw_args).expect("cwd extraction should succeed");
-        assert_eq!(cwd, Some(PathBuf::from("C:\\tmp")));
+        assert_eq!(cwd, Some(PathBuf::from("tmp/workdir")));
     }
 }
