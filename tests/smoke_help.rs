@@ -124,6 +124,7 @@ fn shows_top_level_help() {
         .assert()
         .success()
         .stdout(contains("AIHelper CLI toolbox"))
+        .stdout(contains("ai"))
         .stdout(contains("file"))
         .stdout(contains("search"))
         .stdout(contains("ctx"))
@@ -138,6 +139,27 @@ fn shows_file_subcommand_help() {
         .assert()
         .success()
         .stdout(contains("read"));
+}
+
+#[test]
+fn ai_info_text_outputs_domain_manual() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["ai", "info", "--domain", "file"])
+        .assert()
+        .success()
+        .stdout(contains("Domain: file"))
+        .stdout(contains("ah file read"));
+}
+
+#[test]
+fn ai_info_json_outputs_structured_manual() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["--json", "ai", "info", "--domain", "search"])
+        .assert()
+        .success()
+        .stdout(contains("\"command\": \"ai.info\""))
+        .stdout(contains("\"domain\": \"search\""))
+        .stdout(contains("\"name\": \"text\""));
 }
 
 #[test]

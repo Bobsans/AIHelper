@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod cli;
 pub mod commands;
 pub mod error;
@@ -66,6 +67,9 @@ pub fn run() -> Result<(), AppError> {
             }
             Ok(())
         }
+        RuntimeCommand::AiInfo { domain, options } => {
+            ai::execute_info(&manager, domain.as_deref(), options)
+        }
         RuntimeCommand::Invoke {
             domain,
             argv,
@@ -113,6 +117,7 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
 fn command_is_quiet(command: &RuntimeCommand) -> bool {
     match command {
         RuntimeCommand::PluginsList { options } => options.quiet,
+        RuntimeCommand::AiInfo { options, .. } => options.quiet,
         RuntimeCommand::Invoke { options, .. } => options.quiet,
     }
 }

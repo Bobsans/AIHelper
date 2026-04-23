@@ -36,6 +36,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum CliCommand {
+    /// AI-agent focused command manual
+    Ai(AiArgs),
     /// File utilities
     File(DomainInvokeArgs),
     /// Search utilities
@@ -63,6 +65,28 @@ pub struct DomainInvokeArgs {
 pub struct PluginsArgs {
     #[command(subcommand)]
     pub command: PluginsCommand,
+}
+
+#[derive(Debug, Args)]
+pub struct AiArgs {
+    #[command(subcommand)]
+    pub command: AiCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AiCommand {
+    #[command(about = "Show full AI-agent manual for available commands")]
+    Info(AiInfoArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AiInfoArgs {
+    #[arg(
+        long,
+        value_name = "DOMAIN",
+        help = "Show manual only for a single command domain"
+    )]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -106,6 +130,10 @@ pub enum RuntimeCommand {
     PluginsList {
         options: GlobalOptions,
     },
+    AiInfo {
+        domain: Option<String>,
+        options: GlobalOptions,
+    },
     Invoke {
         domain: String,
         argv: Vec<String>,
@@ -135,6 +163,12 @@ impl Cli {
         }
 
         match self.command {
+            Some(CliCommand::Ai(args)) => match args.command {
+                AiCommand::Info(info_args) => Ok(RuntimeCommand::AiInfo {
+                    domain: info_args.domain,
+                    options,
+                }),
+            },
             Some(CliCommand::File(args)) => {
                 let argv =
                     strip_trailing_global_flags(&args.argv, &mut options, &mut deferred_cwd)?;

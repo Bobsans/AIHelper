@@ -16,3 +16,4 @@ Output:
 
 Notes:
 - invalid dynamic plugins are skipped at startup; built-in plugins remain available
+- dynamic plugins can optionally expose manual data consumed by `ah ai info`

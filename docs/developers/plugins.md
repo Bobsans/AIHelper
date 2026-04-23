@@ -23,6 +23,7 @@ If a dynamic plugin fails to load, the runtime skips it and continues with remai
 Dynamic plugins must expose symbol:
 
 - `ah_plugin_entry_v1`
+- optional: `ah_plugin_manual_json_v1`
 
 Entry returns pointer to:
 
@@ -36,6 +37,11 @@ Required fields:
 - `description`
 - `invoke_json`
 - `free_c_string`
+
+Optional symbol behavior:
+- `ah_plugin_manual_json_v1` returns JSON for `PluginManual`
+- host uses it for `ah ai info`
+- if absent, plugin is still valid and loaded normally
 
 The host validates `abi_version` against `AH_PLUGIN_ABI_VERSION`.
 

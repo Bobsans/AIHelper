@@ -7,8 +7,9 @@ use std::{
 };
 
 use ah_plugin_api::{
-    AH_PLUGIN_ABI_VERSION, AH_PLUGIN_ENTRY_V1_SYMBOL, AhPluginEntryV1, GlobalOptionsWire,
-    InvocationRequest, InvocationResponse, PluginMetadata, c_ptr_to_string,
+    AH_PLUGIN_ABI_VERSION, AH_PLUGIN_ENTRY_V1_SYMBOL, AH_PLUGIN_MANUAL_JSON_V1_SYMBOL,
+    AhPluginEntryV1, AhPluginManualJsonV1, GlobalOptionsWire, InvocationRequest,
+    InvocationResponse, PluginManual, PluginMetadata, c_ptr_to_string,
 };
 use libloading::Library;
 use thiserror::Error;
@@ -43,6 +44,7 @@ pub enum RuntimeError {
 
 pub trait BuiltinPlugin: Send + Sync {
     fn metadata(&self) -> PluginMetadata;
+    fn manual(&self) -> PluginManual;
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse;
 }
 
@@ -166,6 +168,28 @@ impl PluginManager {
         plugins.sort_by(|left, right| left.domain.cmp(&right.domain));
         plugins
     }
+
+    pub fn collect_plugin_manuals(&self) -> Vec<PluginManual> {
+        let mut manuals = Vec::new();
+        for plugin in self.builtin_plugins.values() {
+            manuals.push(plugin.manual());
+        }
+        for plugin in self.dynamic_plugins.values() {
+            match plugin.manual() {
+                Ok(Some(manual)) => manuals.push(manual),
+                Ok(None) => manuals.push(fallback_manual(
+                    &plugin.metadata,
+                    "manual is not provided by this dynamic plugin".to_owned(),
+                )),
+                Err(error) => manuals.push(fallback_manual(
+                    &plugin.metadata,
+                    format!("failed to load plugin manual: {error}"),
+                )),
+            }
+        }
+        manuals.sort_by(|left, right| left.domain.cmp(&right.domain));
+        manuals
+    }
 }
 
 impl Default for PluginManager {
@@ -178,6 +202,7 @@ struct DynamicPlugin {
     _library: Library,
     metadata: PluginMetadata,
     invoke_json: unsafe extern "C" fn(*const c_char) -> *mut c_char,
+    manual_json: Option<unsafe extern "C" fn() -> *mut c_char>,
     free_c_string: unsafe extern "C" fn(*mut c_char),
 }
 
@@ -228,6 +253,10 @@ impl DynamicPlugin {
                 reason,
             }
         })?;
+        let manual_json =
+            unsafe { library.get::<AhPluginManualJsonV1>(AH_PLUGIN_MANUAL_JSON_V1_SYMBOL) }
+                .ok()
+                .map(|symbol| *symbol);
 
         Ok(Self {
             _library: library,
@@ -238,6 +267,7 @@ impl DynamicPlugin {
                 abi_version: api.abi_version,
             },
             invoke_json: api.invoke_json,
+            manual_json,
             free_c_string: api.free_c_string,
         })
     }
@@ -266,12 +296,42 @@ impl DynamicPlugin {
         serde_json::from_str::<InvocationResponse>(&response_raw)
             .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
     }
+
+    fn manual(&self) -> Result<Option<PluginManual>, RuntimeError> {
+        let Some(manual_json) = self.manual_json else {
+            return Ok(None);
+        };
+
+        let response_ptr = unsafe { manual_json() };
+        if response_ptr.is_null() {
+            return Ok(None);
+        }
+        let response_raw = unsafe {
+            let decoded = c_ptr_to_string(response_ptr);
+            (self.free_c_string)(response_ptr);
+            decoded
+        }
+        .map_err(RuntimeError::ResponseParse)?;
+        let manual = serde_json::from_str::<PluginManual>(&response_raw)
+            .map_err(|error| RuntimeError::ResponseParse(error.to_string()))?;
+        Ok(Some(manual))
+    }
 }
 
 fn is_dynamic_lib_file(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("dll") | Some("so") | Some("dylib") => true,
         _ => false,
+    }
+}
+
+fn fallback_manual(metadata: &PluginMetadata, note: String) -> PluginManual {
+    PluginManual {
+        plugin_name: metadata.plugin_name.clone(),
+        domain: metadata.domain.clone(),
+        description: metadata.description.clone(),
+        commands: Vec::new(),
+        notes: vec![note],
     }
 }
 
@@ -296,6 +356,16 @@ mod tests {
                 domain: "echo".to_owned(),
                 description: "echo test plugin".to_owned(),
                 abi_version: AH_PLUGIN_ABI_VERSION,
+            }
+        }
+
+        fn manual(&self) -> PluginManual {
+            PluginManual {
+                plugin_name: "builtin-echo".to_owned(),
+                domain: "echo".to_owned(),
+                description: "echo test plugin".to_owned(),
+                commands: Vec::new(),
+                notes: vec!["test manual".to_owned()],
             }
         }
 
@@ -362,6 +432,17 @@ mod tests {
         assert_eq!(response.message.as_deref(), Some("ok"));
 
         fs::remove_dir_all(&dir).expect("temp plugin dir should be removed");
+    }
+
+    #[test]
+    fn collect_plugin_manuals_includes_builtin_plugins() {
+        let mut manager = PluginManager::new();
+        manager.register_builtin(Arc::new(EchoBuiltinPlugin));
+
+        let manuals = manager.collect_plugin_manuals();
+        assert_eq!(manuals.len(), 1);
+        assert_eq!(manuals[0].domain, "echo");
+        assert_eq!(manuals[0].plugin_name, "builtin-echo");
     }
 
     fn unique_temp_path(suffix: &str) -> PathBuf {

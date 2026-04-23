@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 pub const AH_PLUGIN_ABI_VERSION: u32 = 1;
 pub const AH_PLUGIN_ENTRY_V1_SYMBOL: &[u8] = b"ah_plugin_entry_v1\0";
+pub const AH_PLUGIN_MANUAL_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_manual_json_v1\0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalOptionsWire {
@@ -58,6 +59,29 @@ pub struct PluginMetadata {
     pub abi_version: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManualExample {
+    pub description: String,
+    pub argv: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManualCommand {
+    pub name: String,
+    pub summary: String,
+    pub usage: String,
+    pub examples: Vec<ManualExample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginManual {
+    pub plugin_name: String,
+    pub domain: String,
+    pub description: String,
+    pub commands: Vec<ManualCommand>,
+    pub notes: Vec<String>,
+}
+
 #[repr(C)]
 pub struct AhPluginApiV1 {
     pub abi_version: u32,
@@ -69,6 +93,7 @@ pub struct AhPluginApiV1 {
 }
 
 pub type AhPluginEntryV1 = unsafe extern "C" fn() -> *const AhPluginApiV1;
+pub type AhPluginManualJsonV1 = unsafe extern "C" fn() -> *mut c_char;
 
 pub fn to_c_string_ptr(value: &str) -> *const c_char {
     let sanitized = value.replace('\0', "\\0");
@@ -109,6 +134,15 @@ pub fn response_to_c_string(response: &InvocationResponse) -> *mut c_char {
                 .expect("fallback JSON must be valid cstring")
                 .into_raw()
         }
+    }
+}
+
+pub fn manual_to_c_string(manual: &PluginManual) -> *mut c_char {
+    match serde_json::to_string(manual) {
+        Ok(raw) => CString::new(raw)
+            .expect("JSON should not contain interior null bytes")
+            .into_raw(),
+        Err(_) => null_response_ptr(),
     }
 }
 
