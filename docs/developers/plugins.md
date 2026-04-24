@@ -17,6 +17,7 @@ At startup, runtime scans:
 
 Plugins with duplicate domain names override built-in plugins.
 If a dynamic plugin fails to load, the runtime skips it and continues with remaining plugins.
+Plugin-domain state (`enabled/disabled`) is managed by host command `ah plugins ...` and persisted in global `plugins.json`.
 
 ## ABI Contract
 

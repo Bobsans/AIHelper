@@ -22,12 +22,14 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
 
 1. CLI parses global options and domain argv.
 2. Runtime initializes plugin manager.
-3. Built-in plugins are registered (`file/search/ctx/git/task`).
+3. Built-in plugins are registered (`file/search/ctx/git/http/task`).
 4. Dynamic plugins are loaded from `plugins` directory next to `ah` executable (if present).
-5. Domain invocation is routed to plugin:
+5. Global plugin-state config is loaded (`plugins.json`) and disabled domains are applied.
+6. Domain invocation is routed to plugin:
    - dynamic plugin takes precedence for same domain
    - otherwise built-in plugin handles request
-6. Plugin returns `InvocationResponse` (`success/error`).
+   - disabled domain returns `DOMAIN_DISABLED`
+7. Plugin returns `InvocationResponse` (`success/error`).
 
 ## Plugin Contract
 
@@ -42,7 +44,7 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
 
 ## Command Contracts
 
-- Commands remain domain-scoped (`file`, `search`, `ctx`, `git`, `task`).
+- Commands remain domain-scoped (`file`, `search`, `ctx`, `git`, `http`, `task`).
 - Global flags (`--json`, `--quiet`, `--cwd`, `--limit`) are converted to plugin wire options.
 - Output contract:
   - text by default

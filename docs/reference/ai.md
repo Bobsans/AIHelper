@@ -16,7 +16,7 @@ Flags:
 
 Output includes:
 - global CLI flags
-- host commands (`ai info`, `plugins list`)
+- host commands (`ai info`, `plugins list`, `plugins enable`, `plugins disable`, `plugins reset`)
 - per-plugin command descriptions
 - per-command examples intended for AI agents
 

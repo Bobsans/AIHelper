@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use ah_plugin_api::{GlobalOptionsWire, PluginMetadata};
-use clap::{Arg, ArgAction, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser};
+use clap::{
+    Arg, ArgAction, ArgGroup, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser,
+};
 
 use crate::{error::AppError, output::OutputMode};
 
@@ -10,6 +12,20 @@ const HOST_COMMAND_PLUGINS: &str = "plugins";
 
 pub enum RuntimeCommand {
     PluginsList {
+        state_filter: Option<PluginStateFilter>,
+        options: GlobalOptions,
+    },
+    PluginsEnable {
+        domain: String,
+        options: GlobalOptions,
+    },
+    PluginsDisable {
+        domain: String,
+        options: GlobalOptions,
+    },
+    PluginsReset {
+        domain: Option<String>,
+        all: bool,
         options: GlobalOptions,
     },
     AiInfo {
@@ -26,6 +42,12 @@ pub enum RuntimeCommand {
 pub enum CliParseResult {
     Command(RuntimeCommand),
     ExitSuccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginStateFilter {
+    Enabled,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,11 +134,43 @@ pub fn parse_runtime_command(
             }
         }
         Some((HOST_COMMAND_PLUGINS, plugins_matches)) => {
-            let Some((subcommand, _)) = plugins_matches.subcommand() else {
+            let Some((subcommand, plugin_submatches)) = plugins_matches.subcommand() else {
                 return Err(AppError::invalid_argument("missing plugins subcommand"));
             };
             match subcommand {
-                "list" => RuntimeCommand::PluginsList { options },
+                "list" => {
+                    let state_filter = plugin_submatches
+                        .get_one::<String>("state")
+                        .map(|value| parse_plugin_state_filter(value))
+                        .transpose()?;
+                    RuntimeCommand::PluginsList {
+                        state_filter,
+                        options,
+                    }
+                }
+                "enable" => RuntimeCommand::PluginsEnable {
+                    domain: plugin_submatches
+                        .get_one::<String>("domain")
+                        .cloned()
+                        .ok_or_else(|| {
+                            AppError::invalid_argument("missing plugins enable domain")
+                        })?,
+                    options,
+                },
+                "disable" => RuntimeCommand::PluginsDisable {
+                    domain: plugin_submatches
+                        .get_one::<String>("domain")
+                        .cloned()
+                        .ok_or_else(|| {
+                            AppError::invalid_argument("missing plugins disable domain")
+                        })?,
+                    options,
+                },
+                "reset" => RuntimeCommand::PluginsReset {
+                    domain: plugin_submatches.get_one::<String>("domain").cloned(),
+                    all: plugin_submatches.get_flag("all"),
+                    options,
+                },
                 _ => return Err(AppError::invalid_argument("unsupported plugins subcommand")),
             }
         }
@@ -207,7 +261,42 @@ fn build_ai_command() -> Command {
 fn build_plugins_command() -> Command {
     Command::new(HOST_COMMAND_PLUGINS)
         .about("Plugin management commands")
-        .subcommand(Command::new("list").about("List registered plugins"))
+        .subcommand(
+            Command::new("list").about("List registered plugins").arg(
+                Arg::new("state")
+                    .long("state")
+                    .value_name("STATE")
+                    .value_parser(["enabled", "disabled"])
+                    .help("Filter by plugin domain state"),
+            ),
+        )
+        .subcommand(
+            Command::new("enable")
+                .about("Enable plugin domain")
+                .arg(Arg::new("domain").value_name("DOMAIN").required(true)),
+        )
+        .subcommand(
+            Command::new("disable")
+                .about("Disable plugin domain")
+                .arg(Arg::new("domain").value_name("DOMAIN").required(true)),
+        )
+        .subcommand(
+            Command::new("reset")
+                .about("Reset plugin domain override")
+                .arg(Arg::new("domain").value_name("DOMAIN").required(false))
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .action(ArgAction::SetTrue)
+                        .help("Reset all domain overrides"),
+                )
+                .group(
+                    ArgGroup::new("plugins-reset-target")
+                        .args(["domain", "all"])
+                        .required(true)
+                        .multiple(false),
+                ),
+        )
 }
 
 fn build_domain_command(domain: &str, description: &str) -> Command {
@@ -242,16 +331,27 @@ fn top_level_domain_summary(domain: &str, fallback: &str) -> String {
         "search" => "Search utilities".to_owned(),
         "ctx" => "Context-reduction utilities".to_owned(),
         "git" => "Git-focused utilities".to_owned(),
+        "http" => "HTTP workflow utilities".to_owned(),
         "task" => "Task recipe utilities".to_owned(),
         _ => fallback.to_owned(),
     }
 }
 
+fn parse_plugin_state_filter(value: &str) -> Result<PluginStateFilter, AppError> {
+    match value {
+        "enabled" => Ok(PluginStateFilter::Enabled),
+        "disabled" => Ok(PluginStateFilter::Disabled),
+        _ => Err(AppError::invalid_argument(format!(
+            "unsupported plugins --state value: {value}"
+        ))),
+    }
+}
+
 fn collect_domain_argv(matches: &ArgMatches) -> Result<Vec<String>, AppError> {
-    if let Some(values) = matches.get_many::<String>("argv") {
+    if let Ok(Some(values)) = matches.try_get_many::<String>("argv") {
         return Ok(values.cloned().collect());
     }
-    if let Some(values) = matches.get_many::<OsString>("") {
+    if let Ok(Some(values)) = matches.try_get_many::<OsString>("") {
         return values
             .map(|value| {
                 value.to_str().map(str::to_owned).ok_or_else(|| {
@@ -415,5 +515,59 @@ mod tests {
         ];
         let cwd = extract_last_cwd(&raw_args).expect("cwd extraction should succeed");
         assert_eq!(cwd, Some(PathBuf::from("tmp/workdir")));
+    }
+
+    #[test]
+    fn parser_parses_plugins_state_management_commands() {
+        let plugins = vec![PluginMetadata {
+            plugin_name: "builtin-http".to_owned(),
+            domain: "http".to_owned(),
+            description: "HTTP workflow plugin (built-in)".to_owned(),
+            abi_version: 1,
+        }];
+
+        let disable_args = vec![
+            OsString::from("ah"),
+            OsString::from("plugins"),
+            OsString::from("disable"),
+            OsString::from("http"),
+        ];
+        let parsed_disable =
+            parse_runtime_command(disable_args, &plugins).expect("disable should parse");
+        let CliParseResult::Command(RuntimeCommand::PluginsDisable { domain, .. }) = parsed_disable
+        else {
+            panic!("unexpected disable parse result");
+        };
+        assert_eq!(domain, "http");
+
+        let list_args = vec![
+            OsString::from("ah"),
+            OsString::from("plugins"),
+            OsString::from("list"),
+            OsString::from("--state"),
+            OsString::from("disabled"),
+        ];
+        let parsed_list = parse_runtime_command(list_args, &plugins).expect("list should parse");
+        let CliParseResult::Command(RuntimeCommand::PluginsList { state_filter, .. }) = parsed_list
+        else {
+            panic!("unexpected list parse result");
+        };
+        assert_eq!(state_filter, Some(PluginStateFilter::Disabled));
+
+        let reset_args = vec![
+            OsString::from("ah"),
+            OsString::from("plugins"),
+            OsString::from("reset"),
+            OsString::from("--all"),
+        ];
+        let parsed_reset =
+            parse_runtime_command(reset_args, &plugins).expect("reset --all should parse");
+        let CliParseResult::Command(RuntimeCommand::PluginsReset { all, domain, .. }) =
+            parsed_reset
+        else {
+            panic!("unexpected reset parse result");
+        };
+        assert!(all);
+        assert_eq!(domain, None);
     }
 }

@@ -13,7 +13,7 @@ The binary command is `ah`.
 - `ctx` (`pack`, `symbols`, `changed`)
 - `git` (`changed`, `diff`, `blame`)
 - `task` (`save`, `list`, `run`)
-- Plugin registry command is available: `ah plugins list`.
+- Plugin management commands are available: `ah plugins list|enable|disable|reset`.
 - Example external dynamic plugin source is included: `plugins/ah-plugin-ollama`.
 
 ## Quick Start

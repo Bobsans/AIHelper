@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{CString, c_char},
     fs,
     path::{Path, PathBuf},
@@ -40,6 +40,8 @@ pub enum RuntimeError {
     Invocation(String),
     #[error("plugin response parse failed: {0}")]
     ResponseParse(String),
+    #[error("plugin domain '{0}' is disabled")]
+    DomainDisabled(String),
 }
 
 pub trait BuiltinPlugin: Send + Sync {
@@ -74,6 +76,20 @@ impl PluginLoadReport {
 pub struct PluginManager {
     dynamic_plugins: HashMap<String, DynamicPlugin>,
     builtin_plugins: HashMap<String, Arc<dyn BuiltinPlugin>>,
+    disabled_domains: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginSource {
+    Builtin,
+    Dynamic,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegisteredPlugin {
+    pub metadata: PluginMetadata,
+    pub source: PluginSource,
+    pub enabled: bool,
 }
 
 impl PluginManager {
@@ -81,7 +97,22 @@ impl PluginManager {
         Self {
             dynamic_plugins: HashMap::new(),
             builtin_plugins: HashMap::new(),
+            disabled_domains: HashSet::new(),
         }
+    }
+
+    pub fn set_disabled_domains<I>(&mut self, domains: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.disabled_domains = domains
+            .into_iter()
+            .map(|domain| domain_key(&domain))
+            .collect();
+    }
+
+    pub fn is_domain_disabled(&self, domain: &str) -> bool {
+        self.disabled_domains.contains(&domain_key(domain))
     }
 
     pub fn register_builtin(&mut self, plugin: Arc<dyn BuiltinPlugin>) {
@@ -148,9 +179,15 @@ impl PluginManager {
         };
 
         if let Some(plugin) = self.dynamic_plugins.get(domain) {
+            if self.is_domain_disabled(domain) {
+                return Err(RuntimeError::DomainDisabled(domain.to_owned()));
+            }
             return plugin.invoke(&request);
         }
         if let Some(plugin) = self.builtin_plugins.get(domain) {
+            if self.is_domain_disabled(domain) {
+                return Err(RuntimeError::DomainDisabled(domain.to_owned()));
+            }
             return Ok(plugin.invoke(&request));
         }
 
@@ -158,23 +195,59 @@ impl PluginManager {
     }
 
     pub fn list_plugins(&self) -> Vec<PluginMetadata> {
+        self.list_registered_plugins()
+            .into_iter()
+            .map(|plugin| plugin.metadata)
+            .collect()
+    }
+
+    pub fn list_registered_plugins(&self) -> Vec<RegisteredPlugin> {
         let mut plugins = Vec::new();
         for plugin in self.builtin_plugins.values() {
-            plugins.push(plugin.metadata());
+            let metadata = plugin.metadata();
+            plugins.push(RegisteredPlugin {
+                enabled: !self.is_domain_disabled(&metadata.domain),
+                metadata,
+                source: PluginSource::Builtin,
+            });
         }
         for plugin in self.dynamic_plugins.values() {
-            plugins.push(plugin.metadata.clone());
+            plugins.push(RegisteredPlugin {
+                enabled: !self.is_domain_disabled(&plugin.metadata.domain),
+                metadata: plugin.metadata.clone(),
+                source: PluginSource::Dynamic,
+            });
         }
-        plugins.sort_by(|left, right| left.domain.cmp(&right.domain));
+        plugins.sort_by(|left, right| {
+            left.metadata
+                .domain
+                .cmp(&right.metadata.domain)
+                .then_with(|| left.metadata.plugin_name.cmp(&right.metadata.plugin_name))
+        });
         plugins
+    }
+
+    pub fn list_enabled_plugins(&self) -> Vec<PluginMetadata> {
+        self.list_registered_plugins()
+            .into_iter()
+            .filter(|plugin| plugin.enabled)
+            .map(|plugin| plugin.metadata)
+            .collect()
     }
 
     pub fn collect_plugin_manuals(&self) -> Vec<PluginManual> {
         let mut manuals = Vec::new();
         for plugin in self.builtin_plugins.values() {
+            let metadata = plugin.metadata();
+            if self.is_domain_disabled(&metadata.domain) {
+                continue;
+            }
             manuals.push(plugin.manual());
         }
         for plugin in self.dynamic_plugins.values() {
+            if self.is_domain_disabled(&plugin.metadata.domain) {
+                continue;
+            }
             match plugin.manual() {
                 Ok(Some(manual)) => manuals.push(manual),
                 Ok(None) => manuals.push(fallback_manual(
@@ -335,6 +408,10 @@ fn fallback_manual(metadata: &PluginMetadata, note: String) -> PluginManual {
     }
 }
 
+fn domain_key(domain: &str) -> String {
+    domain.trim().to_ascii_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -443,6 +520,31 @@ mod tests {
         assert_eq!(manuals.len(), 1);
         assert_eq!(manuals[0].domain, "echo");
         assert_eq!(manuals[0].plugin_name, "builtin-echo");
+    }
+
+    #[test]
+    fn disabled_domain_blocks_invocation_and_manuals() {
+        let mut manager = PluginManager::new();
+        manager.register_builtin(Arc::new(EchoBuiltinPlugin));
+        manager.set_disabled_domains(vec!["echo".to_owned()]);
+
+        let invoke = manager.invoke(
+            "echo",
+            Vec::new(),
+            GlobalOptionsWire {
+                json: false,
+                quiet: false,
+                limit: None,
+            },
+        );
+        let Err(RuntimeError::DomainDisabled(domain)) = invoke else {
+            panic!("expected domain disabled error");
+        };
+        assert_eq!(domain, "echo");
+
+        assert!(manager.collect_plugin_manuals().is_empty());
+        assert!(manager.list_enabled_plugins().is_empty());
+        assert_eq!(manager.list_plugins().len(), 1);
     }
 
     fn unique_temp_path(suffix: &str) -> PathBuf {

@@ -130,11 +130,44 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
         HostCommandDoc {
             name: "plugins.list".to_owned(),
             summary: "List registered plugins and their metadata.".to_owned(),
-            usage: "plugins list [--json]".to_owned(),
+            usage: "plugins list [--state <enabled|disabled>] [--json]".to_owned(),
             examples: vec![HostCommandExample {
                 description: "Inspect plugin registry".to_owned(),
                 command: "ah plugins list --json".to_owned(),
             }],
+        },
+        HostCommandDoc {
+            name: "plugins.enable".to_owned(),
+            summary: "Enable a disabled plugin domain.".to_owned(),
+            usage: "plugins enable <domain> [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Enable HTTP domain".to_owned(),
+                command: "ah plugins enable http".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "plugins.disable".to_owned(),
+            summary: "Disable plugin domain (built-in or dynamic).".to_owned(),
+            usage: "plugins disable <domain> [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Disable ollama domain".to_owned(),
+                command: "ah plugins disable ollama".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "plugins.reset".to_owned(),
+            summary: "Reset plugin domain override(s) back to default state.".to_owned(),
+            usage: "plugins reset <domain> [--json] | plugins reset --all [--json]".to_owned(),
+            examples: vec![
+                HostCommandExample {
+                    description: "Reset one domain override".to_owned(),
+                    command: "ah plugins reset http".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Reset all overrides".to_owned(),
+                    command: "ah plugins reset --all".to_owned(),
+                },
+            ],
         },
     ]
 }

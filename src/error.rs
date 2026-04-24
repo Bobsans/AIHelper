@@ -467,6 +467,9 @@ fn hint_for_code(code: &str) -> Option<String> {
         "DOMAIN_NOT_FOUND" => {
             Some("run `ah plugins list` to inspect available command domains".to_owned())
         }
+        "DOMAIN_DISABLED" => {
+            Some("run `ah plugins enable <domain>` to re-enable the domain".to_owned())
+        }
         "FILE_NOT_FOUND" => {
             Some("verify path exists and current working directory is correct".to_owned())
         }
