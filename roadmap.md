@@ -83,6 +83,39 @@ Primary goal: reduce context usage and repetitive shell boilerplate while keepin
 - Package/distribution strategy and versioning policy.
 - Automate docs validation in CI (link check + example command verification).
 
+### Phase 5: Workflow Domains Expansion
+- Add `test` domain for tight edit-test loop:
+  - `ah test run [--filter ...]`
+  - `ah test failed`
+  - `ah test watch`
+- Add `logs` domain for operational debugging:
+  - `ah logs tail <target>`
+  - `ah logs grep <pattern>`
+  - `ah logs since <window>`
+- Add `http` domain for API validation workflows (bundled plugin):
+  - quick calls:
+    - `ah http get|post|put|patch|delete <url> [flags]`
+    - `ah http request --method <METHOD> <url> [flags]`
+    - `ah http replay --curl "<curl ...>" [flags]`
+  - scenario checks:
+    - `ah http assert <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]`
+    - `ah http run <spec-path> ...` (alias for `assert`)
+  - spec format: YAML-first with JSON compatibility.
+  - assertion model: `path + operator` (`eq`, `contains`, `exists`, `match`).
+  - execution behavior: run all cases by default; `--fail-fast` is optional.
+  - output contract: `text` by default; `json` and `junit` via `--report`.
+  - v1 exclusions: no retries and no cross-case `extract` variables (planned for `v1.1`).
+  - status: implemented (2026-04-24).
+- Add `deps` domain for dependency hygiene:
+  - `ah deps outdated`
+  - `ah deps graph`
+  - `ah deps why <pkg>`
+- Add `ci` domain for CI triage:
+  - `ah ci status`
+  - `ah ci failed`
+  - `ah ci rerun`
+- Recommended implementation order: `test` -> `logs` -> `http` -> `deps` -> `ci`.
+
 ## 8) Priority Backlog
 - P0:
 - `file read` with line numbers and ranges
@@ -96,6 +129,9 @@ Primary goal: reduce context usage and repetitive shell boilerplate while keepin
 - recipe system (`task`)
 - plugin API for custom domains
 - optional TUI wrapper
+- P3:
+- workflow domains: `test`, `logs`, `http`
+- maintenance domains: `deps`, `ci`
 
 ## 9) Quality Gates
 - Every command has:

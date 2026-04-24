@@ -10,6 +10,8 @@ mod file;
 mod git;
 #[path = "integration/help.rs"]
 mod help;
+#[path = "integration/http.rs"]
+mod http;
 #[path = "integration/plugins.rs"]
 mod plugins;
 #[path = "integration/search.rs"]

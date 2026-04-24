@@ -13,6 +13,7 @@ fn shows_top_level_help() {
         .stdout(contains("search"))
         .stdout(contains("ctx"))
         .stdout(contains("git"))
+        .stdout(contains("http"))
         .stdout(contains("task"));
 }
 

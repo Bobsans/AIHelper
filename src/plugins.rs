@@ -34,6 +34,12 @@ struct GitPluginCli {
 }
 
 #[derive(Debug, Parser)]
+struct HttpPluginCli {
+    #[command(flatten)]
+    args: commands::http::HttpArgs,
+}
+
+#[derive(Debug, Parser)]
 struct TaskPluginCli {
     #[command(flatten)]
     args: commands::task::TaskArgs,
@@ -45,6 +51,7 @@ pub fn builtins() -> Vec<Arc<dyn BuiltinPlugin>> {
         Arc::new(SearchBuiltinPlugin),
         Arc::new(CtxBuiltinPlugin),
         Arc::new(GitBuiltinPlugin),
+        Arc::new(HttpBuiltinPlugin),
         Arc::new(TaskBuiltinPlugin),
     ]
 }
@@ -53,6 +60,7 @@ struct FileBuiltinPlugin;
 struct SearchBuiltinPlugin;
 struct CtxBuiltinPlugin;
 struct GitBuiltinPlugin;
+struct HttpBuiltinPlugin;
 struct TaskBuiltinPlugin;
 
 fn file_metadata() -> PluginMetadata {
@@ -96,6 +104,15 @@ fn task_metadata() -> PluginMetadata {
         plugin_name: "builtin-task".to_owned(),
         domain: "task".to_owned(),
         description: "Task recipe plugin (built-in)".to_owned(),
+        abi_version: 1,
+    }
+}
+
+fn http_metadata() -> PluginMetadata {
+    PluginMetadata {
+        plugin_name: "builtin-http".to_owned(),
+        domain: "http".to_owned(),
+        description: "HTTP workflow plugin (built-in)".to_owned(),
         abi_version: 1,
     }
 }
@@ -321,6 +338,79 @@ fn task_manual() -> PluginManual {
     }
 }
 
+fn http_manual() -> PluginManual {
+    PluginManual {
+        plugin_name: http_metadata().plugin_name,
+        domain: "http".to_owned(),
+        description: "HTTP request and API assertion helpers.".to_owned(),
+        commands: vec![
+            ManualCommand {
+                name: "request".to_owned(),
+                summary: "Send HTTP request with explicit method.".to_owned(),
+                usage: "request --method <METHOD> <url> [--header \"K: V\"] [--query \"KEY=VALUE\"] [--timeout-secs N] [--bearer TOKEN] [--basic USER:PASS] [--json <JSON>|--json-file <PATH>] [--body <TEXT>|--body-file <PATH>] [--expect-status <code|range>] [--expect-header \"K: V\"] [--expect-body-contains <TEXT>] [--expect-json <PATH:OP[:VALUE]>]".to_owned(),
+                examples: vec![manual_example(
+                    "Basic request with status check",
+                    &["request", "--method", "GET", "https://example.com/health", "--expect-status", "200"],
+                )],
+            },
+            ManualCommand {
+                name: "get".to_owned(),
+                summary: "Shortcut for GET request.".to_owned(),
+                usage: "get <url> [request/expect flags]".to_owned(),
+                examples: vec![manual_example(
+                    "GET JSON endpoint",
+                    &["get", "https://example.com/api/version", "--expect-status", "2xx"],
+                )],
+            },
+            ManualCommand {
+                name: "post".to_owned(),
+                summary: "Shortcut for POST request.".to_owned(),
+                usage: "post <url> [request/expect flags]".to_owned(),
+                examples: vec![manual_example(
+                    "POST JSON payload",
+                    &["post", "https://example.com/api/items", "--json", "{\"name\":\"demo\"}", "--expect-status", "201"],
+                )],
+            },
+            ManualCommand {
+                name: "replay".to_owned(),
+                summary: "Replay supported curl command form.".to_owned(),
+                usage: "replay --curl \"<curl ...>\" [request/expect flags]".to_owned(),
+                examples: vec![manual_example(
+                    "Replay existing curl command",
+                    &[
+                        "replay",
+                        "--curl",
+                        "curl -X GET https://example.com/health -H 'accept: application/json'",
+                    ],
+                )],
+            },
+            ManualCommand {
+                name: "assert".to_owned(),
+                summary: "Run API assertions from YAML/JSON spec.".to_owned(),
+                usage: "assert <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]".to_owned(),
+                examples: vec![manual_example(
+                    "Run assertions with machine output",
+                    &["assert", "api/health.yaml", "--report", "json"],
+                )],
+            },
+            ManualCommand {
+                name: "run".to_owned(),
+                summary: "Alias for assert.".to_owned(),
+                usage: "run <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]".to_owned(),
+                examples: vec![manual_example(
+                    "Alias usage",
+                    &["run", "api/health.yaml", "--fail-fast"],
+                )],
+            },
+        ],
+        notes: vec![
+            "Spec format is YAML-first with JSON compatibility.".to_owned(),
+            "Global --json maps assert/run report format to json.".to_owned(),
+            "Retries and cross-case extract variables are planned for v1.1.".to_owned(),
+        ],
+    }
+}
+
 fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
     ManualExample {
         description: description.to_owned(),
@@ -401,6 +491,25 @@ impl BuiltinPlugin for GitBuiltinPlugin {
         };
         let options = GlobalOptions::from(request.globals.clone());
         map_execute(commands::git::execute(parsed.args, &options))
+    }
+}
+
+impl BuiltinPlugin for HttpBuiltinPlugin {
+    fn metadata(&self) -> PluginMetadata {
+        http_metadata()
+    }
+
+    fn manual(&self) -> PluginManual {
+        http_manual()
+    }
+
+    fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
+        let parsed = match parse_args::<HttpPluginCli>("http", &request.argv) {
+            ParseOutcome::Parsed(value) => value,
+            ParseOutcome::Response(response) => return response,
+        };
+        let options = GlobalOptions::from(request.globals.clone());
+        map_execute(commands::http::execute(parsed.args, &options))
     }
 }
 
@@ -486,6 +595,12 @@ mod tests {
     fn git_manual_examples_parse() {
         let manual = git_manual();
         assert_examples_parse::<GitPluginCli>(&manual);
+    }
+
+    #[test]
+    fn http_manual_examples_parse() {
+        let manual = http_manual();
+        assert_examples_parse::<HttpPluginCli>(&manual);
     }
 
     #[test]
