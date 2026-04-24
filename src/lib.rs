@@ -111,11 +111,54 @@ fn handle_response(
     let message = response
         .error_message
         .unwrap_or_else(|| "plugin execution failed".to_owned());
-    Err(AppError::invalid_argument(format!("[{code}] {message}")))
+    Err(AppError::external(code, message))
 }
 
 fn map_runtime_error(error: RuntimeError) -> AppError {
-    AppError::invalid_argument(error.to_string())
+    match error {
+        RuntimeError::DomainNotFound(domain) => AppError::external(
+            "DOMAIN_NOT_FOUND",
+            format!("unknown command domain: {domain}"),
+        ),
+        RuntimeError::LibraryLoad { path, source } => AppError::external(
+            "PLUGIN_LIBRARY_LOAD_FAILED",
+            format!(
+                "failed to load plugin library '{}': {source}",
+                path.display()
+            ),
+        ),
+        RuntimeError::SymbolLoad { path, source } => AppError::external(
+            "PLUGIN_SYMBOL_LOAD_FAILED",
+            format!(
+                "failed to load plugin entrypoint '{}': {source}",
+                path.display()
+            ),
+        ),
+        RuntimeError::AbiVersionMismatch {
+            path,
+            found,
+            expected,
+        } => AppError::external(
+            "PLUGIN_ABI_MISMATCH",
+            format!(
+                "plugin '{}' has incompatible ABI version {found}; expected {expected}",
+                path.display()
+            ),
+        ),
+        RuntimeError::InvalidMetadata { path, reason } => AppError::external(
+            "PLUGIN_METADATA_INVALID",
+            format!(
+                "plugin '{}' returned invalid metadata: {reason}",
+                path.display()
+            ),
+        ),
+        RuntimeError::Invocation(message) => {
+            AppError::external("PLUGIN_INVOCATION_FAILED", message)
+        }
+        RuntimeError::ResponseParse(message) => {
+            AppError::external("PLUGIN_RESPONSE_PARSE_FAILED", message)
+        }
+    }
 }
 
 fn command_is_quiet(command: &RuntimeCommand) -> bool {

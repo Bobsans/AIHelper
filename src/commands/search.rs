@@ -572,7 +572,9 @@ fn match_file(
                     .collect()
             };
 
-            let after_end = (index + context_lines + 1).min(lines.len().saturating_sub(1));
+            let after_end = index
+                .saturating_add(context_lines)
+                .min(lines.len().saturating_sub(1));
             let after = if context_lines == 0 || index + 1 >= lines.len() {
                 Vec::new()
             } else {

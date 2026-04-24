@@ -454,7 +454,7 @@ fn parse_args<T: Parser + CommandFactory>(domain: &str, argv: &[String]) -> Pars
 fn map_execute(result: Result<(), AppError>) -> InvocationResponse {
     match result {
         Ok(()) => InvocationResponse::ok(None),
-        Err(error) => InvocationResponse::error(error.code(), error.to_string()),
+        Err(error) => InvocationResponse::error(error.code(), error.detail_message()),
     }
 }
 
