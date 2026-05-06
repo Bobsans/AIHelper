@@ -399,6 +399,9 @@ fn render_success(
     output: &OllamaOutput,
     text_output: String,
 ) -> InvocationResponse {
+    if globals.quiet {
+        return InvocationResponse::ok(None);
+    }
     if globals.json {
         match serde_json::to_string_pretty(output) {
             Ok(payload) => InvocationResponse::ok(Some(payload)),
@@ -568,7 +571,17 @@ fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashMap,
+        io::{BufRead, BufReader, Read, Write},
+        net::{TcpListener, TcpStream},
+        sync::{Arc, Mutex},
+        thread,
+        time::{Duration, Instant},
+    };
+
     use clap::{CommandFactory, Parser};
+    use serde_json::Value;
 
     use super::*;
 
@@ -606,5 +619,488 @@ mod tests {
     #[test]
     fn parser_builds_command_tree() {
         let _ = OllamaCli::command();
+    }
+
+    #[test]
+    fn ask_posts_generate_request_and_returns_json_output() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "model": "llama3.2",
+                "response": "summary text",
+                "done": true,
+                "done_reason": "stop",
+                "created_at": "2026-05-06T00:00:00Z",
+                "total_duration": 10,
+                "load_duration": 2,
+                "prompt_eval_count": 3,
+                "prompt_eval_duration": 4,
+                "eval_count": 5,
+                "eval_duration": 6
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "ask",
+            "--model",
+            "llama3.2",
+            "--prompt",
+            "summarize",
+            "--system",
+            "be terse",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "ask");
+        assert_eq!(payload["model"], "llama3.2");
+        assert_eq!(payload["response"], "summary text");
+        assert_eq!(payload["metrics"]["eval_count"], 5);
+
+        let request = only_request(&server);
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/api/generate");
+        assert_eq!(request.header("content-type"), Some("application/json"));
+        let body: Value = serde_json::from_str(&request.body).expect("body should be json");
+        assert_eq!(body["model"], "llama3.2");
+        assert_eq!(body["prompt"], "summarize");
+        assert_eq!(body["system"], "be terse");
+        assert_eq!(body["stream"], false);
+    }
+
+    #[test]
+    fn ask_text_mode_returns_plain_response() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "model": "llama3.2",
+                "response": "plain text",
+                "done": true
+            }"#,
+        )]);
+
+        let response = invoke_text(&[
+            "ask",
+            "--model",
+            "llama3.2",
+            "--prompt",
+            "say hi",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(response.success, "{response:?}");
+        assert_eq!(response.message.as_deref(), Some("plain text"));
+    }
+
+    #[test]
+    fn chat_posts_messages_and_returns_json_output() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "model": "mistral",
+                "message": { "content": "chat answer" },
+                "done": true,
+                "done_reason": "stop",
+                "created_at": "2026-05-06T00:00:00Z",
+                "total_duration": 100,
+                "load_duration": 20,
+                "prompt_eval_count": 30,
+                "prompt_eval_duration": 40,
+                "eval_count": 50,
+                "eval_duration": 60
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "chat",
+            "--model",
+            "mistral",
+            "--system",
+            "system prompt",
+            "--message",
+            "user message",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "chat");
+        assert_eq!(payload["response"], "chat answer");
+        assert_eq!(payload["metrics"]["total_duration"], 100);
+
+        let request = only_request(&server);
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/api/chat");
+        let body: Value = serde_json::from_str(&request.body).expect("body should be json");
+        assert_eq!(body["model"], "mistral");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][0]["content"], "system prompt");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "user message");
+    }
+
+    #[test]
+    fn http_error_has_stable_error_code_and_truncated_body() {
+        let long_body = "x".repeat(500);
+        let server = MockServer::new(vec![MockResponse::text(500, &long_body)]);
+
+        let response = invoke_json(&[
+            "ask",
+            "--model",
+            "llama3.2",
+            "--prompt",
+            "fail",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(!response.success);
+        assert_eq!(response.error_code.as_deref(), Some("OLLAMA_API_FAILED"));
+        let message = response.error_message.as_deref().unwrap_or("");
+        assert!(message.contains("HTTP 500"));
+        assert!(message.ends_with("..."));
+        assert!(message.len() < long_body.len() + 200);
+    }
+
+    #[test]
+    fn invalid_json_response_has_stable_error_code() {
+        let server = MockServer::new(vec![MockResponse::text(200, "not-json")]);
+
+        let response = invoke_json(&[
+            "ask",
+            "--model",
+            "llama3.2",
+            "--prompt",
+            "decode",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(!response.success);
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("OLLAMA_RESPONSE_INVALID")
+        );
+    }
+
+    #[test]
+    fn empty_generate_response_is_rejected() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{"model":"llama3.2","response":"   ","done":true}"#,
+        )]);
+
+        let response = invoke_json(&[
+            "ask",
+            "--model",
+            "llama3.2",
+            "--prompt",
+            "empty",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(!response.success);
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("OLLAMA_RESPONSE_INVALID")
+        );
+        assert!(
+            response
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("empty 'response' field")
+        );
+    }
+
+    #[test]
+    fn empty_chat_message_is_rejected() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{"model":"mistral","message":{"content":""},"done":true}"#,
+        )]);
+
+        let response = invoke_json(&[
+            "chat",
+            "--model",
+            "mistral",
+            "--message",
+            "empty",
+            "--base-url",
+            &server.url(),
+        ]);
+
+        assert!(!response.success);
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("OLLAMA_RESPONSE_INVALID")
+        );
+        assert!(
+            response
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("empty message content")
+        );
+    }
+
+    #[test]
+    fn quiet_mode_suppresses_success_message() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "model": "llama3.2",
+                "response": "hidden",
+                "done": true
+            }"#,
+        )]);
+
+        let response = invoke_with_globals(
+            &[
+                "ask",
+                "--model",
+                "llama3.2",
+                "--prompt",
+                "quiet",
+                "--base-url",
+                &server.url(),
+            ],
+            GlobalOptionsWire {
+                json: false,
+                quiet: true,
+                limit: None,
+            },
+        );
+
+        assert!(response.success, "{response:?}");
+        assert_eq!(response.message, None);
+    }
+
+    fn invoke_json(argv: &[&str]) -> InvocationResponse {
+        invoke_with_globals(
+            argv,
+            GlobalOptionsWire {
+                json: true,
+                quiet: false,
+                limit: None,
+            },
+        )
+    }
+
+    fn invoke_text(argv: &[&str]) -> InvocationResponse {
+        invoke_with_globals(
+            argv,
+            GlobalOptionsWire {
+                json: false,
+                quiet: false,
+                limit: None,
+            },
+        )
+    }
+
+    fn invoke_with_globals(argv: &[&str], globals: GlobalOptionsWire) -> InvocationResponse {
+        let request = InvocationRequest {
+            domain: DOMAIN.to_owned(),
+            argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+            globals,
+        };
+        let request_json = serde_json::to_string(&request).expect("request should serialize");
+        let request_c = std::ffi::CString::new(request_json).expect("request should be cstring");
+        invoke_from_raw(request_c.as_ptr())
+    }
+
+    fn response_json(response: &InvocationResponse) -> Value {
+        serde_json::from_str(response.message.as_deref().expect("message should exist"))
+            .expect("message should be json")
+    }
+
+    fn only_request(server: &MockServer) -> CapturedRequest {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        requests[0].clone()
+    }
+
+    #[derive(Debug, Clone)]
+    struct CapturedRequest {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+        body: String,
+    }
+
+    impl CapturedRequest {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .get(&name.to_ascii_lowercase())
+                .map(String::as_str)
+        }
+    }
+
+    struct MockResponse {
+        status: u16,
+        content_type: &'static str,
+        body: String,
+    }
+
+    impl MockResponse {
+        fn json(status: u16, body: &str) -> Self {
+            Self {
+                status,
+                content_type: "application/json",
+                body: body.to_owned(),
+            }
+        }
+
+        fn text(status: u16, body: &str) -> Self {
+            Self {
+                status,
+                content_type: "text/plain",
+                body: body.to_owned(),
+            }
+        }
+    }
+
+    struct MockServer {
+        url: String,
+        requests: Arc<Mutex<Vec<CapturedRequest>>>,
+        handle: Option<thread::JoinHandle<()>>,
+    }
+
+    impl MockServer {
+        fn new(responses: Vec<MockResponse>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
+            listener
+                .set_nonblocking(true)
+                .expect("listener should be nonblocking");
+            let url = format!(
+                "http://{}",
+                listener.local_addr().expect("local addr should exist")
+            );
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let captured = Arc::clone(&requests);
+            let handle = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                for response in responses {
+                    loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => {
+                                handle_connection(stream, response, &captured);
+                                break;
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                if Instant::now() > deadline {
+                                    return;
+                                }
+                                thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(_) => return,
+                        }
+                    }
+                }
+            });
+
+            Self {
+                url,
+                requests,
+                handle: Some(handle),
+            }
+        }
+
+        fn url(&self) -> String {
+            self.url.clone()
+        }
+
+        fn requests(&self) -> Vec<CapturedRequest> {
+            if let Some(handle) = &self.handle {
+                while !handle.is_finished() {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            self.requests.lock().expect("requests lock").clone()
+        }
+    }
+
+    impl Drop for MockServer {
+        fn drop(&mut self) {
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn handle_connection(
+        mut stream: TcpStream,
+        response: MockResponse,
+        requests: &Arc<Mutex<Vec<CapturedRequest>>>,
+    ) {
+        let mut reader = BufReader::new(stream.try_clone().expect("stream should clone"));
+        let mut first_line = String::new();
+        reader
+            .read_line(&mut first_line)
+            .expect("request line should read");
+        let mut parts = first_line.split_whitespace();
+        let method = parts.next().unwrap_or("").to_owned();
+        let path = parts.next().unwrap_or("").to_owned();
+
+        let mut headers = HashMap::new();
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("header should read");
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = trimmed.split_once(':') {
+                let key = name.trim().to_ascii_lowercase();
+                let value = value.trim().to_owned();
+                if key == "content-length" {
+                    content_length = value.parse::<usize>().unwrap_or(0);
+                }
+                headers.insert(key, value);
+            }
+        }
+
+        let mut body_bytes = vec![0; content_length];
+        if content_length > 0 {
+            reader
+                .read_exact(&mut body_bytes)
+                .expect("request body should read");
+        }
+        let body = String::from_utf8_lossy(&body_bytes).into_owned();
+        requests
+            .lock()
+            .expect("requests lock")
+            .push(CapturedRequest {
+                method,
+                path,
+                headers,
+                body,
+            });
+
+        let reason = match response.status {
+            200 => "OK",
+            500 => "Internal Server Error",
+            _ => "OK",
+        };
+        let response_headers = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.status,
+            reason,
+            response.content_type,
+            response.body.len()
+        );
+        stream
+            .write_all(response_headers.as_bytes())
+            .expect("response headers should write");
+        stream
+            .write_all(response.body.as_bytes())
+            .expect("response body should write");
     }
 }
