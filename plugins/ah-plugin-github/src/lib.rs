@@ -1573,6 +1573,13 @@ fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashMap,
+        io::{BufRead, BufReader},
+        net::{TcpListener, TcpStream},
+        sync::{Arc, Mutex},
+    };
+
     use clap::{CommandFactory, Parser};
 
     use super::*;
@@ -1651,5 +1658,615 @@ mod tests {
         .expect("inputs should parse");
         assert_eq!(parsed["target"], "main");
         assert_eq!(parsed["dry_run"], "true");
+    }
+
+    #[test]
+    fn release_get_uses_expected_request_and_auth_header() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "id": 10,
+                "tag_name": "v1.0.0",
+                "name": "v1.0.0",
+                "draft": false,
+                "prerelease": false,
+                "html_url": "https://github.com/acme/tool/releases/tag/v1.0.0",
+                "published_at": "2026-05-06T00:00:00Z",
+                "assets": []
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "--token",
+            "secret-token",
+            "release",
+            "get",
+            "v1.0.0",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.release.get");
+        assert_eq!(payload["repository"], "acme/tool");
+        assert_eq!(payload["release"]["tag_name"], "v1.0.0");
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[0].path, "/repos/acme/tool/releases/tags/v1.0.0");
+        assert_eq!(
+            requests[0].header("authorization"),
+            Some("Bearer secret-token")
+        );
+        assert_eq!(
+            requests[0].header("x-github-api-version"),
+            Some("2022-11-28")
+        );
+    }
+
+    #[test]
+    fn release_assets_returns_asset_list() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "id": 10,
+                "tag_name": "v1.0.0",
+                "name": "v1.0.0",
+                "draft": false,
+                "prerelease": false,
+                "html_url": "https://github.com/acme/tool/releases/tag/v1.0.0",
+                "published_at": "2026-05-06T00:00:00Z",
+                "assets": [
+                    {
+                        "id": 1,
+                        "name": "tool-linux.zip",
+                        "size": 123,
+                        "browser_download_url": "https://example.test/tool-linux.zip"
+                    }
+                ]
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "assets",
+            "v1.0.0",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.release.assets");
+        assert_eq!(payload["asset_count"], 1);
+        assert_eq!(payload["assets"][0]["name"], "tool-linux.zip");
+    }
+
+    #[test]
+    fn release_create_posts_expected_body() {
+        let server = MockServer::new(vec![MockResponse::json(
+            201,
+            r#"{
+                "id": 11,
+                "tag_name": "v1.0.1",
+                "name": "v1.0.1",
+                "draft": true,
+                "prerelease": false,
+                "html_url": "https://github.com/acme/tool/releases/tag/v1.0.1",
+                "published_at": null,
+                "assets": []
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "create",
+            "v1.0.1",
+            "--title",
+            "v1.0.1",
+            "--notes",
+            "release notes",
+            "--target",
+            "main",
+            "--draft",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let request = only_request(&server);
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/repos/acme/tool/releases");
+        let body: Value = serde_json::from_str(&request.body).expect("body should be json");
+        assert_eq!(body["tag_name"], "v1.0.1");
+        assert_eq!(body["target_commitish"], "main");
+        assert_eq!(body["name"], "v1.0.1");
+        assert_eq!(body["body"], "release notes");
+        assert_eq!(body["draft"], true);
+        assert_eq!(body["prerelease"], false);
+    }
+
+    #[test]
+    fn workflow_dispatch_posts_ref_and_inputs() {
+        let server = MockServer::new(vec![MockResponse::empty(204)]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "workflow",
+            "run",
+            "release.yml",
+            "--ref",
+            "main",
+            "--input",
+            "dry_run=true",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let request = only_request(&server);
+        assert_eq!(request.method, "POST");
+        assert_eq!(
+            request.path,
+            "/repos/acme/tool/actions/workflows/release.yml/dispatches"
+        );
+        let body: Value = serde_json::from_str(&request.body).expect("body should be json");
+        assert_eq!(body["ref"], "main");
+        assert_eq!(body["inputs"]["dry_run"], "true");
+    }
+
+    #[test]
+    fn runs_command_includes_workflow_branch_and_limit() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "workflow_runs": [
+                    {
+                        "id": 42,
+                        "name": "CI",
+                        "event": "push",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "head_branch": "main",
+                        "head_sha": "abc123",
+                        "html_url": "https://github.com/acme/tool/actions/runs/42",
+                        "created_at": "2026-05-06T00:00:00Z",
+                        "updated_at": "2026-05-06T00:01:00Z"
+                    }
+                ]
+            }"#,
+        )]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--repo",
+                "acme/tool",
+                "--api-url",
+                &server.url(),
+                "runs",
+                "--workflow",
+                "ci.yml",
+                "--branch",
+                "main",
+            ],
+            Some(3),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["run_count"], 1);
+        let request = only_request(&server);
+        assert_eq!(
+            request.path,
+            "/repos/acme/tool/actions/workflows/ci.yml/runs?per_page=3&branch=main"
+        );
+    }
+
+    #[test]
+    fn run_wait_polls_until_completed() {
+        let server = MockServer::new(vec![
+            MockResponse::json(200, workflow_run_json(42, "in_progress", None)),
+            MockResponse::json(200, workflow_run_json(42, "completed", Some("success"))),
+        ]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "run",
+            "wait",
+            "42",
+            "--interval-secs",
+            "1",
+            "--timeout-secs",
+            "5",
+            "--fail-on-failure",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.run.wait");
+        assert_eq!(payload["run"]["status"], "completed");
+        assert_eq!(payload["run"]["conclusion"], "success");
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2);
+    }
+
+    #[test]
+    fn run_jobs_and_artifacts_decode_lists() {
+        let jobs_server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "jobs": [
+                    {
+                        "id": 7,
+                        "name": "test",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": "https://github.com/acme/tool/actions/jobs/7",
+                        "started_at": "2026-05-06T00:00:00Z",
+                        "completed_at": "2026-05-06T00:01:00Z"
+                    }
+                ]
+            }"#,
+        )]);
+        let jobs_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &jobs_server.url(),
+            "run",
+            "jobs",
+            "42",
+        ]);
+        assert!(jobs_response.success, "{jobs_response:?}");
+        let jobs_payload = response_json(&jobs_response);
+        assert_eq!(jobs_payload["job_count"], 1);
+        assert_eq!(jobs_payload["jobs"][0]["name"], "test");
+
+        let artifacts_server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "artifacts": [
+                    {
+                        "id": 8,
+                        "name": "ah-linux-x64.zip",
+                        "size_in_bytes": 123,
+                        "expired": false,
+                        "archive_download_url": "https://api.github.com/artifacts/8/zip"
+                    }
+                ]
+            }"#,
+        )]);
+        let artifacts_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &artifacts_server.url(),
+            "run",
+            "artifacts",
+            "42",
+        ]);
+        assert!(artifacts_response.success, "{artifacts_response:?}");
+        let artifacts_payload = response_json(&artifacts_response);
+        assert_eq!(artifacts_payload["artifact_count"], 1);
+        assert_eq!(
+            artifacts_payload["artifacts"][0]["name"],
+            "ah-linux-x64.zip"
+        );
+    }
+
+    #[test]
+    fn run_logs_and_warnings_read_zip_archive() {
+        let zip_bytes = log_zip_bytes(&[(
+            "Build/1_step.txt",
+            "normal line\nNode.js 20 actions are deprecated\n\u{1b}[1mwarning: noisy\u{1b}[0m\n",
+        )]);
+        let server = MockServer::new(vec![MockResponse::bytes(200, "application/zip", zip_bytes)]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--repo",
+                "acme/tool",
+                "--api-url",
+                &server.url(),
+                "run",
+                "warnings",
+                "42",
+            ],
+            Some(10),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.run.warnings");
+        assert_eq!(payload["match_count"], 2);
+        assert_eq!(
+            payload["matches"][1]["text"], "warning: noisy",
+            "ANSI escape sequences should be stripped"
+        );
+    }
+
+    #[test]
+    fn github_api_failure_has_stable_error_code() {
+        let server = MockServer::new(vec![MockResponse::json(
+            404,
+            r#"{"message":"Not Found","status":"404"}"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "get",
+            "missing",
+        ]);
+
+        assert!(!response.success);
+        assert_eq!(response.error_code.as_deref(), Some("GITHUB_API_FAILED"));
+        assert!(
+            response
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("HTTP 404")
+        );
+    }
+
+    fn invoke_json(argv: &[&str]) -> InvocationResponse {
+        invoke_json_with_limit(argv, None)
+    }
+
+    fn invoke_json_with_limit(argv: &[&str], limit: Option<usize>) -> InvocationResponse {
+        let request = InvocationRequest {
+            domain: DOMAIN.to_owned(),
+            argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+            globals: GlobalOptionsWire {
+                json: true,
+                quiet: false,
+                limit,
+            },
+        };
+        let request_json = serde_json::to_string(&request).expect("request should serialize");
+        let request_c = std::ffi::CString::new(request_json).expect("request should be cstring");
+        invoke_from_raw(request_c.as_ptr())
+    }
+
+    fn response_json(response: &InvocationResponse) -> Value {
+        serde_json::from_str(response.message.as_deref().expect("message should exist"))
+            .expect("message should be json")
+    }
+
+    fn workflow_run_json(id: u64, status: &str, conclusion: Option<&str>) -> &'static str {
+        let conclusion = conclusion
+            .map(|value| format!(r#""{value}""#))
+            .unwrap_or_else(|| "null".to_owned());
+        let raw = format!(
+            r#"{{
+                "id": {id},
+                "name": "CI",
+                "event": "push",
+                "status": "{status}",
+                "conclusion": {conclusion},
+                "head_branch": "main",
+                "head_sha": "abc123",
+                "html_url": "https://github.com/acme/tool/actions/runs/{id}",
+                "created_at": "2026-05-06T00:00:00Z",
+                "updated_at": "2026-05-06T00:01:00Z"
+            }}"#
+        );
+        Box::leak(raw.into_boxed_str())
+    }
+
+    fn only_request(server: &MockServer) -> CapturedRequest {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        requests[0].clone()
+    }
+
+    fn log_zip_bytes(files: &[(&str, &str)]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        for (path, content) in files {
+            writer
+                .start_file(*path, zip::write::SimpleFileOptions::default())
+                .expect("zip file should start");
+            writer
+                .write_all(content.as_bytes())
+                .expect("zip content should write");
+        }
+        writer.finish().expect("zip should finish").into_inner()
+    }
+
+    #[derive(Debug, Clone)]
+    struct CapturedRequest {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+        body: String,
+    }
+
+    impl CapturedRequest {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .get(&name.to_ascii_lowercase())
+                .map(String::as_str)
+        }
+    }
+
+    struct MockResponse {
+        status: u16,
+        content_type: String,
+        body: Vec<u8>,
+    }
+
+    impl MockResponse {
+        fn json(status: u16, body: &str) -> Self {
+            Self::bytes(status, "application/json", body.as_bytes().to_vec())
+        }
+
+        fn empty(status: u16) -> Self {
+            Self::bytes(status, "application/json", Vec::new())
+        }
+
+        fn bytes(status: u16, content_type: &str, body: Vec<u8>) -> Self {
+            Self {
+                status,
+                content_type: content_type.to_owned(),
+                body,
+            }
+        }
+    }
+
+    struct MockServer {
+        url: String,
+        requests: Arc<Mutex<Vec<CapturedRequest>>>,
+        handle: Option<thread::JoinHandle<()>>,
+    }
+
+    impl MockServer {
+        fn new(responses: Vec<MockResponse>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
+            listener
+                .set_nonblocking(true)
+                .expect("listener should be nonblocking");
+            let url = format!(
+                "http://{}",
+                listener.local_addr().expect("local addr should exist")
+            );
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let captured = Arc::clone(&requests);
+            let handle = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                for response in responses {
+                    loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => {
+                                handle_connection(stream, response, &captured);
+                                break;
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                if Instant::now() > deadline {
+                                    return;
+                                }
+                                thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(_) => return,
+                        }
+                    }
+                }
+            });
+
+            Self {
+                url,
+                requests,
+                handle: Some(handle),
+            }
+        }
+
+        fn url(&self) -> String {
+            self.url.clone()
+        }
+
+        fn requests(&self) -> Vec<CapturedRequest> {
+            if let Some(handle) = &self.handle {
+                while !handle.is_finished() {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            self.requests.lock().expect("requests lock").clone()
+        }
+    }
+
+    impl Drop for MockServer {
+        fn drop(&mut self) {
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn handle_connection(
+        mut stream: TcpStream,
+        response: MockResponse,
+        requests: &Arc<Mutex<Vec<CapturedRequest>>>,
+    ) {
+        let mut reader = BufReader::new(stream.try_clone().expect("stream should clone"));
+        let mut first_line = String::new();
+        reader
+            .read_line(&mut first_line)
+            .expect("request line should read");
+        let mut parts = first_line.split_whitespace();
+        let method = parts.next().unwrap_or("").to_owned();
+        let path = parts.next().unwrap_or("").to_owned();
+
+        let mut headers = HashMap::new();
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("header should read");
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = trimmed.split_once(':') {
+                let key = name.trim().to_ascii_lowercase();
+                let value = value.trim().to_owned();
+                if key == "content-length" {
+                    content_length = value.parse::<usize>().unwrap_or(0);
+                }
+                headers.insert(key, value);
+            }
+        }
+
+        let mut body_bytes = vec![0; content_length];
+        if content_length > 0 {
+            reader
+                .read_exact(&mut body_bytes)
+                .expect("request body should read");
+        }
+        let body = String::from_utf8_lossy(&body_bytes).into_owned();
+        requests
+            .lock()
+            .expect("requests lock")
+            .push(CapturedRequest {
+                method,
+                path,
+                headers,
+                body,
+            });
+
+        let status_text = match response.status {
+            200 => "OK",
+            201 => "Created",
+            204 => "No Content",
+            404 => "Not Found",
+            _ => "OK",
+        };
+        let headers = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.status,
+            status_text,
+            response.content_type,
+            response.body.len()
+        );
+        stream
+            .write_all(headers.as_bytes())
+            .expect("response headers should write");
+        stream
+            .write_all(&response.body)
+            .expect("response body should write");
     }
 }
