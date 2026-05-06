@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Added
 - Dynamic `ah github` plugin for GitHub repository, release, workflow, run, log warning, and artifact inspection.
+- `ah git status`, `ah git tags`, and `ah git remotes` for compact repository release context.
+- Built-in `ah project` domain with `detect` and `commands` helpers.
+- Built-in `ah run check` for direct command execution with timeout and bounded output.
 
 ### Changed
 - CI now tests the full workspace with a locked dependency graph.

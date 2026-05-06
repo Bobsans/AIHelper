@@ -2,6 +2,49 @@
 
 Git-focused helpers for compact change analysis.
 
+## `ah git status`
+
+Show a compact repository summary for release or review context.
+
+```bash
+ah git status [--json]
+```
+
+Text output includes:
+- branch and upstream
+- ahead/behind counts when upstream exists
+- changed, staged, unstaged, and untracked counts
+- latest commit subject
+- latest reachable tag when available
+
+Status: implemented.
+
+## `ah git tags`
+
+List repository tags newest-first.
+
+```bash
+ah git tags [--latest] [--limit N] [--json]
+```
+
+Flags:
+- `--latest`: return only the first tag after sorting
+- `--limit N`: cap listed tags
+
+Status: implemented.
+
+## `ah git remotes`
+
+List configured remotes with fetch URL, push URL, and provider hint.
+
+```bash
+ah git remotes [--json]
+```
+
+Provider hints currently recognize GitHub, GitLab, and Bitbucket URL patterns.
+
+Status: implemented.
+
 ## `ah git changed`
 
 Show working tree changes from `git status --porcelain`.

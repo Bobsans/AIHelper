@@ -331,6 +331,8 @@ fn top_level_domain_summary(domain: &str, fallback: &str) -> String {
         "search" => "Search utilities".to_owned(),
         "ctx" => "Context-reduction utilities".to_owned(),
         "git" => "Git-focused utilities".to_owned(),
+        "project" => "Project detection utilities".to_owned(),
+        "run" => "Command execution check utilities".to_owned(),
         "http" => "HTTP workflow utilities".to_owned(),
         "task" => "Task recipe utilities".to_owned(),
         _ => fallback.to_owned(),

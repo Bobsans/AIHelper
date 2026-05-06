@@ -14,6 +14,8 @@ fn shows_top_level_help() {
         .stdout(contains("ctx"))
         .stdout(contains("git"))
         .stdout(contains("http"))
+        .stdout(contains("project"))
+        .stdout(contains("run"))
         .stdout(contains("task"));
 }
 

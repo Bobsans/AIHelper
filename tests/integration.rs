@@ -14,6 +14,10 @@ mod help;
 mod http;
 #[path = "integration/plugins.rs"]
 mod plugins;
+#[path = "integration/project.rs"]
+mod project;
+#[path = "integration/run.rs"]
+mod run;
 #[path = "integration/search.rs"]
 mod search;
 #[path = "integration/task.rs"]

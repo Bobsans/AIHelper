@@ -11,7 +11,9 @@ The binary command is `ah`.
 - `file` (`read`, `head`, `tail`, `stat`, `tree`)
 - `search` (`text`, `files`)
 - `ctx` (`pack`, `symbols`, `changed`)
-- `git` (`changed`, `diff`, `blame`)
+- `git` (`status`, `tags`, `remotes`, `changed`, `diff`, `blame`)
+- `project` (`detect`, `commands`)
+- `run` (`check`)
 - `task` (`save`, `list`, `run`)
 - Plugin management commands are available: `ah plugins list|enable|disable|reset`.
 - External dynamic plugin sources are included: `plugins/ah-plugin-github`, `plugins/ah-plugin-ollama`.
@@ -33,7 +35,7 @@ cargo run --bin ah -- file read roadmap.md -n --from 1 --to 40
 
 ## Project Layout
 - `src/` application source code
-- `src/commands/` CLI domains (`file`, `search`, `ctx`, `git`, `task`)
+- `src/commands/` CLI domains (`file`, `search`, `ctx`, `git`, `project`, `run`, `task`)
 - `tests/` integration and smoke tests
 - `docs/agents/` token-efficient recipes for AI agents
 - `docs/developers/` architecture and contribution docs

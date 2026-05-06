@@ -8,6 +8,8 @@ Reference docs for all command domains and flags.
 - [search](search.md)
 - [ctx](ctx.md)
 - [git](git.md)
+- [project](project.md)
+- [run](run.md)
 - [task](task.md)
 - [http (bundled plugin)](http.md)
 - [plugins](plugins.md)

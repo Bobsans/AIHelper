@@ -34,6 +34,18 @@ struct GitPluginCli {
 }
 
 #[derive(Debug, Parser)]
+struct ProjectPluginCli {
+    #[command(flatten)]
+    args: commands::project::ProjectArgs,
+}
+
+#[derive(Debug, Parser)]
+struct RunPluginCli {
+    #[command(flatten)]
+    args: commands::run::RunArgs,
+}
+
+#[derive(Debug, Parser)]
 struct HttpPluginCli {
     #[command(flatten)]
     args: commands::http::HttpArgs,
@@ -51,6 +63,8 @@ pub fn builtins() -> Vec<Arc<dyn BuiltinPlugin>> {
         Arc::new(SearchBuiltinPlugin),
         Arc::new(CtxBuiltinPlugin),
         Arc::new(GitBuiltinPlugin),
+        Arc::new(ProjectBuiltinPlugin),
+        Arc::new(RunBuiltinPlugin),
         Arc::new(HttpBuiltinPlugin),
         Arc::new(TaskBuiltinPlugin),
     ]
@@ -60,6 +74,8 @@ struct FileBuiltinPlugin;
 struct SearchBuiltinPlugin;
 struct CtxBuiltinPlugin;
 struct GitBuiltinPlugin;
+struct ProjectBuiltinPlugin;
+struct RunBuiltinPlugin;
 struct HttpBuiltinPlugin;
 struct TaskBuiltinPlugin;
 
@@ -95,6 +111,24 @@ fn git_metadata() -> PluginMetadata {
         plugin_name: "builtin-git".to_owned(),
         domain: "git".to_owned(),
         description: "Git utilities plugin (built-in)".to_owned(),
+        abi_version: 1,
+    }
+}
+
+fn project_metadata() -> PluginMetadata {
+    PluginMetadata {
+        plugin_name: "builtin-project".to_owned(),
+        domain: "project".to_owned(),
+        description: "Project detection plugin (built-in)".to_owned(),
+        abi_version: 1,
+    }
+}
+
+fn run_metadata() -> PluginMetadata {
+    PluginMetadata {
+        plugin_name: "builtin-run".to_owned(),
+        domain: "run".to_owned(),
+        description: "Command execution check plugin (built-in)".to_owned(),
         abi_version: 1,
     }
 }
@@ -275,6 +309,30 @@ fn git_manual() -> PluginManual {
         description: "Git-oriented context helpers for working tree and history.".to_owned(),
         commands: vec![
             ManualCommand {
+                name: "status".to_owned(),
+                summary: "Show compact repository status summary.".to_owned(),
+                usage: "status".to_owned(),
+                examples: vec![manual_example(
+                    "Inspect branch, upstream, counts, commit, and tag",
+                    &["status"],
+                )],
+            },
+            ManualCommand {
+                name: "tags".to_owned(),
+                summary: "List tags newest-first.".to_owned(),
+                usage: "tags [--latest]".to_owned(),
+                examples: vec![
+                    manual_example("List tags", &["tags"]),
+                    manual_example("Show latest tag only", &["tags", "--latest"]),
+                ],
+            },
+            ManualCommand {
+                name: "remotes".to_owned(),
+                summary: "List configured git remotes with provider hint.".to_owned(),
+                usage: "remotes".to_owned(),
+                examples: vec![manual_example("Inspect remotes", &["remotes"])],
+            },
+            ManualCommand {
                 name: "changed".to_owned(),
                 summary: "Summarize working tree changes.".to_owned(),
                 usage: "changed".to_owned(),
@@ -300,6 +358,64 @@ fn git_manual() -> PluginManual {
             },
         ],
         notes: vec!["Useful for quick change-attribution in AI review loops.".to_owned()],
+    }
+}
+
+fn project_manual() -> PluginManual {
+    PluginManual {
+        plugin_name: project_metadata().plugin_name,
+        domain: "project".to_owned(),
+        description: "Detect project ecosystems and suggest common commands.".to_owned(),
+        commands: vec![
+            ManualCommand {
+                name: "detect".to_owned(),
+                summary: "Detect ecosystems, package files, CI files, docs, and changelog files."
+                    .to_owned(),
+                usage: "detect [path]".to_owned(),
+                examples: vec![manual_example("Detect current project", &["detect"])],
+            },
+            ManualCommand {
+                name: "commands".to_owned(),
+                summary: "Suggest likely install, test, build, and release-build commands."
+                    .to_owned(),
+                usage: "commands [path]".to_owned(),
+                examples: vec![manual_example(
+                    "Suggest commands for current project",
+                    &["commands"],
+                )],
+            },
+        ],
+        notes: vec![
+            "Detection is heuristic and does not execute package managers.".to_owned(),
+            "Use with ah run check to execute suggested commands explicitly.".to_owned(),
+        ],
+    }
+}
+
+fn run_manual() -> PluginManual {
+    PluginManual {
+        plugin_name: run_metadata().plugin_name,
+        domain: "run".to_owned(),
+        description: "Run explicit commands with timeout and bounded output.".to_owned(),
+        commands: vec![ManualCommand {
+            name: "check".to_owned(),
+            summary: "Run a command and report success, exit code, duration, stdout, and stderr."
+                .to_owned(),
+            usage:
+                "check [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--tail-lines N] <command...>"
+                    .to_owned(),
+            examples: vec![
+                manual_example("Run cargo tests", &["check", "cargo", "test"]),
+                manual_example(
+                    "Run command with timeout",
+                    &["check", "--timeout-secs", "60", "cargo", "build"],
+                ),
+            ],
+        }],
+        notes: vec![
+            "Command is executed directly without a shell.".to_owned(),
+            "The ah command itself exits successfully; inspect success=false for checked command failures.".to_owned(),
+        ],
     }
 }
 
@@ -494,6 +610,44 @@ impl BuiltinPlugin for GitBuiltinPlugin {
     }
 }
 
+impl BuiltinPlugin for ProjectBuiltinPlugin {
+    fn metadata(&self) -> PluginMetadata {
+        project_metadata()
+    }
+
+    fn manual(&self) -> PluginManual {
+        project_manual()
+    }
+
+    fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
+        let parsed = match parse_args::<ProjectPluginCli>("project", &request.argv) {
+            ParseOutcome::Parsed(value) => value,
+            ParseOutcome::Response(response) => return response,
+        };
+        let options = GlobalOptions::from(request.globals.clone());
+        map_execute(commands::project::execute(parsed.args, &options))
+    }
+}
+
+impl BuiltinPlugin for RunBuiltinPlugin {
+    fn metadata(&self) -> PluginMetadata {
+        run_metadata()
+    }
+
+    fn manual(&self) -> PluginManual {
+        run_manual()
+    }
+
+    fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
+        let parsed = match parse_args::<RunPluginCli>("run", &request.argv) {
+            ParseOutcome::Parsed(value) => value,
+            ParseOutcome::Response(response) => return response,
+        };
+        let options = GlobalOptions::from(request.globals.clone());
+        map_execute(commands::run::execute(parsed.args, &options))
+    }
+}
+
 impl BuiltinPlugin for HttpBuiltinPlugin {
     fn metadata(&self) -> PluginMetadata {
         http_metadata()
@@ -595,6 +749,18 @@ mod tests {
     fn git_manual_examples_parse() {
         let manual = git_manual();
         assert_examples_parse::<GitPluginCli>(&manual);
+    }
+
+    #[test]
+    fn project_manual_examples_parse() {
+        let manual = project_manual();
+        assert_examples_parse::<ProjectPluginCli>(&manual);
+    }
+
+    #[test]
+    fn run_manual_examples_parse() {
+        let manual = run_manual();
+        assert_examples_parse::<RunPluginCli>(&manual);
     }
 
     #[test]
