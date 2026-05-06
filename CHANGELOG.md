@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.0] - 2026-05-06
+
+### Added
+- Built-in `ah http` domain for HTTP request and API assertion workflows.
+- `ah http request` plus method shortcuts for `get`, `post`, `put`, `patch`, and `delete`.
+- `ah http replay` for replaying supported curl commands through the stable CLI contract.
+- `ah http assert` and `ah http run` for repeatable API checks from spec files, including text, JSON, and JUnit reports.
+
+### Documentation
+- Added `docs/reference/http.md` and linked the HTTP domain from the reference index.
+
+### Tests
+- Added integration coverage for HTTP request handling, curl replay, assertion specs, reports, and help/manual visibility.
+
 ## [0.2.0] - 2026-04-23
 
 ### Added

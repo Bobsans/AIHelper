@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ah-plugin-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-ollama"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ah-plugin-api",
  "clap",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "ah-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ah-plugin-api",
  "libloading",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "aihelper"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ah-plugin-api",
  "ah-runtime",
