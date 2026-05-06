@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+- Dynamic `ah github` plugin for GitHub repository, release, workflow, run, log warning, and artifact inspection.
+
+### Changed
+- CI now tests the full workspace with a locked dependency graph.
+- Release archives now package `ah-plugin-github` alongside `ah-plugin-ollama`.
+
 ## [0.3.0] - 2026-05-06
 
 ### Added

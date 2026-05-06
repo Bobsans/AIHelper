@@ -9,6 +9,7 @@ default-run = "ah"
 members = [
     "crates/ah-plugin-api",
     "crates/ah-runtime",
+    "plugins/ah-plugin-github",
     "plugins/ah-plugin-ollama",
 ]
 resolver = "2"

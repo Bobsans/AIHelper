@@ -21,4 +21,4 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Test
-        run: cargo test --all-targets
+        run: cargo test --workspace --all-targets --locked

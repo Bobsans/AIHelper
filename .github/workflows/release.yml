@@ -35,6 +35,7 @@ jobs:
       - name: Build release binary
         run: |
           cargo build --release --locked --bin ah
+          cargo build --release --locked -p ah-plugin-github
           cargo build --release --locked -p ah-plugin-ollama
 
       - name: Compute archive name
@@ -52,6 +53,7 @@ jobs:
           $archive = "${{ steps.meta.outputs.archive }}"
           New-Item -ItemType Directory -Path "dist/plugins" -Force | Out-Null
           Copy-Item -LiteralPath "target/release/ah.exe" -Destination "dist/ah.exe" -Force
+          Copy-Item -LiteralPath "target/release/ah_plugin_github.dll" -Destination "dist/plugins/ah-plugin-github.dll" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_ollama.dll" -Destination "dist/plugins/ah-plugin-ollama.dll" -Force
           Push-Location "dist"
           Compress-Archive -Path "ah.exe", "plugins" -DestinationPath "..\$archive" -Force
@@ -65,8 +67,10 @@ jobs:
           cp "target/release/ah" "dist/ah"
           chmod +x "dist/ah"
           if [ "${{ runner.os }}" = "Linux" ]; then
+            cp "target/release/libah_plugin_github.so" "dist/plugins/ah-plugin-github.so"
             cp "target/release/libah_plugin_ollama.so" "dist/plugins/ah-plugin-ollama.so"
           else
+            cp "target/release/libah_plugin_github.dylib" "dist/plugins/ah-plugin-github.dylib"
             cp "target/release/libah_plugin_ollama.dylib" "dist/plugins/ah-plugin-ollama.dylib"
           fi
           (

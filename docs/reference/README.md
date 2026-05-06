@@ -11,4 +11,5 @@ Reference docs for all command domains and flags.
 - [task](task.md)
 - [http (bundled plugin)](http.md)
 - [plugins](plugins.md)
+- [github (dynamic plugin)](github.md)
 - [ollama (dynamic plugin)](ollama.md)

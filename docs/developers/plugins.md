@@ -70,32 +70,33 @@ Plugin returns JSON response:
 - Use stable error codes for machine handling.
 - Treat ABI changes as versioned events (bump API version intentionally).
 
-## Example Dynamic Plugin: Ollama
+## Example Dynamic Plugins
 
-Repository includes dynamic plugin source at:
+Repository includes dynamic plugin sources at:
 
+- `plugins/ah-plugin-github`
 - `plugins/ah-plugin-ollama`
 
-Build and install (Windows):
+Build and install one plugin (Windows):
 
 ```powershell
-cargo build --release -p ah-plugin-ollama
+cargo build --release -p ah-plugin-github
 New-Item -ItemType Directory -Force plugins | Out-Null
-Copy-Item target/release/ah_plugin_ollama.dll plugins/ah-plugin-ollama.dll
+Copy-Item target/release/ah_plugin_github.dll plugins/ah-plugin-github.dll
 ```
 
-Build and install (Linux):
+Build and install one plugin (Linux):
 
 ```bash
-cargo build --release -p ah-plugin-ollama
+cargo build --release -p ah-plugin-github
 mkdir -p plugins
-cp target/release/libah_plugin_ollama.so plugins/ah-plugin-ollama.so
+cp target/release/libah_plugin_github.so plugins/ah-plugin-github.so
 ```
 
-Build and install (macOS):
+Build and install one plugin (macOS):
 
 ```bash
-cargo build --release -p ah-plugin-ollama
+cargo build --release -p ah-plugin-github
 mkdir -p plugins
-cp target/release/libah_plugin_ollama.dylib plugins/ah-plugin-ollama.dylib
+cp target/release/libah_plugin_github.dylib plugins/ah-plugin-github.dylib
 ```
