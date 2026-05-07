@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-07
+
 ### Added
 - `ah git commit-info` for commit metadata, touched files, and line stats.
 - `ah git tag create` for simple local tag creation.
