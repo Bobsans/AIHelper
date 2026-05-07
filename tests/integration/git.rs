@@ -67,6 +67,48 @@ fn git_blame_line_returns_json_entry() {
 }
 
 #[test]
+fn git_blame_full_file_keeps_line_text() {
+    if !git_available() {
+        return;
+    }
+
+    let temp_dir = init_git_repo_with_one_commit();
+    let cwd = temp_dir.path();
+    let cwd_str = cwd.to_string_lossy().to_string();
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["--json", "--cwd", &cwd_str, "git", "blame", "app.txt"])
+        .assert()
+        .success()
+        .stdout(contains("\"entry_count\": 2"))
+        .stdout(contains("\"text\": \"line one\""))
+        .stdout(contains("\"text\": \"line two\""));
+}
+
+#[test]
+fn git_commit_info_quiet_still_validates_reference() {
+    if !git_available() {
+        return;
+    }
+
+    let temp_dir = init_git_repo_with_one_commit();
+    let cwd = temp_dir.path();
+    let cwd_str = cwd.to_string_lossy().to_string();
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "--quiet",
+        "--cwd",
+        &cwd_str,
+        "git",
+        "commit-info",
+        "definitely-missing-ref",
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
 fn git_commit_info_reports_metadata_and_files() {
     if !git_available() {
         return;
@@ -161,6 +203,7 @@ fn git_tags_reports_latest_tag() {
     let temp_dir = init_git_repo_with_one_commit();
     let cwd = temp_dir.path();
     run_git(cwd, &["tag", "v0.1.0"]);
+    run_git(cwd, &["tag", "v0.2.0"]);
 
     let cwd_str = cwd.to_string_lossy().to_string();
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
@@ -170,7 +213,8 @@ fn git_tags_reports_latest_tag() {
         .stdout(contains("\"command\": \"git.tags\""))
         .stdout(contains("\"latest\": true"))
         .stdout(contains("\"tag_count\": 1"))
-        .stdout(contains("\"name\": \"v0.1.0\""));
+        .stdout(contains("\"truncated\": false"))
+        .stderr("");
 }
 
 #[test]

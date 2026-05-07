@@ -714,11 +714,11 @@ fn execute(cli: GithubCli, globals: &GlobalOptionsWire) -> InvocationResponse {
 
 fn execute_repo(context: &GithubContext, globals: &GlobalOptionsWire) -> InvocationResponse {
     let path = format!("/repos/{}/{}", context.repo.owner, context.repo.repo);
-    let repo_response = github_json::<GithubRepoResponse>(context, Method::GET, &path, None);
-    let (html_url, default_branch, private) = match repo_response {
-        Ok(value) => (value.html_url, value.default_branch, value.private),
-        Err(_) => (None, None, None),
-    };
+    let (html_url, default_branch, private) =
+        match github_json::<GithubRepoResponse>(context, Method::GET, &path, None) {
+            Ok(value) => (value.html_url, value.default_branch, value.private),
+            Err(_) => (None, None, None),
+        };
 
     let output = RepoOutput {
         command: "github.repo",
@@ -1271,7 +1271,8 @@ fn wait_run(
             );
         }
 
-        if start.elapsed() >= timeout {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
             return InvocationResponse::error(
                 "GITHUB_RUN_TIMEOUT",
                 format!(
@@ -1280,7 +1281,9 @@ fn wait_run(
                 ),
             );
         }
-        thread::sleep(interval);
+
+        let remaining = timeout - elapsed;
+        thread::sleep(interval.min(remaining));
     }
 }
 
@@ -1511,6 +1514,7 @@ fn github_context(args: &GithubConnectionArgs) -> Result<GithubContext, Invocati
     let token = resolve_token(args);
     let client = Client::builder()
         .timeout(Duration::from_secs(args.timeout_secs.max(1)))
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|error| {
             InvocationResponse::error(
@@ -1597,6 +1601,9 @@ fn parse_github_remote_url(remote: &str) -> Option<RepoSlug> {
         return parse_repo_slug(rest);
     }
     if let Some(rest) = trimmed.strip_prefix("ssh://git@github.com/") {
+        return parse_repo_slug(rest);
+    }
+    if let Some(rest) = trimmed.strip_prefix("git+ssh://git@github.com/") {
         return parse_repo_slug(rest);
     }
     None
@@ -1749,35 +1756,7 @@ fn download_run_logs(
         "/repos/{}/{}/actions/runs/{run_id}/logs",
         context.repo.owner, context.repo.repo
     );
-    let url = format!("{}{}", context.api_url, path);
-    let mut request = context
-        .client
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "AIHelper-github-plugin");
-    if let Some(token) = &context.token {
-        request = request.bearer_auth(token);
-    }
-    let response = request.send().map_err(|error| {
-        InvocationResponse::error(
-            "GITHUB_HTTP_FAILED",
-            format!("request to '{url}' failed: {error}"),
-        )
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
-        return Err(InvocationResponse::error(
-            "GITHUB_API_FAILED",
-            format!(
-                "GitHub returned HTTP {status} for '{url}': {}",
-                truncate_for_error(&body, 500)
-            ),
-        ));
-    }
+    let response = github_response(context, Method::GET, &path, None)?;
     let bytes = response.bytes().map_err(|error| {
         InvocationResponse::error(
             "GITHUB_RESPONSE_INVALID",
@@ -2021,7 +2000,7 @@ fn render_runs_text(runs: &[WorkflowRunResponse]) -> String {
 
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
     if let Some(limit_value) = limit {
-        if items.len() > limit_value {
+        if limit_value > 0 && items.len() > limit_value {
             items.truncate(limit_value);
             return true;
         }
@@ -2044,13 +2023,34 @@ fn strip_ansi_sequences(text: &str) -> String {
             output.push(ch);
             continue;
         }
-        if chars.peek() == Some(&'[') {
-            chars.next();
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
+        match chars.peek() {
+            Some(&'[') => {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
                 }
             }
+            Some(&']') => {
+                chars.next();
+                loop {
+                    match chars.next() {
+                        None | Some('\x07') => break,
+                        Some('\u{1b}') => {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
         }
     }
     output
@@ -2270,6 +2270,24 @@ mod tests {
     }
 
     #[test]
+    fn repo_command_falls_back_when_api_lookup_fails() {
+        let server = MockServer::new(vec![MockResponse::json(
+            500,
+            r#"{"message":"server error"}"#,
+        )]);
+
+        let response = invoke_json(&["--repo", "acme/tool", "--api-url", &server.url(), "repo"]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.repo");
+        assert_eq!(payload["repository"], "acme/tool");
+        assert!(payload["html_url"].is_null());
+        assert!(payload["default_branch"].is_null());
+        assert!(payload["private"].is_null());
+    }
+
+    #[test]
     fn rejects_non_github_remote() {
         assert!(parse_github_remote_url("https://gitlab.com/Bobsans/AIHelper.git").is_none());
     }
@@ -2394,7 +2412,7 @@ mod tests {
 
     #[test]
     fn issue_create_and_update_send_expected_bodies() {
-        let create_server = MockServer::new(vec![MockResponse::json(201, issue_json(21, "open"))]);
+        let create_server = MockServer::new(vec![MockResponse::json(201, &issue_json(21, "open"))]);
         let create_response = invoke_json(&[
             "--repo",
             "acme/tool",
@@ -2423,7 +2441,7 @@ mod tests {
         assert_eq!(create_body["assignees"][0], "bob");
 
         let update_server =
-            MockServer::new(vec![MockResponse::json(200, issue_json(21, "closed"))]);
+            MockServer::new(vec![MockResponse::json(200, &issue_json(21, "closed"))]);
         let update_response = invoke_json(&[
             "--repo",
             "acme/tool",
@@ -2450,8 +2468,8 @@ mod tests {
     #[test]
     fn issue_close_comments_then_closes() {
         let server = MockServer::new(vec![
-            MockResponse::json(201, issue_comment_json(101)),
-            MockResponse::json(200, issue_json(21, "closed")),
+            MockResponse::json(201, &issue_comment_json(101)),
+            MockResponse::json(200, &issue_json(21, "closed")),
         ]);
 
         let response = invoke_json(&[
@@ -2478,7 +2496,7 @@ mod tests {
     #[test]
     fn issue_comment_and_comments_work() {
         let comment_server =
-            MockServer::new(vec![MockResponse::json(201, issue_comment_json(101))]);
+            MockServer::new(vec![MockResponse::json(201, &issue_comment_json(101))]);
         let comment_response = invoke_json(&[
             "--repo",
             "acme/tool",
@@ -2734,8 +2752,8 @@ mod tests {
     #[test]
     fn run_wait_polls_until_completed() {
         let server = MockServer::new(vec![
-            MockResponse::json(200, workflow_run_json(42, "in_progress", None)),
-            MockResponse::json(200, workflow_run_json(42, "completed", Some("success"))),
+            MockResponse::json(200, &workflow_run_json(42, "in_progress", None)),
+            MockResponse::json(200, &workflow_run_json(42, "completed", Some("success"))),
         ]);
 
         let response = invoke_json(&[
@@ -2909,11 +2927,11 @@ mod tests {
             .expect("message should be json")
     }
 
-    fn workflow_run_json(id: u64, status: &str, conclusion: Option<&str>) -> &'static str {
+    fn workflow_run_json(id: u64, status: &str, conclusion: Option<&str>) -> String {
         let conclusion = conclusion
             .map(|value| format!(r#""{value}""#))
             .unwrap_or_else(|| "null".to_owned());
-        let raw = format!(
+        format!(
             r#"{{
                 "id": {id},
                 "name": "CI",
@@ -2926,12 +2944,11 @@ mod tests {
                 "created_at": "2026-05-06T00:00:00Z",
                 "updated_at": "2026-05-06T00:01:00Z"
             }}"#
-        );
-        Box::leak(raw.into_boxed_str())
+        )
     }
 
-    fn issue_json(number: u64, state: &str) -> &'static str {
-        let raw = format!(
+    fn issue_json(number: u64, state: &str) -> String {
+        format!(
             r#"{{
                 "number": {number},
                 "title": "Fix build",
@@ -2946,12 +2963,11 @@ mod tests {
                 "updated_at": "2026-05-07T00:01:00Z",
                 "closed_at": null
             }}"#
-        );
-        Box::leak(raw.into_boxed_str())
+        )
     }
 
-    fn issue_comment_json(id: u64) -> &'static str {
-        let raw = format!(
+    fn issue_comment_json(id: u64) -> String {
+        format!(
             r#"{{
                 "id": {id},
                 "body": "hello",
@@ -2960,8 +2976,7 @@ mod tests {
                 "created_at": "2026-05-07T00:00:00Z",
                 "updated_at": "2026-05-07T00:01:00Z"
             }}"#
-        );
-        Box::leak(raw.into_boxed_str())
+        )
     }
 
     fn only_request(server: &MockServer) -> CapturedRequest {
@@ -3076,7 +3091,11 @@ mod tests {
 
         fn requests(&self) -> Vec<CapturedRequest> {
             if let Some(handle) = &self.handle {
+                let deadline = Instant::now() + Duration::from_secs(10);
                 while !handle.is_finished() {
+                    if Instant::now() >= deadline {
+                        break;
+                    }
                     thread::sleep(Duration::from_millis(5));
                 }
             }

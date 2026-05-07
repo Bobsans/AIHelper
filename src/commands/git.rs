@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::Command};
+use std::{path::PathBuf, process::Command, sync::OnceLock};
 
 use clap::{Args, Subcommand};
 use regex::Regex;
@@ -666,6 +666,7 @@ fn execute_blame(args: BlameArgs, options: &GlobalOptions) -> Result<(), AppErro
 
 fn execute_commit_info(args: CommitInfoArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let in_repo = is_inside_git_repo()?;
+
     let commit = if in_repo {
         Some(read_commit_info(&args.reference, options.limit)?)
     } else {
@@ -957,11 +958,15 @@ fn is_inside_git_repo() -> Result<bool, AppError> {
 fn parse_porcelain_status(raw: String) -> Vec<ChangedEntry> {
     let mut entries = Vec::new();
     for line in raw.lines() {
-        if line.len() < 4 {
+        let mut chars = line.chars();
+        let x = chars.next().unwrap_or(' ');
+        let y = chars.next().unwrap_or(' ');
+        let _ = chars.next();
+        let rest: String = chars.collect();
+        if rest.is_empty() {
             continue;
         }
-        let status = line[0..2].trim().to_owned();
-        let rest = line[3..].to_owned();
+        let status = format!("{x}{y}").trim().to_owned();
         if let Some((old_path, new_path)) = rest.split_once(" -> ") {
             entries.push(ChangedEntry {
                 status,
@@ -1007,9 +1012,13 @@ fn count_porcelain_status(raw: &str) -> (usize, usize, usize) {
     (staged_count, unstaged_count, untracked_count)
 }
 
+fn blame_header_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^([0-9a-f^]{7,40})\s+\d+\s+(\d+)(?:\s+\d+)?$").unwrap())
+}
+
 fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
-    let header_re = Regex::new(r"^([0-9a-f^]{7,40})\s+\d+\s+(\d+)\s+(\d+)$")
-        .map_err(|error| AppError::invalid_argument(format!("internal regex error: {error}")))?;
+    let header_re = blame_header_regex();
 
     let mut entries = Vec::new();
     let mut lines = raw.lines().peekable();
@@ -1021,7 +1030,6 @@ fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
 
         let commit = captures[1].to_owned();
         let final_line = captures[2].parse::<usize>().unwrap_or(0);
-        let line_count = captures[3].parse::<usize>().unwrap_or(1);
 
         let mut author = String::new();
         let mut author_mail = String::new();
@@ -1051,18 +1059,15 @@ fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
             }
         }
 
-        let safe_count = line_count.max(1);
-        for offset in 0..safe_count {
-            entries.push(BlameEntry {
-                line: final_line + offset,
-                commit: commit.clone(),
-                author: author.clone(),
-                author_mail: author_mail.clone(),
-                author_time,
-                summary: summary.clone(),
-                text: text.clone(),
-            });
-        }
+        entries.push(BlameEntry {
+            line: final_line,
+            commit,
+            author,
+            author_mail,
+            author_time,
+            summary,
+            text,
+        });
     }
 
     Ok(entries)
