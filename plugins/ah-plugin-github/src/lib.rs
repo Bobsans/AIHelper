@@ -65,6 +65,10 @@ struct GithubConnectionArgs {
 enum GithubCommand {
     #[command(about = "Inspect detected GitHub repository")]
     Repo,
+    #[command(about = "List GitHub issues")]
+    Issues(IssuesArgs),
+    #[command(about = "Work with GitHub issues")]
+    Issue(IssueArgs),
     #[command(about = "Work with GitHub releases")]
     Release(ReleaseArgs),
     #[command(about = "List GitHub Actions workflows")]
@@ -75,6 +79,98 @@ enum GithubCommand {
     Runs(RunsArgs),
     #[command(about = "Inspect a GitHub Actions workflow run")]
     Run(RunArgs),
+}
+
+#[derive(Debug, Args)]
+struct IssuesArgs {
+    #[arg(long, default_value = "open", value_parser = ["open", "closed", "all"])]
+    state: String,
+    #[arg(long = "label", value_name = "LABEL")]
+    labels: Vec<String>,
+    #[arg(long)]
+    assignee: Option<String>,
+    #[arg(long)]
+    author: Option<String>,
+    #[arg(long)]
+    since: Option<String>,
+    #[arg(long)]
+    search: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct IssueArgs {
+    #[command(subcommand)]
+    command: IssueCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum IssueCommand {
+    #[command(about = "Get issue metadata")]
+    Get(IssueNumberArgs),
+    #[command(about = "Create an issue")]
+    Create(CreateIssueArgs),
+    #[command(about = "Update an issue")]
+    Update(UpdateIssueArgs),
+    #[command(about = "Close an issue")]
+    Close(CloseIssueArgs),
+    #[command(about = "Add an issue comment")]
+    Comment(CommentIssueArgs),
+    #[command(about = "List issue comments")]
+    Comments(IssueNumberArgs),
+}
+
+#[derive(Debug, Args)]
+struct IssueNumberArgs {
+    number: u64,
+}
+
+#[derive(Debug, Args)]
+struct CreateIssueArgs {
+    #[arg(long)]
+    title: String,
+    #[arg(long, value_name = "TEXT")]
+    body: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    body_file: Option<String>,
+    #[arg(long = "label", value_name = "LABEL")]
+    labels: Vec<String>,
+    #[arg(long = "assignee", value_name = "USER")]
+    assignees: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct UpdateIssueArgs {
+    number: u64,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long, value_name = "TEXT")]
+    body: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    body_file: Option<String>,
+    #[arg(long, value_parser = ["open", "closed"])]
+    state: Option<String>,
+    #[arg(long = "label", value_name = "LABEL")]
+    labels: Vec<String>,
+    #[arg(long = "assignee", value_name = "USER")]
+    assignees: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct CloseIssueArgs {
+    number: u64,
+    #[arg(long, value_name = "TEXT")]
+    comment: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    comment_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CommentIssueArgs {
+    number: u64,
+    #[arg(long, value_name = "TEXT")]
+    body: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    body_file: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -229,6 +325,89 @@ struct GithubRepoResponse {
     html_url: Option<String>,
     default_branch: Option<String>,
     private: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct GithubUser {
+    login: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct GithubLabel {
+    name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct IssueResponse {
+    number: u64,
+    title: String,
+    body: Option<String>,
+    state: String,
+    html_url: Option<String>,
+    user: Option<GithubUser>,
+    #[serde(default)]
+    labels: Vec<GithubLabel>,
+    #[serde(default)]
+    assignees: Vec<GithubUser>,
+    comments: Option<u64>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    closed_at: Option<String>,
+    #[serde(default)]
+    pull_request: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueSearchResponse {
+    items: Vec<IssueResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssuesOutput {
+    command: &'static str,
+    repository: String,
+    state: String,
+    labels: Vec<String>,
+    assignee: Option<String>,
+    author: Option<String>,
+    since: Option<String>,
+    search: Option<String>,
+    issue_count: usize,
+    issues: Vec<IssueResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueOutput {
+    command: &'static str,
+    repository: String,
+    issue: IssueResponse,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct IssueCommentResponse {
+    id: u64,
+    body: Option<String>,
+    html_url: Option<String>,
+    user: Option<GithubUser>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueCommentsOutput {
+    command: &'static str,
+    repository: String,
+    number: u64,
+    comment_count: usize,
+    comments: Vec<IssueCommentResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueCommentOutput {
+    command: &'static str,
+    repository: String,
+    number: u64,
+    comment: IssueCommentResponse,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -523,6 +702,8 @@ fn execute(cli: GithubCli, globals: &GlobalOptionsWire) -> InvocationResponse {
 
     match cli.command {
         GithubCommand::Repo => execute_repo(&context, globals),
+        GithubCommand::Issues(args) => execute_issues(args, &context, globals),
+        GithubCommand::Issue(args) => execute_issue(args, &context, globals),
         GithubCommand::Release(args) => execute_release(args, &context, globals),
         GithubCommand::Workflows => execute_workflows(&context, globals),
         GithubCommand::Workflow(args) => execute_workflow(args, &context, globals),
@@ -552,6 +733,258 @@ fn execute_repo(context: &GithubContext, globals: &GlobalOptionsWire) -> Invocat
     };
 
     render_success(globals, &output, format!("{}\n", output.repository))
+}
+
+fn execute_issues(
+    args: IssuesArgs,
+    context: &GithubContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let mut issues = if let Some(search) = &args.search {
+        let path = github_issue_search_path(context, &args, search, per_page);
+        match github_json::<IssueSearchResponse>(context, Method::GET, &path, None) {
+            Ok(value) => value.items,
+            Err(error) => return error,
+        }
+    } else {
+        let path = github_issues_list_path(context, &args, per_page);
+        match github_json::<Vec<IssueResponse>>(context, Method::GET, &path, None) {
+            Ok(value) => value,
+            Err(error) => return error,
+        }
+    };
+    issues.retain(|issue| issue.pull_request.is_none());
+    let text = render_issues_text(&issues);
+    render_success(
+        globals,
+        &IssuesOutput {
+            command: "github.issues",
+            repository: context.repo.full_name(),
+            state: args.state,
+            labels: args.labels,
+            assignee: args.assignee,
+            author: args.author,
+            since: args.since,
+            search: args.search,
+            issue_count: issues.len(),
+            issues,
+        },
+        text,
+    )
+}
+
+fn execute_issue(
+    args: IssueArgs,
+    context: &GithubContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    match args.command {
+        IssueCommand::Get(args) => {
+            let issue = match get_issue(context, args.number) {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            render_success(
+                globals,
+                &IssueOutput {
+                    command: "github.issue.get",
+                    repository: context.repo.full_name(),
+                    issue: issue.clone(),
+                },
+                render_issues_text(std::slice::from_ref(&issue)),
+            )
+        }
+        IssueCommand::Create(args) => create_issue(context, args, globals),
+        IssueCommand::Update(args) => update_issue(context, args, globals),
+        IssueCommand::Close(args) => close_issue(context, args, globals),
+        IssueCommand::Comment(args) => comment_issue(context, args, globals),
+        IssueCommand::Comments(args) => issue_comments(context, args.number, globals),
+    }
+}
+
+fn create_issue(
+    context: &GithubContext,
+    args: CreateIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let body_text = match resolve_optional_text(args.body, args.body_file, "body") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let mut body = serde_json::Map::new();
+    body.insert("title".to_owned(), Value::String(args.title));
+    if let Some(body_text) = body_text {
+        body.insert("body".to_owned(), Value::String(body_text));
+    }
+    if !args.labels.is_empty() {
+        body.insert("labels".to_owned(), json!(args.labels));
+    }
+    if !args.assignees.is_empty() {
+        body.insert("assignees".to_owned(), json!(args.assignees));
+    }
+    let path = format!("/repos/{}/{}/issues", context.repo.owner, context.repo.repo);
+    let issue =
+        match github_json::<IssueResponse>(context, Method::POST, &path, Some(Value::Object(body)))
+        {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+    render_success(
+        globals,
+        &IssueOutput {
+            command: "github.issue.create",
+            repository: context.repo.full_name(),
+            issue: issue.clone(),
+        },
+        render_issues_text(std::slice::from_ref(&issue)),
+    )
+}
+
+fn update_issue(
+    context: &GithubContext,
+    args: UpdateIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let body_text = match resolve_optional_text(args.body, args.body_file, "body") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let mut body = serde_json::Map::new();
+    if let Some(title) = args.title {
+        body.insert("title".to_owned(), Value::String(title));
+    }
+    if let Some(body_text) = body_text {
+        body.insert("body".to_owned(), Value::String(body_text));
+    }
+    if let Some(state) = args.state {
+        body.insert("state".to_owned(), Value::String(state));
+    }
+    if !args.labels.is_empty() {
+        body.insert("labels".to_owned(), json!(args.labels));
+    }
+    if !args.assignees.is_empty() {
+        body.insert("assignees".to_owned(), json!(args.assignees));
+    }
+    if body.is_empty() {
+        return InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "issue update requires at least one field",
+        );
+    }
+    let path = format!(
+        "/repos/{}/{}/issues/{}",
+        context.repo.owner, context.repo.repo, args.number
+    );
+    let issue = match github_json::<IssueResponse>(
+        context,
+        Method::PATCH,
+        &path,
+        Some(Value::Object(body)),
+    ) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueOutput {
+            command: "github.issue.update",
+            repository: context.repo.full_name(),
+            issue: issue.clone(),
+        },
+        render_issues_text(std::slice::from_ref(&issue)),
+    )
+}
+
+fn close_issue(
+    context: &GithubContext,
+    args: CloseIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let comment = match resolve_optional_text(args.comment, args.comment_file, "comment") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    if let Some(comment) = comment {
+        if let Err(error) = create_issue_comment(context, args.number, comment) {
+            return error;
+        }
+    }
+    let path = format!(
+        "/repos/{}/{}/issues/{}",
+        context.repo.owner, context.repo.repo, args.number
+    );
+    let issue = match github_json::<IssueResponse>(
+        context,
+        Method::PATCH,
+        &path,
+        Some(json!({ "state": "closed" })),
+    ) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueOutput {
+            command: "github.issue.close",
+            repository: context.repo.full_name(),
+            issue: issue.clone(),
+        },
+        render_issues_text(std::slice::from_ref(&issue)),
+    )
+}
+
+fn comment_issue(
+    context: &GithubContext,
+    args: CommentIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let body = match resolve_required_text(args.body, args.body_file, "body") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let comment = match create_issue_comment(context, args.number, body) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueCommentOutput {
+            command: "github.issue.comment",
+            repository: context.repo.full_name(),
+            number: args.number,
+            comment: comment.clone(),
+        },
+        render_comments_text(std::slice::from_ref(&comment)),
+    )
+}
+
+fn issue_comments(
+    context: &GithubContext,
+    number: u64,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let path = format!(
+        "/repos/{}/{}/issues/{number}/comments?per_page={per_page}",
+        context.repo.owner, context.repo.repo
+    );
+    let comments = match github_json::<Vec<IssueCommentResponse>>(context, Method::GET, &path, None)
+    {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueCommentsOutput {
+            command: "github.issue.comments",
+            repository: context.repo.full_name(),
+            number,
+            comment_count: comments.len(),
+            comments: comments.clone(),
+        },
+        render_comments_text(&comments),
+    )
 }
 
 fn execute_release(
@@ -971,6 +1404,86 @@ fn run_artifacts(
     )
 }
 
+fn get_issue(context: &GithubContext, number: u64) -> Result<IssueResponse, InvocationResponse> {
+    let path = format!(
+        "/repos/{}/{}/issues/{number}",
+        context.repo.owner, context.repo.repo
+    );
+    github_json::<IssueResponse>(context, Method::GET, &path, None)
+}
+
+fn create_issue_comment(
+    context: &GithubContext,
+    number: u64,
+    body: String,
+) -> Result<IssueCommentResponse, InvocationResponse> {
+    let path = format!(
+        "/repos/{}/{}/issues/{number}/comments",
+        context.repo.owner, context.repo.repo
+    );
+    github_json::<IssueCommentResponse>(context, Method::POST, &path, Some(json!({ "body": body })))
+}
+
+fn github_issues_list_path(context: &GithubContext, args: &IssuesArgs, per_page: usize) -> String {
+    let mut query = vec![
+        format!("state={}", urlencoding::encode(&args.state)),
+        format!("per_page={per_page}"),
+    ];
+    if !args.labels.is_empty() {
+        query.push(format!(
+            "labels={}",
+            urlencoding::encode(&args.labels.join(","))
+        ));
+    }
+    if let Some(assignee) = &args.assignee {
+        query.push(format!("assignee={}", urlencoding::encode(assignee)));
+    }
+    if let Some(author) = &args.author {
+        query.push(format!("creator={}", urlencoding::encode(author)));
+    }
+    if let Some(since) = &args.since {
+        query.push(format!("since={}", urlencoding::encode(since)));
+    }
+    format!(
+        "/repos/{}/{}/issues?{}",
+        context.repo.owner,
+        context.repo.repo,
+        query.join("&")
+    )
+}
+
+fn github_issue_search_path(
+    context: &GithubContext,
+    args: &IssuesArgs,
+    search: &str,
+    per_page: usize,
+) -> String {
+    let mut qualifiers = vec![
+        format!("repo:{}/{}", context.repo.owner, context.repo.repo),
+        "is:issue".to_owned(),
+        search.to_owned(),
+    ];
+    if args.state != "all" {
+        qualifiers.push(format!("state:{}", args.state));
+    }
+    for label in &args.labels {
+        qualifiers.push(format!("label:\"{label}\""));
+    }
+    if let Some(assignee) = &args.assignee {
+        qualifiers.push(format!("assignee:{assignee}"));
+    }
+    if let Some(author) = &args.author {
+        qualifiers.push(format!("author:{author}"));
+    }
+    if let Some(since) = &args.since {
+        qualifiers.push(format!("updated:>={since}"));
+    }
+    format!(
+        "/search/issues?q={}&per_page={per_page}",
+        urlencoding::encode(&qualifiers.join(" "))
+    )
+}
+
 fn get_release(context: &GithubContext, tag: &str) -> Result<ReleaseResponse, InvocationResponse> {
     let path = format!(
         "/repos/{}/{}/releases/tags/{}",
@@ -1324,6 +1837,41 @@ fn parse_key_values(values: &[String], flag_name: &str) -> Result<Value, Invocat
     Ok(Value::Object(map))
 }
 
+fn resolve_optional_text(
+    inline: Option<String>,
+    file: Option<String>,
+    field_name: &str,
+) -> Result<Option<String>, InvocationResponse> {
+    match (inline, file) {
+        (Some(value), None) => Ok(Some(value)),
+        (None, Some(path)) => fs::read_to_string(&path).map(Some).map_err(|error| {
+            InvocationResponse::error(
+                "FILE_READ_FAILED",
+                format!("failed to read {field_name} file '{path}': {error}"),
+            )
+        }),
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("use either --{field_name} or --{field_name}-file, not both"),
+        )),
+    }
+}
+
+fn resolve_required_text(
+    inline: Option<String>,
+    file: Option<String>,
+    field_name: &str,
+) -> Result<String, InvocationResponse> {
+    match resolve_optional_text(inline, file, field_name)? {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        _ => Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("--{field_name} or --{field_name}-file is required"),
+        )),
+    }
+}
+
 fn grep_lines(lines: &[LogLine], pattern: &str) -> Vec<LogLine> {
     let needle = pattern.to_lowercase();
     lines
@@ -1368,6 +1916,56 @@ fn render_success<T: Serialize>(
     } else {
         InvocationResponse::ok(Some(text_output))
     }
+}
+
+fn render_issues_text(issues: &[IssueResponse]) -> String {
+    if issues.is_empty() {
+        return String::new();
+    }
+    issues
+        .iter()
+        .map(|issue| {
+            format!(
+                "#{} {} {} {}",
+                issue.number,
+                issue.state,
+                issue.title,
+                issue.html_url.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_comments_text(comments: &[IssueCommentResponse]) -> String {
+    if comments.is_empty() {
+        return String::new();
+    }
+    comments
+        .iter()
+        .map(|comment| {
+            let first_line = comment
+                .body
+                .as_deref()
+                .unwrap_or("")
+                .lines()
+                .next()
+                .unwrap_or("");
+            format!(
+                "{} {} {}",
+                comment.id,
+                comment
+                    .user
+                    .as_ref()
+                    .map(|user| user.login.as_str())
+                    .unwrap_or("-"),
+                first_line
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
 }
 
 fn render_release_text(release: &ReleaseResponse) -> String {
@@ -1469,6 +2067,48 @@ fn plugin_manual() -> PluginManual {
                 summary: "Detect GitHub repository context.".to_owned(),
                 usage: "repo [--repo OWNER/REPO] [--remote NAME] [--api-url URL] [--token TOKEN] [--use-git-credential]".to_owned(),
                 examples: vec![manual_example("Inspect current GitHub repository", &["repo"])],
+            },
+            ManualCommand {
+                name: "issues".to_owned(),
+                summary: "List GitHub issues.".to_owned(),
+                usage: "issues [--state open|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT]".to_owned(),
+                examples: vec![manual_example("List open bugs", &["issues", "--label", "bug"])],
+            },
+            ManualCommand {
+                name: "issue get".to_owned(),
+                summary: "Get issue metadata.".to_owned(),
+                usage: "issue get <number>".to_owned(),
+                examples: vec![manual_example("Inspect issue", &["issue", "get", "42"])],
+            },
+            ManualCommand {
+                name: "issue create".to_owned(),
+                summary: "Create an issue.".to_owned(),
+                usage: "issue create --title TITLE [--body TEXT|--body-file PATH] [--label LABEL ...] [--assignee USER ...]".to_owned(),
+                examples: vec![manual_example("Create bug issue", &["issue", "create", "--title", "Fix build", "--body", "Build fails", "--label", "bug"])],
+            },
+            ManualCommand {
+                name: "issue update".to_owned(),
+                summary: "Update issue fields.".to_owned(),
+                usage: "issue update <number> [--title TITLE] [--body TEXT|--body-file PATH] [--state open|closed] [--label LABEL ...] [--assignee USER ...]".to_owned(),
+                examples: vec![manual_example("Close issue via update", &["issue", "update", "42", "--state", "closed"])],
+            },
+            ManualCommand {
+                name: "issue close".to_owned(),
+                summary: "Close an issue, optionally after adding a comment.".to_owned(),
+                usage: "issue close <number> [--comment TEXT|--comment-file PATH]".to_owned(),
+                examples: vec![manual_example("Close with comment", &["issue", "close", "42", "--comment", "Fixed in main"])],
+            },
+            ManualCommand {
+                name: "issue comment".to_owned(),
+                summary: "Add an issue comment.".to_owned(),
+                usage: "issue comment <number> --body TEXT|--body-file PATH".to_owned(),
+                examples: vec![manual_example("Comment on issue", &["issue", "comment", "42", "--body", "I can reproduce this"])],
+            },
+            ManualCommand {
+                name: "issue comments".to_owned(),
+                summary: "List issue comments.".to_owned(),
+                usage: "issue comments <number>".to_owned(),
+                examples: vec![manual_example("List comments", &["issue", "comments", "42"])],
             },
             ManualCommand {
                 name: "release get".to_owned(),
@@ -1658,6 +2298,226 @@ mod tests {
         .expect("inputs should parse");
         assert_eq!(parsed["target"], "main");
         assert_eq!(parsed["dry_run"], "true");
+    }
+
+    #[test]
+    fn issues_list_uses_filters_and_limit() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"[{
+                "number": 12,
+                "title": "Fix build",
+                "body": "body",
+                "state": "open",
+                "html_url": "https://github.com/acme/tool/issues/12",
+                "user": {"login": "alice"},
+                "labels": [{"name": "bug"}],
+                "assignees": [{"login": "bob"}],
+                "comments": 1,
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z",
+                "closed_at": null
+            }]"#,
+        )]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--repo",
+                "acme/tool",
+                "--api-url",
+                &server.url(),
+                "issues",
+                "--state",
+                "all",
+                "--label",
+                "bug",
+                "--assignee",
+                "bob",
+                "--author",
+                "alice",
+                "--since",
+                "2026-05-07T00:00:00Z",
+            ],
+            Some(5),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.issues");
+        assert_eq!(payload["issue_count"], 1);
+        let request = only_request(&server);
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.path,
+            "/repos/acme/tool/issues?state=all&per_page=5&labels=bug&assignee=bob&creator=alice&since=2026-05-07T00%3A00%3A00Z"
+        );
+    }
+
+    #[test]
+    fn issues_search_uses_search_api() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{"items": [{
+                "number": 13,
+                "title": "Crash on startup",
+                "body": "body",
+                "state": "open",
+                "html_url": "https://github.com/acme/tool/issues/13",
+                "user": {"login": "alice"},
+                "labels": [],
+                "assignees": [],
+                "comments": 0,
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z",
+                "closed_at": null
+            }]}"#,
+        )]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--repo",
+                "acme/tool",
+                "--api-url",
+                &server.url(),
+                "issues",
+                "--search",
+                "startup crash",
+            ],
+            Some(3),
+        );
+
+        assert!(response.success, "{response:?}");
+        let request = only_request(&server);
+        assert!(request.path.starts_with("/search/issues?q="));
+        assert!(request.path.contains("per_page=3"));
+    }
+
+    #[test]
+    fn issue_create_and_update_send_expected_bodies() {
+        let create_server = MockServer::new(vec![MockResponse::json(201, issue_json(21, "open"))]);
+        let create_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &create_server.url(),
+            "issue",
+            "create",
+            "--title",
+            "Fix build",
+            "--body",
+            "details",
+            "--label",
+            "bug",
+            "--assignee",
+            "bob",
+        ]);
+        assert!(create_response.success, "{create_response:?}");
+        let create_request = only_request(&create_server);
+        assert_eq!(create_request.method, "POST");
+        assert_eq!(create_request.path, "/repos/acme/tool/issues");
+        let create_body: Value =
+            serde_json::from_str(&create_request.body).expect("body should be json");
+        assert_eq!(create_body["title"], "Fix build");
+        assert_eq!(create_body["body"], "details");
+        assert_eq!(create_body["labels"][0], "bug");
+        assert_eq!(create_body["assignees"][0], "bob");
+
+        let update_server =
+            MockServer::new(vec![MockResponse::json(200, issue_json(21, "closed"))]);
+        let update_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &update_server.url(),
+            "issue",
+            "update",
+            "21",
+            "--state",
+            "closed",
+            "--label",
+            "fixed",
+        ]);
+        assert!(update_response.success, "{update_response:?}");
+        let update_request = only_request(&update_server);
+        assert_eq!(update_request.method, "PATCH");
+        assert_eq!(update_request.path, "/repos/acme/tool/issues/21");
+        let update_body: Value =
+            serde_json::from_str(&update_request.body).expect("body should be json");
+        assert_eq!(update_body["state"], "closed");
+        assert_eq!(update_body["labels"][0], "fixed");
+    }
+
+    #[test]
+    fn issue_close_comments_then_closes() {
+        let server = MockServer::new(vec![
+            MockResponse::json(201, issue_comment_json(101)),
+            MockResponse::json(200, issue_json(21, "closed")),
+        ]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "issue",
+            "close",
+            "21",
+            "--comment",
+            "fixed",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "POST");
+        assert_eq!(requests[0].path, "/repos/acme/tool/issues/21/comments");
+        assert_eq!(requests[1].method, "PATCH");
+        assert_eq!(requests[1].path, "/repos/acme/tool/issues/21");
+    }
+
+    #[test]
+    fn issue_comment_and_comments_work() {
+        let comment_server =
+            MockServer::new(vec![MockResponse::json(201, issue_comment_json(101))]);
+        let comment_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &comment_server.url(),
+            "issue",
+            "comment",
+            "21",
+            "--body",
+            "hello",
+        ]);
+        assert!(comment_response.success, "{comment_response:?}");
+        let comment_payload = response_json(&comment_response);
+        assert_eq!(comment_payload["command"], "github.issue.comment");
+
+        let list_server = MockServer::new(vec![MockResponse::json(
+            200,
+            &format!("[{}]", issue_comment_json(101)),
+        )]);
+        let list_response = invoke_json_with_limit(
+            &[
+                "--repo",
+                "acme/tool",
+                "--api-url",
+                &list_server.url(),
+                "issue",
+                "comments",
+                "21",
+            ],
+            Some(2),
+        );
+        assert!(list_response.success, "{list_response:?}");
+        let list_payload = response_json(&list_response);
+        assert_eq!(list_payload["command"], "github.issue.comments");
+        assert_eq!(list_payload["comment_count"], 1);
+        assert_eq!(
+            only_request(&list_server).path,
+            "/repos/acme/tool/issues/21/comments?per_page=2"
+        );
     }
 
     #[test]
@@ -2070,6 +2930,40 @@ mod tests {
         Box::leak(raw.into_boxed_str())
     }
 
+    fn issue_json(number: u64, state: &str) -> &'static str {
+        let raw = format!(
+            r#"{{
+                "number": {number},
+                "title": "Fix build",
+                "body": "body",
+                "state": "{state}",
+                "html_url": "https://github.com/acme/tool/issues/{number}",
+                "user": {{"login": "alice"}},
+                "labels": [{{"name": "bug"}}],
+                "assignees": [{{"login": "bob"}}],
+                "comments": 1,
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z",
+                "closed_at": null
+            }}"#
+        );
+        Box::leak(raw.into_boxed_str())
+    }
+
+    fn issue_comment_json(id: u64) -> &'static str {
+        let raw = format!(
+            r#"{{
+                "id": {id},
+                "body": "hello",
+                "html_url": "https://github.com/acme/tool/issues/21#issuecomment-{id}",
+                "user": {{"login": "alice"}},
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z"
+            }}"#
+        );
+        Box::leak(raw.into_boxed_str())
+    }
+
     fn only_request(server: &MockServer) -> CapturedRequest {
         let requests = server.requests();
         assert_eq!(requests.len(), 1);
@@ -2203,6 +3097,9 @@ mod tests {
         response: MockResponse,
         requests: &Arc<Mutex<Vec<CapturedRequest>>>,
     ) {
+        stream
+            .set_nonblocking(false)
+            .expect("accepted stream should be blocking");
         let mut reader = BufReader::new(stream.try_clone().expect("stream should clone"));
         let mut first_line = String::new();
         reader

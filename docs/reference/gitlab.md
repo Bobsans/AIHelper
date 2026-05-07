@@ -68,6 +68,64 @@ ah gitlab release create <tag> [--name NAME] [--description TEXT|--description-f
 
 This command does not bump versions, edit changelogs, commit, tag, or push. It only calls the GitLab Releases API.
 
+## `ah gitlab issues`
+
+List project issues.
+
+```bash
+ah gitlab issues [--state opened|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT] [--limit N]
+```
+
+`--since` maps to GitLab's `updated_after` filter. Custom GitLab hosts keep using the same global `--host` and `--api-url` options as the rest of the plugin.
+
+## `ah gitlab issue get`
+
+Get issue metadata by internal issue id (`iid`).
+
+```bash
+ah gitlab issue get <iid>
+```
+
+## `ah gitlab issue create`
+
+Create an issue.
+
+```bash
+ah gitlab issue create --title TITLE [--description TEXT|--description-file PATH] [--label LABEL ...] [--assignee-id ID ...]
+```
+
+## `ah gitlab issue update`
+
+Update issue fields.
+
+```bash
+ah gitlab issue update <iid> [--title TITLE] [--description TEXT|--description-file PATH] [--state opened|closed] [--label LABEL ...] [--assignee-id ID ...]
+```
+
+## `ah gitlab issue close`
+
+Close an issue, optionally after adding a comment.
+
+```bash
+ah gitlab issue close <iid> [--comment TEXT|--comment-file PATH]
+```
+
+## `ah gitlab issue comment`
+
+Add an issue comment.
+
+```bash
+ah gitlab issue comment <iid> --body TEXT|--body-file PATH
+```
+
+## `ah gitlab issue comments`
+
+List issue comments.
+
+```bash
+ah gitlab issue comments <iid> [--limit N]
+```
+
 ## `ah gitlab pipelines`
 
 List pipelines.
@@ -132,6 +190,13 @@ Stable command identifiers in JSON include:
 - `gitlab.releases`
 - `gitlab.release.get`
 - `gitlab.release.create`
+- `gitlab.issues`
+- `gitlab.issue.get`
+- `gitlab.issue.create`
+- `gitlab.issue.update`
+- `gitlab.issue.close`
+- `gitlab.issue.comment`
+- `gitlab.issue.comments`
 - `gitlab.pipelines`
 - `gitlab.pipeline.get`
 - `gitlab.pipeline.wait`

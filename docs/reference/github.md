@@ -34,6 +34,64 @@ ah github repo
 ah --json github --repo Bobsans/AIHelper repo
 ```
 
+## `ah github issues`
+
+List repository issues. Pull requests are filtered out of the returned issue list.
+
+```bash
+ah github issues [--state open|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT] [--limit N]
+```
+
+`--search` uses GitHub issue search scoped to the selected repository.
+
+## `ah github issue get`
+
+Get issue metadata by issue number.
+
+```bash
+ah github issue get <number>
+```
+
+## `ah github issue create`
+
+Create an issue.
+
+```bash
+ah github issue create --title TITLE [--body TEXT|--body-file PATH] [--label LABEL ...] [--assignee USER ...]
+```
+
+## `ah github issue update`
+
+Update issue fields.
+
+```bash
+ah github issue update <number> [--title TITLE] [--body TEXT|--body-file PATH] [--state open|closed] [--label LABEL ...] [--assignee USER ...]
+```
+
+## `ah github issue close`
+
+Close an issue, optionally after adding a comment.
+
+```bash
+ah github issue close <number> [--comment TEXT|--comment-file PATH]
+```
+
+## `ah github issue comment`
+
+Add an issue comment.
+
+```bash
+ah github issue comment <number> --body TEXT|--body-file PATH
+```
+
+## `ah github issue comments`
+
+List issue comments.
+
+```bash
+ah github issue comments <number> [--limit N]
+```
+
 ## `ah github release get`
 
 Get release metadata by tag.
@@ -161,6 +219,13 @@ Text output is compact by default. Use global `--json` for structured machine-re
 Stable command identifiers in JSON include:
 
 - `github.repo`
+- `github.issues`
+- `github.issue.get`
+- `github.issue.create`
+- `github.issue.update`
+- `github.issue.close`
+- `github.issue.comment`
+- `github.issue.comments`
 - `github.release.get`
 - `github.release.assets`
 - `github.release.create`

@@ -66,6 +66,10 @@ struct GitlabConnectionArgs {
 enum GitlabCommand {
     #[command(about = "Inspect detected GitLab project")]
     Project,
+    #[command(about = "List GitLab issues")]
+    Issues(IssuesArgs),
+    #[command(about = "Work with GitLab issues")]
+    Issue(IssueArgs),
     #[command(about = "List GitLab releases")]
     Releases,
     #[command(about = "Work with GitLab releases")]
@@ -76,6 +80,98 @@ enum GitlabCommand {
     Pipeline(PipelineArgs),
     #[command(about = "Inspect GitLab job")]
     Job(JobArgs),
+}
+
+#[derive(Debug, Args)]
+struct IssuesArgs {
+    #[arg(long, default_value = "opened", value_parser = ["opened", "closed", "all"])]
+    state: String,
+    #[arg(long = "label", value_name = "LABEL")]
+    labels: Vec<String>,
+    #[arg(long)]
+    assignee: Option<String>,
+    #[arg(long)]
+    author: Option<String>,
+    #[arg(long)]
+    since: Option<String>,
+    #[arg(long)]
+    search: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct IssueArgs {
+    #[command(subcommand)]
+    command: IssueCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum IssueCommand {
+    #[command(about = "Get issue metadata")]
+    Get(IssueIidArgs),
+    #[command(about = "Create an issue")]
+    Create(CreateIssueArgs),
+    #[command(about = "Update an issue")]
+    Update(UpdateIssueArgs),
+    #[command(about = "Close an issue")]
+    Close(CloseIssueArgs),
+    #[command(about = "Add an issue comment")]
+    Comment(CommentIssueArgs),
+    #[command(about = "List issue comments")]
+    Comments(IssueIidArgs),
+}
+
+#[derive(Debug, Args)]
+struct IssueIidArgs {
+    iid: u64,
+}
+
+#[derive(Debug, Args)]
+struct CreateIssueArgs {
+    #[arg(long)]
+    title: String,
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    description_file: Option<String>,
+    #[arg(long = "label", value_name = "LABEL")]
+    labels: Vec<String>,
+    #[arg(long = "assignee-id", value_name = "ID")]
+    assignee_ids: Vec<u64>,
+}
+
+#[derive(Debug, Args)]
+struct UpdateIssueArgs {
+    iid: u64,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    description_file: Option<String>,
+    #[arg(long, value_parser = ["opened", "closed"])]
+    state: Option<String>,
+    #[arg(long = "label", value_name = "LABEL")]
+    labels: Vec<String>,
+    #[arg(long = "assignee-id", value_name = "ID")]
+    assignee_ids: Vec<u64>,
+}
+
+#[derive(Debug, Args)]
+struct CloseIssueArgs {
+    iid: u64,
+    #[arg(long, value_name = "TEXT")]
+    comment: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    comment_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CommentIssueArgs {
+    iid: u64,
+    #[arg(long, value_name = "TEXT")]
+    body: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    body_file: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -216,6 +312,81 @@ struct GitlabProjectResponse {
     web_url: Option<String>,
     default_branch: Option<String>,
     visibility: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct GitlabUser {
+    id: Option<u64>,
+    username: Option<String>,
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct IssueResponse {
+    id: u64,
+    iid: u64,
+    project_id: Option<u64>,
+    title: String,
+    description: Option<String>,
+    state: String,
+    web_url: Option<String>,
+    author: Option<GitlabUser>,
+    #[serde(default)]
+    assignees: Option<Vec<GitlabUser>>,
+    #[serde(default)]
+    labels: Vec<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    closed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssuesOutput {
+    command: &'static str,
+    project: String,
+    state: String,
+    labels: Vec<String>,
+    assignee: Option<String>,
+    author: Option<String>,
+    since: Option<String>,
+    search: Option<String>,
+    issue_count: usize,
+    issues: Vec<IssueResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueOutput {
+    command: &'static str,
+    project: String,
+    issue: IssueResponse,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct IssueNoteResponse {
+    id: u64,
+    body: Option<String>,
+    author: Option<GitlabUser>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    system: Option<bool>,
+    web_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueNotesOutput {
+    command: &'static str,
+    project: String,
+    iid: u64,
+    comment_count: usize,
+    comments: Vec<IssueNoteResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueNoteOutput {
+    command: &'static str,
+    project: String,
+    iid: u64,
+    comment: IssueNoteResponse,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -436,6 +607,8 @@ fn execute(cli: GitlabCli, globals: &GlobalOptionsWire) -> InvocationResponse {
 
     match cli.command {
         GitlabCommand::Project => execute_project(&context, globals),
+        GitlabCommand::Issues(args) => execute_issues(args, &context, globals),
+        GitlabCommand::Issue(args) => execute_issue(args, &context, globals),
         GitlabCommand::Releases => execute_releases(&context, globals),
         GitlabCommand::Release(args) => execute_release(args, &context, globals),
         GitlabCommand::Pipelines(args) => execute_pipelines(args, &context, globals),
@@ -472,6 +645,254 @@ fn execute_project(context: &GitlabContext, globals: &GlobalOptionsWire) -> Invo
     };
 
     render_success(globals, &output, format!("{}\n", output.project))
+}
+
+fn execute_issues(
+    args: IssuesArgs,
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let path = gitlab_issues_list_path(context, &args, per_page);
+    let issues = match gitlab_json::<Vec<IssueResponse>>(context, Method::GET, &path, None) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssuesOutput {
+            command: "gitlab.issues",
+            project: context.project.value.clone(),
+            state: args.state,
+            labels: args.labels,
+            assignee: args.assignee,
+            author: args.author,
+            since: args.since,
+            search: args.search,
+            issue_count: issues.len(),
+            issues: issues.clone(),
+        },
+        render_issues_text(&issues),
+    )
+}
+
+fn execute_issue(
+    args: IssueArgs,
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    match args.command {
+        IssueCommand::Get(args) => {
+            let issue = match get_issue(context, args.iid) {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            render_success(
+                globals,
+                &IssueOutput {
+                    command: "gitlab.issue.get",
+                    project: context.project.value.clone(),
+                    issue: issue.clone(),
+                },
+                render_issues_text(std::slice::from_ref(&issue)),
+            )
+        }
+        IssueCommand::Create(args) => create_issue(context, args, globals),
+        IssueCommand::Update(args) => update_issue(context, args, globals),
+        IssueCommand::Close(args) => close_issue(context, args, globals),
+        IssueCommand::Comment(args) => comment_issue(context, args, globals),
+        IssueCommand::Comments(args) => issue_comments(context, args.iid, globals),
+    }
+}
+
+fn create_issue(
+    context: &GitlabContext,
+    args: CreateIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let description =
+        match resolve_optional_text(args.description, args.description_file, "description") {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+    let mut body = serde_json::Map::new();
+    body.insert("title".to_owned(), Value::String(args.title));
+    if let Some(description) = description {
+        body.insert("description".to_owned(), Value::String(description));
+    }
+    if !args.labels.is_empty() {
+        body.insert("labels".to_owned(), Value::String(args.labels.join(",")));
+    }
+    if !args.assignee_ids.is_empty() {
+        body.insert("assignee_ids".to_owned(), json!(args.assignee_ids));
+    }
+    let path = format!("/projects/{}/issues", context.project.encoded());
+    let issue =
+        match gitlab_json::<IssueResponse>(context, Method::POST, &path, Some(Value::Object(body)))
+        {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+    render_success(
+        globals,
+        &IssueOutput {
+            command: "gitlab.issue.create",
+            project: context.project.value.clone(),
+            issue: issue.clone(),
+        },
+        render_issues_text(std::slice::from_ref(&issue)),
+    )
+}
+
+fn update_issue(
+    context: &GitlabContext,
+    args: UpdateIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let description =
+        match resolve_optional_text(args.description, args.description_file, "description") {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+    let mut body = serde_json::Map::new();
+    if let Some(title) = args.title {
+        body.insert("title".to_owned(), Value::String(title));
+    }
+    if let Some(description) = description {
+        body.insert("description".to_owned(), Value::String(description));
+    }
+    if let Some(state) = args.state {
+        body.insert(
+            "state_event".to_owned(),
+            Value::String(gitlab_state_event(&state).to_owned()),
+        );
+    }
+    if !args.labels.is_empty() {
+        body.insert("labels".to_owned(), Value::String(args.labels.join(",")));
+    }
+    if !args.assignee_ids.is_empty() {
+        body.insert("assignee_ids".to_owned(), json!(args.assignee_ids));
+    }
+    if body.is_empty() {
+        return InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "issue update requires at least one field",
+        );
+    }
+    let path = format!(
+        "/projects/{}/issues/{}",
+        context.project.encoded(),
+        args.iid
+    );
+    let issue = match gitlab_json::<IssueResponse>(
+        context,
+        Method::PUT,
+        &path,
+        Some(Value::Object(body)),
+    ) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueOutput {
+            command: "gitlab.issue.update",
+            project: context.project.value.clone(),
+            issue: issue.clone(),
+        },
+        render_issues_text(std::slice::from_ref(&issue)),
+    )
+}
+
+fn close_issue(
+    context: &GitlabContext,
+    args: CloseIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let comment = match resolve_optional_text(args.comment, args.comment_file, "comment") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    if let Some(comment) = comment {
+        if let Err(error) = create_issue_note(context, args.iid, comment) {
+            return error;
+        }
+    }
+    let path = format!(
+        "/projects/{}/issues/{}",
+        context.project.encoded(),
+        args.iid
+    );
+    let issue = match gitlab_json::<IssueResponse>(
+        context,
+        Method::PUT,
+        &path,
+        Some(json!({ "state_event": "close" })),
+    ) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueOutput {
+            command: "gitlab.issue.close",
+            project: context.project.value.clone(),
+            issue: issue.clone(),
+        },
+        render_issues_text(std::slice::from_ref(&issue)),
+    )
+}
+
+fn comment_issue(
+    context: &GitlabContext,
+    args: CommentIssueArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let body = match resolve_required_text(args.body, args.body_file, "body") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let comment = match create_issue_note(context, args.iid, body) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueNoteOutput {
+            command: "gitlab.issue.comment",
+            project: context.project.value.clone(),
+            iid: args.iid,
+            comment: comment.clone(),
+        },
+        render_comments_text(std::slice::from_ref(&comment)),
+    )
+}
+
+fn issue_comments(
+    context: &GitlabContext,
+    iid: u64,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let path = format!(
+        "/projects/{}/issues/{iid}/notes?per_page={per_page}&activity_filter=only_comments",
+        context.project.encoded()
+    );
+    let comments = match gitlab_json::<Vec<IssueNoteResponse>>(context, Method::GET, &path, None) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    render_success(
+        globals,
+        &IssueNotesOutput {
+            command: "gitlab.issue.comments",
+            project: context.project.value.clone(),
+            iid,
+            comment_count: comments.len(),
+            comments: comments.clone(),
+        },
+        render_comments_text(&comments),
+    )
 }
 
 fn execute_releases(context: &GitlabContext, globals: &GlobalOptionsWire) -> InvocationResponse {
@@ -1093,6 +1514,96 @@ fn download_job_trace(context: &GitlabContext, job_id: u64) -> Result<String, In
     })
 }
 
+fn get_issue(context: &GitlabContext, iid: u64) -> Result<IssueResponse, InvocationResponse> {
+    let path = format!("/projects/{}/issues/{iid}", context.project.encoded());
+    gitlab_json::<IssueResponse>(context, Method::GET, &path, None)
+}
+
+fn create_issue_note(
+    context: &GitlabContext,
+    iid: u64,
+    body: String,
+) -> Result<IssueNoteResponse, InvocationResponse> {
+    let path = format!("/projects/{}/issues/{iid}/notes", context.project.encoded());
+    gitlab_json::<IssueNoteResponse>(context, Method::POST, &path, Some(json!({ "body": body })))
+}
+
+fn gitlab_issues_list_path(context: &GitlabContext, args: &IssuesArgs, per_page: usize) -> String {
+    let mut query = vec![
+        "scope=all".to_owned(),
+        format!("state={}", urlencoding::encode(&args.state)),
+        format!("per_page={per_page}"),
+    ];
+    if !args.labels.is_empty() {
+        query.push(format!(
+            "labels={}",
+            urlencoding::encode(&args.labels.join(","))
+        ));
+    }
+    if let Some(assignee) = &args.assignee {
+        query.push(format!(
+            "assignee_username={}",
+            urlencoding::encode(assignee)
+        ));
+    }
+    if let Some(author) = &args.author {
+        query.push(format!("author_username={}", urlencoding::encode(author)));
+    }
+    if let Some(since) = &args.since {
+        query.push(format!("updated_after={}", urlencoding::encode(since)));
+    }
+    if let Some(search) = &args.search {
+        query.push(format!("search={}", urlencoding::encode(search)));
+    }
+    format!(
+        "/projects/{}/issues?{}",
+        context.project.encoded(),
+        query.join("&")
+    )
+}
+
+fn gitlab_state_event(state: &str) -> &'static str {
+    match state {
+        "closed" => "close",
+        _ => "reopen",
+    }
+}
+
+fn resolve_optional_text(
+    inline: Option<String>,
+    file: Option<String>,
+    field_name: &str,
+) -> Result<Option<String>, InvocationResponse> {
+    match (inline, file) {
+        (Some(value), None) => Ok(Some(value)),
+        (None, Some(path)) => fs::read_to_string(&path).map(Some).map_err(|error| {
+            InvocationResponse::error(
+                "FILE_READ_FAILED",
+                format!("failed to read {field_name} file '{path}': {error}"),
+            )
+        }),
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("use either --{field_name} or --{field_name}-file, not both"),
+        )),
+    }
+}
+
+fn resolve_required_text(
+    inline: Option<String>,
+    file: Option<String>,
+    field_name: &str,
+) -> Result<String, InvocationResponse> {
+    match resolve_optional_text(inline, file, field_name)? {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        _ => Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("--{field_name} or --{field_name}-file is required"),
+        )),
+    }
+}
+
 fn grep_lines(lines: &[TraceLine], pattern: &str) -> Vec<TraceLine> {
     let needle = pattern.to_lowercase();
     lines
@@ -1144,6 +1655,56 @@ fn render_success<T: Serialize>(
     } else {
         InvocationResponse::ok(Some(text_output))
     }
+}
+
+fn render_issues_text(issues: &[IssueResponse]) -> String {
+    if issues.is_empty() {
+        return String::new();
+    }
+    issues
+        .iter()
+        .map(|issue| {
+            format!(
+                "#{} {} {} {}",
+                issue.iid,
+                issue.state,
+                issue.title,
+                issue.web_url.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_comments_text(comments: &[IssueNoteResponse]) -> String {
+    if comments.is_empty() {
+        return String::new();
+    }
+    comments
+        .iter()
+        .map(|comment| {
+            let first_line = comment
+                .body
+                .as_deref()
+                .unwrap_or("")
+                .lines()
+                .next()
+                .unwrap_or("");
+            format!(
+                "{} {} {}",
+                comment.id,
+                comment
+                    .author
+                    .as_ref()
+                    .and_then(|user| user.username.as_deref())
+                    .unwrap_or("-"),
+                first_line
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
 }
 
 fn render_releases_text(releases: &[ReleaseResponse]) -> String {
@@ -1279,6 +1840,48 @@ fn plugin_manual() -> PluginManual {
                     "Create release from description file",
                     &["release", "create", "v1.0.1", "--name", "v1.0.1", "--description-file", "RELEASE_NOTES.md"],
                 )],
+            },
+            ManualCommand {
+                name: "issues".to_owned(),
+                summary: "List GitLab issues.".to_owned(),
+                usage: "issues [--state opened|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT]".to_owned(),
+                examples: vec![manual_example("List open bugs", &["issues", "--label", "bug"])],
+            },
+            ManualCommand {
+                name: "issue get".to_owned(),
+                summary: "Get issue metadata.".to_owned(),
+                usage: "issue get <iid>".to_owned(),
+                examples: vec![manual_example("Inspect issue", &["issue", "get", "42"])],
+            },
+            ManualCommand {
+                name: "issue create".to_owned(),
+                summary: "Create an issue.".to_owned(),
+                usage: "issue create --title TITLE [--description TEXT|--description-file PATH] [--label LABEL ...] [--assignee-id ID ...]".to_owned(),
+                examples: vec![manual_example("Create bug issue", &["issue", "create", "--title", "Fix build", "--description", "Build fails", "--label", "bug"])],
+            },
+            ManualCommand {
+                name: "issue update".to_owned(),
+                summary: "Update issue fields.".to_owned(),
+                usage: "issue update <iid> [--title TITLE] [--description TEXT|--description-file PATH] [--state opened|closed] [--label LABEL ...] [--assignee-id ID ...]".to_owned(),
+                examples: vec![manual_example("Close issue via update", &["issue", "update", "42", "--state", "closed"])],
+            },
+            ManualCommand {
+                name: "issue close".to_owned(),
+                summary: "Close an issue, optionally after adding a comment.".to_owned(),
+                usage: "issue close <iid> [--comment TEXT|--comment-file PATH]".to_owned(),
+                examples: vec![manual_example("Close with comment", &["issue", "close", "42", "--comment", "Fixed in main"])],
+            },
+            ManualCommand {
+                name: "issue comment".to_owned(),
+                summary: "Add an issue comment.".to_owned(),
+                usage: "issue comment <iid> --body TEXT|--body-file PATH".to_owned(),
+                examples: vec![manual_example("Comment on issue", &["issue", "comment", "42", "--body", "I can reproduce this"])],
+            },
+            ManualCommand {
+                name: "issue comments".to_owned(),
+                summary: "List issue comments.".to_owned(),
+                usage: "issue comments <iid>".to_owned(),
+                examples: vec![manual_example("List comments", &["issue", "comments", "42"])],
             },
             ManualCommand {
                 name: "pipelines".to_owned(),
@@ -1647,6 +2250,192 @@ mod tests {
     }
 
     #[test]
+    fn issues_list_uses_filters_and_limit() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            &format!("[{}]", issue_json(21, "opened")),
+        )]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--project",
+                "group/tool",
+                "--api-url",
+                &server.url(),
+                "issues",
+                "--state",
+                "all",
+                "--label",
+                "bug",
+                "--assignee",
+                "bob",
+                "--author",
+                "alice",
+                "--since",
+                "2026-05-07T00:00:00Z",
+                "--search",
+                "crash",
+            ],
+            Some(5),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "gitlab.issues");
+        assert_eq!(payload["issue_count"], 1);
+        let request = only_request(&server);
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.path,
+            "/projects/group%2Ftool/issues?scope=all&state=all&per_page=5&labels=bug&assignee_username=bob&author_username=alice&updated_after=2026-05-07T00%3A00%3A00Z&search=crash"
+        );
+    }
+
+    #[test]
+    fn issue_create_and_update_send_expected_bodies() {
+        let create_server =
+            MockServer::new(vec![MockResponse::json(201, issue_json(21, "opened"))]);
+
+        let create_response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &create_server.url(),
+            "issue",
+            "create",
+            "--title",
+            "Fix build",
+            "--description",
+            "Build fails",
+            "--label",
+            "bug",
+            "--assignee-id",
+            "10",
+        ]);
+
+        assert!(create_response.success, "{create_response:?}");
+        let create_request = only_request(&create_server);
+        assert_eq!(create_request.method, "POST");
+        assert_eq!(create_request.path, "/projects/group%2Ftool/issues");
+        let create_body: Value =
+            serde_json::from_str(&create_request.body).expect("body should be json");
+        assert_eq!(create_body["title"], "Fix build");
+        assert_eq!(create_body["description"], "Build fails");
+        assert_eq!(create_body["labels"], "bug");
+        assert_eq!(create_body["assignee_ids"], json!([10]));
+
+        let update_server =
+            MockServer::new(vec![MockResponse::json(200, issue_json(21, "closed"))]);
+
+        let update_response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &update_server.url(),
+            "issue",
+            "update",
+            "21",
+            "--state",
+            "closed",
+            "--label",
+            "fixed",
+        ]);
+
+        assert!(update_response.success, "{update_response:?}");
+        let update_request = only_request(&update_server);
+        assert_eq!(update_request.method, "PUT");
+        assert_eq!(update_request.path, "/projects/group%2Ftool/issues/21");
+        let update_body: Value =
+            serde_json::from_str(&update_request.body).expect("body should be json");
+        assert_eq!(update_body["state_event"], "close");
+        assert_eq!(update_body["labels"], "fixed");
+    }
+
+    #[test]
+    fn issue_close_comments_then_closes() {
+        let server = MockServer::new(vec![
+            MockResponse::json(201, issue_note_json(101)),
+            MockResponse::json(200, issue_json(21, "closed")),
+        ]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "issue",
+            "close",
+            "21",
+            "--comment",
+            "Fixed in main",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "POST");
+        assert_eq!(requests[0].path, "/projects/group%2Ftool/issues/21/notes");
+        assert_eq!(requests[1].method, "PUT");
+        assert_eq!(requests[1].path, "/projects/group%2Ftool/issues/21");
+        let close_body: Value =
+            serde_json::from_str(&requests[1].body).expect("body should be json");
+        assert_eq!(close_body["state_event"], "close");
+    }
+
+    #[test]
+    fn issue_comment_and_comments_work() {
+        let comment_server = MockServer::new(vec![MockResponse::json(201, issue_note_json(101))]);
+
+        let comment_response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &comment_server.url(),
+            "issue",
+            "comment",
+            "21",
+            "--body",
+            "I can reproduce this",
+        ]);
+
+        assert!(comment_response.success, "{comment_response:?}");
+        let comment_payload = response_json(&comment_response);
+        assert_eq!(comment_payload["command"], "gitlab.issue.comment");
+        let comment_request = only_request(&comment_server);
+        assert_eq!(
+            comment_request.path,
+            "/projects/group%2Ftool/issues/21/notes"
+        );
+
+        let list_server = MockServer::new(vec![MockResponse::json(
+            200,
+            &format!("[{}]", issue_note_json(101)),
+        )]);
+
+        let list_response = invoke_json_with_limit(
+            &[
+                "--project",
+                "group/tool",
+                "--api-url",
+                &list_server.url(),
+                "issue",
+                "comments",
+                "21",
+            ],
+            Some(2),
+        );
+
+        assert!(list_response.success, "{list_response:?}");
+        let list_payload = response_json(&list_response);
+        assert_eq!(list_payload["command"], "gitlab.issue.comments");
+        let list_request = only_request(&list_server);
+        assert_eq!(
+            list_request.path,
+            "/projects/group%2Ftool/issues/21/notes?per_page=2&activity_filter=only_comments"
+        );
+    }
+
+    #[test]
     fn gitlab_api_failure_has_stable_error_code() {
         let server = MockServer::new(vec![MockResponse::json(
             404,
@@ -1711,6 +2500,41 @@ mod tests {
                 "web_url": "https://gitlab.example.com/group/tool/-/pipelines/{id}",
                 "created_at": "2026-05-07T00:00:00Z",
                 "updated_at": "2026-05-07T00:01:00Z"
+            }}"#
+        );
+        Box::leak(raw.into_boxed_str())
+    }
+
+    fn issue_json(iid: u64, state: &str) -> &'static str {
+        let raw = format!(
+            r#"{{
+                "id": {iid},
+                "iid": {iid},
+                "project_id": 9,
+                "title": "Fix build",
+                "description": "Build fails",
+                "state": "{state}",
+                "web_url": "https://gitlab.example.com/group/tool/-/issues/{iid}",
+                "author": {{"id": 1, "username": "alice", "name": "Alice"}},
+                "assignees": [{{"id": 10, "username": "bob", "name": "Bob"}}],
+                "labels": ["bug"],
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z",
+                "closed_at": null
+            }}"#
+        );
+        Box::leak(raw.into_boxed_str())
+    }
+
+    fn issue_note_json(id: u64) -> &'static str {
+        let raw = format!(
+            r#"{{
+                "id": {id},
+                "body": "I can reproduce this",
+                "author": {{"id": 10, "username": "bob", "name": "Bob"}},
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z",
+                "system": false
             }}"#
         );
         Box::leak(raw.into_boxed_str())
@@ -1831,6 +2655,9 @@ mod tests {
         response: MockResponse,
         requests: &Arc<Mutex<Vec<CapturedRequest>>>,
     ) {
+        stream
+            .set_nonblocking(false)
+            .expect("accepted stream should be blocking");
         let mut reader = BufReader::new(stream.try_clone().expect("stream should clone"));
         let mut first_line = String::new();
         reader
