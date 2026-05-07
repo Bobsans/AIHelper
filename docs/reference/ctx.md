@@ -33,7 +33,8 @@ ah ctx symbols <path> [--preset <summary|review|debug>] [--max-bytes BYTES] [--f
 Behavior:
 - for directory input, scans files recursively
 - `--limit` caps number of files scanned
-- supports Rust/Markdown/Python/JS/TS/Vue/Go heuristics
+- supports Rust, Markdown, Python, JS/TS/Vue, Go, Java, Kotlin, Scala, C#, PHP, Ruby, Elixir/Erlang, Swift, Dart, C/C++, Zig, Lua, Perl, R, Julia, Haskell, OCaml, Terraform/OpenTofu, YAML, TOML, shell/PowerShell, Dockerfile, Makefile/Justfile/Rakefile heuristics
+- extracts common structural symbols such as functions, methods, classes, interfaces, structs, enums, records, modules, namespaces, packages, Terraform blocks, TOML sections, YAML top-level keys, Docker stages, and task targets
 - `--preset` controls default file limit and symbol density per file
 - `--max-bytes` skips files larger than limit (default: `8388608`)
 - `--follow-symlinks` enables symlink traversal

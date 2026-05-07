@@ -2,16 +2,15 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
 };
 
 use clap::{Args, Subcommand, ValueEnum};
-use regex::Regex;
 use serde::Serialize;
 use walkdir::WalkDir;
 
 use crate::{
     cli::GlobalOptions,
+    commands::ctx_symbols::{Symbol, extract_symbols},
     error::AppError,
     output::OutputMode,
     safety::{self, TextFileDecision, TextFilePolicy, TextFileSkipReason},
@@ -74,13 +73,6 @@ pub struct SymbolsArgs {
 
 #[derive(Debug, Args)]
 pub struct ChangedArgs {}
-
-#[derive(Debug, Clone, Serialize)]
-struct Symbol {
-    line: usize,
-    kind: String,
-    name: String,
-}
 
 #[derive(Debug, Serialize)]
 struct SymbolsFileOutput {
@@ -646,263 +638,6 @@ fn is_text_candidate(path: &Path, _size_bytes: u64) -> bool {
             | "avi"
             | "mov"
     )
-}
-
-fn extract_symbols(path: &Path, content: &str) -> Vec<Symbol> {
-    let ext = path
-        .extension()
-        .map(|value| value.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-
-    match ext.as_str() {
-        "rs" => extract_rust_symbols(content),
-        "md" | "markdown" => extract_markdown_symbols(content),
-        "py" => extract_python_symbols(content),
-        "js" | "jsx" | "ts" | "tsx" | "vue" => extract_js_ts_symbols(content),
-        "go" => extract_go_symbols(content),
-        _ => extract_generic_symbols(content),
-    }
-}
-
-fn extract_rust_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = rust_fn_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "fn".to_owned(),
-                name: captures[3].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = rust_type_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: captures[2].to_owned(),
-                name: captures[3].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = rust_impl_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "impl".to_owned(),
-                name: captures[2].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = rust_mod_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "mod".to_owned(),
-                name: captures[2].to_owned(),
-            });
-        }
-    }
-    symbols
-}
-
-fn extract_markdown_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('#') {
-            continue;
-        }
-        let level = trimmed.chars().take_while(|char| *char == '#').count();
-        let name = trimmed[level..].trim();
-        if name.is_empty() {
-            continue;
-        }
-        symbols.push(Symbol {
-            line: index + 1,
-            kind: format!("h{level}"),
-            name: name.to_owned(),
-        });
-    }
-    symbols
-}
-
-fn extract_python_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = python_class_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "class".to_owned(),
-                name: captures[1].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = python_fn_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "def".to_owned(),
-                name: captures[1].to_owned(),
-            });
-        }
-    }
-    symbols
-}
-
-fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = js_class_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "class".to_owned(),
-                name: captures[2].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = js_function_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "function".to_owned(),
-                name: captures[3].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = js_interface_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "interface".to_owned(),
-                name: captures[2].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = js_type_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "type".to_owned(),
-                name: captures[2].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = js_const_fn_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "const-fn".to_owned(),
-                name: captures[2].to_owned(),
-            });
-        }
-    }
-    symbols
-}
-
-fn extract_go_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = go_func_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "func".to_owned(),
-                name: captures[1].to_owned(),
-            });
-            continue;
-        }
-        if let Some(captures) = go_type_re().captures(line) {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "type".to_owned(),
-                name: captures[1].to_owned(),
-            });
-        }
-    }
-    symbols
-}
-
-fn extract_generic_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("class ")
-            || trimmed.starts_with("interface ")
-            || trimmed.starts_with("fn ")
-            || trimmed.starts_with("def ")
-        {
-            symbols.push(Symbol {
-                line: index + 1,
-                kind: "symbol".to_owned(),
-                name: trimmed.to_owned(),
-            });
-        }
-    }
-    symbols
-}
-
-fn rust_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?(async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn rust_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?(struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn rust_impl_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*impl(\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_:<>]*)"))
-}
-
-fn rust_mod_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn python_class_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn python_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn js_class_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn js_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(export\s+)?(async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn js_interface_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn js_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*="))
-}
-
-fn js_const_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(async\s*)?\(")
-    })
-}
-
-fn go_func_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn go_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+"))
-}
-
-fn compile_regex(pattern: &str) -> Regex {
-    Regex::new(pattern).expect("valid ctx symbol regex")
 }
 
 fn is_inside_git_repo() -> Result<bool, AppError> {

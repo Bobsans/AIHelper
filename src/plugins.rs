@@ -278,7 +278,8 @@ fn ctx_manual() -> PluginManual {
             },
             ManualCommand {
                 name: "symbols".to_owned(),
-                summary: "Extract symbols from file or directory.".to_owned(),
+                summary:
+                    "Extract code, config, and document symbols from file or directory.".to_owned(),
                 usage: "symbols <path> [--preset <summary|review|debug>] [--max-bytes BYTES] [--follow-symlinks]".to_owned(),
                 examples: vec![manual_example(
                     "Extract symbols from commands module",
@@ -297,6 +298,7 @@ fn ctx_manual() -> PluginManual {
         ],
         notes: vec![
             "Presets tune default limits and symbol density.".to_owned(),
+            "Symbol extraction uses lightweight heuristics across common programming, infra, config, and script files.".to_owned(),
             "Pair with --json for downstream prompt assembly.".to_owned(),
         ],
     }
@@ -383,18 +385,19 @@ fn project_manual() -> PluginManual {
     PluginManual {
         plugin_name: project_metadata().plugin_name,
         domain: "project".to_owned(),
-        description: "Detect project ecosystems and suggest common commands.".to_owned(),
+        description: "Detect project ecosystems, tools, roles, versions, and suggested commands."
+            .to_owned(),
         commands: vec![
             ManualCommand {
                 name: "detect".to_owned(),
-                summary: "Detect ecosystems, package files, CI files, docs, and changelog files."
+                summary: "Detect ecosystems, tools, roles, grouped files, versions, and commands."
                     .to_owned(),
                 usage: "detect [path]".to_owned(),
                 examples: vec![manual_example("Detect current project", &["detect"])],
             },
             ManualCommand {
                 name: "commands".to_owned(),
-                summary: "Suggest likely install, test, build, and release-build commands."
+                summary: "Suggest likely install, test, build, release, and infra commands."
                     .to_owned(),
                 usage: "commands [path]".to_owned(),
                 examples: vec![manual_example(
@@ -413,7 +416,10 @@ fn project_manual() -> PluginManual {
             },
         ],
         notes: vec![
-            "Detection is heuristic and does not execute package managers.".to_owned(),
+            "Detection is heuristic and does not execute package managers or infra tools."
+                .to_owned(),
+            "JSON detect output includes compatibility fields plus richer grouped snapshot fields."
+                .to_owned(),
             "Use with ah run check to execute suggested commands explicitly.".to_owned(),
         ],
     }

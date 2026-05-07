@@ -10,6 +10,13 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - `ah git commit-info` for commit metadata, touched files, and line stats.
 - `ah git tag create` for simple local tag creation.
 - `ah project version` for version detection from common manifest files.
+- Expanded `ah project detect` with richer snapshot fields for tools, roles, grouped files, versions, and suggested commands.
+- Broader `ah project` ecosystem detection for additional languages, platforms, infrastructure, quality, and security tooling.
+- Package-manager-aware `ah project commands` suggestions for Node projects plus additional language and infrastructure tools.
+- Expanded `ah ctx symbols` heuristics across common programming, infrastructure, config, and script files.
+
+### Changed
+- Moved `ah ctx` symbol extraction into a dedicated internal module.
 
 ## [0.4.0] - 2026-05-07
 

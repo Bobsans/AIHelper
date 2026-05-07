@@ -1,4 +1,5 @@
 pub mod ctx;
+pub mod ctx_symbols;
 pub mod file;
 pub mod git;
 pub mod http;

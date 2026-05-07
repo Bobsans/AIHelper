@@ -151,3 +151,126 @@ fn ctx_pack_summary_preset_limits_symbol_preview() {
         .expect("symbols should be array for pack item");
     assert_eq!(symbols.len(), 4);
 }
+
+#[test]
+fn ctx_symbols_extracts_extended_language_symbols() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let root = temp_dir.path();
+    fs::write(
+        root.join("Main.java"),
+        "package demo;\npublic interface Service {}\npublic record User(String name) {}\npublic class App {\n  public void run() {}\n}\n",
+    )
+    .expect("java file should be written");
+    fs::write(
+        root.join("App.kt"),
+        "package demo\n\ndata class Person(val name: String)\nfun boot() {}\n",
+    )
+    .expect("kotlin file should be written");
+    fs::write(
+        root.join("Program.cs"),
+        "namespace Demo;\npublic record Item(string Name);\npublic class App {\n  public void Run() {}\n}\n",
+    )
+    .expect("csharp file should be written");
+    fs::write(
+        root.join("lib.php"),
+        "<?php\nnamespace App;\ninterface Handler {}\nfunction handle() {}\n",
+    )
+    .expect("php file should be written");
+    fs::write(
+        root.join("worker.rb"),
+        "module Demo\nclass Worker\n  def perform\n  end\nend\n",
+    )
+    .expect("ruby file should be written");
+    fs::write(
+        root.join("main.dart"),
+        "class Widget {}\nvoid render() {}\n",
+    )
+    .expect("dart file should be written");
+    fs::write(
+        root.join("main.tf"),
+        "resource \"aws_s3_bucket\" \"logs\" {}\nmodule \"network\" {}\nvariable \"region\" {}\n",
+    )
+    .expect("terraform file should be written");
+
+    let cwd = root.to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "ctx", "symbols", &cwd])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    let mut names = Vec::new();
+    for file in payload["files"].as_array().expect("files should be array") {
+        for symbol in file["symbols"].as_array().expect("symbols should be array") {
+            names.push(format!(
+                "{} {}",
+                symbol["kind"].as_str().unwrap(),
+                symbol["name"].as_str().unwrap()
+            ));
+        }
+    }
+
+    for expected in [
+        "package demo",
+        "interface Service",
+        "record User",
+        "class App",
+        "class Person",
+        "fun boot",
+        "namespace Demo",
+        "record Item",
+        "namespace App",
+        "interface Handler",
+        "function handle",
+        "module Demo",
+        "class Worker",
+        "def perform",
+        "class Widget",
+        "function render",
+        "resource aws_s3_bucket.logs",
+        "module network",
+        "variable region",
+    ] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "missing {expected}"
+        );
+    }
+}
+
+#[test]
+fn ctx_symbols_extracts_config_and_script_symbols() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let root = temp_dir.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\n\n[dependencies]\nserde = \"1\"\n",
+    )
+    .expect("toml file should be written");
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  app:\n    image: demo\nvolumes:\n  data:\n",
+    )
+    .expect("yaml file should be written");
+    fs::write(root.join("script.sh"), "build() {\n  echo ok\n}\n")
+        .expect("shell file should be written");
+    fs::write(root.join("Dockerfile"), "FROM rust:latest AS builder\n")
+        .expect("Dockerfile should be written");
+    fs::write(root.join("Makefile"), "test:\n\tcargo test\n").expect("Makefile should be written");
+
+    let cwd = root.to_string_lossy().to_string();
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["ctx", "symbols", &cwd])
+        .assert()
+        .success()
+        .stdout(contains("section package"))
+        .stdout(contains("section dependencies"))
+        .stdout(contains("key services"))
+        .stdout(contains("key volumes"))
+        .stdout(contains("function build"))
+        .stdout(contains("stage builder"))
+        .stdout(contains("target test"));
+}
