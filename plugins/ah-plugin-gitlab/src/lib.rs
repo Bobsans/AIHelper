@@ -1,0 +1,1899 @@
+use std::{
+    env,
+    ffi::c_char,
+    fs,
+    io::Write,
+    process::{Command, Stdio},
+    ptr,
+    sync::atomic::{AtomicPtr, Ordering},
+    thread,
+    time::{Duration, Instant},
+};
+
+use ah_plugin_api::{
+    AH_PLUGIN_ABI_VERSION, AhPluginApiV1, GlobalOptionsWire, InvocationRequest, InvocationResponse,
+    ManualCommand, ManualExample, PluginManual, c_ptr_to_string, free_c_string_ptr,
+    manual_to_c_string, response_to_c_string,
+};
+use clap::{Args, Parser, Subcommand, error::ErrorKind};
+use reqwest::{Method, blocking::Client};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
+
+const DOMAIN: &str = "gitlab";
+const PLUGIN_NAME: &str = "external-gitlab";
+const DESCRIPTION: &str = "GitLab Releases and Pipelines plugin (dynamic)";
+const DEFAULT_HOST: &str = "https://gitlab.com";
+const DEFAULT_REMOTE: &str = "origin";
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
+const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 1800;
+
+static PLUGIN_NAME_C: &[u8] = b"external-gitlab\0";
+static DOMAIN_C: &[u8] = b"gitlab\0";
+static DESCRIPTION_C: &[u8] = b"GitLab Releases and Pipelines plugin (dynamic)\0";
+
+static PLUGIN_API_PTR: AtomicPtr<AhPluginApiV1> = AtomicPtr::new(ptr::null_mut());
+
+#[derive(Debug, Parser)]
+#[command(name = "gitlab", about = "GitLab release and pipeline helpers")]
+struct GitlabCli {
+    #[command(flatten)]
+    connection: GitlabConnectionArgs,
+    #[command(subcommand)]
+    command: GitlabCommand,
+}
+
+#[derive(Debug, Args, Clone)]
+struct GitlabConnectionArgs {
+    #[arg(long, global = true, value_name = "PATH_OR_ID")]
+    project: Option<String>,
+    #[arg(long, global = true, default_value = DEFAULT_REMOTE, value_name = "NAME")]
+    remote: String,
+    #[arg(long, global = true, default_value = DEFAULT_HOST, value_name = "URL")]
+    host: String,
+    #[arg(long, global = true, value_name = "URL")]
+    api_url: Option<String>,
+    #[arg(long, global = true, value_name = "TOKEN")]
+    token: Option<String>,
+    #[arg(long, global = true)]
+    use_git_credential: bool,
+    #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    timeout_secs: u64,
+}
+
+#[derive(Debug, Subcommand)]
+enum GitlabCommand {
+    #[command(about = "Inspect detected GitLab project")]
+    Project,
+    #[command(about = "List GitLab releases")]
+    Releases,
+    #[command(about = "Work with GitLab releases")]
+    Release(ReleaseArgs),
+    #[command(about = "List GitLab pipelines")]
+    Pipelines(PipelinesArgs),
+    #[command(about = "Inspect GitLab pipeline")]
+    Pipeline(PipelineArgs),
+    #[command(about = "Inspect GitLab job")]
+    Job(JobArgs),
+}
+
+#[derive(Debug, Args)]
+struct ReleaseArgs {
+    #[command(subcommand)]
+    command: ReleaseCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ReleaseCommand {
+    #[command(about = "Get release metadata by tag")]
+    Get(TagArgs),
+    #[command(about = "Create a GitLab release for an existing or new tag")]
+    Create(CreateReleaseArgs),
+}
+
+#[derive(Debug, Args)]
+struct TagArgs {
+    tag: String,
+}
+
+#[derive(Debug, Args)]
+struct CreateReleaseArgs {
+    tag: String,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    description_file: Option<String>,
+    #[arg(long)]
+    r#ref: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PipelinesArgs {
+    #[arg(long, value_name = "BRANCH")]
+    branch: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PipelineArgs {
+    #[command(subcommand)]
+    command: PipelineCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PipelineCommand {
+    #[command(about = "Get pipeline metadata")]
+    Get(PipelineIdArgs),
+    #[command(about = "Wait for pipeline completion")]
+    Wait(WaitPipelineArgs),
+    #[command(about = "List pipeline jobs")]
+    Jobs(PipelineIdArgs),
+}
+
+#[derive(Debug, Args)]
+struct PipelineIdArgs {
+    pipeline_id: u64,
+}
+
+#[derive(Debug, Args)]
+struct WaitPipelineArgs {
+    pipeline_id: u64,
+    #[arg(long, default_value_t = DEFAULT_WAIT_INTERVAL_SECS, value_name = "SECONDS")]
+    interval_secs: u64,
+    #[arg(long, default_value_t = DEFAULT_WAIT_TIMEOUT_SECS, value_name = "SECONDS")]
+    timeout_secs: u64,
+    #[arg(long)]
+    fail_on_failure: bool,
+}
+
+#[derive(Debug, Args)]
+struct JobArgs {
+    #[command(subcommand)]
+    command: JobCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum JobCommand {
+    #[command(about = "Read job trace")]
+    Trace(JobTraceArgs),
+    #[command(about = "Extract warning-like lines from job trace")]
+    Warnings(JobIdArgs),
+}
+
+#[derive(Debug, Args)]
+struct JobTraceArgs {
+    job_id: u64,
+    #[arg(long)]
+    grep: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct JobIdArgs {
+    job_id: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectRef {
+    value: String,
+}
+
+impl ProjectRef {
+    fn encoded(&self) -> String {
+        urlencoding::encode(&self.value).into_owned()
+    }
+}
+
+#[derive(Debug)]
+struct GitlabContext {
+    client: Client,
+    host: String,
+    api_url: String,
+    token: Option<String>,
+    project: ProjectRef,
+    remote_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectOutput {
+    command: &'static str,
+    project: String,
+    remote_url: Option<String>,
+    host: String,
+    api_url: String,
+    id: Option<u64>,
+    path_with_namespace: Option<String>,
+    web_url: Option<String>,
+    default_branch: Option<String>,
+    visibility: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GitlabProjectResponse {
+    id: Option<u64>,
+    path_with_namespace: Option<String>,
+    web_url: Option<String>,
+    default_branch: Option<String>,
+    visibility: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct ReleaseResponse {
+    tag_name: String,
+    name: Option<String>,
+    description: Option<String>,
+    created_at: Option<String>,
+    released_at: Option<String>,
+    upcoming_release: Option<bool>,
+    assets: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleasesOutput {
+    command: &'static str,
+    project: String,
+    release_count: usize,
+    releases: Vec<ReleaseResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseOutput {
+    command: &'static str,
+    project: String,
+    release: ReleaseResponse,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct PipelineResponse {
+    id: u64,
+    iid: Option<u64>,
+    project_id: Option<u64>,
+    sha: Option<String>,
+    r#ref: Option<String>,
+    status: String,
+    source: Option<String>,
+    web_url: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PipelinesOutput {
+    command: &'static str,
+    project: String,
+    branch: Option<String>,
+    pipeline_count: usize,
+    pipelines: Vec<PipelineResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct PipelineOutput {
+    command: &'static str,
+    project: String,
+    pipeline: PipelineResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct WaitPipelineOutput {
+    command: &'static str,
+    project: String,
+    pipeline: PipelineResponse,
+    elapsed_secs: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct JobResponse {
+    id: u64,
+    name: String,
+    status: String,
+    stage: Option<String>,
+    r#ref: Option<String>,
+    allow_failure: Option<bool>,
+    web_url: Option<String>,
+    created_at: Option<String>,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct JobsOutput {
+    command: &'static str,
+    project: String,
+    pipeline_id: u64,
+    job_count: usize,
+    jobs: Vec<JobResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TraceLine {
+    line: usize,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TraceOutput {
+    command: &'static str,
+    project: String,
+    job_id: u64,
+    grep: Option<String>,
+    match_count: usize,
+    truncated: bool,
+    matches: Vec<TraceLine>,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
+    let existing = PLUGIN_API_PTR.load(Ordering::Acquire);
+    if !existing.is_null() {
+        return existing.cast_const();
+    }
+
+    let created = Box::into_raw(Box::new(AhPluginApiV1 {
+        abi_version: AH_PLUGIN_ABI_VERSION,
+        plugin_name: PLUGIN_NAME_C.as_ptr().cast(),
+        domain: DOMAIN_C.as_ptr().cast(),
+        description: DESCRIPTION_C.as_ptr().cast(),
+        invoke_json: ah_plugin_invoke_json,
+        free_c_string: ah_plugin_free_c_string,
+    }));
+
+    match PLUGIN_API_PTR.compare_exchange(
+        ptr::null_mut(),
+        created,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => created.cast_const(),
+        Err(existing) => {
+            unsafe { drop(Box::from_raw(created)) };
+            existing.cast_const()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ah_plugin_manual_json_v1() -> *mut c_char {
+    manual_to_c_string(&plugin_manual())
+}
+
+unsafe extern "C" fn ah_plugin_invoke_json(request_json: *const c_char) -> *mut c_char {
+    let response = invoke_from_raw(request_json);
+    response_to_c_string(&response)
+}
+
+unsafe extern "C" fn ah_plugin_free_c_string(value: *mut c_char) {
+    unsafe { free_c_string_ptr(value) };
+}
+
+fn invoke_from_raw(request_json: *const c_char) -> InvocationResponse {
+    let request_json = match unsafe { c_ptr_to_string(request_json) } {
+        Ok(value) => value,
+        Err(error) => {
+            return InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                format!("invalid request pointer: {error}"),
+            );
+        }
+    };
+
+    let request = match serde_json::from_str::<InvocationRequest>(&request_json) {
+        Ok(value) => value,
+        Err(error) => {
+            return InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                format!("invalid request JSON: {error}"),
+            );
+        }
+    };
+
+    if request.domain != DOMAIN {
+        return InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!(
+                "plugin domain mismatch: expected '{DOMAIN}', got '{}'",
+                request.domain
+            ),
+        );
+    }
+
+    let parsed = match parse_args(&request.argv) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+
+    execute(parsed, &request.globals)
+}
+
+fn parse_args(argv: &[String]) -> Result<GitlabCli, InvocationResponse> {
+    let mut args = Vec::with_capacity(argv.len() + 1);
+    args.push(DOMAIN.to_owned());
+    args.extend(argv.iter().cloned());
+
+    match GitlabCli::try_parse_from(args) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                Err(InvocationResponse::ok(Some(error.to_string())))
+            } else {
+                Err(InvocationResponse::error(
+                    "INVALID_ARGUMENT",
+                    error.to_string(),
+                ))
+            }
+        }
+    }
+}
+
+fn execute(cli: GitlabCli, globals: &GlobalOptionsWire) -> InvocationResponse {
+    let context = match gitlab_context(&cli.connection) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+
+    match cli.command {
+        GitlabCommand::Project => execute_project(&context, globals),
+        GitlabCommand::Releases => execute_releases(&context, globals),
+        GitlabCommand::Release(args) => execute_release(args, &context, globals),
+        GitlabCommand::Pipelines(args) => execute_pipelines(args, &context, globals),
+        GitlabCommand::Pipeline(args) => execute_pipeline(args, &context, globals),
+        GitlabCommand::Job(args) => execute_job(args, &context, globals),
+    }
+}
+
+fn execute_project(context: &GitlabContext, globals: &GlobalOptionsWire) -> InvocationResponse {
+    let path = format!("/projects/{}", context.project.encoded());
+    let project_response = gitlab_json::<GitlabProjectResponse>(context, Method::GET, &path, None);
+    let (id, path_with_namespace, web_url, default_branch, visibility) = match project_response {
+        Ok(value) => (
+            value.id,
+            value.path_with_namespace,
+            value.web_url,
+            value.default_branch,
+            value.visibility,
+        ),
+        Err(_) => (None, None, None, None, None),
+    };
+
+    let output = ProjectOutput {
+        command: "gitlab.project",
+        project: context.project.value.clone(),
+        remote_url: context.remote_url.clone(),
+        host: context.host.clone(),
+        api_url: context.api_url.clone(),
+        id,
+        path_with_namespace,
+        web_url,
+        default_branch,
+        visibility,
+    };
+
+    render_success(globals, &output, format!("{}\n", output.project))
+}
+
+fn execute_releases(context: &GitlabContext, globals: &GlobalOptionsWire) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let path = format!(
+        "/projects/{}/releases?per_page={per_page}",
+        context.project.encoded()
+    );
+    let releases = match gitlab_json::<Vec<ReleaseResponse>>(context, Method::GET, &path, None) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let text = render_releases_text(&releases);
+    render_success(
+        globals,
+        &ReleasesOutput {
+            command: "gitlab.releases",
+            project: context.project.value.clone(),
+            release_count: releases.len(),
+            releases,
+        },
+        text,
+    )
+}
+
+fn execute_release(
+    args: ReleaseArgs,
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    match args.command {
+        ReleaseCommand::Get(args) => {
+            let release = match get_release(context, &args.tag) {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let text = render_release_text(&release);
+            render_success(
+                globals,
+                &ReleaseOutput {
+                    command: "gitlab.release.get",
+                    project: context.project.value.clone(),
+                    release,
+                },
+                text,
+            )
+        }
+        ReleaseCommand::Create(args) => create_release(context, args, globals),
+    }
+}
+
+fn execute_pipelines(
+    args: PipelinesArgs,
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(10).max(1).min(100);
+    let ref_query = args
+        .branch
+        .as_ref()
+        .map(|branch| format!("&ref={}", urlencoding::encode(branch)))
+        .unwrap_or_default();
+    let path = format!(
+        "/projects/{}/pipelines?per_page={per_page}{ref_query}",
+        context.project.encoded()
+    );
+    let pipelines = match gitlab_json::<Vec<PipelineResponse>>(context, Method::GET, &path, None) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let text = render_pipelines_text(&pipelines);
+    render_success(
+        globals,
+        &PipelinesOutput {
+            command: "gitlab.pipelines",
+            project: context.project.value.clone(),
+            branch: args.branch,
+            pipeline_count: pipelines.len(),
+            pipelines,
+        },
+        text,
+    )
+}
+
+fn execute_pipeline(
+    args: PipelineArgs,
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    match args.command {
+        PipelineCommand::Get(args) => {
+            let pipeline = match get_pipeline(context, args.pipeline_id) {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let text = render_pipelines_text(std::slice::from_ref(&pipeline));
+            render_success(
+                globals,
+                &PipelineOutput {
+                    command: "gitlab.pipeline.get",
+                    project: context.project.value.clone(),
+                    pipeline,
+                },
+                text,
+            )
+        }
+        PipelineCommand::Wait(args) => wait_pipeline(context, args, globals),
+        PipelineCommand::Jobs(args) => pipeline_jobs(context, args.pipeline_id, globals),
+    }
+}
+
+fn execute_job(
+    args: JobArgs,
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    match args.command {
+        JobCommand::Trace(args) => job_trace(context, args.job_id, args.grep, globals, false),
+        JobCommand::Warnings(args) => job_trace(context, args.job_id, None, globals, true),
+    }
+}
+
+fn create_release(
+    context: &GitlabContext,
+    args: CreateReleaseArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let description = match (args.description, args.description_file) {
+        (Some(description), None) => Some(description),
+        (None, Some(path)) => match fs::read_to_string(&path) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                return InvocationResponse::error(
+                    "FILE_READ_FAILED",
+                    format!("failed to read description file '{path}': {error}"),
+                );
+            }
+        },
+        (None, None) => None,
+        (Some(_), Some(_)) => {
+            return InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                "use either --description or --description-file, not both",
+            );
+        }
+    };
+    let body = json!({
+        "tag_name": args.tag,
+        "name": args.name,
+        "description": description,
+        "ref": args.r#ref,
+    });
+    let path = format!("/projects/{}/releases", context.project.encoded());
+    let release = match gitlab_json::<ReleaseResponse>(context, Method::POST, &path, Some(body)) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let text = render_release_text(&release);
+    render_success(
+        globals,
+        &ReleaseOutput {
+            command: "gitlab.release.create",
+            project: context.project.value.clone(),
+            release,
+        },
+        text,
+    )
+}
+
+fn wait_pipeline(
+    context: &GitlabContext,
+    args: WaitPipelineArgs,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(args.timeout_secs.max(1));
+    let interval = Duration::from_secs(args.interval_secs.max(1));
+
+    loop {
+        let pipeline = match get_pipeline(context, args.pipeline_id) {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+        if is_pipeline_terminal(&pipeline.status) {
+            if args.fail_on_failure && pipeline.status != "success" {
+                return InvocationResponse::error(
+                    "GITLAB_PIPELINE_FAILED",
+                    format!(
+                        "pipeline {} completed with status {}",
+                        pipeline.id, pipeline.status
+                    ),
+                );
+            }
+            let elapsed_secs = start.elapsed().as_secs();
+            let text = render_pipelines_text(std::slice::from_ref(&pipeline));
+            return render_success(
+                globals,
+                &WaitPipelineOutput {
+                    command: "gitlab.pipeline.wait",
+                    project: context.project.value.clone(),
+                    pipeline,
+                    elapsed_secs,
+                },
+                text,
+            );
+        }
+
+        if start.elapsed() >= timeout {
+            return InvocationResponse::error(
+                "GITLAB_PIPELINE_TIMEOUT",
+                format!(
+                    "pipeline {} did not complete within {} seconds",
+                    args.pipeline_id, args.timeout_secs
+                ),
+            );
+        }
+        thread::sleep(interval);
+    }
+}
+
+fn pipeline_jobs(
+    context: &GitlabContext,
+    pipeline_id: u64,
+    globals: &GlobalOptionsWire,
+) -> InvocationResponse {
+    let path = format!(
+        "/projects/{}/pipelines/{pipeline_id}/jobs?per_page=100",
+        context.project.encoded()
+    );
+    let jobs = match gitlab_json::<Vec<JobResponse>>(context, Method::GET, &path, None) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let text = render_jobs_text(&jobs);
+    render_success(
+        globals,
+        &JobsOutput {
+            command: "gitlab.pipeline.jobs",
+            project: context.project.value.clone(),
+            pipeline_id,
+            job_count: jobs.len(),
+            jobs,
+        },
+        text,
+    )
+}
+
+fn job_trace(
+    context: &GitlabContext,
+    job_id: u64,
+    grep: Option<String>,
+    globals: &GlobalOptionsWire,
+    warnings_only: bool,
+) -> InvocationResponse {
+    let trace = match download_job_trace(context, job_id) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let lines = trace
+        .lines()
+        .enumerate()
+        .map(|(index, line)| TraceLine {
+            line: index + 1,
+            text: strip_ansi_sequences(line),
+        })
+        .collect::<Vec<_>>();
+    let mut matches = if warnings_only {
+        warning_lines(&lines)
+    } else if let Some(pattern) = &grep {
+        grep_lines(&lines, pattern)
+    } else {
+        lines
+    };
+    let truncated = apply_limit(&mut matches, globals.limit);
+    let text = matches
+        .iter()
+        .map(|line| format!("{}: {}", line.line, line.text))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if matches.is_empty() { "" } else { "\n" };
+    render_success(
+        globals,
+        &TraceOutput {
+            command: if warnings_only {
+                "gitlab.job.warnings"
+            } else {
+                "gitlab.job.trace"
+            },
+            project: context.project.value.clone(),
+            job_id,
+            grep,
+            match_count: matches.len(),
+            truncated,
+            matches,
+        },
+        text,
+    )
+}
+
+fn get_release(context: &GitlabContext, tag: &str) -> Result<ReleaseResponse, InvocationResponse> {
+    let path = format!(
+        "/projects/{}/releases/{}",
+        context.project.encoded(),
+        urlencoding::encode(tag)
+    );
+    gitlab_json::<ReleaseResponse>(context, Method::GET, &path, None)
+}
+
+fn get_pipeline(
+    context: &GitlabContext,
+    pipeline_id: u64,
+) -> Result<PipelineResponse, InvocationResponse> {
+    let path = format!(
+        "/projects/{}/pipelines/{pipeline_id}",
+        context.project.encoded()
+    );
+    gitlab_json::<PipelineResponse>(context, Method::GET, &path, None)
+}
+
+fn gitlab_context(args: &GitlabConnectionArgs) -> Result<GitlabContext, InvocationResponse> {
+    let host = normalize_host(&args.host)?;
+    let api_url = normalize_api_url(args.api_url.as_deref(), &host)?;
+    let (project, remote_url) = resolve_project(args, &host)?;
+    let token = resolve_token(args, &host);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(args.timeout_secs.max(1)))
+        .build()
+        .map_err(|error| {
+            InvocationResponse::error(
+                "GITLAB_HTTP_FAILED",
+                format!("failed to create HTTP client: {error}"),
+            )
+        })?;
+
+    Ok(GitlabContext {
+        client,
+        host,
+        api_url,
+        token,
+        project,
+        remote_url,
+    })
+}
+
+fn resolve_project(
+    args: &GitlabConnectionArgs,
+    host: &str,
+) -> Result<(ProjectRef, Option<String>), InvocationResponse> {
+    if let Some(project) = &args.project {
+        return parse_project_ref(project)
+            .map(|project| (project, None))
+            .ok_or_else(|| invalid_project(project));
+    }
+
+    let remote_url = read_git_remote_url(&args.remote)?;
+    parse_gitlab_remote_url(&remote_url, host)
+        .map(|project| (project, Some(remote_url.clone())))
+        .ok_or_else(|| {
+            InvocationResponse::error(
+                "GITLAB_PROJECT_UNDETECTED",
+                format!(
+                    "could not detect GitLab project from remote '{}' for host '{}': {}",
+                    args.remote, host, remote_url
+                ),
+            )
+        })
+}
+
+fn read_git_remote_url(remote: &str) -> Result<String, InvocationResponse> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", remote])
+        .output()
+        .map_err(|error| {
+            InvocationResponse::error(
+                "COMMAND_EXECUTION_FAILED",
+                format!("failed to execute git remote get-url {remote}: {error}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(InvocationResponse::error(
+            "COMMAND_FAILED",
+            format!(
+                "git remote get-url {remote} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn parse_project_ref(value: &str) -> Option<ProjectRef> {
+    let normalized = value.trim().trim_matches('/').trim_end_matches(".git");
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.chars().all(|ch| ch.is_ascii_digit()) {
+        return Some(ProjectRef {
+            value: normalized.to_owned(),
+        });
+    }
+    if normalized.split('/').count() < 2 || normalized.split('/').any(str::is_empty) {
+        return None;
+    }
+    Some(ProjectRef {
+        value: normalized.to_owned(),
+    })
+}
+
+fn parse_gitlab_remote_url(remote: &str, host: &str) -> Option<ProjectRef> {
+    let host_authority = host_authority(host)?;
+    let trimmed = remote.trim();
+
+    if let Some(rest) = trimmed.strip_prefix("git@") {
+        let (remote_host, path) = rest.split_once(':')?;
+        if remote_host.eq_ignore_ascii_case(&host_authority) {
+            return parse_project_ref(path);
+        }
+    }
+
+    for prefix in ["https://", "http://"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            let (remote_host, path) = rest.split_once('/')?;
+            if remote_host.eq_ignore_ascii_case(&host_authority) {
+                return parse_project_ref(path);
+            }
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("ssh://git@") {
+        let (_, path) = split_authority_and_path(rest)?;
+        if authority_matches_host(rest, &host_authority) {
+            return parse_project_ref(path);
+        }
+    }
+
+    None
+}
+
+fn split_authority_and_path(value: &str) -> Option<(&str, &str)> {
+    let slash = value.find('/')?;
+    Some((&value[..slash], &value[slash + 1..]))
+}
+
+fn authority_matches_host(value: &str, expected_host: &str) -> bool {
+    let Some((authority, _)) = split_authority_and_path(value) else {
+        return false;
+    };
+    let host_without_port = authority.split(':').next().unwrap_or(authority);
+    host_without_port.eq_ignore_ascii_case(expected_host)
+}
+
+fn invalid_project(value: &str) -> InvocationResponse {
+    InvocationResponse::error(
+        "INVALID_ARGUMENT",
+        format!("--project must use group/project path or numeric id, got '{value}'"),
+    )
+}
+
+fn normalize_host(value: &str) -> Result<String, InvocationResponse> {
+    let normalized = value.trim().trim_end_matches('/').to_owned();
+    if normalized.is_empty() {
+        return Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "--host must not be empty",
+        ));
+    }
+    if !normalized.starts_with("https://") && !normalized.starts_with("http://") {
+        return Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "--host must start with http:// or https://",
+        ));
+    }
+    Ok(normalized)
+}
+
+fn normalize_api_url(value: Option<&str>, host: &str) -> Result<String, InvocationResponse> {
+    let raw = value
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{host}/api/v4"));
+    let normalized = raw.trim().trim_end_matches('/').to_owned();
+    if normalized.is_empty() {
+        return Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "--api-url must not be empty",
+        ));
+    }
+    Ok(normalized)
+}
+
+fn host_authority(host: &str) -> Option<String> {
+    let without_scheme = host
+        .strip_prefix("https://")
+        .or_else(|| host.strip_prefix("http://"))?;
+    Some(without_scheme.split('/').next()?.to_owned())
+}
+
+fn resolve_token(args: &GitlabConnectionArgs, host: &str) -> Option<String> {
+    args.token
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env_token("GITLAB_TOKEN"))
+        .or_else(|| env_token("GL_TOKEN"))
+        .or_else(|| {
+            if args.use_git_credential {
+                git_credential_token(host)
+            } else {
+                None
+            }
+        })
+}
+
+fn env_token(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn git_credential_token(host: &str) -> Option<String> {
+    let host = host_authority(host)?;
+    let mut child = Command::new("git")
+        .args(["credential", "fill"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
+            .ok()?;
+    }
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(value) = line.strip_prefix("password=") {
+            let token = value.trim().to_owned();
+            if !token.is_empty() {
+                return Some(token);
+            }
+        }
+    }
+    None
+}
+
+fn gitlab_json<T>(
+    context: &GitlabContext,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+) -> Result<T, InvocationResponse>
+where
+    T: DeserializeOwned,
+{
+    let response = gitlab_response(context, method, path, body)?;
+    response.json::<T>().map_err(|error| {
+        InvocationResponse::error(
+            "GITLAB_RESPONSE_INVALID",
+            format!("failed to decode GitLab response for '{path}': {error}"),
+        )
+    })
+}
+
+fn gitlab_response(
+    context: &GitlabContext,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+) -> Result<reqwest::blocking::Response, InvocationResponse> {
+    let url = format!("{}{}", context.api_url, path);
+    let mut request = context
+        .client
+        .request(method, &url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "AIHelper-gitlab-plugin");
+    if let Some(token) = &context.token {
+        request = request.header("PRIVATE-TOKEN", token);
+    }
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().map_err(|error| {
+        InvocationResponse::error(
+            "GITLAB_HTTP_FAILED",
+            format!("request to '{url}' failed: {error}"),
+        )
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
+        return Err(InvocationResponse::error(
+            "GITLAB_API_FAILED",
+            format!(
+                "GitLab returned HTTP {status} for '{url}': {}",
+                truncate_for_error(&body, 500)
+            ),
+        ));
+    }
+    Ok(response)
+}
+
+fn download_job_trace(context: &GitlabContext, job_id: u64) -> Result<String, InvocationResponse> {
+    let path = format!(
+        "/projects/{}/jobs/{job_id}/trace",
+        context.project.encoded()
+    );
+    let response = gitlab_response(context, Method::GET, &path, None)?;
+    response.text().map_err(|error| {
+        InvocationResponse::error(
+            "GITLAB_RESPONSE_INVALID",
+            format!("failed to read job trace for job {job_id}: {error}"),
+        )
+    })
+}
+
+fn grep_lines(lines: &[TraceLine], pattern: &str) -> Vec<TraceLine> {
+    let needle = pattern.to_lowercase();
+    lines
+        .iter()
+        .filter(|line| line.text.to_lowercase().contains(&needle))
+        .cloned()
+        .collect()
+}
+
+fn warning_lines(lines: &[TraceLine]) -> Vec<TraceLine> {
+    lines
+        .iter()
+        .filter(|line| is_warning_like(&line.text))
+        .cloned()
+        .collect()
+}
+
+fn is_warning_like(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("warning")
+        || lower.contains("deprecated")
+        || lower.contains("deprecation")
+        || lower.contains("will be removed")
+}
+
+fn is_pipeline_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "success" | "failed" | "canceled" | "skipped" | "manual"
+    )
+}
+
+fn render_success<T: Serialize>(
+    globals: &GlobalOptionsWire,
+    output: &T,
+    text_output: String,
+) -> InvocationResponse {
+    if globals.quiet {
+        return InvocationResponse::ok(None);
+    }
+    if globals.json {
+        match serde_json::to_string_pretty(output) {
+            Ok(payload) => InvocationResponse::ok(Some(payload)),
+            Err(error) => InvocationResponse::error(
+                "JSON_SERIALIZATION_FAILED",
+                format!("failed to serialize plugin output: {error}"),
+            ),
+        }
+    } else {
+        InvocationResponse::ok(Some(text_output))
+    }
+}
+
+fn render_releases_text(releases: &[ReleaseResponse]) -> String {
+    if releases.is_empty() {
+        return String::new();
+    }
+    releases
+        .iter()
+        .map(render_release_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_release_text(release: &ReleaseResponse) -> String {
+    render_release_line(release) + "\n"
+}
+
+fn render_release_line(release: &ReleaseResponse) -> String {
+    format!(
+        "{} {} {}",
+        release.tag_name,
+        release.name.as_deref().unwrap_or("-"),
+        release.released_at.as_deref().unwrap_or("-")
+    )
+}
+
+fn render_pipelines_text(pipelines: &[PipelineResponse]) -> String {
+    if pipelines.is_empty() {
+        return String::new();
+    }
+    pipelines
+        .iter()
+        .map(|pipeline| {
+            format!(
+                "{} {} {} {}",
+                pipeline.id,
+                pipeline.r#ref.as_deref().unwrap_or("-"),
+                pipeline.status,
+                pipeline.web_url.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_jobs_text(jobs: &[JobResponse]) -> String {
+    if jobs.is_empty() {
+        return String::new();
+    }
+    jobs.iter()
+        .map(|job| {
+            format!(
+                "{} {} {} {}",
+                job.id,
+                job.name,
+                job.status,
+                job.web_url.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
+    if let Some(limit_value) = limit {
+        if items.len() > limit_value {
+            items.truncate(limit_value);
+            return true;
+        }
+    }
+    false
+}
+
+fn truncate_for_error(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+    text.chars().take(max_chars).collect::<String>() + "..."
+}
+
+fn strip_ansi_sequences(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            output.push(ch);
+            continue;
+        }
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+    }
+    output
+}
+
+fn plugin_manual() -> PluginManual {
+    PluginManual {
+        plugin_name: PLUGIN_NAME.to_owned(),
+        domain: DOMAIN.to_owned(),
+        description: DESCRIPTION.to_owned(),
+        commands: vec![
+            ManualCommand {
+                name: "project".to_owned(),
+                summary: "Detect GitLab project context.".to_owned(),
+                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--token TOKEN] [--use-git-credential]".to_owned(),
+                examples: vec![manual_example("Inspect current GitLab project", &["project"])],
+            },
+            ManualCommand {
+                name: "releases".to_owned(),
+                summary: "List GitLab releases.".to_owned(),
+                usage: "releases [--project PATH_OR_ID]".to_owned(),
+                examples: vec![manual_example("List releases", &["releases"])],
+            },
+            ManualCommand {
+                name: "release get".to_owned(),
+                summary: "Get release metadata by tag.".to_owned(),
+                usage: "release get <tag> [--project PATH_OR_ID]".to_owned(),
+                examples: vec![manual_example("Inspect release v1.0.0", &["release", "get", "v1.0.0"])],
+            },
+            ManualCommand {
+                name: "release create".to_owned(),
+                summary: "Create a GitLab release for a tag.".to_owned(),
+                usage: "release create <tag> [--name NAME] [--description TEXT|--description-file PATH] [--ref REF]".to_owned(),
+                examples: vec![manual_example(
+                    "Create release from description file",
+                    &["release", "create", "v1.0.1", "--name", "v1.0.1", "--description-file", "RELEASE_NOTES.md"],
+                )],
+            },
+            ManualCommand {
+                name: "pipelines".to_owned(),
+                summary: "List GitLab pipelines.".to_owned(),
+                usage: "pipelines [--branch BRANCH]".to_owned(),
+                examples: vec![manual_example("List main pipelines", &["pipelines", "--branch", "main"])],
+            },
+            ManualCommand {
+                name: "pipeline get".to_owned(),
+                summary: "Get pipeline metadata.".to_owned(),
+                usage: "pipeline get <pipeline-id>".to_owned(),
+                examples: vec![manual_example("Inspect one pipeline", &["pipeline", "get", "42"])],
+            },
+            ManualCommand {
+                name: "pipeline wait".to_owned(),
+                summary: "Wait for pipeline completion.".to_owned(),
+                usage: "pipeline wait <pipeline-id> [--interval-secs SECONDS] [--timeout-secs SECONDS] [--fail-on-failure]".to_owned(),
+                examples: vec![manual_example("Wait for one pipeline", &["pipeline", "wait", "42", "--fail-on-failure"])],
+            },
+            ManualCommand {
+                name: "pipeline jobs".to_owned(),
+                summary: "List jobs for a pipeline.".to_owned(),
+                usage: "pipeline jobs <pipeline-id>".to_owned(),
+                examples: vec![manual_example("Inspect pipeline jobs", &["pipeline", "jobs", "42"])],
+            },
+            ManualCommand {
+                name: "job trace".to_owned(),
+                summary: "Read or search a job trace.".to_owned(),
+                usage: "job trace <job-id> [--grep TEXT]".to_owned(),
+                examples: vec![manual_example("Search job trace", &["job", "trace", "7", "--grep", "warning"])],
+            },
+            ManualCommand {
+                name: "job warnings".to_owned(),
+                summary: "Extract warning-like lines from a job trace.".to_owned(),
+                usage: "job warnings <job-id>".to_owned(),
+                examples: vec![manual_example("List job warnings", &["job", "warnings", "7"])],
+            },
+        ],
+        notes: vec![
+            "GitLab-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
+            "Project defaults to a GitLab path parsed from `origin`; override with --project group/project or numeric id.".to_owned(),
+            "Use --host for self-managed GitLab and --api-url for nonstandard API roots.".to_owned(),
+            "Authentication checks --token, GITLAB_TOKEN, then GL_TOKEN; use --use-git-credential to opt into git credential helper lookup.".to_owned(),
+            "Use global --json for stable machine-readable output and --limit to cap releases, pipelines, or trace matches.".to_owned(),
+        ],
+    }
+}
+
+fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
+    ManualExample {
+        description: description.to_owned(),
+        argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        io::{BufRead, BufReader, Read},
+        net::{TcpListener, TcpStream},
+        sync::{Arc, Mutex},
+    };
+
+    use clap::{CommandFactory, Parser};
+
+    use super::*;
+
+    #[test]
+    fn manual_examples_parse() {
+        let manual = plugin_manual();
+        for command in &manual.commands {
+            for example in &command.examples {
+                let mut args = Vec::with_capacity(example.argv.len() + 1);
+                args.push(manual.domain.clone());
+                args.extend(example.argv.iter().cloned());
+                let parse_result = GitlabCli::try_parse_from(args.clone());
+                assert!(
+                    parse_result.is_ok(),
+                    "manual example failed to parse for command '{}': argv={args:?}",
+                    command.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parser_builds_command_tree() {
+        let _ = GitlabCli::command();
+    }
+
+    #[test]
+    fn parses_gitlab_project_refs() {
+        assert_eq!(
+            parse_project_ref("group/subgroup/tool.git")
+                .expect("project should parse")
+                .value,
+            "group/subgroup/tool"
+        );
+        assert_eq!(
+            parse_project_ref("123")
+                .expect("project id should parse")
+                .value,
+            "123"
+        );
+        assert!(parse_project_ref("single").is_none());
+    }
+
+    #[test]
+    fn parses_common_gitlab_remotes_for_custom_host() {
+        let host = "https://gitlab.example.com";
+        assert_eq!(
+            parse_gitlab_remote_url("https://gitlab.example.com/group/tool.git", host)
+                .expect("project should parse")
+                .value,
+            "group/tool"
+        );
+        assert_eq!(
+            parse_gitlab_remote_url("git@gitlab.example.com:group/subgroup/tool.git", host)
+                .expect("project should parse")
+                .value,
+            "group/subgroup/tool"
+        );
+        assert_eq!(
+            parse_gitlab_remote_url("ssh://git@gitlab.example.com:2222/group/tool.git", host)
+                .expect("project should parse")
+                .value,
+            "group/tool"
+        );
+    }
+
+    #[test]
+    fn rejects_non_matching_host_remote() {
+        assert!(
+            parse_gitlab_remote_url(
+                "https://gitlab.other.example.com/group/tool.git",
+                "https://gitlab.example.com"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn release_get_uses_encoded_project_and_private_token() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"{
+                "tag_name": "v1.0.0",
+                "name": "v1.0.0",
+                "description": "notes",
+                "created_at": "2026-05-07T00:00:00Z",
+                "released_at": "2026-05-07T00:01:00Z",
+                "upcoming_release": false,
+                "assets": {"links": []}
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/subgroup/tool",
+            "--api-url",
+            &server.url(),
+            "--token",
+            "secret-token",
+            "release",
+            "get",
+            "v1.0.0",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "gitlab.release.get");
+        assert_eq!(payload["project"], "group/subgroup/tool");
+        assert_eq!(payload["release"]["tag_name"], "v1.0.0");
+
+        let request = only_request(&server);
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.path,
+            "/projects/group%2Fsubgroup%2Ftool/releases/v1.0.0"
+        );
+        assert_eq!(request.header("private-token"), Some("secret-token"));
+    }
+
+    #[test]
+    fn release_create_posts_expected_body() {
+        let server = MockServer::new(vec![MockResponse::json(
+            201,
+            r#"{
+                "tag_name": "v1.0.1",
+                "name": "v1.0.1",
+                "description": "release notes",
+                "created_at": "2026-05-07T00:00:00Z",
+                "released_at": "2026-05-07T00:01:00Z",
+                "upcoming_release": false,
+                "assets": {"links": []}
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "create",
+            "v1.0.1",
+            "--name",
+            "v1.0.1",
+            "--description",
+            "release notes",
+            "--ref",
+            "main",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let request = only_request(&server);
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/projects/group%2Ftool/releases");
+        let body: Value = serde_json::from_str(&request.body).expect("body should be json");
+        assert_eq!(body["tag_name"], "v1.0.1");
+        assert_eq!(body["name"], "v1.0.1");
+        assert_eq!(body["description"], "release notes");
+        assert_eq!(body["ref"], "main");
+    }
+
+    #[test]
+    fn pipelines_command_includes_ref_and_limit() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"[{
+                "id": 42,
+                "iid": 3,
+                "project_id": 9,
+                "sha": "abc123",
+                "ref": "main",
+                "status": "success",
+                "source": "push",
+                "web_url": "https://gitlab.example.com/group/tool/-/pipelines/42",
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z"
+            }]"#,
+        )]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--project",
+                "group/tool",
+                "--api-url",
+                &server.url(),
+                "pipelines",
+                "--branch",
+                "main",
+            ],
+            Some(3),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["pipeline_count"], 1);
+        let request = only_request(&server);
+        assert_eq!(
+            request.path,
+            "/projects/group%2Ftool/pipelines?per_page=3&ref=main"
+        );
+    }
+
+    #[test]
+    fn pipeline_wait_polls_until_terminal() {
+        let server = MockServer::new(vec![
+            MockResponse::json(200, pipeline_json(42, "running")),
+            MockResponse::json(200, pipeline_json(42, "success")),
+        ]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "pipeline",
+            "wait",
+            "42",
+            "--interval-secs",
+            "1",
+            "--timeout-secs",
+            "5",
+            "--fail-on-failure",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "gitlab.pipeline.wait");
+        assert_eq!(payload["pipeline"]["status"], "success");
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    #[test]
+    fn pipeline_jobs_decodes_list() {
+        let server = MockServer::new(vec![MockResponse::json(
+            200,
+            r#"[{
+                "id": 7,
+                "name": "test",
+                "status": "success",
+                "stage": "test",
+                "ref": "main",
+                "allow_failure": false,
+                "web_url": "https://gitlab.example.com/group/tool/-/jobs/7",
+                "created_at": "2026-05-07T00:00:00Z",
+                "started_at": "2026-05-07T00:00:10Z",
+                "finished_at": "2026-05-07T00:01:00Z"
+            }]"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "pipeline",
+            "jobs",
+            "42",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["job_count"], 1);
+        assert_eq!(payload["jobs"][0]["name"], "test");
+        assert_eq!(
+            only_request(&server).path,
+            "/projects/group%2Ftool/pipelines/42/jobs?per_page=100"
+        );
+    }
+
+    #[test]
+    fn job_trace_and_warnings_read_plain_text() {
+        let server = MockServer::new(vec![MockResponse::bytes(
+            200,
+            "text/plain",
+            "normal line\nwarning: deprecated config\n\u{1b}[1mwill be removed soon\u{1b}[0m\n"
+                .as_bytes()
+                .to_vec(),
+        )]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--project",
+                "group/tool",
+                "--api-url",
+                &server.url(),
+                "job",
+                "warnings",
+                "7",
+            ],
+            Some(10),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "gitlab.job.warnings");
+        assert_eq!(payload["match_count"], 2);
+        assert_eq!(
+            payload["matches"][1]["text"], "will be removed soon",
+            "ANSI escape sequences should be stripped"
+        );
+    }
+
+    #[test]
+    fn gitlab_api_failure_has_stable_error_code() {
+        let server = MockServer::new(vec![MockResponse::json(
+            404,
+            r#"{"message":"404 Project Not Found"}"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "get",
+            "missing",
+        ]);
+
+        assert!(!response.success);
+        assert_eq!(response.error_code.as_deref(), Some("GITLAB_API_FAILED"));
+        assert!(
+            response
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("HTTP 404")
+        );
+    }
+
+    fn invoke_json(argv: &[&str]) -> InvocationResponse {
+        invoke_json_with_limit(argv, None)
+    }
+
+    fn invoke_json_with_limit(argv: &[&str], limit: Option<usize>) -> InvocationResponse {
+        let request = InvocationRequest {
+            domain: DOMAIN.to_owned(),
+            argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+            globals: GlobalOptionsWire {
+                json: true,
+                quiet: false,
+                limit,
+            },
+        };
+        let request_json = serde_json::to_string(&request).expect("request should serialize");
+        let request_c = std::ffi::CString::new(request_json).expect("request should be cstring");
+        invoke_from_raw(request_c.as_ptr())
+    }
+
+    fn response_json(response: &InvocationResponse) -> Value {
+        serde_json::from_str(response.message.as_deref().expect("message should exist"))
+            .expect("message should be json")
+    }
+
+    fn pipeline_json(id: u64, status: &str) -> &'static str {
+        let raw = format!(
+            r#"{{
+                "id": {id},
+                "iid": 3,
+                "project_id": 9,
+                "sha": "abc123",
+                "ref": "main",
+                "status": "{status}",
+                "source": "push",
+                "web_url": "https://gitlab.example.com/group/tool/-/pipelines/{id}",
+                "created_at": "2026-05-07T00:00:00Z",
+                "updated_at": "2026-05-07T00:01:00Z"
+            }}"#
+        );
+        Box::leak(raw.into_boxed_str())
+    }
+
+    fn only_request(server: &MockServer) -> CapturedRequest {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        requests[0].clone()
+    }
+
+    #[derive(Debug, Clone)]
+    struct CapturedRequest {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+        body: String,
+    }
+
+    impl CapturedRequest {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .get(&name.to_ascii_lowercase())
+                .map(String::as_str)
+        }
+    }
+
+    struct MockResponse {
+        status: u16,
+        content_type: String,
+        body: Vec<u8>,
+    }
+
+    impl MockResponse {
+        fn json(status: u16, body: &str) -> Self {
+            Self::bytes(status, "application/json", body.as_bytes().to_vec())
+        }
+
+        fn bytes(status: u16, content_type: &str, body: Vec<u8>) -> Self {
+            Self {
+                status,
+                content_type: content_type.to_owned(),
+                body,
+            }
+        }
+    }
+
+    struct MockServer {
+        url: String,
+        requests: Arc<Mutex<Vec<CapturedRequest>>>,
+        handle: Option<thread::JoinHandle<()>>,
+    }
+
+    impl MockServer {
+        fn new(responses: Vec<MockResponse>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("mock server should bind");
+            listener
+                .set_nonblocking(true)
+                .expect("listener should be nonblocking");
+            let url = format!(
+                "http://{}",
+                listener.local_addr().expect("local addr should exist")
+            );
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let captured = Arc::clone(&requests);
+            let handle = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                for response in responses {
+                    loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => {
+                                handle_connection(stream, response, &captured);
+                                break;
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                if Instant::now() > deadline {
+                                    return;
+                                }
+                                thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(_) => return,
+                        }
+                    }
+                }
+            });
+
+            Self {
+                url,
+                requests,
+                handle: Some(handle),
+            }
+        }
+
+        fn url(&self) -> String {
+            self.url.clone()
+        }
+
+        fn requests(&self) -> Vec<CapturedRequest> {
+            if let Some(handle) = &self.handle {
+                while !handle.is_finished() {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            self.requests.lock().expect("requests lock").clone()
+        }
+    }
+
+    impl Drop for MockServer {
+        fn drop(&mut self) {
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn handle_connection(
+        mut stream: TcpStream,
+        response: MockResponse,
+        requests: &Arc<Mutex<Vec<CapturedRequest>>>,
+    ) {
+        let mut reader = BufReader::new(stream.try_clone().expect("stream should clone"));
+        let mut first_line = String::new();
+        reader
+            .read_line(&mut first_line)
+            .expect("request line should read");
+        let mut parts = first_line.split_whitespace();
+        let method = parts.next().unwrap_or("").to_owned();
+        let path = parts.next().unwrap_or("").to_owned();
+
+        let mut headers = HashMap::new();
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("header should read");
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = trimmed.split_once(':') {
+                let key = name.trim().to_ascii_lowercase();
+                let value = value.trim().to_owned();
+                if key == "content-length" {
+                    content_length = value.parse::<usize>().unwrap_or(0);
+                }
+                headers.insert(key, value);
+            }
+        }
+
+        let mut body_bytes = vec![0; content_length];
+        if content_length > 0 {
+            reader
+                .read_exact(&mut body_bytes)
+                .expect("request body should read");
+        }
+        let body = String::from_utf8_lossy(&body_bytes).into_owned();
+        requests
+            .lock()
+            .expect("requests lock")
+            .push(CapturedRequest {
+                method,
+                path,
+                headers,
+                body,
+            });
+
+        let status_text = match response.status {
+            200 => "OK",
+            201 => "Created",
+            404 => "Not Found",
+            _ => "OK",
+        };
+        let headers = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.status,
+            status_text,
+            response.content_type,
+            response.body.len()
+        );
+        stream
+            .write_all(headers.as_bytes())
+            .expect("response headers should write");
+        stream
+            .write_all(&response.body)
+            .expect("response body should write");
+    }
+}

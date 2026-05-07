@@ -14,4 +14,5 @@ Reference docs for all command domains and flags.
 - [http (bundled plugin)](http.md)
 - [plugins](plugins.md)
 - [github (dynamic plugin)](github.md)
+- [gitlab (dynamic plugin)](gitlab.md)
 - [ollama (dynamic plugin)](ollama.md)

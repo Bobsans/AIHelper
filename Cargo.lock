@@ -30,6 +30,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-plugin-gitlab"
+version = "0.3.0"
+dependencies = [
+ "ah-plugin-api",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "urlencoding",
+]
+
+[[package]]
 name = "ah-plugin-ollama"
 version = "0.3.0"
 dependencies = [

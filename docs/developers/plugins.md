@@ -75,6 +75,7 @@ Plugin returns JSON response:
 Repository includes dynamic plugin sources at:
 
 - `plugins/ah-plugin-github`
+- `plugins/ah-plugin-gitlab`
 - `plugins/ah-plugin-ollama`
 
 Build and install one plugin (Windows):
