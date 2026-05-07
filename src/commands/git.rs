@@ -26,6 +26,10 @@ pub enum GitCommand {
     Diff(DiffArgs),
     #[command(about = "Show blame information for a file or a single line")]
     Blame(BlameArgs),
+    #[command(about = "Show commit metadata, touched files, and stats")]
+    CommitInfo(CommitInfoArgs),
+    #[command(about = "Create or inspect git tags")]
+    Tag(TagArgs),
 }
 
 #[derive(Debug, Args)]
@@ -54,6 +58,33 @@ pub struct BlameArgs {
     pub path: PathBuf,
     #[arg(long)]
     pub line: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+pub struct CommitInfoArgs {
+    #[arg(default_value = "HEAD", value_name = "ref")]
+    pub reference: String,
+}
+
+#[derive(Debug, Args)]
+pub struct TagArgs {
+    #[command(subcommand)]
+    pub command: TagCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TagCommand {
+    #[command(about = "Create a git tag")]
+    Create(TagCreateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TagCreateArgs {
+    pub tag: String,
+    #[arg(long, value_name = "TEXT")]
+    pub message: Option<String>,
+    #[arg(long = "ref", default_value = "HEAD", value_name = "ref")]
+    pub reference: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +125,46 @@ struct CommitSummary {
     hash: String,
     short_hash: String,
     subject: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CommitInfoOutput {
+    command: &'static str,
+    in_git_repo: bool,
+    reference: String,
+    commit: Option<CommitInfo>,
+}
+
+#[derive(Debug, Serialize)]
+struct CommitInfo {
+    hash: String,
+    short_hash: String,
+    author: GitPerson,
+    author_date: Option<String>,
+    committer: GitPerson,
+    committer_date: Option<String>,
+    subject: String,
+    body: String,
+    file_count: usize,
+    additions: Option<usize>,
+    deletions: Option<usize>,
+    files: Vec<CommitFile>,
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct GitPerson {
+    name: String,
+    email: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CommitFile {
+    status: Option<String>,
+    path: String,
+    old_path: Option<String>,
+    additions: Option<usize>,
+    deletions: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +229,16 @@ struct GitBlameOutput {
     entries: Vec<BlameEntry>,
 }
 
+#[derive(Debug, Serialize)]
+struct GitTagCreateOutput {
+    command: &'static str,
+    in_git_repo: bool,
+    tag: String,
+    reference: String,
+    annotated: bool,
+    target_commit: Option<CommitSummary>,
+}
+
 pub fn execute(args: GitArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         GitCommand::Status(status_args) => execute_status(status_args, options),
@@ -166,6 +247,8 @@ pub fn execute(args: GitArgs, options: &GlobalOptions) -> Result<(), AppError> {
         GitCommand::Changed(changed_args) => execute_changed(changed_args, options),
         GitCommand::Diff(diff_args) => execute_diff(diff_args, options),
         GitCommand::Blame(blame_args) => execute_blame(blame_args, options),
+        GitCommand::CommitInfo(commit_args) => execute_commit_info(commit_args, options),
+        GitCommand::Tag(tag_args) => execute_tag(tag_args, options),
     }
 }
 
@@ -581,6 +664,165 @@ fn execute_blame(args: BlameArgs, options: &GlobalOptions) -> Result<(), AppErro
     Ok(())
 }
 
+fn execute_commit_info(args: CommitInfoArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    let in_repo = is_inside_git_repo()?;
+    let commit = if in_repo {
+        Some(read_commit_info(&args.reference, options.limit)?)
+    } else {
+        None
+    };
+
+    if options.quiet {
+        return Ok(());
+    }
+
+    match options.output {
+        OutputMode::Text => {
+            if !in_repo {
+                println!("not a git repository");
+                return Ok(());
+            }
+            let Some(commit) = &commit else {
+                println!("commit not found");
+                return Ok(());
+            };
+            println!(
+                "commit={} author=\"{} <{}>\" date={} subject={}",
+                commit.short_hash,
+                commit.author.name,
+                commit.author.email,
+                commit.author_date.as_deref().unwrap_or("-"),
+                commit.subject
+            );
+            println!(
+                "files={} additions={} deletions={}",
+                commit.file_count,
+                commit
+                    .additions
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_owned()),
+                commit
+                    .deletions
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_owned())
+            );
+            for file in &commit.files {
+                println!(
+                    "{} +{} -{} {}",
+                    file.status.as_deref().unwrap_or("-"),
+                    file.additions
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_owned()),
+                    file.deletions
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_owned()),
+                    file.path
+                );
+            }
+            if commit.truncated {
+                eprintln!("warning: output truncated by --limit");
+            }
+        }
+        OutputMode::Json => {
+            let payload = CommitInfoOutput {
+                command: "git.commit-info",
+                in_git_repo: in_repo,
+                reference: args.reference,
+                commit,
+            };
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+    }
+
+    Ok(())
+}
+
+fn execute_tag(args: TagArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    match args.command {
+        TagCommand::Create(create_args) => execute_tag_create(create_args, options),
+    }
+}
+
+fn execute_tag_create(args: TagCreateArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    let in_repo = is_inside_git_repo()?;
+    if !in_repo {
+        if options.quiet {
+            return Ok(());
+        }
+        return match options.output {
+            OutputMode::Text => {
+                println!("not a git repository");
+                Ok(())
+            }
+            OutputMode::Json => {
+                let payload = GitTagCreateOutput {
+                    command: "git.tag.create",
+                    in_git_repo: false,
+                    tag: args.tag,
+                    reference: args.reference,
+                    annotated: args.message.is_some(),
+                    target_commit: None,
+                };
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+                Ok(())
+            }
+        };
+    }
+
+    let annotated = args.message.is_some();
+    let mut command = vec!["tag".to_owned()];
+    if let Some(message) = args.message {
+        command.push("-a".to_owned());
+        command.push(args.tag.clone());
+        command.push("-m".to_owned());
+        command.push(message);
+        command.push(args.reference.clone());
+    } else {
+        command.push(args.tag.clone());
+        command.push(args.reference.clone());
+    }
+    read_git_output(command)?;
+    let target_commit =
+        read_git_trimmed(["rev-parse", &format!("{}^{{commit}}", args.tag)]).map(|hash| {
+            CommitSummary {
+                short_hash: short_commit(&hash),
+                hash,
+                subject: read_git_trimmed(["log", "-1", "--format=%s", &args.tag])
+                    .unwrap_or_default(),
+            }
+        });
+
+    if options.quiet {
+        return Ok(());
+    }
+
+    let payload = GitTagCreateOutput {
+        command: "git.tag.create",
+        in_git_repo: true,
+        tag: args.tag,
+        reference: args.reference,
+        annotated,
+        target_commit,
+    };
+
+    match options.output {
+        OutputMode::Text => {
+            println!(
+                "created tag {} at {}",
+                payload.tag,
+                payload
+                    .target_commit
+                    .as_ref()
+                    .map(|commit| commit.short_hash.as_str())
+                    .unwrap_or("-")
+            );
+        }
+        OutputMode::Json => println!("{}", serde_json::to_string_pretty(&payload)?),
+    }
+
+    Ok(())
+}
+
 fn read_git_output(args: Vec<String>) -> Result<String, AppError> {
     let printable = format!("git {}", args.join(" "));
     let output = Command::new("git")
@@ -595,6 +837,99 @@ fn read_git_output(args: Vec<String>) -> Result<String, AppError> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn read_commit_info(reference: &str, limit: Option<usize>) -> Result<CommitInfo, AppError> {
+    let metadata = read_git_output(vec![
+        "show".to_owned(),
+        "-s".to_owned(),
+        "--format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%b".to_owned(),
+        reference.to_owned(),
+    ])?;
+    let mut parts = metadata.splitn(10, '\0');
+    let hash = parts.next().unwrap_or("").trim().to_owned();
+    let short_hash = parts.next().unwrap_or("").trim().to_owned();
+    let author_name = parts.next().unwrap_or("").trim().to_owned();
+    let author_email = parts.next().unwrap_or("").trim().to_owned();
+    let author_date = optional_trimmed(parts.next().unwrap_or(""));
+    let committer_name = parts.next().unwrap_or("").trim().to_owned();
+    let committer_email = parts.next().unwrap_or("").trim().to_owned();
+    let committer_date = optional_trimmed(parts.next().unwrap_or(""));
+    let subject = parts.next().unwrap_or("").trim().to_owned();
+    let body = parts.next().unwrap_or("").trim().to_owned();
+
+    let mut files = read_commit_files(reference)?;
+    let file_count = files.len();
+    let additions = sum_optional(files.iter().map(|file| file.additions));
+    let deletions = sum_optional(files.iter().map(|file| file.deletions));
+    let truncated = apply_limit(&mut files, limit);
+
+    Ok(CommitInfo {
+        hash,
+        short_hash,
+        author: GitPerson {
+            name: author_name,
+            email: author_email,
+        },
+        author_date,
+        committer: GitPerson {
+            name: committer_name,
+            email: committer_email,
+        },
+        committer_date,
+        subject,
+        body,
+        file_count,
+        additions,
+        deletions,
+        files,
+        truncated,
+    })
+}
+
+fn read_commit_files(reference: &str) -> Result<Vec<CommitFile>, AppError> {
+    let status_raw = read_git_output(vec![
+        "diff-tree".to_owned(),
+        "--no-commit-id".to_owned(),
+        "--name-status".to_owned(),
+        "-r".to_owned(),
+        "--root".to_owned(),
+        reference.to_owned(),
+    ])?;
+    let stats_raw = read_git_output(vec![
+        "show".to_owned(),
+        "--numstat".to_owned(),
+        "--format=".to_owned(),
+        "--root".to_owned(),
+        reference.to_owned(),
+    ])?;
+    let stats = parse_numstat(&stats_raw);
+    let mut files = parse_name_status(&status_raw);
+    for file in &mut files {
+        if let Some((additions, deletions)) = stats.iter().find_map(|stat| {
+            if stat.path == file.path {
+                Some((stat.additions, stat.deletions))
+            } else {
+                None
+            }
+        }) {
+            file.additions = additions;
+            file.deletions = deletions;
+        }
+    }
+    if files.is_empty() {
+        files = stats
+            .into_iter()
+            .map(|stat| CommitFile {
+                status: None,
+                path: stat.path,
+                old_path: None,
+                additions: stat.additions,
+                deletions: stat.deletions,
+            })
+            .collect();
+    }
+    Ok(files)
 }
 
 fn read_git_trimmed<const N: usize>(args: [&str; N]) -> Option<String> {
@@ -733,6 +1068,53 @@ fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
     Ok(entries)
 }
 
+fn parse_name_status(raw: &str) -> Vec<CommitFile> {
+    raw.lines()
+        .filter_map(|line| {
+            let parts = line.split('\t').collect::<Vec<_>>();
+            let status = parts.first()?.to_string();
+            if status.starts_with('R') || status.starts_with('C') {
+                let old_path = parts.get(1).map(|value| normalize_slashes(value));
+                let path = parts.get(2).map(|value| normalize_slashes(value))?;
+                Some(CommitFile {
+                    status: Some(status),
+                    path,
+                    old_path,
+                    additions: None,
+                    deletions: None,
+                })
+            } else {
+                let path = parts.get(1).map(|value| normalize_slashes(value))?;
+                Some(CommitFile {
+                    status: Some(status),
+                    path,
+                    old_path: None,
+                    additions: None,
+                    deletions: None,
+                })
+            }
+        })
+        .collect()
+}
+
+fn parse_numstat(raw: &str) -> Vec<CommitFile> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let additions = parse_optional_usize(parts.next()?);
+            let deletions = parse_optional_usize(parts.next()?);
+            let path = normalize_slashes(parts.next()?);
+            Some(CommitFile {
+                status: None,
+                path,
+                old_path: None,
+                additions,
+                deletions,
+            })
+        })
+        .collect()
+}
+
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
     if let Some(limit_value) = limit {
         if items.len() > limit_value {
@@ -748,6 +1130,31 @@ fn parse_ahead_behind(raw: &str) -> Option<(Option<usize>, Option<usize>)> {
     let behind = parts.next()?.parse::<usize>().ok()?;
     let ahead = parts.next()?.parse::<usize>().ok()?;
     Some((Some(ahead), Some(behind)))
+}
+
+fn parse_optional_usize(raw: &str) -> Option<usize> {
+    raw.parse::<usize>().ok()
+}
+
+fn optional_trimmed(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
+}
+
+fn sum_optional(values: impl Iterator<Item = Option<usize>>) -> Option<usize> {
+    let mut saw_value = false;
+    let mut total = 0usize;
+    for value in values {
+        if let Some(value) = value {
+            saw_value = true;
+            total += value;
+        }
+    }
+    if saw_value { Some(total) } else { None }
 }
 
 fn parse_remotes(raw: &str) -> Vec<RemoteEntry> {

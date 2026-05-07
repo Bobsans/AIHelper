@@ -38,3 +38,21 @@ Examples of suggestions:
 - Go: `go test ./...`, `go build ./...`
 
 Status: implemented.
+
+## `ah project version`
+
+Detect project versions from common manifest files without executing package managers.
+
+```bash
+ah project version [path] [--limit N] [--json]
+```
+
+Supported manifests:
+- Rust: `Cargo.toml` `[package] version`
+- Node: `package.json` `version`
+- Python: `pyproject.toml` `[project] version`
+- .NET: `.csproj` `<Version>`
+- Maven: `pom.xml` `<version>`
+- Gradle: `build.gradle` / `build.gradle.kts` `version`
+
+Status: implemented.

@@ -37,6 +37,30 @@ fn project_commands_suggests_common_commands() {
         .stdout(contains("\"build\""));
 }
 
+#[test]
+fn project_version_reports_manifest_versions() {
+    let temp_dir = sample_project();
+    let root = temp_dir.path();
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo-python\"\nversion = \"2.3.4\"\n",
+    )
+    .expect("pyproject.toml should be written");
+    let cwd = root.to_string_lossy().to_string();
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["--json", "project", "version", &cwd])
+        .assert()
+        .success()
+        .stdout(contains("\"command\": \"project.version\""))
+        .stdout(contains("\"kind\": \"cargo\""))
+        .stdout(contains("\"version\": \"0.1.0\""))
+        .stdout(contains("\"kind\": \"npm\""))
+        .stdout(contains("\"version\": \"1.2.3\""))
+        .stdout(contains("\"kind\": \"python\""))
+        .stdout(contains("\"version\": \"2.3.4\""));
+}
+
 fn sample_project() -> TempDir {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     let root = temp_dir.path();
@@ -47,7 +71,7 @@ fn sample_project() -> TempDir {
     .expect("Cargo.toml should be written");
     fs::write(
         root.join("package.json"),
-        "{\"scripts\":{\"build\":\"echo ok\"}}\n",
+        "{\"name\":\"demo-node\",\"version\":\"1.2.3\",\"scripts\":{\"build\":\"echo ok\"}}\n",
     )
     .expect("package.json should be written");
     fs::write(root.join("README.md"), "# Demo\n").expect("README should be written");

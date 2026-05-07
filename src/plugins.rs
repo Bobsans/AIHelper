@@ -327,6 +327,15 @@ fn git_manual() -> PluginManual {
                 ],
             },
             ManualCommand {
+                name: "tag create".to_owned(),
+                summary: "Create a lightweight or annotated git tag.".to_owned(),
+                usage: "tag create <tag> [--message TEXT] [--ref REF]".to_owned(),
+                examples: vec![manual_example(
+                    "Create an annotated release tag",
+                    &["tag", "create", "v1.0.0", "--message", "v1.0.0"],
+                )],
+            },
+            ManualCommand {
                 name: "remotes".to_owned(),
                 summary: "List configured git remotes with provider hint.".to_owned(),
                 usage: "remotes".to_owned(),
@@ -356,6 +365,15 @@ fn git_manual() -> PluginManual {
                     &["blame", "src/commands/search.rs", "--line", "120"],
                 )],
             },
+            ManualCommand {
+                name: "commit-info".to_owned(),
+                summary: "Show commit metadata, touched files, and line stats.".to_owned(),
+                usage: "commit-info [ref]".to_owned(),
+                examples: vec![manual_example(
+                    "Inspect the latest commit",
+                    &["commit-info", "HEAD"],
+                )],
+            },
         ],
         notes: vec!["Useful for quick change-attribution in AI review loops.".to_owned()],
     }
@@ -382,6 +400,15 @@ fn project_manual() -> PluginManual {
                 examples: vec![manual_example(
                     "Suggest commands for current project",
                     &["commands"],
+                )],
+            },
+            ManualCommand {
+                name: "version".to_owned(),
+                summary: "Detect project version from common manifest files.".to_owned(),
+                usage: "version [path]".to_owned(),
+                examples: vec![manual_example(
+                    "Detect current project version",
+                    &["version"],
                 )],
             },
         ],

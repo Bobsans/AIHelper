@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+- `ah git commit-info` for commit metadata, touched files, and line stats.
+- `ah git tag create` for simple local tag creation.
+- `ah project version` for version detection from common manifest files.
+
 ## [0.4.0] - 2026-05-07
 
 ### Added
