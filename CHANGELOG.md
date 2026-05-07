@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-07
+
 ### Added
 - Dynamic `ah github` plugin for GitHub repository, release, workflow, run, log warning, and artifact inspection.
 - Dynamic `ah gitlab` plugin for GitLab project, release, pipeline, job trace, and warning inspection with custom host support.
