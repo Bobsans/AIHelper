@@ -305,6 +305,7 @@ fn execute_tree(args: TreeArgs, options: &GlobalOptions) -> Result<(), AppError>
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_lines_output(
     command: &'static str,
     path: &Path,
@@ -537,11 +538,11 @@ fn line_cap(options: &GlobalOptions) -> usize {
 }
 
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit {
-        if items.len() > limit_value {
-            items.truncate(limit_value);
-            return true;
-        }
+    if let Some(limit_value) = limit
+        && items.len() > limit_value
+    {
+        items.truncate(limit_value);
+        return true;
     }
     false
 }

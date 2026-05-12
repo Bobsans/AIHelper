@@ -327,11 +327,11 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit {
-        if items.len() > limit_value {
-            items.truncate(limit_value);
-            return true;
-        }
+    if let Some(limit_value) = limit
+        && items.len() > limit_value
+    {
+        items.truncate(limit_value);
+        return true;
     }
     false
 }

@@ -102,6 +102,13 @@ pub fn to_c_string_ptr(value: &str) -> *const c_char {
         .into_raw()
 }
 
+/// Frees a C string pointer previously returned by this API.
+///
+/// # Safety
+///
+/// `value` must be null or a pointer produced by `CString::into_raw` from this
+/// crate. Passing any other pointer, or freeing the same pointer more than
+/// once, is undefined behavior.
 pub unsafe fn free_c_string_ptr(value: *mut c_char) {
     if value.is_null() {
         return;
@@ -109,6 +116,12 @@ pub unsafe fn free_c_string_ptr(value: *mut c_char) {
     let _ = unsafe { CString::from_raw(value) };
 }
 
+/// Converts a non-null C string pointer to a Rust `String`.
+///
+/// # Safety
+///
+/// `ptr_value` must point to a valid, nul-terminated C string for the duration
+/// of this call.
 pub unsafe fn c_ptr_to_string(ptr_value: *const c_char) -> Result<String, String> {
     if ptr_value.is_null() {
         return Err("null c string pointer".to_owned());

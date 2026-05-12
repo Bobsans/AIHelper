@@ -77,7 +77,7 @@ fn disable_and_enable_domain_controls_invocation() {
         .args(["file", "head", &sample, "--lines", "1"])
         .assert()
         .failure()
-        .stderr(contains("error[DOMAIN_DISABLED]"));
+        .stderr(contains("DOMAIN_DISABLED: file"));
 
     let mut enable_cmd = Command::cargo_bin("ah").expect("binary should compile");
     enable_cmd

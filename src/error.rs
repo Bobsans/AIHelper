@@ -103,11 +103,8 @@ impl AppError {
 
     pub fn print(&self) {
         let rendered = self.rendered();
-        eprintln!("error[{}]: {}", rendered.code, rendered.message);
-        for context in rendered.context {
-            eprintln!("  {}: {}", context.label, context.value);
-        }
-        if let Some(hint) = rendered.hint {
+        eprintln!("{}: {}", rendered.code, concise_error_message(&rendered));
+        if let Some(hint) = concise_hint(&rendered.code) {
             eprintln!("hint: {hint}");
         }
     }
@@ -231,7 +228,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: Some("check --cwd and ensure the directory exists".to_owned()),
             },
             Self::FileRead { path, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -246,7 +242,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: hint_for_code(self.code()),
             },
             Self::FileWrite { path, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -261,7 +256,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: None,
             },
             Self::FileMetadata { path, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -276,7 +270,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: hint_for_code(self.code()),
             },
             Self::DirectoryRead { path, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -291,7 +284,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: hint_for_code(self.code()),
             },
             Self::CommandExecution { command, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -306,7 +298,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: None,
             },
             Self::CommandFailed {
                 command,
@@ -331,7 +322,6 @@ impl AppError {
                         value: stderr.trim().to_owned(),
                     },
                 ],
-                hint: None,
             },
             Self::JsonDeserialization { path, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -346,7 +336,6 @@ impl AppError {
                         value: source.to_string(),
                     },
                 ],
-                hint: None,
             },
             Self::JsonSerialization(source) => RenderedError {
                 code: self.code().to_owned(),
@@ -355,7 +344,6 @@ impl AppError {
                     label: "reason",
                     value: source.to_string(),
                 }],
-                hint: None,
             },
         }
     }
@@ -366,7 +354,6 @@ struct RenderedError {
     code: String,
     message: String,
     context: Vec<RenderedContext>,
-    hint: Option<String>,
 }
 
 #[derive(Debug)]
@@ -387,7 +374,6 @@ fn render_invalid_argument(raw: &str) -> RenderedError {
                 label: "path",
                 value: path_value,
             }],
-            hint: hint_for_code("PATH_NOT_FOUND"),
         };
     }
     if let Some(path) = message.strip_prefix("path is not a file or directory: ") {
@@ -399,7 +385,6 @@ fn render_invalid_argument(raw: &str) -> RenderedError {
                 label: "path",
                 value: path_value,
             }],
-            hint: hint_for_code("PATH_INVALID_TYPE"),
         };
     }
     if let Some(task) = message.strip_prefix("task not found: ") {
@@ -411,7 +396,6 @@ fn render_invalid_argument(raw: &str) -> RenderedError {
                 label: "task",
                 value: task_value,
             }],
-            hint: hint_for_code("TASK_NOT_FOUND"),
         };
     }
 
@@ -420,7 +404,6 @@ fn render_invalid_argument(raw: &str) -> RenderedError {
         code: code.to_owned(),
         message,
         context: Vec::new(),
-        hint: hint_for_code(code),
     }
 }
 
@@ -449,35 +432,72 @@ fn classify_invalid_argument(message: &str) -> &'static str {
     "INVALID_ARGUMENT"
 }
 
-fn hint_for_code(code: &str) -> Option<String> {
-    match code {
-        "PATH_NOT_FOUND" => {
-            Some("check path spelling or set --cwd to the correct workspace".to_owned())
+fn concise_error_message(error: &RenderedError) -> String {
+    match error.code.as_str() {
+        "PATH_NOT_FOUND" | "PATH_INVALID_TYPE" | "FILE_NOT_FOUND" | "DIRECTORY_NOT_FOUND" => {
+            context_value(error, "path").unwrap_or_else(|| compact_message(&error.message))
         }
-        "PATH_INVALID_TYPE" => {
-            Some("provide a file or directory path expected by the command".to_owned())
-        }
-        "TASK_NOT_FOUND" => Some("run `ah task list` to inspect available saved tasks".to_owned()),
-        "SYMLINK_TRAVERSAL_BLOCKED" => {
-            Some("use --follow-symlinks if traversal is intentional".to_owned())
-        }
-        "REGEX_INVALID" => {
-            Some("fix the regex syntax or remove --regex for plain text search".to_owned())
-        }
-        "DOMAIN_NOT_FOUND" => {
-            Some("run `ah plugins list` to inspect available command domains".to_owned())
+        "TASK_NOT_FOUND" => {
+            context_value(error, "task").unwrap_or_else(|| compact_message(&error.message))
         }
         "DOMAIN_DISABLED" => {
-            Some("run `ah plugins enable <domain>` to re-enable the domain".to_owned())
+            strip_after_colon(&error.message).unwrap_or_else(|| compact_message(&error.message))
         }
-        "FILE_NOT_FOUND" => {
-            Some("verify path exists and current working directory is correct".to_owned())
+        "DOMAIN_NOT_FOUND" => {
+            strip_after_colon(&error.message).unwrap_or_else(|| compact_message(&error.message))
         }
-        "DIRECTORY_NOT_FOUND" => {
-            Some("verify directory exists and current working directory is correct".to_owned())
+        "REGEX_INVALID" => {
+            regex_error_summary(&error.message).unwrap_or_else(|| "invalid regex".to_owned())
         }
+        "SYMLINK_TRAVERSAL_BLOCKED" => "symlink blocked".to_owned(),
+        "INVALID_RANGE" => compact_message(&error.message),
+        "GLOB_INVALID" => compact_message(&error.message),
+        _ => compact_message(&error.message),
+    }
+}
+
+fn concise_hint(code: &str) -> Option<&'static str> {
+    match code {
+        "PATH_NOT_FOUND" | "PATH_INVALID_TYPE" | "FILE_NOT_FOUND" | "DIRECTORY_NOT_FOUND" => {
+            Some("check path or --cwd")
+        }
+        "REGEX_INVALID" => Some("fix regex or drop --regex"),
+        "SYMLINK_TRAVERSAL_BLOCKED" => Some("use --follow-symlinks"),
+        "TASK_NOT_FOUND" => Some("run ah task list"),
+        "DOMAIN_NOT_FOUND" => Some("run ah plugins list"),
+        "DOMAIN_DISABLED" => Some("enable domain or choose another"),
         _ => None,
     }
+}
+
+fn context_value(error: &RenderedError, label: &str) -> Option<String> {
+    error
+        .context
+        .iter()
+        .find(|context| context.label == label)
+        .map(|context| context.value.clone())
+}
+
+fn regex_error_summary(message: &str) -> Option<String> {
+    message.lines().rev().find_map(|line| {
+        line.trim()
+            .strip_prefix("error:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+fn strip_after_colon(message: &str) -> Option<String> {
+    message
+        .rsplit_once(':')
+        .map(|(_, value)| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn compact_message(message: &str) -> String {
+    message.lines().next().unwrap_or(message).trim().to_owned()
 }
 
 fn normalize_message(raw: &str) -> String {
@@ -532,6 +552,5 @@ fn render_external(code: &str, message: &str) -> RenderedError {
         code: code.to_owned(),
         message: normalized_message,
         context: Vec::new(),
-        hint: hint_for_code(code),
     }
 }

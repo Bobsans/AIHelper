@@ -493,6 +493,12 @@ struct TraceOutput {
     matches: Vec<TraceLine>,
 }
 
+/// Returns the GitLab plugin ABI entry point.
+///
+/// # Safety
+///
+/// The returned pointer is process-static and must not be freed or mutated by
+/// the caller.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
     let existing = PLUGIN_API_PTR.load(Ordering::Acquire);
@@ -523,6 +529,12 @@ pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
     }
 }
 
+/// Returns the GitLab plugin manual JSON as an owned C string.
+///
+/// # Safety
+///
+/// The caller must free the returned pointer with this plugin's
+/// `free_c_string` callback.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ah_plugin_manual_json_v1() -> *mut c_char {
     manual_to_c_string(&plugin_manual())
@@ -652,7 +664,7 @@ fn execute_issues(
     context: &GitlabContext,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
     let path = gitlab_issues_list_path(context, &args, per_page);
     let issues = match gitlab_json::<Vec<IssueResponse>>(context, Method::GET, &path, None) {
         Ok(value) => value,
@@ -813,10 +825,10 @@ fn close_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    if let Some(comment) = comment {
-        if let Err(error) = create_issue_note(context, args.iid, comment) {
-            return error;
-        }
+    if let Some(comment) = comment
+        && let Err(error) = create_issue_note(context, args.iid, comment)
+    {
+        return error;
     }
     let path = format!(
         "/projects/{}/issues/{}",
@@ -873,7 +885,7 @@ fn issue_comments(
     iid: u64,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
     let path = format!(
         "/projects/{}/issues/{iid}/notes?per_page={per_page}&activity_filter=only_comments",
         context.project.encoded()
@@ -896,7 +908,7 @@ fn issue_comments(
 }
 
 fn execute_releases(context: &GitlabContext, globals: &GlobalOptionsWire) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
     let path = format!(
         "/projects/{}/releases?per_page={per_page}",
         context.project.encoded()
@@ -949,7 +961,7 @@ fn execute_pipelines(
     context: &GitlabContext,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(10).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(10).clamp(1, 100);
     let ref_query = args
         .branch
         .as_ref()
@@ -1772,11 +1784,11 @@ fn render_jobs_text(jobs: &[JobResponse]) -> String {
 }
 
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit {
-        if items.len() > limit_value {
-            items.truncate(limit_value);
-            return true;
-        }
+    if let Some(limit_value) = limit
+        && items.len() > limit_value
+    {
+        items.truncate(limit_value);
+        return true;
     }
     false
 }

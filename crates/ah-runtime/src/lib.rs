@@ -392,10 +392,10 @@ impl DynamicPlugin {
 }
 
 fn is_dynamic_lib_file(path: &Path) -> bool {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("dll") | Some("so") | Some("dylib") => true,
-        _ => false,
-    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("dll") | Some("so") | Some("dylib")
+    )
 }
 
 fn fallback_manual(metadata: &PluginMetadata, note: String) -> PluginManual {

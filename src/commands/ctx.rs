@@ -322,6 +322,7 @@ fn execute_pack(args: PackArgs, options: &GlobalOptions) -> Result<(), AppError>
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_pack_entry(
     path: &Path,
     preset_settings: &PresetSettings,

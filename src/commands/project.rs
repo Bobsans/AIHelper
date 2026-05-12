@@ -285,7 +285,7 @@ fn detect_project(path: &Path) -> Result<ProjectSnapshot, AppError> {
 
     let candidates = collect_project_files(&root);
     for file in &candidates {
-        let rel = normalize_relative(&root, &file);
+        let rel = normalize_relative(&root, file);
         let Some(name) = file.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
@@ -1073,21 +1073,21 @@ fn detect_versions(
             continue;
         };
         let lower_name = name.to_ascii_lowercase();
-        let rel = normalize_relative(root, &file);
+        let rel = normalize_relative(root, file);
         let parsed = match lower_name.as_str() {
-            "cargo.toml" => parse_cargo_version(&file, &rel)?,
-            "package.json" => parse_package_json_version(&file, &rel)?,
-            "composer.json" => parse_package_json_like_version(&file, &rel, "composer")?,
-            "pyproject.toml" => parse_pyproject_version(&file, &rel)?,
-            "pubspec.yaml" => parse_pubspec_version(&file, &rel)?,
-            "mix.exs" => parse_assignment_version(&file, &rel, "mix", "medium")?,
-            "pom.xml" => parse_xml_version(&file, &rel, "maven", "medium")?,
-            "build.gradle" | "build.gradle.kts" => parse_gradle_version(&file, &rel)?,
+            "cargo.toml" => parse_cargo_version(file, &rel)?,
+            "package.json" => parse_package_json_version(file, &rel)?,
+            "composer.json" => parse_package_json_like_version(file, &rel, "composer")?,
+            "pyproject.toml" => parse_pyproject_version(file, &rel)?,
+            "pubspec.yaml" => parse_pubspec_version(file, &rel)?,
+            "mix.exs" => parse_assignment_version(file, &rel, "mix", "medium")?,
+            "pom.xml" => parse_xml_version(file, &rel, "maven", "medium")?,
+            "build.gradle" | "build.gradle.kts" => parse_gradle_version(file, &rel)?,
             _ if lower_name.ends_with(".gemspec") => {
-                parse_assignment_version(&file, &rel, "gemspec", "medium")?
+                parse_assignment_version(file, &rel, "gemspec", "medium")?
             }
             _ if lower_name.ends_with(".csproj") => {
-                parse_xml_version(&file, &rel, "dotnet", "high")?
+                parse_xml_version(file, &rel, "dotnet", "high")?
             }
             _ => None,
         };

@@ -11,9 +11,20 @@ fn search_path_not_found_error_is_rendered_without_nested_wrappers() {
     cmd.args(["search", "text", "customFieldValues", "Fixdigital"])
         .assert()
         .failure()
-        .stderr(contains("error[PATH_NOT_FOUND]: path does not exist"))
-        .stderr(contains("path: Fixdigital"))
+        .stderr(contains("PATH_NOT_FOUND: Fixdigital"))
+        .stderr(contains("hint: check path or --cwd"))
         .stderr(predicates::str::contains("invalid argument: [").not());
+}
+
+#[test]
+fn search_invalid_regex_error_is_concise() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["search", "text", "(", "src", "--regex"])
+        .assert()
+        .failure()
+        .stderr(contains("REGEX_INVALID: unclosed group"))
+        .stderr(contains("hint: fix regex or drop --regex"))
+        .stderr(predicates::str::contains("regex parse error").not());
 }
 
 #[test]
@@ -104,6 +115,24 @@ fn search_text_json_contains_mode_fields() {
 }
 
 #[test]
+fn search_text_json_reports_character_column_for_unicode_lines() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    fs::write(temp_dir.path().join("unicode.txt"), "a\u{00e9}needle\n")
+        .expect("test file should be written");
+
+    let root = temp_dir.path().to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "search", "text", "needle", &root])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["matches"][0]["column"], 3);
+}
+
+#[test]
 fn search_text_json_reports_skipped_binary_and_large_files() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     fs::write(temp_dir.path().join("ok.txt"), "match here\n").expect("text file should be written");
@@ -142,6 +171,26 @@ fn search_text_json_reports_skipped_binary_and_large_files() {
 }
 
 #[test]
+fn search_text_accepts_multiple_paths() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let left = temp_dir.path().join("left");
+    let right = temp_dir.path().join("right");
+    fs::create_dir(&left).expect("left dir should be created");
+    fs::create_dir(&right).expect("right dir should be created");
+    fs::write(left.join("one.txt"), "needle in left\n").expect("left file should be written");
+    fs::write(right.join("two.txt"), "needle in right\n").expect("right file should be written");
+
+    let left_root = left.to_string_lossy().to_string();
+    let right_root = right.to_string_lossy().to_string();
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["search", "text", "needle", &left_root, &right_root])
+        .assert()
+        .success()
+        .stdout(contains("one.txt"))
+        .stdout(contains("two.txt"));
+}
+
+#[test]
 fn search_files_returns_matching_paths() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     fs::write(temp_dir.path().join("alpha.txt"), "a").expect("file should be written");
@@ -157,5 +206,27 @@ fn search_files_returns_matching_paths() {
         .success()
         .stdout(contains("alpha.txt"))
         .stdout(contains("alpha_notes.md"))
+        .stdout(predicates::str::contains("beta.txt").not());
+}
+
+#[test]
+fn search_files_accepts_multiple_paths() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let left = temp_dir.path().join("left");
+    let right = temp_dir.path().join("right");
+    fs::create_dir(&left).expect("left dir should be created");
+    fs::create_dir(&right).expect("right dir should be created");
+    fs::write(left.join("alpha_left.txt"), "a").expect("left file should be written");
+    fs::write(right.join("alpha_right.txt"), "b").expect("right file should be written");
+    fs::write(right.join("beta.txt"), "c").expect("beta file should be written");
+
+    let left_root = left.to_string_lossy().to_string();
+    let right_root = right.to_string_lossy().to_string();
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["search", "files", "alpha", &left_root, &right_root])
+        .assert()
+        .success()
+        .stdout(contains("alpha_left.txt"))
+        .stdout(contains("alpha_right.txt"))
         .stdout(predicates::str::contains("beta.txt").not());
 }

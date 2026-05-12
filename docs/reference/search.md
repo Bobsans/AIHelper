@@ -7,12 +7,13 @@ Search utilities (text and file discovery).
 Search by content in files.
 
 ```bash
-ah search text <pattern> [path] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks] [--limit N] [--json]
+ah search text <pattern> [path...] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks] [--limit N] [--json]
 ```
 
 Behavior:
 - default mode is literal/plain search (`pattern` treated as text)
 - add `--regex` to treat `pattern` as regular expression
+- omit `path` to search from the current directory, or pass multiple paths to search them together
 
 Flags:
 - `--glob <pattern>`: limit files by glob (repeatable)
@@ -31,7 +32,7 @@ Safety behavior:
 
 Output:
 - text mode: one line per hit (`path:line:text`) and optional context lines
-- json mode: includes backend, match count, file count, full match objects, and skip counters
+- json mode: includes backend, root/roots, match count, file count, full match objects, and skip counters
 
 Status: implemented.
 
@@ -40,14 +41,17 @@ Status: implemented.
 Search file paths by query substring.
 
 ```bash
-ah search files <query> [path] [--follow-symlinks] [--limit N] [--json]
+ah search files <query> [path...] [--follow-symlinks] [--limit N] [--json]
 ```
 
 Flags:
 - `--follow-symlinks`: follow symlink directories/files during traversal
 
+Behavior:
+- omit `path` to search from the current directory, or pass multiple paths to search them together
+
 Output:
 - text mode: one matched path per line
-- json mode: includes backend, match count, and matched paths
+- json mode: includes backend, root/roots, match count, and matched paths
 
 Status: implemented.

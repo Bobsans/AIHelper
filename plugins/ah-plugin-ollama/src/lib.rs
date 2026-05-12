@@ -169,6 +169,12 @@ struct OllamaMetrics {
     eval_duration: Option<u64>,
 }
 
+/// Returns the Ollama plugin ABI entry point.
+///
+/// # Safety
+///
+/// The returned pointer is process-static and must not be freed or mutated by
+/// the caller.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
     let existing = PLUGIN_API_PTR.load(Ordering::Acquire);
@@ -199,6 +205,12 @@ pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
     }
 }
 
+/// Returns the Ollama plugin manual JSON as an owned C string.
+///
+/// # Safety
+///
+/// The caller must free the returned pointer with this plugin's
+/// `free_c_string` callback.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ah_plugin_manual_json_v1() -> *mut c_char {
     manual_to_c_string(&plugin_manual())

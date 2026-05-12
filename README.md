@@ -1,6 +1,8 @@
 # AIHelper
 
-AIHelper is a Rust CLI toolbox for AI agents and developers.
+AIHelper is a Rust CLI toolbox for AI agents and developers. It reduces context
+usage and repetitive shell boilerplate by providing explicit, fast, scriptable
+commands with predictable text and JSON output.
 
 The binary command is `ah`.
 
@@ -23,7 +25,7 @@ The binary command is `ah`.
 cargo build
 cargo run --bin ah -- --help
 cargo run --bin ah -- plugins list
-cargo run --bin ah -- file read roadmap.md -n --from 1 --to 40
+cargo run --bin ah -- file read README.md -n --from 1 --to 40
 ```
 
 ## Runtime Layout
@@ -46,6 +48,3 @@ cargo run --bin ah -- file read roadmap.md -n --from 1 --to 40
 - [Developer guide](docs/developers/README.md)
 - [Command reference](docs/reference/README.md)
 - [Changelog](CHANGELOG.md)
-
-## Roadmap
-See [roadmap.md](roadmap.md).

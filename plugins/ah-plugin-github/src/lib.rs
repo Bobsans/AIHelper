@@ -588,6 +588,12 @@ struct ArtifactResponse {
     archive_download_url: Option<String>,
 }
 
+/// Returns the GitHub plugin ABI entry point.
+///
+/// # Safety
+///
+/// The returned pointer is process-static and must not be freed or mutated by
+/// the caller.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
     let existing = PLUGIN_API_PTR.load(Ordering::Acquire);
@@ -618,6 +624,12 @@ pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
     }
 }
 
+/// Returns the GitHub plugin manual JSON as an owned C string.
+///
+/// # Safety
+///
+/// The caller must free the returned pointer with this plugin's
+/// `free_c_string` callback.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ah_plugin_manual_json_v1() -> *mut c_char {
     manual_to_c_string(&plugin_manual())
@@ -740,7 +752,7 @@ fn execute_issues(
     context: &GithubContext,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
     let mut issues = if let Some(search) = &args.search {
         let path = github_issue_search_path(context, &args, search, per_page);
         match github_json::<IssueSearchResponse>(context, Method::GET, &path, None) {
@@ -905,10 +917,10 @@ fn close_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    if let Some(comment) = comment {
-        if let Err(error) = create_issue_comment(context, args.number, comment) {
-            return error;
-        }
+    if let Some(comment) = comment
+        && let Err(error) = create_issue_comment(context, args.number, comment)
+    {
+        return error;
     }
     let path = format!(
         "/repos/{}/{}/issues/{}",
@@ -964,7 +976,7 @@ fn issue_comments(
     number: u64,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(20).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
     let path = format!(
         "/repos/{}/{}/issues/{number}/comments?per_page={per_page}",
         context.repo.owner, context.repo.repo
@@ -1074,7 +1086,7 @@ fn execute_runs(
     context: &GithubContext,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(10).max(1).min(100);
+    let per_page = globals.limit.unwrap_or(10).clamp(1, 100);
     let branch_query = args
         .branch
         .as_ref()
@@ -1999,11 +2011,12 @@ fn render_runs_text(runs: &[WorkflowRunResponse]) -> String {
 }
 
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit {
-        if limit_value > 0 && items.len() > limit_value {
-            items.truncate(limit_value);
-            return true;
-        }
+    if let Some(limit_value) = limit
+        && limit_value > 0
+        && items.len() > limit_value
+    {
+        items.truncate(limit_value);
+        return true;
     }
     false
 }

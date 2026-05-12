@@ -5,8 +5,8 @@ Find relevant code/text snippets quickly without reading full files.
 
 ## Commands
 ```bash
-ah search text <pattern> <path> [--context 1] [--limit 50]
-ah search text <regex> <path> --regex [--context 1]
+ah search text <pattern> <path...> [--context 1] [--limit 50]
+ah search text <regex> <path...> --regex [--context 1]
 ```
 
 ## Examples

@@ -89,7 +89,8 @@ fn file_read_symlink_requires_follow_flag() {
         .args(["file", "read", &link])
         .assert()
         .failure()
-        .stderr(contains("symlink traversal is disabled"));
+        .stderr(contains("SYMLINK_TRAVERSAL_BLOCKED: symlink blocked"))
+        .stderr(contains("hint: use --follow-symlinks"));
 
     Command::cargo_bin("ah")
         .expect("binary should compile")

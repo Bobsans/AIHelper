@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-12
+
+### Added
+- `ah search text` and `ah search files` now accept multiple paths.
+- JSON search output now includes `roots` while preserving the existing `root` field.
+
+### Changed
+- CLI errors now render in a shorter `CODE: detail` format with concise hints.
+- Removed `roadmap.md` and moved stable project intent into the README.
+
+### Fixed
+- `ah search text --json` now reports character columns correctly for Unicode text.
+- The workspace now passes `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+
 ## [0.5.0] - 2026-05-07
 
 ### Added

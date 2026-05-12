@@ -592,10 +592,10 @@ fn execute_blame(args: BlameArgs, options: &GlobalOptions) -> Result<(), AppErro
             args.path.to_string_lossy()
         )));
     }
-    if let Some(line) = args.line {
-        if line == 0 {
-            return Err(AppError::invalid_argument("--line must be >= 1"));
-        }
+    if let Some(line) = args.line
+        && line == 0
+    {
+        return Err(AppError::invalid_argument("--line must be >= 1"));
     }
 
     let path_string = args.path.to_string_lossy().into_owned();
@@ -1037,7 +1037,7 @@ fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
         let mut summary = String::new();
         let mut text = String::new();
 
-        while let Some(metadata_line) = lines.next() {
+        for metadata_line in lines.by_ref() {
             if let Some(value) = metadata_line.strip_prefix('\t') {
                 text = value.to_owned();
                 break;
@@ -1047,7 +1047,7 @@ fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
                 continue;
             }
             if let Some(value) = metadata_line.strip_prefix("author-mail ") {
-                author_mail = value.trim_matches(&['<', '>']).to_owned();
+                author_mail = value.trim_matches(['<', '>']).to_owned();
                 continue;
             }
             if let Some(value) = metadata_line.strip_prefix("author-time ") {
@@ -1121,11 +1121,11 @@ fn parse_numstat(raw: &str) -> Vec<CommitFile> {
 }
 
 fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit {
-        if items.len() > limit_value {
-            items.truncate(limit_value);
-            return true;
-        }
+    if let Some(limit_value) = limit
+        && items.len() > limit_value
+    {
+        items.truncate(limit_value);
+        return true;
     }
     false
 }
@@ -1153,11 +1153,9 @@ fn optional_trimmed(raw: &str) -> Option<String> {
 fn sum_optional(values: impl Iterator<Item = Option<usize>>) -> Option<usize> {
     let mut saw_value = false;
     let mut total = 0usize;
-    for value in values {
-        if let Some(value) = value {
-            saw_value = true;
-            total += value;
-        }
+    for value in values.flatten() {
+        saw_value = true;
+        total += value;
     }
     if saw_value { Some(total) } else { None }
 }

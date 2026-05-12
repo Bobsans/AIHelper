@@ -152,7 +152,7 @@ fn settings_file_path() -> Result<PathBuf, AppError> {
 fn default_config_dir() -> Result<PathBuf, AppError> {
     #[cfg(target_os = "windows")]
     {
-        return env::var_os("APPDATA")
+        env::var_os("APPDATA")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
             .map(|path| path.join("AIHelper"))
@@ -160,12 +160,12 @@ fn default_config_dir() -> Result<PathBuf, AppError> {
                 AppError::invalid_argument(
                     "unable to resolve %APPDATA% for plugin settings; set AH_CONFIG_DIR",
                 )
-            });
+            })
     }
 
     #[cfg(target_os = "macos")]
     {
-        return env::var_os("HOME")
+        env::var_os("HOME")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
             .map(|path| {
@@ -177,7 +177,7 @@ fn default_config_dir() -> Result<PathBuf, AppError> {
                 AppError::invalid_argument(
                     "unable to resolve $HOME for plugin settings; set AH_CONFIG_DIR",
                 )
-            });
+            })
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]

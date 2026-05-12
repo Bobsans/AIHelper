@@ -483,19 +483,18 @@ pub fn classify_file(rel: &str, name: &str) -> Vec<FileRuleDetection> {
             Some("infra"),
         ));
     }
-    if lower_name.ends_with(".gradle") || lower_name.ends_with(".gradle.kts") {
-        if lower_rel.contains("android")
+    if (lower_name.ends_with(".gradle") || lower_name.ends_with(".gradle.kts"))
+        && (lower_rel.contains("android")
             || lower_rel == "settings.gradle"
-            || lower_rel == "settings.gradle.kts"
-        {
-            detections.push(grouped(
-                FileGroup::Config,
-                "android-gradle",
-                Some("android"),
-                Some("gradle"),
-                Some("mobile"),
-            ));
-        }
+            || lower_rel == "settings.gradle.kts")
+    {
+        detections.push(grouped(
+            FileGroup::Config,
+            "android-gradle",
+            Some("android"),
+            Some("gradle"),
+            Some("mobile"),
+        ));
     }
     if lower_name == "androidmanifest.xml" {
         detections.push(grouped(

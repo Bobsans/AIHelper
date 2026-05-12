@@ -45,6 +45,6 @@ pub fn emit_not_implemented(mode: OutputMode, quiet: bool, command: &str) -> Res
         mode,
         quiet,
         command,
-        "This command is part of the roadmap and is not implemented yet.",
+        "This planned command is not implemented yet.",
     )
 }

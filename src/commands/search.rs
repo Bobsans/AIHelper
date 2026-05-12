@@ -35,7 +35,8 @@ pub enum SearchCommand {
 #[derive(Debug, Args)]
 pub struct TextArgs {
     pub pattern: String,
-    pub path: Option<PathBuf>,
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
     #[arg(long = "glob")]
     pub globs: Vec<String>,
     #[arg(long)]
@@ -61,7 +62,8 @@ pub struct TextArgs {
 #[derive(Debug, Args)]
 pub struct FilesArgs {
     pub query: String,
-    pub path: Option<PathBuf>,
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
     #[arg(long, help = "Follow symlink directories during traversal")]
     pub follow_symlinks: bool,
 }
@@ -87,6 +89,7 @@ struct SearchTextOutput {
     command: &'static str,
     backend: String,
     root: String,
+    roots: Vec<String>,
     pattern: String,
     regex: bool,
     ignore_case: bool,
@@ -105,6 +108,7 @@ struct SearchFilesOutput {
     command: &'static str,
     backend: String,
     root: String,
+    roots: Vec<String>,
     query: String,
     match_count: usize,
     truncated: bool,
@@ -129,6 +133,13 @@ struct TextCollectStats {
     skipped_symlink_files: usize,
 }
 
+struct SearchScope {
+    roots: Vec<PathBuf>,
+    display_root: PathBuf,
+    root_label: String,
+    root_labels: Vec<String>,
+}
+
 pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         SearchCommand::Text(text_args) => execute_text(text_args, options),
@@ -138,25 +149,19 @@ pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError
 
 fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError> {
     safety::validate_max_bytes(args.max_bytes)?;
-    let root = resolve_root(args.path.as_ref())?;
-    if !args.follow_symlinks && is_symlink_path(&root)? {
-        return Err(AppError::invalid_argument(format!(
-            "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
-            root.to_string_lossy()
-        )));
-    }
+    let scope = resolve_scope(&args.paths, args.follow_symlinks)?;
     let context_lines = args.context.unwrap_or(0);
     let matcher = build_matcher(&args.pattern, args.regex, args.ignore_case)?;
     let globset = build_globset(&args.globs)?;
     let backend_supports_rg = rg_is_available();
 
     let candidate_files = if backend_supports_rg {
-        match candidate_files_with_rg(&args, &root) {
+        match candidate_files_with_rg(&args, &scope.roots) {
             Some(files) => files,
-            None => collect_files_fallback(&root, globset.as_ref(), args.follow_symlinks)?,
+            None => collect_files_from_roots(&scope.roots, globset.as_ref(), args.follow_symlinks)?,
         }
     } else {
-        collect_files_fallback(&root, globset.as_ref(), args.follow_symlinks)?
+        collect_files_from_roots(&scope.roots, globset.as_ref(), args.follow_symlinks)?
     };
 
     let backend = if backend_supports_rg {
@@ -167,7 +172,7 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
 
     let (matches, stats, truncated) = collect_text_matches(
         candidate_files,
-        &root,
+        &scope.display_root,
         &matcher,
         context_lines,
         args.max_bytes,
@@ -199,7 +204,8 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
             let payload = SearchTextOutput {
                 command: "search.text",
                 backend: backend.to_owned(),
-                root: root.to_string_lossy().into_owned(),
+                root: scope.root_label,
+                roots: scope.root_labels,
                 pattern: args.pattern,
                 regex: args.regex,
                 ignore_case: args.ignore_case,
@@ -220,26 +226,20 @@ fn execute_text(args: TextArgs, options: &GlobalOptions) -> Result<(), AppError>
 }
 
 fn execute_files(args: FilesArgs, options: &GlobalOptions) -> Result<(), AppError> {
-    let root = resolve_root(args.path.as_ref())?;
-    if !args.follow_symlinks && is_symlink_path(&root)? {
-        return Err(AppError::invalid_argument(format!(
-            "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
-            root.to_string_lossy()
-        )));
-    }
+    let scope = resolve_scope(&args.paths, args.follow_symlinks)?;
     let query = args.query;
 
     let (all_files, backend) = if rg_is_available() {
-        match files_with_rg(&root, args.follow_symlinks) {
+        match files_with_rg(&scope.roots, args.follow_symlinks) {
             Some(files) => (files, "rg+rust"),
             None => (
-                collect_files_fallback(&root, None, args.follow_symlinks)?,
+                collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?,
                 "rust",
             ),
         }
     } else {
         (
-            collect_files_fallback(&root, None, args.follow_symlinks)?,
+            collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?,
             "rust",
         )
     };
@@ -249,8 +249,7 @@ fn execute_files(args: FilesArgs, options: &GlobalOptions) -> Result<(), AppErro
     let max_count = options.limit.unwrap_or(usize::MAX);
 
     for file_path in all_files {
-        let relative_path = file_path.strip_prefix(&root).unwrap_or(file_path.as_path());
-        let normalized_relative = normalize_path_for_match(relative_path);
+        let normalized_relative = display_path(&file_path, &scope.display_root);
         let haystack = normalized_relative.clone();
         if haystack.contains(&query) {
             if matched.len() < max_count {
@@ -279,7 +278,8 @@ fn execute_files(args: FilesArgs, options: &GlobalOptions) -> Result<(), AppErro
             let payload = SearchFilesOutput {
                 command: "search.files",
                 backend: backend.to_owned(),
-                root: root.to_string_lossy().into_owned(),
+                root: scope.root_label,
+                roots: scope.root_labels,
                 query,
                 match_count: matched.len(),
                 truncated,
@@ -323,16 +323,69 @@ fn build_matcher(
     })
 }
 
-fn resolve_root(root: Option<&PathBuf>) -> Result<PathBuf, AppError> {
-    let path = root.cloned().unwrap_or_else(|| PathBuf::from("."));
-    if path.exists() {
-        Ok(path)
+fn resolve_scope(paths: &[PathBuf], follow_symlinks: bool) -> Result<SearchScope, AppError> {
+    let requested_roots = if paths.is_empty() {
+        vec![PathBuf::from(".")]
     } else {
-        Err(AppError::invalid_argument(format!(
-            "path does not exist: {}",
-            path.to_string_lossy()
-        )))
+        paths.to_vec()
+    };
+
+    for root in &requested_roots {
+        if !root.exists() {
+            return Err(AppError::invalid_argument(format!(
+                "path does not exist: {}",
+                root.to_string_lossy()
+            )));
+        }
+        if !follow_symlinks && is_symlink_path(root)? {
+            return Err(AppError::invalid_argument(format!(
+                "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
+                root.to_string_lossy()
+            )));
+        }
     }
+
+    let mut roots = requested_roots
+        .iter()
+        .map(|root| absolutize_path(root))
+        .collect::<Result<Vec<_>, _>>()?;
+    roots.sort();
+    roots.dedup();
+
+    let current_dir = current_dir()?;
+    let display_root = if roots.len() == 1 {
+        roots[0].clone()
+    } else {
+        current_dir.clone()
+    };
+    let root_labels = requested_roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let root_label = if root_labels.len() == 1 {
+        root_labels[0].clone()
+    } else {
+        current_dir.to_string_lossy().into_owned()
+    };
+
+    Ok(SearchScope {
+        roots,
+        display_root,
+        root_label,
+        root_labels,
+    })
+}
+
+fn absolutize_path(path: &Path) -> Result<PathBuf, AppError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let current_dir = current_dir()?;
+    Ok(current_dir.join(path))
+}
+
+fn current_dir() -> Result<PathBuf, AppError> {
+    std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))
 }
 
 fn build_globset(globs: &[String]) -> Result<Option<GlobSet>, AppError> {
@@ -361,7 +414,7 @@ fn rg_is_available() -> bool {
         .unwrap_or(false)
 }
 
-fn candidate_files_with_rg(args: &TextArgs, root: &Path) -> Option<Vec<PathBuf>> {
+fn candidate_files_with_rg(args: &TextArgs, roots: &[PathBuf]) -> Option<Vec<PathBuf>> {
     let mut command = Command::new("rg");
     command.arg("-l");
     command.arg("--color").arg("never");
@@ -378,7 +431,10 @@ fn candidate_files_with_rg(args: &TextArgs, root: &Path) -> Option<Vec<PathBuf>>
     if !args.regex {
         command.arg("-F");
     }
-    command.arg("--").arg(&args.pattern).arg(root);
+    command.arg("--").arg(&args.pattern);
+    for root in roots {
+        command.arg(root);
+    }
 
     let output = command.output().ok()?;
     if !output.status.success() && output.status.code() != Some(1) {
@@ -396,13 +452,15 @@ fn candidate_files_with_rg(args: &TextArgs, root: &Path) -> Option<Vec<PathBuf>>
     Some(files)
 }
 
-fn files_with_rg(root: &Path, follow_symlinks: bool) -> Option<Vec<PathBuf>> {
+fn files_with_rg(roots: &[PathBuf], follow_symlinks: bool) -> Option<Vec<PathBuf>> {
     let mut command = Command::new("rg");
     command.arg("--files");
     if follow_symlinks {
         command.arg("-L");
     }
-    command.arg(root);
+    for root in roots {
+        command.arg(root);
+    }
     let output = command.output().ok()?;
     if !output.status.success() {
         return None;
@@ -417,6 +475,20 @@ fn files_with_rg(root: &Path, follow_symlinks: bool) -> Option<Vec<PathBuf>> {
     files.sort();
     files.dedup();
     Some(files)
+}
+
+fn collect_files_from_roots(
+    roots: &[PathBuf],
+    globset: Option<&GlobSet>,
+    follow_symlinks: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut files = Vec::new();
+    for root in roots {
+        files.extend(collect_files_fallback(root, globset, follow_symlinks)?);
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
 }
 
 fn collect_files_fallback(
@@ -553,7 +625,7 @@ fn match_file(
     let lines: Vec<String> = text.lines().map(|line| line.to_owned()).collect();
 
     let mut matches = Vec::new();
-    let normalized_path = normalize_path_for_match(path.strip_prefix(root).unwrap_or(path));
+    let normalized_path = display_path(path, root);
 
     for (index, line) in lines.iter().enumerate() {
         if let Some(column) = find_match_column(matcher, line) {
@@ -604,22 +676,29 @@ fn match_file(
 
 fn find_match_column(matcher: &PatternMatcher, line: &str) -> Option<usize> {
     match matcher {
-        PatternMatcher::Regex { pattern } => pattern.find(line).map(|item| item.start() + 1),
+        PatternMatcher::Regex { pattern } => pattern
+            .find(line)
+            .map(|item| byte_index_to_column(line, item.start())),
         PatternMatcher::Literal {
             needle,
             needle_lower,
             ignore_case,
         } => {
             if *ignore_case {
-                let haystack_lower = line.to_lowercase();
-                haystack_lower
-                    .find(needle_lower.as_ref()?)
-                    .map(|index| index + 1)
+                let needle_lower = needle_lower.as_ref()?;
+                line.char_indices()
+                    .find(|(index, _)| line[*index..].to_lowercase().starts_with(needle_lower))
+                    .map(|(index, _)| byte_index_to_column(line, index))
             } else {
-                line.find(needle).map(|index| index + 1)
+                line.find(needle)
+                    .map(|index| byte_index_to_column(line, index))
             }
         }
     }
+}
+
+fn byte_index_to_column(line: &str, byte_index: usize) -> usize {
+    line[..byte_index].chars().count() + 1
 }
 
 fn render_text_matches(matches: &[TextMatch], context_lines: usize) -> String {
@@ -663,4 +742,15 @@ fn is_symlink_path(path: &Path) -> Result<bool, AppError> {
 
 fn normalize_path_for_match(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn display_path(path: &Path, root: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    if relative.as_os_str().is_empty() {
+        return path
+            .file_name()
+            .map(|name| name.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|| normalize_path_for_match(path));
+    }
+    normalize_path_for_match(relative)
 }

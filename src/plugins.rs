@@ -232,7 +232,7 @@ fn search_manual() -> PluginManual {
             ManualCommand {
                 name: "text".to_owned(),
                 summary: "Search text in files (literal by default, regex with --regex).".to_owned(),
-                usage: "text <pattern> [path] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks]".to_owned(),
+                usage: "text <pattern> [path...] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks]".to_owned(),
                 examples: vec![
                     manual_example(
                         "Literal search in Rust files",
@@ -247,7 +247,7 @@ fn search_manual() -> PluginManual {
             ManualCommand {
                 name: "files".to_owned(),
                 summary: "Find file paths containing substring.".to_owned(),
-                usage: "files <query> [path] [--follow-symlinks]".to_owned(),
+                usage: "files <query> [path...] [--follow-symlinks]".to_owned(),
                 examples: vec![manual_example(
                     "Find docs related to plugins",
                     &["files", "plugin", "docs"],

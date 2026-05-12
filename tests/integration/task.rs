@@ -60,5 +60,6 @@ fn task_run_unknown_task_fails() {
         .args(["--cwd", &cwd, "task", "run", "missing"])
         .assert()
         .failure()
-        .stderr(contains("task not found: missing"));
+        .stderr(contains("TASK_NOT_FOUND: missing"))
+        .stderr(contains("hint: run ah task list"));
 }

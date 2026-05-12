@@ -177,7 +177,7 @@ fn spawn_mock_server(responses: Vec<MockResponse>) -> (String, thread::JoinHandl
                 "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n",
                 response.status,
                 status_reason(response.status),
-                response.body.as_bytes().len()
+                response.body.len()
             );
             for (name, value) in &response.headers {
                 payload.push_str(name);
