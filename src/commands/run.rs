@@ -1,9 +1,13 @@
 use std::{
     io::{self, Read},
+    path::PathBuf,
     process::{Command, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+#[cfg(windows)]
+use std::{env, path::Path};
 
 use clap::Args;
 use serde::Serialize;
@@ -71,7 +75,8 @@ fn execute_check(args: CheckArgs, options: &GlobalOptions) -> Result<(), AppErro
     let command_label = args.command.join(" ");
     let command_args = args.command.iter().skip(1).cloned().collect::<Vec<_>>();
     let started = Instant::now();
-    let mut child = Command::new(&program)
+    let spawn_program = resolve_program_for_spawn(&program);
+    let mut child = Command::new(&spawn_program)
         .args(&command_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -166,6 +171,107 @@ fn execute_check(args: CheckArgs, options: &GlobalOptions) -> Result<(), AppErro
     Ok(())
 }
 
+fn resolve_program_for_spawn(program: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(resolved) = resolve_windows_program(program) {
+            return resolved;
+        }
+    }
+
+    PathBuf::from(program)
+}
+
+#[cfg(windows)]
+fn resolve_windows_program(program: &str) -> Option<PathBuf> {
+    let original = Path::new(program);
+    if original.extension().is_some() {
+        return None;
+    }
+
+    let path_exts = path_ext_candidates();
+    if has_path_separator(program) {
+        return find_existing_with_extensions(original, &path_exts);
+    }
+
+    let current_dir = env::current_dir().ok();
+    let path_dirs = env::var_os("PATH").map(|paths| env::split_paths(&paths).collect::<Vec<_>>());
+    resolve_windows_program_in(
+        program,
+        current_dir.as_deref(),
+        path_dirs.as_deref(),
+        &path_exts,
+    )
+}
+
+#[cfg(windows)]
+fn resolve_windows_program_in(
+    program: &str,
+    current_dir: Option<&Path>,
+    path_dirs: Option<&[PathBuf]>,
+    path_exts: &[String],
+) -> Option<PathBuf> {
+    if let Some(current_dir) = current_dir {
+        let candidate = current_dir.join(program);
+        if let Some(resolved) = find_existing_with_extensions(&candidate, path_exts) {
+            return Some(resolved);
+        }
+    }
+
+    for dir in path_dirs.unwrap_or_default() {
+        let candidate = dir.join(program);
+        if let Some(resolved) = find_existing_with_extensions(&candidate, path_exts) {
+            return Some(resolved);
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn find_existing_with_extensions(candidate: &Path, path_exts: &[String]) -> Option<PathBuf> {
+    for extension in path_exts {
+        let mut extended = candidate.to_path_buf();
+        extended.set_extension(extension.trim_start_matches('.'));
+        if extended.is_file() {
+            return Some(extended);
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn path_ext_candidates() -> Vec<String> {
+    env::var_os("PATHEXT")
+        .map(|raw| {
+            raw.to_string_lossy()
+                .split(';')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    if value.starts_with('.') {
+                        value.to_owned()
+                    } else {
+                        format!(".{value}")
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| {
+            [".COM", ".EXE", ".BAT", ".CMD"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+#[cfg(windows)]
+fn has_path_separator(program: &str) -> bool {
+    program.contains('\\') || program.contains('/')
+}
+
 fn join_output_reader(
     handle: Option<JoinHandle<io::Result<Vec<u8>>>>,
     command_label: &str,
@@ -205,4 +311,33 @@ fn prepare_output(
         end -= 1;
     }
     (text[..end].to_owned(), true)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn resolves_extensionless_program_from_path_with_pathext_order() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let shim = temp_dir.path().join("npx.CMD");
+        fs::write(&shim, "@echo off\r\n").expect("shim should be written");
+
+        let resolved = resolve_windows_program_in(
+            "npx",
+            None,
+            Some(&[temp_dir.path().to_path_buf()]),
+            &[".EXE".to_owned(), ".CMD".to_owned()],
+        )
+        .expect("npx should resolve through PATHEXT");
+
+        assert_eq!(resolved, shim);
+    }
+
+    #[test]
+    fn does_not_rewrite_programs_that_already_have_an_extension() {
+        assert!(resolve_windows_program("npx.cmd").is_none());
+    }
 }

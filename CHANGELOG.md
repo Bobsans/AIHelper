@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-18
+
+### Fixed
+- `ah run check` now resolves extensionless Windows commands through `PATHEXT` before spawning them.
+
 ## [0.6.0] - 2026-05-12
 
 ### Added
