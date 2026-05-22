@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-22
+
+### Added
+- Dynamic `ah postgres` plugin for PostgreSQL toolchain management, inspection, SQL execution, and diagnostics workflows.
+- PostgreSQL command reference documentation and release archive packaging for the Postgres plugin.
+
+### Changed
+- Split built-in command domains into smaller domain/io/output modules while preserving their CLI behavior.
+- Release workflow now builds and packages `ah-plugin-postgres`.
+
+### Fixed
+- `cargo run help` can discover Cargo-built dynamic plugins from profile directories when plugin artifacts are present.
+- CI formatting and help integration checks are stable on fresh Linux runners without requiring dynamic plugin artifacts.
+- Removed Linux-only warning noise from the Windows command resolver path.
+
 ## [0.6.1] - 2026-05-18
 
 ### Fixed

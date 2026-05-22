@@ -40,6 +40,7 @@ pub struct InvocationNormalization {
 
 /// Normalizes invocation arguments before plugin parsing, extracting supported
 /// global flags from `argv` into `globals`.
+#[allow(clippy::result_large_err)]
 pub fn normalize_invocation_argv(
     argv: &[String],
     mut globals: GlobalOptionsWire,
@@ -84,6 +85,7 @@ pub fn normalize_invocation_argv(
     })
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_limit(value: &str) -> Result<usize, InvocationResponse> {
     let parsed = value.parse::<usize>().map_err(|_| {
         InvocationResponse::error(
@@ -229,7 +231,8 @@ impl PluginApiVersion {
     }
 
     pub fn is_compatible_with_host(&self) -> bool {
-        self.major == AH_PLUGIN_API_MAJOR_VERSION && self.minor <= AH_PLUGIN_API_MINOR_VERSION
+        let host = Self::current();
+        self.major == host.major && self.minor <= host.minor
     }
 }
 
@@ -239,7 +242,7 @@ impl Default for PluginApiVersion {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginCompatibility {
     #[serde(default)]
     pub api_version: PluginApiVersion,
@@ -264,15 +267,6 @@ impl PluginCompatibility {
             self.capabilities.push(capability);
         }
         self
-    }
-}
-
-impl Default for PluginCompatibility {
-    fn default() -> Self {
-        Self {
-            api_version: PluginApiVersion::current(),
-            capabilities: Vec::new(),
-        }
     }
 }
 
@@ -375,6 +369,7 @@ pub unsafe fn free_c_string_ptr(value: *mut c_char) {
 
 /// Converts a raw invocation request into a typed response using the plugin-local
 /// argument parser and command executor.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn invoke_request_with_parser<TArgs, TParse, TExecute>(
     expected_domain: &str,
     request_json: *const c_char,

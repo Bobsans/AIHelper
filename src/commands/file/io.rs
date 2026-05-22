@@ -47,7 +47,7 @@ pub(crate) fn read_lines_in_range(
         }
 
         let line = line_result.map_err(|source| map_text_line_error(path, source))?;
-        if line_cap.map_or(true, |cap| selected.len() < cap) {
+        if line_cap.is_none_or(|cap| selected.len() < cap) {
             selected.push((line_number, line));
             continue;
         }

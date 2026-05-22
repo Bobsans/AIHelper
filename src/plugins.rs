@@ -775,7 +775,7 @@ fn parse_args<T: Parser + CommandFactory>(
     let options = GlobalOptions::from(normalized.globals);
     let mut args = Vec::with_capacity(argv.len() + 1);
     args.push(domain.to_owned());
-    args.extend(normalized.argv.into_iter());
+    args.extend(normalized.argv);
 
     match T::try_parse_from(args) {
         Ok(value) => ParseOutcome::Parsed(value, options),

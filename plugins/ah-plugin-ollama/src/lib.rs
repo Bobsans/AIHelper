@@ -1,8 +1,11 @@
+#![allow(clippy::result_large_err)]
+
 use std::time::Duration;
 
+#[cfg(test)]
+use ah_plugin_api::InvocationRequest;
 use ah_plugin_api::{
-    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample,
-    PluginManual,
+    GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::blocking::Client;

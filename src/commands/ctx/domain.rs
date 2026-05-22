@@ -375,8 +375,8 @@ fn parse_changed_entries(lines: Vec<String>) -> Vec<ChangedEntry> {
         if let Some((old_path, new_path)) = rest.split_once(" -> ") {
             entries.push(ChangedEntry {
                 status,
-                path: normalize_path(&new_path),
-                old_path: Some(normalize_path(&old_path)),
+                path: normalize_path(new_path),
+                old_path: Some(normalize_path(old_path)),
             });
         } else {
             entries.push(ChangedEntry {

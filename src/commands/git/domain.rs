@@ -467,14 +467,14 @@ fn execute_tag_create(args: TagCreateArgs) -> Result<GitResult, AppError> {
     }
     adapters::io::read_git_output(&command)?;
     let target_ref = format!("{}^{{commit}}", args.tag);
-    let target_commit = adapters::io::read_git_trimmed(["rev-parse", target_ref.as_str()])
-        .and_then(|hash| {
-            Some(CommitSummary {
+    let target_commit =
+        adapters::io::read_git_trimmed(["rev-parse", target_ref.as_str()]).map(|hash| {
+            CommitSummary {
                 short_hash: short_commit(&hash),
                 hash,
                 subject: adapters::io::read_git_trimmed(["log", "-1", "--format=%s", &args.tag])
                     .unwrap_or_default(),
-            })
+            }
         });
 
     let payload = GitTagCreateOutput {

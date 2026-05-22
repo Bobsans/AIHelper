@@ -369,18 +369,18 @@ fn push_dynamic_plugin_conflicts(
     existing_dynamic: Option<&PluginMetadata>,
     existing_builtin: Option<PluginMetadata>,
 ) {
-    if let Some(existing) = existing_dynamic {
-        if !is_same_plugin_identity(new_metadata, existing) {
-            report.push_conflict(
-                new_metadata.clone(),
-                existing.clone(),
-                PluginSource::Dynamic,
-                PluginSource::Dynamic,
-                format!(
-                    "multiple dynamic plugins for domain '{domain_key}', last loaded takes precedence",
-                ),
-            );
-        }
+    if let Some(existing) = existing_dynamic
+        && !is_same_plugin_identity(new_metadata, existing)
+    {
+        report.push_conflict(
+            new_metadata.clone(),
+            existing.clone(),
+            PluginSource::Dynamic,
+            PluginSource::Dynamic,
+            format!(
+                "multiple dynamic plugins for domain '{domain_key}', last loaded takes precedence",
+            ),
+        );
     }
     if let Some(existing) = existing_builtin {
         report.push_conflict(
