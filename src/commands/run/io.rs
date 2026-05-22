@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -8,6 +8,8 @@ use std::{
 
 #[cfg(windows)]
 use std::env;
+#[cfg(windows)]
+use std::path::Path;
 
 use crate::error::AppError;
 
@@ -136,11 +138,6 @@ pub(crate) fn resolve_windows_program(program: &str) -> Option<PathBuf> {
         path_dirs.as_deref(),
         &path_exts,
     )
-}
-
-#[cfg(not(windows))]
-pub(crate) fn resolve_windows_program(_program: &str) -> Option<PathBuf> {
-    None
 }
 
 #[cfg(windows)]

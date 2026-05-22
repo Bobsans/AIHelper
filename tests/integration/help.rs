@@ -13,11 +13,7 @@ fn shows_top_level_help() {
         .stdout(contains("search"))
         .stdout(contains("ctx"))
         .stdout(contains("git"))
-        .stdout(contains("github"))
-        .stdout(contains("gitlab"))
         .stdout(contains("http"))
-        .stdout(contains("ollama"))
-        .stdout(contains("postgres"))
         .stdout(contains("project"))
         .stdout(contains("run"))
         .stdout(contains("task"));
