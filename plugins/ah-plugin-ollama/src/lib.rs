@@ -1,14 +1,8 @@
-use std::{
-    ffi::c_char,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-    time::Duration,
-};
+use std::time::Duration;
 
 use ah_plugin_api::{
-    AH_PLUGIN_ABI_VERSION, AhPluginApiV1, GlobalOptionsWire, InvocationRequest, InvocationResponse,
-    ManualCommand, ManualExample, PluginManual, c_ptr_to_string, free_c_string_ptr,
-    manual_to_c_string, response_to_c_string,
+    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample,
+    PluginManual,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::blocking::Client;
@@ -24,7 +18,15 @@ static PLUGIN_NAME_C: &[u8] = b"external-ollama\0";
 static DOMAIN_C: &[u8] = b"ollama\0";
 static DESCRIPTION_C: &[u8] = b"Ollama Local API plugin (dynamic)\0";
 
-static PLUGIN_API_PTR: AtomicPtr<AhPluginApiV1> = AtomicPtr::new(ptr::null_mut());
+ah_plugin_api::define_plugin_entrypoint_v1!(
+    plugin_name_c: PLUGIN_NAME_C,
+    domain_c: DOMAIN_C,
+    description_c: DESCRIPTION_C,
+    domain: DOMAIN,
+    parse_fn: parse_args,
+    execute_fn: execute,
+    manual_fn: plugin_manual,
+);
 
 #[derive(Debug, Parser)]
 #[command(name = "ollama", about = "Ollama Local API commands")]
@@ -169,101 +171,10 @@ struct OllamaMetrics {
     eval_duration: Option<u64>,
 }
 
-/// Returns the Ollama plugin ABI entry point.
-///
-/// # Safety
-///
-/// The returned pointer is process-static and must not be freed or mutated by
-/// the caller.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ah_plugin_entry_v1() -> *const AhPluginApiV1 {
-    let existing = PLUGIN_API_PTR.load(Ordering::Acquire);
-    if !existing.is_null() {
-        return existing.cast_const();
-    }
-
-    let created = Box::into_raw(Box::new(AhPluginApiV1 {
-        abi_version: AH_PLUGIN_ABI_VERSION,
-        plugin_name: PLUGIN_NAME_C.as_ptr().cast(),
-        domain: DOMAIN_C.as_ptr().cast(),
-        description: DESCRIPTION_C.as_ptr().cast(),
-        invoke_json: ah_plugin_invoke_json,
-        free_c_string: ah_plugin_free_c_string,
-    }));
-
-    match PLUGIN_API_PTR.compare_exchange(
-        ptr::null_mut(),
-        created,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    ) {
-        Ok(_) => created.cast_const(),
-        Err(existing) => {
-            unsafe { drop(Box::from_raw(created)) };
-            existing.cast_const()
-        }
-    }
-}
-
-/// Returns the Ollama plugin manual JSON as an owned C string.
-///
-/// # Safety
-///
-/// The caller must free the returned pointer with this plugin's
-/// `free_c_string` callback.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ah_plugin_manual_json_v1() -> *mut c_char {
-    manual_to_c_string(&plugin_manual())
-}
-
-unsafe extern "C" fn ah_plugin_invoke_json(request_json: *const c_char) -> *mut c_char {
-    let response = invoke_from_raw(request_json);
-    response_to_c_string(&response)
-}
-
-unsafe extern "C" fn ah_plugin_free_c_string(value: *mut c_char) {
-    unsafe { free_c_string_ptr(value) };
-}
-
-fn invoke_from_raw(request_json: *const c_char) -> InvocationResponse {
-    let request_json = match unsafe { c_ptr_to_string(request_json) } {
-        Ok(value) => value,
-        Err(error) => {
-            return InvocationResponse::error(
-                "INVALID_ARGUMENT",
-                format!("invalid request pointer: {error}"),
-            );
-        }
-    };
-
-    let request = match serde_json::from_str::<InvocationRequest>(&request_json) {
-        Ok(value) => value,
-        Err(error) => {
-            return InvocationResponse::error(
-                "INVALID_ARGUMENT",
-                format!("invalid request JSON: {error}"),
-            );
-        }
-    };
-
-    if request.domain != DOMAIN {
-        return InvocationResponse::error(
-            "INVALID_ARGUMENT",
-            format!(
-                "plugin domain mismatch: expected '{DOMAIN}', got '{}'",
-                request.domain
-            ),
-        );
-    }
-
-    let parsed = match parse_args(&request.argv) {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-
-    match parsed.command {
-        OllamaCommand::Ask(args) => execute_ask(args, &request.globals),
-        OllamaCommand::Chat(args) => execute_chat(args, &request.globals),
+fn execute(cli: OllamaCli, globals: &GlobalOptionsWire) -> InvocationResponse {
+    match cli.command {
+        OllamaCommand::Ask(args) => execute_ask(args, globals),
+        OllamaCommand::Chat(args) => execute_chat(args, globals),
     }
 }
 

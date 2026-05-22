@@ -1,90 +1,29 @@
 pub mod ai;
 pub mod cli;
 pub mod commands;
+pub mod config;
 pub mod error;
 pub mod output;
 pub mod plugin_settings;
 pub mod plugins;
+mod runtime_flow;
 pub mod safety;
 
 use std::path::{Path, PathBuf};
 
-use ah_plugin_api::InvocationResponse;
+use ah_plugin_api::{ErrorDiagnostic, InvocationResponse, RequiredTool};
 use ah_runtime::{PluginManager, PluginSource, RuntimeError};
 use serde::Serialize;
 
 use crate::{
-    cli::{CliParseResult, PluginStateFilter, RuntimeCommand},
+    cli::{PluginStateFilter, RuntimeCommand},
     error::AppError,
     output::OutputMode,
     plugin_settings::PluginSettings,
 };
 
 pub fn run() -> Result<(), AppError> {
-    let raw_args = std::env::args_os().collect::<Vec<_>>();
-    cli::apply_initial_cwd_from_raw_args(&raw_args)?;
-
-    let mut plugin_settings = PluginSettings::load()?;
-    let mut manager = PluginManager::new();
-    for plugin in plugins::builtins() {
-        manager.register_builtin(plugin);
-    }
-
-    let plugin_dirs = resolve_plugin_dirs()?;
-    let load_report = load_dynamic_plugins_from_dirs(&mut manager, &plugin_dirs);
-    manager.set_disabled_domains(plugin_settings.disabled_domains().cloned());
-
-    let plugin_metadata = manager.list_enabled_plugins();
-    let command = match cli::parse_runtime_command(raw_args, &plugin_metadata)? {
-        CliParseResult::ExitSuccess => return Ok(()),
-        CliParseResult::Command(command) => command,
-    };
-    if !command_is_quiet(&command) {
-        for warning in &load_report.warnings {
-            eprintln!(
-                "warning: skipped plugin {}: {}",
-                warning.path.display(),
-                warning.error
-            );
-        }
-    }
-
-    match command {
-        RuntimeCommand::PluginsList {
-            state_filter,
-            options,
-        } => execute_plugins_list(&manager, state_filter, options),
-        RuntimeCommand::PluginsEnable { domain, options } => {
-            execute_plugins_enable(&manager, &mut plugin_settings, &domain, options)
-        }
-        RuntimeCommand::PluginsDisable { domain, options } => {
-            execute_plugins_disable(&manager, &mut plugin_settings, &domain, options)
-        }
-        RuntimeCommand::PluginsReset {
-            domain,
-            all,
-            options,
-        } => execute_plugins_reset(
-            &manager,
-            &mut plugin_settings,
-            domain.as_deref(),
-            all,
-            options,
-        ),
-        RuntimeCommand::AiInfo { domain, options } => {
-            ai::execute_info(&manager, domain.as_deref(), options)
-        }
-        RuntimeCommand::Invoke {
-            domain,
-            argv,
-            options,
-        } => {
-            let response = manager
-                .invoke(&domain, argv, options.to_wire())
-                .map_err(map_runtime_error)?;
-            handle_response(response, options.output, options.quiet)
-        }
-    }
+    runtime_flow::run()
 }
 
 fn execute_plugins_list(
@@ -104,6 +43,7 @@ fn execute_plugins_list(
             description: plugin.metadata.description,
             domain: plugin.metadata.domain,
             plugin_name: plugin.metadata.plugin_name,
+            required_tools: plugin.metadata.required_tools,
             source: plugin_source_label(plugin.source),
             state: plugin_state_label(plugin.enabled),
         })
@@ -323,6 +263,10 @@ fn handle_response(
         return Ok(());
     }
 
+    if let Some(diagnostic) = response.diagnostic {
+        return Err(AppError::from_diagnostic(diagnostic));
+    }
+
     let code = response
         .error_code
         .unwrap_or_else(|| "PLUGIN_EXECUTION_FAILED".to_owned());
@@ -342,6 +286,19 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
             "DOMAIN_DISABLED",
             format!("plugin domain is disabled: {domain}"),
         ),
+        RuntimeError::DependencyMissing {
+            domain,
+            operation,
+            tool,
+            reason,
+        } => AppError::from_diagnostic(ErrorDiagnostic::new(
+            Some(domain),
+            operation,
+            "DEPENDENCY_MISSING",
+            format!("required external tool not found: {tool}"),
+            reason,
+            1,
+        )),
         RuntimeError::LibraryLoad { path, source } => AppError::external(
             "PLUGIN_LIBRARY_LOAD_FAILED",
             format!(
@@ -364,6 +321,19 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
             "PLUGIN_ABI_MISMATCH",
             format!(
                 "plugin '{}' has incompatible ABI version {found}; expected {expected}",
+                path.display()
+            ),
+        ),
+        RuntimeError::ApiVersionMismatch {
+            path,
+            found_major,
+            found_minor,
+            supported_major,
+            supported_minor,
+        } => AppError::external(
+            "PLUGIN_API_MISMATCH",
+            format!(
+                "plugin '{}' requires unsupported Plugin API version {found_major}.{found_minor}; host supports {supported_major}.{supported_minor}",
                 path.display()
             ),
         ),
@@ -400,6 +370,7 @@ struct PluginListEntry {
     domain: String,
     description: String,
     abi_version: u32,
+    required_tools: Vec<RequiredTool>,
     source: &'static str,
     state: &'static str,
 }
@@ -413,13 +384,6 @@ struct PluginStateMutationOutput {
     disabled_domains: Vec<String>,
 }
 
-fn resolve_plugin_dirs() -> Result<Vec<PathBuf>, AppError> {
-    let executable_path = std::env::current_exe().map_err(|source| {
-        AppError::invalid_argument(format!("failed to resolve executable path: {source}"))
-    })?;
-    plugin_dirs_from_executable_path(&executable_path)
-}
-
 fn load_dynamic_plugins_from_dirs(
     manager: &mut PluginManager,
     dirs: &[PathBuf],
@@ -430,78 +394,7 @@ fn load_dynamic_plugins_from_dirs(
         merged.loaded += report.loaded;
         merged.skipped += report.skipped;
         merged.warnings.extend(report.warnings);
+        merged.conflicts.extend(report.conflicts);
     }
     merged
-}
-
-fn plugin_dirs_from_executable_path(executable_path: &Path) -> Result<Vec<PathBuf>, AppError> {
-    let executable_dir = executable_path.parent().ok_or_else(|| {
-        AppError::invalid_argument(format!(
-            "failed to resolve executable directory for '{}'",
-            executable_path.display()
-        ))
-    })?;
-
-    let mut dirs = Vec::new();
-    if is_cargo_profile_dir(executable_dir) {
-        dirs.push(executable_dir.to_path_buf());
-    }
-    dirs.push(plugin_dir_from_executable_path(executable_path)?);
-    dirs.dedup();
-    Ok(dirs)
-}
-
-fn plugin_dir_from_executable_path(executable_path: &Path) -> Result<PathBuf, AppError> {
-    let executable_dir = executable_path.parent().ok_or_else(|| {
-        AppError::invalid_argument(format!(
-            "failed to resolve executable directory for '{}'",
-            executable_path.display()
-        ))
-    })?;
-    Ok(executable_dir.join("plugins"))
-}
-
-fn is_cargo_profile_dir(path: &Path) -> bool {
-    path.join(".cargo-lock").is_file()
-        && matches!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("debug") | Some("release")
-        )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn plugin_dir_is_next_to_executable() {
-        let executable = PathBuf::from_iter(["opt", "aihelper", "ah"]);
-        let plugin_dir =
-            plugin_dir_from_executable_path(&executable).expect("plugin dir should resolve");
-        assert_eq!(
-            plugin_dir,
-            PathBuf::from_iter(["opt", "aihelper", "plugins"])
-        );
-    }
-
-    #[test]
-    fn plugin_dirs_include_cargo_profile_dir_before_plugins() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("aihelper-plugin-dir-test-{}", std::process::id()));
-        let profile_dir = temp_dir.join("target").join("debug");
-        fs::create_dir_all(&profile_dir).expect("profile dir should be created");
-        fs::write(profile_dir.join(".cargo-lock"), "")
-            .expect("cargo lock marker should be written");
-
-        let executable = profile_dir.join("ah.exe");
-        let plugin_dirs =
-            plugin_dirs_from_executable_path(&executable).expect("plugin dirs should resolve");
-        assert_eq!(
-            plugin_dirs,
-            vec![profile_dir.clone(), profile_dir.join("plugins")]
-        );
-
-        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-    }
 }

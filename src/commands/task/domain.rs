@@ -1,0 +1,183 @@
+use serde::{Deserialize, Serialize};
+
+use crate::error::AppError;
+use ah_runtime::core::{apply_limit, normalize_path, truncate_lines};
+
+use super::{adapters, TaskArgs, TaskCommand};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskEntry {
+    pub(crate) name: String,
+    pub(crate) command: String,
+    pub(crate) updated_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskStore {
+    version: u32,
+    tasks: Vec<TaskEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum TaskResult {
+    Save(TaskSaveOutput),
+    List(TaskListOutput),
+    Run(TaskRunOutput),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskSaveOutput {
+    pub command: &'static str,
+    pub name: String,
+    pub task_command: String,
+    pub store_path: String,
+    pub updated_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskListOutput {
+    pub command: &'static str,
+    pub store_path: String,
+    pub count: usize,
+    pub truncated: bool,
+    pub tasks: Vec<TaskEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRunOutput {
+    pub command: &'static str,
+    pub name: String,
+    pub task_command: String,
+    pub exit_code: i32,
+    pub success: bool,
+    pub truncated: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Default for TaskStore {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            tasks: Vec::new(),
+        }
+    }
+}
+
+pub(crate) fn execute(args: TaskArgs, limit: Option<usize>) -> Result<TaskResult, AppError> {
+    match args.command {
+        TaskCommand::Save(save_args) => Ok(TaskResult::Save(run_save(save_args)?)),
+        TaskCommand::List(_list_args) => Ok(TaskResult::List(run_list(_list_args, limit)?)),
+        TaskCommand::Run(run_args) => Ok(TaskResult::Run(run_run(run_args, limit)?)),
+    }
+}
+
+fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
+    validation::validate_task_name(&args.name)?;
+    let store_path = adapters::io::task_store_path();
+    let mut store = adapters::io::load_store(&store_path)?;
+    let updated_unix_seconds = adapters::io::now_unix_seconds();
+
+    if let Some(existing) = store.tasks.iter_mut().find(|task| task.name == args.name) {
+        existing.command = args.command.clone();
+        existing.updated_unix_seconds = updated_unix_seconds;
+    } else {
+        store.tasks.push(TaskEntry {
+            name: args.name.clone(),
+            command: args.command.clone(),
+            updated_unix_seconds,
+        });
+    }
+
+    store.tasks.sort_by(|left, right| left.name.cmp(&right.name));
+    adapters::io::save_store(&store_path, &store)?;
+
+    Ok(TaskSaveOutput {
+        command: "task.save",
+        name: args.name,
+        task_command: args.command,
+        store_path: normalize_path(&store_path),
+        updated_unix_seconds,
+    })
+}
+
+fn run_list(_args: super::ListArgs, limit: Option<usize>) -> Result<TaskListOutput, AppError> {
+    let store_path = adapters::io::task_store_path();
+    let mut store = adapters::io::load_store(&store_path)?;
+    store
+        .tasks
+        .sort_by(|left, right| left.name.cmp(&right.name));
+    let mut tasks = store.tasks;
+    let truncated = apply_limit(&mut tasks, limit);
+
+    Ok(TaskListOutput {
+        command: "task.list",
+        store_path: normalize_path(&store_path),
+        count: tasks.len(),
+        truncated,
+        tasks,
+    })
+}
+
+fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, AppError> {
+    validation::validate_task_name(&args.name)?;
+
+    let store = adapters::io::load_store(&adapters::io::task_store_path())?;
+    let task = store
+        .tasks
+        .into_iter()
+        .find(|entry| entry.name == args.name)
+        .ok_or_else(|| AppError::invalid_argument(format!("task not found: {}", args.name)))?;
+
+    let output = adapters::io::run_shell_command(&task.command)?;
+    let success = output.status.success();
+    let exit_code = output.status.code().unwrap_or_default();
+    let stdout_raw = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr_raw = String::from_utf8_lossy(&output.stderr).into_owned();
+    let (stdout, stdout_truncated) = truncate_lines(&stdout_raw, limit);
+    let (stderr, stderr_truncated) = truncate_lines(&stderr_raw, limit);
+    let truncated = stdout_truncated || stderr_truncated;
+
+    if !success {
+        let stderr_message = if stderr.trim().is_empty() {
+            format!("task '{}' failed with exit code {}", args.name, exit_code)
+        } else {
+            stderr.trim().to_owned()
+        };
+        return Err(AppError::command_failed(
+            format!("task {}", args.name),
+            Some(exit_code),
+            stderr_message,
+        ));
+    }
+
+    Ok(TaskRunOutput {
+        command: "task.run",
+        name: args.name,
+        task_command: task.command,
+        exit_code,
+        success,
+        truncated,
+        stdout,
+        stderr,
+    })
+}
+
+mod validation {
+    use crate::error::AppError;
+
+    pub(super) fn validate_task_name(name: &str) -> Result<(), AppError> {
+        if name.is_empty() {
+            return Err(AppError::invalid_argument("task name must not be empty"));
+        }
+        if !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+        {
+            return Err(AppError::invalid_argument(
+                "task name may contain only letters, numbers, '-', '_' and '.'",
+            ));
+        }
+        Ok(())
+    }
+}

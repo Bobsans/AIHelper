@@ -1,11 +1,14 @@
-use std::{io, path::PathBuf};
+use std::{ffi::OsStr, io, path::PathBuf};
 
+use ah_plugin_api::ErrorDiagnostic;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("{message}")]
     External { code: String, message: String },
+    #[error("{diagnostic}")]
+    Diagnostic { diagnostic: ErrorDiagnostic },
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
     #[error("failed to change working directory to {path:?}: {source}")]
@@ -64,6 +67,7 @@ impl AppError {
     pub fn code(&self) -> &str {
         match self {
             Self::External { code, .. } => code.as_str(),
+            Self::Diagnostic { diagnostic } => diagnostic.code.as_str(),
             Self::InvalidArgument(message) => {
                 classify_invalid_argument(&normalize_message(message))
             }
@@ -102,6 +106,14 @@ impl AppError {
     }
 
     pub fn print(&self) {
+        if wants_json_error_output() {
+            match serde_json::to_string_pretty(&self.diagnostic()) {
+                Ok(payload) => eprintln!("{payload}"),
+                Err(error) => eprintln!("JSON_SERIALIZATION_FAILED: {error}"),
+            }
+            return;
+        }
+
         let rendered = self.rendered();
         eprintln!("{}: {}", rendered.code, concise_error_message(&rendered));
         if let Some(hint) = concise_hint(&rendered.code) {
@@ -118,6 +130,10 @@ impl AppError {
             code: code.into(),
             message: message.into(),
         }
+    }
+
+    pub fn from_diagnostic(diagnostic: ErrorDiagnostic) -> Self {
+        Self::Diagnostic { diagnostic }
     }
 
     pub fn cwd(path: PathBuf, source: io::Error) -> Self {
@@ -170,6 +186,7 @@ impl AppError {
     pub fn detail_message(&self) -> String {
         match self {
             Self::External { message, .. } => normalize_message(message),
+            Self::Diagnostic { diagnostic } => normalize_message(&diagnostic.cause),
             Self::InvalidArgument(message) => normalize_message(message),
             Self::ChangeDirectory { path, source } => {
                 format!(
@@ -214,6 +231,11 @@ impl AppError {
     fn rendered(&self) -> RenderedError {
         match self {
             Self::External { code, message } => render_external(code, message),
+            Self::Diagnostic { diagnostic } => RenderedError {
+                code: diagnostic.code.clone(),
+                message: normalize_message(&diagnostic.message),
+                context: Vec::new(),
+            },
             Self::InvalidArgument(message) => render_invalid_argument(message),
             Self::ChangeDirectory { path, source } => RenderedError {
                 code: self.code().to_owned(),
@@ -347,6 +369,23 @@ impl AppError {
             },
         }
     }
+
+    pub fn diagnostic(&self) -> ErrorDiagnostic {
+        match self {
+            Self::Diagnostic { diagnostic } => diagnostic.clone(),
+            _ => {
+                let rendered = self.rendered();
+                ErrorDiagnostic::new(
+                    infer_domain(&rendered.code),
+                    infer_operation(&rendered.code),
+                    rendered.code.clone(),
+                    rendered.message.clone(),
+                    self.detail_message(),
+                    self.exit_code(),
+                )
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -466,8 +505,46 @@ fn concise_hint(code: &str) -> Option<&'static str> {
         "TASK_NOT_FOUND" => Some("run ah task list"),
         "DOMAIN_NOT_FOUND" => Some("run ah plugins list"),
         "DOMAIN_DISABLED" => Some("enable domain or choose another"),
+        "DEPENDENCY_MISSING" => Some("install the required tool and ensure it is on PATH"),
         _ => None,
     }
+}
+
+fn wants_json_error_output() -> bool {
+    std::env::args_os().any(|arg| arg == OsStr::new("--json"))
+}
+
+fn infer_domain(code: &str) -> Option<String> {
+    let domain = if code.starts_with("GITHUB_") {
+        "github"
+    } else if code.starts_with("GITLAB_") {
+        "gitlab"
+    } else if code.starts_with("OLLAMA_") {
+        "ollama"
+    } else if code.starts_with("POSTGRES_") {
+        "postgres"
+    } else if code.starts_with("PLUGIN_") || code.starts_with("DOMAIN_") {
+        "plugins"
+    } else {
+        return None;
+    };
+    Some(domain.to_owned())
+}
+
+fn infer_operation(code: &str) -> Option<String> {
+    let operation = match code {
+        "COMMAND_EXECUTION_FAILED" | "COMMAND_FAILED" => "process.execute",
+        "JSON_DESERIALIZATION_FAILED" | "JSON_SERIALIZATION_FAILED" => "json",
+        "CWD_CHANGE_FAILED" => "cwd.change",
+        "FILE_NOT_FOUND" | "FILE_READ_FAILED" | "FILE_WRITE_FAILED" | "FILE_METADATA_FAILED" => {
+            "file"
+        }
+        "DIRECTORY_NOT_FOUND" | "DIRECTORY_READ_FAILED" => "directory",
+        "DEPENDENCY_MISSING" => "dependency.preflight",
+        _ if code.starts_with("PLUGIN_") || code.starts_with("DOMAIN_") => "plugin.runtime",
+        _ => return None,
+    };
+    Some(operation.to_owned())
 }
 
 fn context_value(error: &RenderedError, label: &str) -> Option<String> {

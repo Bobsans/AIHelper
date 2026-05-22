@@ -1,14 +1,13 @@
 use std::{
     collections::BTreeSet,
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
+use crate::{config::ConfigContext, error::AppError};
 
-const PLUGIN_SETTINGS_FILE: &str = "plugins.json";
 const SETTINGS_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -19,7 +18,11 @@ pub struct PluginSettings {
 
 impl PluginSettings {
     pub fn load() -> Result<Self, AppError> {
-        let path = settings_file_path()?;
+        let context = ConfigContext::load()?;
+        Self::load_from_path(context.paths().plugin_settings_file.clone())
+    }
+
+    pub fn load_from_path(path: PathBuf) -> Result<Self, AppError> {
         if !path.exists() {
             return Ok(Self {
                 path,
@@ -132,72 +135,6 @@ pub fn normalize_domain(domain: &str) -> Result<String, AppError> {
 
 fn normalize_domain_key(domain: &str) -> String {
     domain.trim().to_ascii_lowercase()
-}
-
-fn settings_file_path() -> Result<PathBuf, AppError> {
-    let config_dir = if let Some(value) = env::var_os("AH_CONFIG_DIR") {
-        let path = PathBuf::from(value);
-        if path.as_os_str().is_empty() {
-            return Err(AppError::invalid_argument(
-                "AH_CONFIG_DIR must not be empty",
-            ));
-        }
-        path
-    } else {
-        default_config_dir()?
-    };
-    Ok(config_dir.join(PLUGIN_SETTINGS_FILE))
-}
-
-fn default_config_dir() -> Result<PathBuf, AppError> {
-    #[cfg(target_os = "windows")]
-    {
-        env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join("AIHelper"))
-            .ok_or_else(|| {
-                AppError::invalid_argument(
-                    "unable to resolve %APPDATA% for plugin settings; set AH_CONFIG_DIR",
-                )
-            })
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| {
-                path.join("Library")
-                    .join("Application Support")
-                    .join("AIHelper")
-            })
-            .ok_or_else(|| {
-                AppError::invalid_argument(
-                    "unable to resolve $HOME for plugin settings; set AH_CONFIG_DIR",
-                )
-            })
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Some(value) = env::var_os("XDG_CONFIG_HOME") {
-            let path = PathBuf::from(value);
-            if !path.as_os_str().is_empty() {
-                return Ok(path.join("aihelper"));
-            }
-        }
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join(".config").join("aihelper"))
-            .ok_or_else(|| {
-                AppError::invalid_argument(
-                    "unable to resolve config directory for plugin settings; set AH_CONFIG_DIR",
-                )
-            })
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

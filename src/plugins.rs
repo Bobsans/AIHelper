@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ah_plugin_api::{
-    InvocationRequest, InvocationResponse, ManualCommand, ManualExample, PluginManual,
-    PluginMetadata,
+    normalize_invocation_argv, GlobalOptionsWire, InvocationRequest, InvocationResponse,
+    ManualCommand, ManualExample, PluginManual, PluginMetadata, RequiredTool,
 };
 use ah_runtime::BuiltinPlugin;
 use clap::{CommandFactory, Parser, error::ErrorKind};
@@ -85,6 +85,8 @@ fn file_metadata() -> PluginMetadata {
         domain: "file".to_owned(),
         description: "File operations plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
 }
 
@@ -94,6 +96,8 @@ fn search_metadata() -> PluginMetadata {
         domain: "search".to_owned(),
         description: "Search operations plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
 }
 
@@ -103,6 +107,8 @@ fn ctx_metadata() -> PluginMetadata {
         domain: "ctx".to_owned(),
         description: "Context utilities plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
 }
 
@@ -112,6 +118,8 @@ fn git_metadata() -> PluginMetadata {
         domain: "git".to_owned(),
         description: "Git utilities plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: vec![git_required_tool()],
+        compatibility: Default::default(),
     }
 }
 
@@ -121,6 +129,8 @@ fn project_metadata() -> PluginMetadata {
         domain: "project".to_owned(),
         description: "Project detection plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
 }
 
@@ -130,6 +140,8 @@ fn run_metadata() -> PluginMetadata {
         domain: "run".to_owned(),
         description: "Command execution check plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
 }
 
@@ -139,6 +151,8 @@ fn task_metadata() -> PluginMetadata {
         domain: "task".to_owned(),
         description: "Task recipe plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
 }
 
@@ -148,7 +162,13 @@ fn http_metadata() -> PluginMetadata {
         domain: "http".to_owned(),
         description: "HTTP workflow plugin (built-in)".to_owned(),
         abi_version: 1,
+        required_tools: Vec::new(),
+        compatibility: Default::default(),
     }
+}
+
+fn git_required_tool() -> RequiredTool {
+    RequiredTool::new("git", "local git commands require the git executable on PATH")
 }
 
 fn file_manual() -> PluginManual {
@@ -577,12 +597,15 @@ impl BuiltinPlugin for FileBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<FilePluginCli>("file", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<FilePluginCli>(
+            "file",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::file::execute(parsed.args, &options))
+        map_execute("file", commands::file::execute(parsed.args, &options))
     }
 }
 
@@ -596,12 +619,15 @@ impl BuiltinPlugin for SearchBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<SearchPluginCli>("search", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<SearchPluginCli>(
+            "search",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::search::execute(parsed.args, &options))
+        map_execute("search", commands::search::execute(parsed.args, &options))
     }
 }
 
@@ -614,13 +640,24 @@ impl BuiltinPlugin for CtxBuiltinPlugin {
         ctx_manual()
     }
 
+    fn required_tools(&self, request: &InvocationRequest) -> Vec<RequiredTool> {
+        if request_command(request).as_deref() == Some("changed") {
+            vec![git_required_tool()]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<CtxPluginCli>("ctx", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<CtxPluginCli>(
+            "ctx",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::ctx::execute(parsed.args, &options))
+        map_execute("ctx", commands::ctx::execute(parsed.args, &options))
     }
 }
 
@@ -634,12 +671,15 @@ impl BuiltinPlugin for GitBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<GitPluginCli>("git", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<GitPluginCli>(
+            "git",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::git::execute(parsed.args, &options))
+        map_execute("git", commands::git::execute(parsed.args, &options))
     }
 }
 
@@ -653,12 +693,15 @@ impl BuiltinPlugin for ProjectBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<ProjectPluginCli>("project", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<ProjectPluginCli>(
+            "project",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::project::execute(parsed.args, &options))
+        map_execute("project", commands::project::execute(parsed.args, &options))
     }
 }
 
@@ -672,12 +715,15 @@ impl BuiltinPlugin for RunBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<RunPluginCli>("run", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<RunPluginCli>(
+            "run",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::run::execute(parsed.args, &options))
+        map_execute("run", commands::run::execute(parsed.args, &options))
     }
 }
 
@@ -691,12 +737,15 @@ impl BuiltinPlugin for HttpBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<HttpPluginCli>("http", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<HttpPluginCli>(
+            "http",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::http::execute(parsed.args, &options))
+        map_execute("http", commands::http::execute(parsed.args, &options))
     }
 }
 
@@ -710,27 +759,46 @@ impl BuiltinPlugin for TaskBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let parsed = match parse_args::<TaskPluginCli>("task", &request.argv) {
-            ParseOutcome::Parsed(value) => value,
+        let (parsed, options) = match parse_args::<TaskPluginCli>(
+            "task",
+            &request.argv,
+            request.globals.clone(),
+        ) {
+            ParseOutcome::Parsed(value, options) => (value, options),
             ParseOutcome::Response(response) => return response,
         };
-        let options = GlobalOptions::from(request.globals.clone());
-        map_execute(commands::task::execute(parsed.args, &options))
+        map_execute("task", commands::task::execute(parsed.args, &options))
     }
 }
 
 enum ParseOutcome<T> {
-    Parsed(T),
+    Parsed(T, GlobalOptions),
     Response(InvocationResponse),
 }
 
-fn parse_args<T: Parser + CommandFactory>(domain: &str, argv: &[String]) -> ParseOutcome<T> {
+fn request_command(request: &InvocationRequest) -> Option<String> {
+    normalize_invocation_argv(&request.argv, request.globals.clone())
+        .ok()
+        .and_then(|normalized| normalized.argv.into_iter().next())
+}
+
+fn parse_args<T: Parser + CommandFactory>(
+    domain: &str,
+    argv: &[String],
+    globals: GlobalOptionsWire,
+) -> ParseOutcome<T> {
+    let normalized = match normalize_invocation_argv(argv, globals) {
+        Ok(value) => value,
+        Err(error) => return ParseOutcome::Response(error.with_error_domain(domain)),
+    };
+
+    let options = GlobalOptions::from(normalized.globals);
     let mut args = Vec::with_capacity(argv.len() + 1);
     args.push(domain.to_owned());
-    args.extend(argv.iter().cloned());
+    args.extend(normalized.argv.into_iter());
 
     match T::try_parse_from(args) {
-        Ok(value) => ParseOutcome::Parsed(value),
+        Ok(value) => ParseOutcome::Parsed(value, options),
         Err(error) => {
             if matches!(
                 error.kind(),
@@ -741,16 +809,17 @@ fn parse_args<T: Parser + CommandFactory>(domain: &str, argv: &[String]) -> Pars
                 ParseOutcome::Response(InvocationResponse::error(
                     "INVALID_ARGUMENT",
                     error.to_string(),
-                ))
+                )
+                .with_error_domain(domain))
             }
         }
     }
 }
 
-fn map_execute(result: Result<(), AppError>) -> InvocationResponse {
+fn map_execute(domain: &str, result: Result<(), AppError>) -> InvocationResponse {
     match result {
         Ok(()) => InvocationResponse::ok(None),
-        Err(error) => InvocationResponse::error(error.code(), error.detail_message()),
+        Err(error) => InvocationResponse::error_diagnostic(error.diagnostic().with_domain(domain)),
     }
 }
 

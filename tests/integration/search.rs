@@ -11,7 +11,7 @@ fn search_path_not_found_error_is_rendered_without_nested_wrappers() {
     cmd.args(["search", "text", "customFieldValues", "Fixdigital"])
         .assert()
         .failure()
-        .stderr(contains("PATH_NOT_FOUND: Fixdigital"))
+        .stderr(contains("PATH_NOT_FOUND: path does not exist: Fixdigital"))
         .stderr(contains("hint: check path or --cwd"))
         .stderr(predicates::str::contains("invalid argument: [").not());
 }

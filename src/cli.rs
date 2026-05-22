@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
-use ah_plugin_api::{GlobalOptionsWire, PluginMetadata};
+use ah_plugin_api::{GlobalOptionsWire, PluginMetadata, normalize_invocation_argv};
 use clap::{
     Arg, ArgAction, ArgGroup, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser,
 };
@@ -118,7 +118,7 @@ pub fn parse_runtime_command(
     if options.limit == Some(0) {
         return Err(AppError::invalid_argument("--limit must be >= 1"));
     }
-    let mut deferred_cwd = matches.get_one::<PathBuf>("cwd").cloned();
+    let deferred_cwd = matches.get_one::<PathBuf>("cwd").cloned();
 
     let runtime_command = match matches.subcommand() {
         Some((HOST_COMMAND_AI, ai_matches)) => {
@@ -176,7 +176,16 @@ pub fn parse_runtime_command(
         }
         Some((domain, domain_matches)) => {
             let mut argv = collect_domain_argv(domain_matches)?;
-            argv = strip_trailing_global_flags(&argv, &mut options, &mut deferred_cwd)?;
+            let normalized = normalize_invocation_argv(&argv, options.to_wire())
+                .map_err(|error| {
+                    AppError::invalid_argument(
+                        error
+                            .error_message
+                            .unwrap_or_else(|| "invalid invocation argument".to_owned()),
+                    )
+                })?;
+            options = GlobalOptions::from(normalized.globals);
+            argv = normalized.argv;
             RuntimeCommand::Invoke {
                 domain: domain.to_owned(),
                 argv,
@@ -388,68 +397,6 @@ fn extract_last_cwd(raw_args: &[OsString]) -> Result<Option<PathBuf>, AppError> 
     Ok(cwd)
 }
 
-fn strip_trailing_global_flags(
-    argv: &[String],
-    options: &mut GlobalOptions,
-    deferred_cwd: &mut Option<PathBuf>,
-) -> Result<Vec<String>, AppError> {
-    let mut filtered = Vec::new();
-    let mut index = 0usize;
-    while index < argv.len() {
-        match argv[index].as_str() {
-            "--json" => {
-                options.output = OutputMode::Json;
-                index += 1;
-            }
-            "--quiet" => {
-                options.quiet = true;
-                index += 1;
-            }
-            "--limit" => {
-                let value = argv.get(index + 1).ok_or_else(|| {
-                    AppError::invalid_argument("missing value for trailing --limit")
-                })?;
-                let parsed = value.parse::<usize>().map_err(|_| {
-                    AppError::invalid_argument(format!(
-                        "invalid value for trailing --limit: {value}"
-                    ))
-                })?;
-                if parsed == 0 {
-                    return Err(AppError::invalid_argument("--limit must be >= 1"));
-                }
-                options.limit = Some(parsed);
-                index += 2;
-            }
-            "--cwd" => {
-                let value = argv.get(index + 1).ok_or_else(|| {
-                    AppError::invalid_argument("missing value for trailing --cwd")
-                })?;
-                *deferred_cwd = Some(PathBuf::from(value));
-                index += 2;
-            }
-            _ => {
-                if let Some(value) = argv[index].strip_prefix("--cwd=") {
-                    *deferred_cwd = Some(PathBuf::from(value));
-                } else if let Some(value) = argv[index].strip_prefix("--limit=") {
-                    let parsed = value.parse::<usize>().map_err(|_| {
-                        AppError::invalid_argument(format!(
-                            "invalid value for trailing --limit: {value}"
-                        ))
-                    })?;
-                    if parsed == 0 {
-                        return Err(AppError::invalid_argument("--limit must be >= 1"));
-                    }
-                    options.limit = Some(parsed);
-                } else {
-                    filtered.push(argv[index].clone());
-                }
-                index += 1;
-            }
-        }
-    }
-    Ok(filtered)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,12 +409,16 @@ mod tests {
                 domain: "file".to_owned(),
                 description: "File operations plugin (built-in)".to_owned(),
                 abi_version: 1,
+                required_tools: Vec::new(),
+                compatibility: Default::default(),
             },
             PluginMetadata {
                 plugin_name: "external-ollama".to_owned(),
                 domain: "ollama".to_owned(),
                 description: "Ollama Local API plugin (dynamic)".to_owned(),
                 abi_version: 1,
+                required_tools: Vec::new(),
+                compatibility: Default::default(),
             },
         ];
         let mut command = build_cli_command(&plugins);
@@ -488,6 +439,8 @@ mod tests {
             domain: "ollama".to_owned(),
             description: "Ollama Local API plugin (dynamic)".to_owned(),
             abi_version: 1,
+            required_tools: Vec::new(),
+            compatibility: Default::default(),
         }];
         let raw_args = vec![
             OsString::from("ah"),
@@ -504,6 +457,38 @@ mod tests {
         };
         assert_eq!(domain, "ollama");
         assert_eq!(argv, vec!["ask", "--model", "llama3.2", "--prompt", "ping"]);
+    }
+
+    #[test]
+    fn parser_strips_invocation_globals_from_domain_argv() {
+        let plugins = vec![PluginMetadata {
+            plugin_name: "external-ollama".to_owned(),
+            domain: "ollama".to_owned(),
+            description: "Ollama Local API plugin (dynamic)".to_owned(),
+            abi_version: 1,
+            required_tools: Vec::new(),
+            compatibility: Default::default(),
+        }];
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("ollama"),
+            OsString::from("ask"),
+            OsString::from("--json"),
+            OsString::from("--quiet"),
+            OsString::from("--limit"),
+            OsString::from("3"),
+            OsString::from("--prompt"),
+            OsString::from("ping"),
+        ];
+        let parsed = parse_runtime_command(raw_args, &plugins).expect("parse should succeed");
+        let CliParseResult::Command(RuntimeCommand::Invoke { domain, argv, options }) = parsed else {
+            panic!("unexpected parse result");
+        };
+        assert_eq!(domain, "ollama");
+        assert_eq!(options.output, OutputMode::Json);
+        assert!(options.quiet);
+        assert_eq!(options.limit, Some(3));
+        assert_eq!(argv, vec!["ask", "--prompt", "ping"]);
     }
 
     #[test]
@@ -526,6 +511,8 @@ mod tests {
             domain: "http".to_owned(),
             description: "HTTP workflow plugin (built-in)".to_owned(),
             abi_version: 1,
+            required_tools: Vec::new(),
+            compatibility: Default::default(),
         }];
 
         let disable_args = vec![
