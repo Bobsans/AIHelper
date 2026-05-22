@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     io::{Cursor, Read, Write},
     process::{Command, Stdio},
     thread,
@@ -8,7 +7,8 @@ use std::{
 };
 
 use ah_plugin_api::{
-    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample, PluginManual,
+    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample,
+    PluginManual,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};

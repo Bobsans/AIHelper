@@ -9,8 +9,7 @@ use std::{
 };
 
 use ah_plugin_api::{
-    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample,
-    PluginManual,
+    GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::blocking::Client;

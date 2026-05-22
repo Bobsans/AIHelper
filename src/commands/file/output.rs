@@ -1,10 +1,8 @@
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::OutputMode,
-};
+use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
 
-use crate::commands::file::domain::{FileResult, FileLinesOutput, FileStatOutput, FileTreeOutput, TreeEntry};
+use crate::commands::file::domain::{
+    FileLinesOutput, FileResult, FileStatOutput, FileTreeOutput, TreeEntry,
+};
 
 pub(crate) fn emit(result: FileResult, options: &GlobalOptions) -> Result<(), AppError> {
     if options.quiet {

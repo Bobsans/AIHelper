@@ -7,9 +7,9 @@ use ah_runtime::core;
 use globset::GlobSet;
 use walkdir::WalkDir;
 
+use crate::commands::search::domain::{ContextLine, PatternMatcher, TextCollectStats, TextMatch};
 use crate::error::AppError;
 use crate::safety::{self, TextFileDecision, TextFilePolicy, TextFileSkipReason};
-use crate::commands::search::domain::{ContextLine, PatternMatcher, TextCollectStats, TextMatch};
 
 #[derive(Debug)]
 pub(crate) struct SearchScope {
@@ -267,8 +267,7 @@ fn match_file(
         }
     }
 
-    let bytes =
-        fs::read(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+    let bytes = fs::read(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
     let text = match String::from_utf8(bytes) {
         Ok(value) => value,
         Err(_) => {
@@ -320,7 +319,9 @@ fn build_context_lines(
             .collect()
     };
 
-    let after_end = index.saturating_add(context_lines).min(lines.len().saturating_sub(1));
+    let after_end = index
+        .saturating_add(context_lines)
+        .min(lines.len().saturating_sub(1));
     let after = if context_lines == 0 || index + 1 >= lines.len() {
         Vec::new()
     } else {

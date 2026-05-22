@@ -1,8 +1,8 @@
 use crate::{
     cli::GlobalOptions,
     commands::git::domain::{
-        CommitInfoOutput, GitBlameOutput, GitChangedOutput, GitDiffOutput, GitRemotesOutput, GitResult,
-        GitStatusOutput, GitTagCreateOutput, GitTagsOutput,
+        CommitInfoOutput, GitBlameOutput, GitChangedOutput, GitDiffOutput, GitRemotesOutput,
+        GitResult, GitStatusOutput, GitTagCreateOutput, GitTagsOutput,
     },
     error::AppError,
     output::OutputMode,

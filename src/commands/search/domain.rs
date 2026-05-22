@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::error::AppError;
 
-use super::{adapters, FilesArgs, TextArgs};
+use super::{FilesArgs, TextArgs, adapters};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SearchTextOutput {
@@ -78,10 +78,7 @@ pub(crate) enum SearchResult {
     Files(SearchFilesOutput),
 }
 
-pub(crate) fn execute_text(
-    args: TextArgs,
-    limit: Option<usize>,
-) -> Result<SearchResult, AppError> {
+pub(crate) fn execute_text(args: TextArgs, limit: Option<usize>) -> Result<SearchResult, AppError> {
     crate::safety::validate_max_bytes(args.max_bytes)?;
     let scope = adapters::io::resolve_scope(&args.paths, args.follow_symlinks)?;
     let context_lines = args.context.unwrap_or(0);
@@ -100,7 +97,11 @@ pub(crate) fn execute_text(
             )?
         }
     } else {
-        adapters::io::collect_files_from_roots(&scope.roots, globset.as_ref(), args.follow_symlinks)?
+        adapters::io::collect_files_from_roots(
+            &scope.roots,
+            globset.as_ref(),
+            args.follow_symlinks,
+        )?
     };
 
     let backend = if backend_supports_rg {
@@ -119,7 +120,11 @@ pub(crate) fn execute_text(
         limit,
     )?;
 
-    let file_count = matches.iter().map(|item| item.path.as_str()).collect::<BTreeSet<_>>().len();
+    let file_count = matches
+        .iter()
+        .map(|item| item.path.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
     Ok(SearchResult::Text(SearchTextOutput {
         command: "search.text",
         backend,
@@ -139,7 +144,10 @@ pub(crate) fn execute_text(
     }))
 }
 
-pub(crate) fn execute_files(args: FilesArgs, limit: Option<usize>) -> Result<SearchResult, AppError> {
+pub(crate) fn execute_files(
+    args: FilesArgs,
+    limit: Option<usize>,
+) -> Result<SearchResult, AppError> {
     let scope = adapters::io::resolve_scope(&args.paths, args.follow_symlinks)?;
 
     let (all_files, backend) = if adapters::io::rg_is_available() {
@@ -198,7 +206,9 @@ fn build_matcher(
         let compiled = RegexBuilder::new(pattern)
             .case_insensitive(ignore_case)
             .build()
-            .map_err(|error| AppError::invalid_argument(format!("invalid regex pattern: {error}")))?;
+            .map_err(|error| {
+                AppError::invalid_argument(format!("invalid regex pattern: {error}"))
+            })?;
         return Ok(PatternMatcher::Regex { pattern: compiled });
     }
     let needle_lower = if ignore_case {

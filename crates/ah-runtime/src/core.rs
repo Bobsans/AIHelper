@@ -5,7 +5,9 @@ use std::{
 };
 
 pub fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit && items.len() > limit_value {
+    if let Some(limit_value) = limit
+        && items.len() > limit_value
+    {
         items.truncate(limit_value);
         return true;
     }
@@ -58,7 +60,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    run_command(program, args).map(|output| output.status.success()).unwrap_or(false)
+    run_command(program, args)
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 pub fn run_shell_command(command: &str) -> std::io::Result<Output> {

@@ -78,13 +78,19 @@ pub fn normalize_invocation_argv(
             }
         }
     }
-    Ok(InvocationNormalization { argv: normalized, globals })
+    Ok(InvocationNormalization {
+        argv: normalized,
+        globals,
+    })
 }
 
 fn parse_limit(value: &str) -> Result<usize, InvocationResponse> {
-    let parsed = value
-        .parse::<usize>()
-        .map_err(|_| InvocationResponse::error("INVALID_ARGUMENT", format!("invalid value for --limit: {value}")))?;
+    let parsed = value.parse::<usize>().map_err(|_| {
+        InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("invalid value for --limit: {value}"),
+        )
+    })?;
     if parsed == 0 {
         return Err(InvocationResponse::error(
             "INVALID_ARGUMENT",
@@ -450,14 +456,15 @@ macro_rules! define_plugin_entrypoint_v1 {
                 return existing.cast_const();
             }
 
-            let created = ::std::boxed::Box::into_raw(::std::boxed::Box::new($crate::AhPluginApiV1 {
-                abi_version: $crate::AH_PLUGIN_ABI_VERSION,
-                plugin_name: $plugin_name_c.as_ptr().cast(),
-                domain: $domain_c.as_ptr().cast(),
-                description: $description_c.as_ptr().cast(),
-                invoke_json: ah_plugin_invoke_json,
-                free_c_string: ah_plugin_free_c_string,
-            }));
+            let created =
+                ::std::boxed::Box::into_raw(::std::boxed::Box::new($crate::AhPluginApiV1 {
+                    abi_version: $crate::AH_PLUGIN_ABI_VERSION,
+                    plugin_name: $plugin_name_c.as_ptr().cast(),
+                    domain: $domain_c.as_ptr().cast(),
+                    description: $description_c.as_ptr().cast(),
+                    invoke_json: ah_plugin_invoke_json,
+                    free_c_string: ah_plugin_free_c_string,
+                }));
 
             match PLUGIN_API_PTR.compare_exchange(
                 ::std::ptr::null_mut(),
@@ -607,26 +614,22 @@ mod tests {
             "x".to_owned(),
             "--limit=5".to_owned(),
         ];
-        let normalized = normalize_invocation_argv(&argv, base_globals())
-            .expect("invocation should normalize");
+        let normalized =
+            normalize_invocation_argv(&argv, base_globals()).expect("invocation should normalize");
         assert!(normalized.globals.json);
         assert!(normalized.globals.quiet);
         assert_eq!(normalized.globals.limit, Some(5));
         assert_eq!(
             normalized.argv,
-            vec![
-                "ask".to_owned(),
-                "--prompt".to_owned(),
-                "x".to_owned(),
-            ]
+            vec!["ask".to_owned(), "--prompt".to_owned(), "x".to_owned(),]
         );
     }
 
     #[test]
     fn normalize_invocation_limit_requires_positive() {
         let argv = vec!["--limit".to_owned(), "0".to_owned()];
-        let error = normalize_invocation_argv(&argv, base_globals())
-            .expect_err("zero limit should fail");
+        let error =
+            normalize_invocation_argv(&argv, base_globals()).expect_err("zero limit should fail");
         assert_eq!(error.error_code.as_deref(), Some("INVALID_ARGUMENT"));
     }
 

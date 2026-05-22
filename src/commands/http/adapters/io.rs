@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use reqwest::{blocking::Client, Method};
+use reqwest::{Method, blocking::Client};
 use serde_json::Value;
 
 use crate::error::AppError;
@@ -97,4 +97,3 @@ pub(crate) fn send_request(request: &RequestConfig) -> Result<ResponseSnapshot, 
         body_json,
     })
 }
-

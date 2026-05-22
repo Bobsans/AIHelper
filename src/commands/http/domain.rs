@@ -8,15 +8,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{
-    error::AppError,
-    output::OutputMode,
-};
+use crate::{error::AppError, output::OutputMode};
 
 use super::{
-    adapters,
     AssertArgs, AssertReportArg, MethodShortcutArgs, ReplayArgs, RequestArgs, RequestExpectArgs,
-    RequestOptionsArgs,
+    RequestOptionsArgs, adapters,
 };
 
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -392,11 +388,9 @@ fn resolve_assert_report_mode(
         (OutputMode::Text, Some(AssertReportArg::Junit)) => Ok(AssertReportFormat::Junit),
         (OutputMode::Json, None) => Ok(AssertReportFormat::Json),
         (OutputMode::Json, Some(AssertReportArg::Json)) => Ok(AssertReportFormat::Json),
-        (OutputMode::Json, Some(AssertReportArg::Text | AssertReportArg::Junit)) => {
-            Err(AppError::invalid_argument(
-                "--json conflicts with --report (use --report json)",
-            ))
-        }
+        (OutputMode::Json, Some(AssertReportArg::Text | AssertReportArg::Junit)) => Err(
+            AppError::invalid_argument("--json conflicts with --report (use --report json)"),
+        ),
     }
 }
 
@@ -1549,7 +1543,6 @@ fn resolve_spec_relative_path(base_dir: &Path, value: &str) -> PathBuf {
         base_dir.join(path)
     }
 }
-
 
 fn duration_millis(value: Duration) -> u64 {
     value.as_millis().min(u128::from(u64::MAX)) as u64

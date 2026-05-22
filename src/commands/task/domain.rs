@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use ah_runtime::core::{apply_limit, normalize_path, truncate_lines};
 
-use super::{adapters, TaskArgs, TaskCommand};
+use super::{TaskArgs, TaskCommand, adapters};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TaskEntry {
@@ -89,7 +89,9 @@ fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
         });
     }
 
-    store.tasks.sort_by(|left, right| left.name.cmp(&right.name));
+    store
+        .tasks
+        .sort_by(|left, right| left.name.cmp(&right.name));
     adapters::io::save_store(&store_path, &store)?;
 
     Ok(TaskSaveOutput {

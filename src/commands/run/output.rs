@@ -1,8 +1,5 @@
 use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::OutputMode,
-    commands::run::domain::RunCheckOutput,
+    cli::GlobalOptions, commands::run::domain::RunCheckOutput, error::AppError, output::OutputMode,
 };
 
 pub(crate) fn emit_check_result(

@@ -4,9 +4,9 @@ use std::io::{BufRead, BufReader, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::commands::file::domain::TreeEntry;
 use crate::error::AppError;
 use crate::safety::{self, TextFileDecision, TextFilePolicy};
-use crate::commands::file::domain::TreeEntry;
 use ah_runtime::core::apply_limit;
 
 pub(crate) fn inspect_text_file(
@@ -30,7 +30,8 @@ pub(crate) fn read_lines_in_range(
         return Ok((Vec::new(), false));
     }
 
-    let file = File::open(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+    let file =
+        File::open(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
     let reader = BufReader::new(file);
 
     let mut selected: Vec<(usize, String)> = Vec::new();
@@ -67,7 +68,8 @@ pub(crate) fn read_tail_lines(
         return Ok((Vec::new(), false));
     }
 
-    let file = File::open(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+    let file =
+        File::open(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
     let reader = BufReader::new(file);
     let mut queue: VecDeque<(usize, String)> = VecDeque::new();
 
@@ -164,7 +166,10 @@ pub(crate) fn metadata_kind(metadata: &Metadata) -> &'static str {
 }
 
 pub(crate) fn system_time_to_unix_seconds(timestamp: SystemTime) -> Option<u64> {
-    timestamp.duration_since(std::time::UNIX_EPOCH).ok().map(|value| value.as_secs())
+    timestamp
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|value| value.as_secs())
 }
 
 fn display_name_for_path(path: &Path) -> String {

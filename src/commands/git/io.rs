@@ -7,7 +7,10 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let command_args: Vec<String> = args.into_iter().map(|value| value.as_ref().to_owned()).collect();
+    let command_args: Vec<String> = args
+        .into_iter()
+        .map(|value| value.as_ref().to_owned())
+        .collect();
     let printable = format!("git {}", command_args.join(" "));
     let output = core::run_command("git", &command_args)
         .map_err(|source| AppError::command_execution(printable.clone(), source))?;
@@ -28,22 +31,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let command_args: Vec<String> = args.into_iter().map(|value| value.as_ref().to_owned()).collect();
+    let command_args: Vec<String> = args
+        .into_iter()
+        .map(|value| value.as_ref().to_owned())
+        .collect();
     let output = core::run_command("git", &command_args).ok()?;
     if !output.status.success() {
         return None;
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 pub(crate) fn is_inside_git_repo() -> Result<bool, AppError> {
-    let output = core::run_command("git", ["rev-parse", "--is-inside-work-tree"])
-        .map_err(|source| AppError::command_execution("git rev-parse --is-inside-work-tree", source))?;
+    let output =
+        core::run_command("git", ["rev-parse", "--is-inside-work-tree"]).map_err(|source| {
+            AppError::command_execution("git rev-parse --is-inside-work-tree", source)
+        })?;
     if !output.status.success() {
         return Ok(false);
     }

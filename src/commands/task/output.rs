@@ -1,8 +1,4 @@
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::OutputMode,
-};
+use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
 
 use crate::commands::task::domain::{TaskListOutput, TaskResult, TaskRunOutput, TaskSaveOutput};
 

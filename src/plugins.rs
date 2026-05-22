@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ah_plugin_api::{
-    normalize_invocation_argv, GlobalOptionsWire, InvocationRequest, InvocationResponse,
-    ManualCommand, ManualExample, PluginManual, PluginMetadata, RequiredTool,
+    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample,
+    PluginManual, PluginMetadata, RequiredTool, normalize_invocation_argv,
 };
 use ah_runtime::BuiltinPlugin;
 use clap::{CommandFactory, Parser, error::ErrorKind};
@@ -168,7 +168,10 @@ fn http_metadata() -> PluginMetadata {
 }
 
 fn git_required_tool() -> RequiredTool {
-    RequiredTool::new("git", "local git commands require the git executable on PATH")
+    RequiredTool::new(
+        "git",
+        "local git commands require the git executable on PATH",
+    )
 }
 
 fn file_manual() -> PluginManual {
@@ -597,14 +600,11 @@ impl BuiltinPlugin for FileBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<FilePluginCli>(
-            "file",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<FilePluginCli>("file", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("file", commands::file::execute(parsed.args, &options))
     }
 }
@@ -619,14 +619,11 @@ impl BuiltinPlugin for SearchBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<SearchPluginCli>(
-            "search",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<SearchPluginCli>("search", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("search", commands::search::execute(parsed.args, &options))
     }
 }
@@ -649,14 +646,11 @@ impl BuiltinPlugin for CtxBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<CtxPluginCli>(
-            "ctx",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<CtxPluginCli>("ctx", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("ctx", commands::ctx::execute(parsed.args, &options))
     }
 }
@@ -671,14 +665,11 @@ impl BuiltinPlugin for GitBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<GitPluginCli>(
-            "git",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<GitPluginCli>("git", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("git", commands::git::execute(parsed.args, &options))
     }
 }
@@ -693,14 +684,12 @@ impl BuiltinPlugin for ProjectBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<ProjectPluginCli>(
-            "project",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<ProjectPluginCli>("project", &request.argv, request.globals.clone())
+            {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("project", commands::project::execute(parsed.args, &options))
     }
 }
@@ -715,14 +704,11 @@ impl BuiltinPlugin for RunBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<RunPluginCli>(
-            "run",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<RunPluginCli>("run", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("run", commands::run::execute(parsed.args, &options))
     }
 }
@@ -737,14 +723,11 @@ impl BuiltinPlugin for HttpBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<HttpPluginCli>(
-            "http",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<HttpPluginCli>("http", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("http", commands::http::execute(parsed.args, &options))
     }
 }
@@ -759,14 +742,11 @@ impl BuiltinPlugin for TaskBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
-        let (parsed, options) = match parse_args::<TaskPluginCli>(
-            "task",
-            &request.argv,
-            request.globals.clone(),
-        ) {
-            ParseOutcome::Parsed(value, options) => (value, options),
-            ParseOutcome::Response(response) => return response,
-        };
+        let (parsed, options) =
+            match parse_args::<TaskPluginCli>("task", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, options) => (value, options),
+                ParseOutcome::Response(response) => return response,
+            };
         map_execute("task", commands::task::execute(parsed.args, &options))
     }
 }
@@ -806,11 +786,10 @@ fn parse_args<T: Parser + CommandFactory>(
             ) {
                 ParseOutcome::Response(InvocationResponse::ok(Some(error.to_string())))
             } else {
-                ParseOutcome::Response(InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    error.to_string(),
+                ParseOutcome::Response(
+                    InvocationResponse::error("INVALID_ARGUMENT", error.to_string())
+                        .with_error_domain(domain),
                 )
-                .with_error_domain(domain))
             }
         }
     }

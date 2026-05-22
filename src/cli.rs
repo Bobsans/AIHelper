@@ -176,8 +176,8 @@ pub fn parse_runtime_command(
         }
         Some((domain, domain_matches)) => {
             let mut argv = collect_domain_argv(domain_matches)?;
-            let normalized = normalize_invocation_argv(&argv, options.to_wire())
-                .map_err(|error| {
+            let normalized =
+                normalize_invocation_argv(&argv, options.to_wire()).map_err(|error| {
                     AppError::invalid_argument(
                         error
                             .error_message
@@ -481,7 +481,12 @@ mod tests {
             OsString::from("ping"),
         ];
         let parsed = parse_runtime_command(raw_args, &plugins).expect("parse should succeed");
-        let CliParseResult::Command(RuntimeCommand::Invoke { domain, argv, options }) = parsed else {
+        let CliParseResult::Command(RuntimeCommand::Invoke {
+            domain,
+            argv,
+            options,
+        }) = parsed
+        else {
             panic!("unexpected parse result");
         };
         assert_eq!(domain, "ollama");

@@ -10,9 +10,8 @@ use serde_json::Value;
 use crate::error::AppError;
 
 use super::{
-    adapters,
-    rules::{classify_file, FileGroup},
-    ProjectPathArgs,
+    ProjectPathArgs, adapters,
+    rules::{FileGroup, classify_file},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,7 +52,6 @@ struct ProjectSnapshot {
     versions: Vec<ProjectVersionEntry>,
     commands: Vec<SuggestedCommand>,
 }
-
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ProjectVersionEntry {
@@ -103,9 +101,7 @@ pub(crate) struct ProjectVersionOutput {
     pub(crate) versions: Vec<ProjectVersionEntry>,
 }
 
-pub(crate) fn run_detect(
-    args: ProjectPathArgs,
-) -> Result<ProjectDetectOutput, AppError> {
+pub(crate) fn run_detect(args: ProjectPathArgs) -> Result<ProjectDetectOutput, AppError> {
     let snapshot = detect_project(&args.path)?;
 
     Ok(ProjectDetectOutput {
@@ -124,9 +120,7 @@ pub(crate) fn run_detect(
     })
 }
 
-pub(crate) fn run_commands(
-    args: ProjectPathArgs,
-) -> Result<ProjectCommandsOutput, AppError> {
+pub(crate) fn run_commands(args: ProjectPathArgs) -> Result<ProjectCommandsOutput, AppError> {
     let snapshot = detect_project(&args.path)?;
 
     Ok(ProjectCommandsOutput {

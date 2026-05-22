@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     io::Write,
     process::{Command, Stdio},
     thread,

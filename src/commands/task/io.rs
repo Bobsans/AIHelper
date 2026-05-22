@@ -35,7 +35,8 @@ pub(crate) fn load_store(path: &Path) -> Result<TaskStore, AppError> {
 
 pub(crate) fn save_store(path: &Path, store: &TaskStore) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
+        fs::create_dir_all(parent)
+            .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
     }
     let raw = serde_json::to_string_pretty(store)?;
     fs::write(path, raw).map_err(|source| AppError::file_write(path.to_path_buf(), source))

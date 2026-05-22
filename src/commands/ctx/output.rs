@@ -27,7 +27,9 @@ fn emit_pack(payload: CtxPackOutput, options: &GlobalOptions) -> Result<(), AppE
                 );
                 println!(
                     "skipped: binary={} large={} symlink={}",
-                    payload.skipped_binary_files, payload.skipped_large_files, payload.skipped_symlink_files
+                    payload.skipped_binary_files,
+                    payload.skipped_large_files,
+                    payload.skipped_symlink_files
                 );
                 for item in &payload.items {
                     println!(
@@ -57,7 +59,9 @@ fn emit_symbols(payload: CtxSymbolsOutput, options: &GlobalOptions) -> Result<()
             println!("preset: {}", payload.preset);
             println!(
                 "skipped: binary={} large={} symlink={}",
-                payload.skipped_binary_files, payload.skipped_large_files, payload.skipped_symlink_files
+                payload.skipped_binary_files,
+                payload.skipped_large_files,
+                payload.skipped_symlink_files
             );
             for file in &payload.files {
                 println!("{}", file.path);

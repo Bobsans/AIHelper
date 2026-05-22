@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::safety::{TextFileDecision, TextFilePolicy};
 use ah_runtime::core::apply_limit;
 
-use super::{adapters, FileArgs, FileCommand, HeadArgs, ReadArgs, StatArgs, TailArgs, TreeArgs};
+use super::{FileArgs, FileCommand, HeadArgs, ReadArgs, StatArgs, TailArgs, TreeArgs, adapters};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct FileLinesOutput {
@@ -102,7 +102,8 @@ fn execute_head(args: HeadArgs, limit: Option<usize>) -> Result<FileResult, AppE
         return Err(crate::safety::skip_reason_to_error(&args.path, reason));
     }
 
-    let (raw_lines, truncated) = adapters::io::read_lines_in_range(&args.path, 1, args.lines, limit)?;
+    let (raw_lines, truncated) =
+        adapters::io::read_lines_in_range(&args.path, 1, args.lines, limit)?;
     Ok(FileResult::Head(FileLinesOutput {
         command: "file.head",
         path: args.path.to_string_lossy().into_owned(),
@@ -147,8 +148,14 @@ fn execute_stat(args: StatArgs) -> Result<FileResult, AppError> {
         kind,
         size_bytes: metadata.len(),
         readonly: metadata.permissions().readonly(),
-        modified_unix_seconds: metadata.modified().ok().and_then(adapters::io::system_time_to_unix_seconds),
-        created_unix_seconds: metadata.created().ok().and_then(adapters::io::system_time_to_unix_seconds),
+        modified_unix_seconds: metadata
+            .modified()
+            .ok()
+            .and_then(adapters::io::system_time_to_unix_seconds),
+        created_unix_seconds: metadata
+            .created()
+            .ok()
+            .and_then(adapters::io::system_time_to_unix_seconds),
     }))
 }
 

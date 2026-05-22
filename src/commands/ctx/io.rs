@@ -29,10 +29,7 @@ pub(crate) fn symlink_metadata(path: &Path) -> Result<fs::Metadata, AppError> {
     fs::symlink_metadata(path).map_err(|source| AppError::file_metadata(path.to_path_buf(), source))
 }
 
-pub(crate) fn walk_entries(
-    root: &Path,
-    follow_symlinks: bool,
-) -> Result<Vec<WalkEntry>, AppError> {
+pub(crate) fn walk_entries(root: &Path, follow_symlinks: bool) -> Result<Vec<WalkEntry>, AppError> {
     let mut entries = Vec::new();
     for entry in WalkDir::new(root)
         .follow_links(follow_symlinks)
@@ -67,8 +64,9 @@ pub(crate) fn is_inside_git_repo() -> Result<bool, AppError> {
 }
 
 pub(crate) fn read_git_status_lines() -> Result<Vec<String>, AppError> {
-    let output = core::run_command("git", ["status", "--porcelain"])
-        .map_err(|error| AppError::invalid_argument(format!("failed to run git status: {error}")))?;
+    let output = core::run_command("git", ["status", "--porcelain"]).map_err(|error| {
+        AppError::invalid_argument(format!("failed to run git status: {error}"))
+    })?;
     if !output.status.success() {
         return Err(AppError::invalid_argument(
             "git status failed for current repository",

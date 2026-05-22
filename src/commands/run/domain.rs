@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::error::AppError;
 
-use super::{adapters, CheckArgs};
+use super::{CheckArgs, adapters};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct RunCheckOutput {
@@ -33,12 +33,8 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
     let command_args = args.command.iter().skip(1).cloned().collect::<Vec<_>>();
     let command_label = args.command.join(" ");
 
-    let execution = adapters::io::run_command(
-        &program,
-        &command_args,
-        args.timeout_secs,
-        &command_label,
-    )?;
+    let execution =
+        adapters::io::run_command(&program, &command_args, args.timeout_secs, &command_label)?;
 
     let (stdout, stdout_truncated) =
         adapters::io::prepare_output(&execution.stdout, args.max_output_bytes, args.tail_lines);

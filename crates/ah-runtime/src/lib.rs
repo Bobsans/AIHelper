@@ -8,10 +8,10 @@ use std::{
 
 use ah_plugin_api::{
     AH_PLUGIN_ABI_VERSION, AH_PLUGIN_API_MAJOR_VERSION, AH_PLUGIN_API_MINOR_VERSION,
-    AH_PLUGIN_ENTRY_V1_SYMBOL, AH_PLUGIN_MANUAL_JSON_V1_SYMBOL,
-    AH_PLUGIN_METADATA_JSON_V1_SYMBOL, AhPluginEntryV1, AhPluginManualJsonV1,
-    AhPluginMetadataJsonV1, GlobalOptionsWire, InvocationRequest, InvocationResponse,
-    PluginManual, PluginMetadata, RequiredTool, c_ptr_to_string, plugin_capabilities,
+    AH_PLUGIN_ENTRY_V1_SYMBOL, AH_PLUGIN_MANUAL_JSON_V1_SYMBOL, AH_PLUGIN_METADATA_JSON_V1_SYMBOL,
+    AhPluginEntryV1, AhPluginManualJsonV1, AhPluginMetadataJsonV1, GlobalOptionsWire,
+    InvocationRequest, InvocationResponse, PluginManual, PluginMetadata, RequiredTool,
+    c_ptr_to_string, plugin_capabilities,
 };
 use libloading::Library;
 use thiserror::Error;
@@ -171,8 +171,7 @@ impl PluginManager {
 
     pub fn register_builtin(&mut self, plugin: Arc<dyn BuiltinPlugin>) {
         let key = domain_key(&plugin.metadata().domain);
-        self.builtin_plugins
-            .insert(key, plugin);
+        self.builtin_plugins.insert(key, plugin);
     }
 
     pub fn load_dynamic_plugins_from_dir(&mut self, dir: &Path) -> PluginLoadReport {

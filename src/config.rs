@@ -130,9 +130,7 @@ fn default_config_dir() -> Result<PathBuf, AppError> {
             .filter(|path| !path.as_os_str().is_empty())
             .map(|path| path.join(".config").join("aihelper"))
             .ok_or_else(|| {
-                AppError::invalid_argument(
-                    "unable to resolve config directory; set AH_CONFIG_DIR",
-                )
+                AppError::invalid_argument("unable to resolve config directory; set AH_CONFIG_DIR")
             })
     }
 }

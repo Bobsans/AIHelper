@@ -127,21 +127,14 @@ pub struct RequestExpectArgs {
 
 pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
-        HttpCommand::Request(request_args) => {
-            execute_request(domain::run_request_command(request_args, "request"), options)
-        }
-        HttpCommand::Get(method_args) => {
-            execute_shortcut("get", "GET", method_args, options)
-        }
-        HttpCommand::Post(method_args) => {
-            execute_shortcut("post", "POST", method_args, options)
-        }
-        HttpCommand::Put(method_args) => {
-            execute_shortcut("put", "PUT", method_args, options)
-        }
-        HttpCommand::Patch(method_args) => {
-            execute_shortcut("patch", "PATCH", method_args, options)
-        }
+        HttpCommand::Request(request_args) => execute_request(
+            domain::run_request_command(request_args, "request"),
+            options,
+        ),
+        HttpCommand::Get(method_args) => execute_shortcut("get", "GET", method_args, options),
+        HttpCommand::Post(method_args) => execute_shortcut("post", "POST", method_args, options),
+        HttpCommand::Put(method_args) => execute_shortcut("put", "PUT", method_args, options),
+        HttpCommand::Patch(method_args) => execute_shortcut("patch", "PATCH", method_args, options),
         HttpCommand::Delete(method_args) => {
             execute_shortcut("delete", "DELETE", method_args, options)
         }
@@ -197,4 +190,3 @@ fn execute_assert(
     }
     Ok(())
 }
-

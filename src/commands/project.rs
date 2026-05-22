@@ -57,4 +57,3 @@ fn execute_version(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(),
     let output = domain::run_version(args, options.limit)?;
     adapters::output::emit_version(output, options)
 }
-

@@ -2,11 +2,11 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::commands::ctx_symbols::{extract_symbols, Symbol};
+use crate::commands::ctx_symbols::{Symbol, extract_symbols};
 use crate::error::AppError;
 use crate::safety::{TextFileDecision, TextFilePolicy, TextFileSkipReason};
 
-use super::{adapters, ChangedArgs, PackArgs, SymbolsArgs};
+use super::{ChangedArgs, PackArgs, SymbolsArgs, adapters};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SymbolsFileOutput {
@@ -84,10 +84,7 @@ struct SkipStats {
     symlink_files: usize,
 }
 
-pub(crate) fn execute_pack(
-    args: PackArgs,
-    limit: Option<usize>,
-) -> Result<CtxResult, AppError> {
+pub(crate) fn execute_pack(args: PackArgs, limit: Option<usize>) -> Result<CtxResult, AppError> {
     crate::safety::validate_max_bytes(args.max_bytes)?;
     let preset_settings = args.preset.settings();
     let roots = if args.paths.is_empty() {
@@ -153,7 +150,10 @@ pub(crate) fn execute_pack(
     Ok(CtxResult::Pack(CtxPackOutput {
         command: "ctx.pack",
         preset: args.preset.as_str().to_owned(),
-        roots: roots.iter().map(|path| adapters::io::normalize_path(path)).collect(),
+        roots: roots
+            .iter()
+            .map(|path| adapters::io::normalize_path(path))
+            .collect(),
         item_count: items.len(),
         file_count,
         directory_count,
@@ -406,7 +406,9 @@ fn register_skip_reason(skip_stats: &mut SkipStats, reason: TextFileSkipReason) 
 }
 
 fn is_symlink_path(path: &Path) -> Result<bool, AppError> {
-    Ok(adapters::io::symlink_metadata(path)?.file_type().is_symlink())
+    Ok(adapters::io::symlink_metadata(path)?
+        .file_type()
+        .is_symlink())
 }
 
 fn normalize_path(value: &str) -> String {

@@ -1,9 +1,5 @@
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::OutputMode,
-};
 use crate::commands::search::domain::{SearchFilesOutput, SearchResult, SearchTextOutput};
+use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
 
 pub(crate) fn emit(result: SearchResult, options: &GlobalOptions) -> Result<(), AppError> {
     if options.quiet {
@@ -53,7 +49,10 @@ fn emit_files(payload: SearchFilesOutput, options: &GlobalOptions) -> Result<(),
     }
 }
 
-fn render_text_matches(matches: &[crate::commands::search::domain::TextMatch], context_lines: usize) -> String {
+fn render_text_matches(
+    matches: &[crate::commands::search::domain::TextMatch],
+    context_lines: usize,
+) -> String {
     let mut lines = Vec::new();
     for (index, item) in matches.iter().enumerate() {
         if context_lines > 0 && index > 0 {

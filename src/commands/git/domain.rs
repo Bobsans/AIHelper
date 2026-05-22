@@ -6,8 +6,8 @@ use crate::error::AppError;
 use ah_runtime::core::apply_limit;
 
 use super::{
-    adapters, BlameArgs, ChangedArgs, CommitInfoArgs, DiffArgs, RemotesArgs, StatusArgs, TagArgs, TagCreateArgs,
-    TagCommand, TagsArgs,
+    BlameArgs, ChangedArgs, CommitInfoArgs, DiffArgs, RemotesArgs, StatusArgs, TagArgs, TagCommand,
+    TagCreateArgs, TagsArgs, adapters,
 };
 
 #[derive(Debug, Serialize)]
@@ -209,15 +209,14 @@ pub(crate) fn execute_status(_args: StatusArgs) -> Result<GitResult, AppError> {
         (None, None)
     };
     let latest_commit = if in_repo {
-        adapters::io::read_git_trimmed(["log", "-1", "--format=%H%x00%s"])
-            .and_then(|raw| {
-                let (hash, subject) = raw.split_once('\0')?;
-                Some(CommitSummary {
-                    hash: hash.to_owned(),
-                    short_hash: short_commit(hash),
-                    subject: subject.to_owned(),
-                })
+        adapters::io::read_git_trimmed(["log", "-1", "--format=%H%x00%s"]).and_then(|raw| {
+            let (hash, subject) = raw.split_once('\0')?;
+            Some(CommitSummary {
+                hash: hash.to_owned(),
+                short_hash: short_commit(hash),
+                subject: subject.to_owned(),
             })
+        })
     } else {
         None
     };
@@ -290,7 +289,10 @@ pub(crate) fn execute_remotes(_args: RemotesArgs) -> Result<GitResult, AppError>
     }))
 }
 
-pub(crate) fn execute_changed(_args: ChangedArgs, limit: Option<usize>) -> Result<GitResult, AppError> {
+pub(crate) fn execute_changed(
+    _args: ChangedArgs,
+    limit: Option<usize>,
+) -> Result<GitResult, AppError> {
     let in_repo = adapters::io::is_inside_git_repo()?;
     let mut entries = if in_repo {
         parse_porcelain_status(&adapters::io::read_git_output([
@@ -314,7 +316,10 @@ pub(crate) fn execute_changed(_args: ChangedArgs, limit: Option<usize>) -> Resul
 
 pub(crate) fn execute_diff(args: DiffArgs, limit: Option<usize>) -> Result<GitResult, AppError> {
     let in_repo = adapters::io::is_inside_git_repo()?;
-    let path_filter = args.path.as_ref().map(|value| normalize_path(&value.to_string_lossy()));
+    let path_filter = args
+        .path
+        .as_ref()
+        .map(|value| normalize_path(&value.to_string_lossy()));
 
     let mut diff = if in_repo {
         let mut command = vec!["diff".to_owned(), "--no-color".to_owned()];
@@ -363,7 +368,9 @@ pub(crate) fn execute_blame(args: BlameArgs, limit: Option<usize>) -> Result<Git
             args.path.to_string_lossy()
         )));
     }
-    if let Some(line) = args.line && line == 0 {
+    if let Some(line) = args.line
+        && line == 0
+    {
         return Err(AppError::invalid_argument("--line must be >= 1"));
     }
 
@@ -460,18 +467,15 @@ fn execute_tag_create(args: TagCreateArgs) -> Result<GitResult, AppError> {
     }
     adapters::io::read_git_output(&command)?;
     let target_ref = format!("{}^{{commit}}", args.tag);
-    let target_commit = adapters::io::read_git_trimmed([
-        "rev-parse",
-        target_ref.as_str(),
-    ])
-    .and_then(|hash| {
-        Some(CommitSummary {
-            short_hash: short_commit(&hash),
-            hash,
-            subject: adapters::io::read_git_trimmed(["log", "-1", "--format=%s", &args.tag])
-                .unwrap_or_default(),
-        })
-    });
+    let target_commit = adapters::io::read_git_trimmed(["rev-parse", target_ref.as_str()])
+        .and_then(|hash| {
+            Some(CommitSummary {
+                short_hash: short_commit(&hash),
+                hash,
+                subject: adapters::io::read_git_trimmed(["log", "-1", "--format=%s", &args.tag])
+                    .unwrap_or_default(),
+            })
+        });
 
     let payload = GitTagCreateOutput {
         command: "git.tag.create",
