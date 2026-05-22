@@ -30,8 +30,8 @@ pub fn run() -> Result<(), AppError> {
         manager.register_builtin(plugin);
     }
 
-    let plugin_dir = resolve_plugin_dir()?;
-    let load_report = manager.load_dynamic_plugins_from_dir(&plugin_dir);
+    let plugin_dirs = resolve_plugin_dirs()?;
+    let load_report = load_dynamic_plugins_from_dirs(&mut manager, &plugin_dirs);
     manager.set_disabled_domains(plugin_settings.disabled_domains().cloned());
 
     let plugin_metadata = manager.list_enabled_plugins();
@@ -413,11 +413,42 @@ struct PluginStateMutationOutput {
     disabled_domains: Vec<String>,
 }
 
-fn resolve_plugin_dir() -> Result<PathBuf, AppError> {
+fn resolve_plugin_dirs() -> Result<Vec<PathBuf>, AppError> {
     let executable_path = std::env::current_exe().map_err(|source| {
         AppError::invalid_argument(format!("failed to resolve executable path: {source}"))
     })?;
-    plugin_dir_from_executable_path(&executable_path)
+    plugin_dirs_from_executable_path(&executable_path)
+}
+
+fn load_dynamic_plugins_from_dirs(
+    manager: &mut PluginManager,
+    dirs: &[PathBuf],
+) -> ah_runtime::PluginLoadReport {
+    let mut merged = ah_runtime::PluginLoadReport::default();
+    for dir in dirs {
+        let report = manager.load_dynamic_plugins_from_dir(dir);
+        merged.loaded += report.loaded;
+        merged.skipped += report.skipped;
+        merged.warnings.extend(report.warnings);
+    }
+    merged
+}
+
+fn plugin_dirs_from_executable_path(executable_path: &Path) -> Result<Vec<PathBuf>, AppError> {
+    let executable_dir = executable_path.parent().ok_or_else(|| {
+        AppError::invalid_argument(format!(
+            "failed to resolve executable directory for '{}'",
+            executable_path.display()
+        ))
+    })?;
+
+    let mut dirs = Vec::new();
+    if is_cargo_profile_dir(executable_dir) {
+        dirs.push(executable_dir.to_path_buf());
+    }
+    dirs.push(plugin_dir_from_executable_path(executable_path)?);
+    dirs.dedup();
+    Ok(dirs)
 }
 
 fn plugin_dir_from_executable_path(executable_path: &Path) -> Result<PathBuf, AppError> {
@@ -430,9 +461,18 @@ fn plugin_dir_from_executable_path(executable_path: &Path) -> Result<PathBuf, Ap
     Ok(executable_dir.join("plugins"))
 }
 
+fn is_cargo_profile_dir(path: &Path) -> bool {
+    path.join(".cargo-lock").is_file()
+        && matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("debug") | Some("release")
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn plugin_dir_is_next_to_executable() {
@@ -443,5 +483,25 @@ mod tests {
             plugin_dir,
             PathBuf::from_iter(["opt", "aihelper", "plugins"])
         );
+    }
+
+    #[test]
+    fn plugin_dirs_include_cargo_profile_dir_before_plugins() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("aihelper-plugin-dir-test-{}", std::process::id()));
+        let profile_dir = temp_dir.join("target").join("debug");
+        fs::create_dir_all(&profile_dir).expect("profile dir should be created");
+        fs::write(profile_dir.join(".cargo-lock"), "")
+            .expect("cargo lock marker should be written");
+
+        let executable = profile_dir.join("ah.exe");
+        let plugin_dirs =
+            plugin_dirs_from_executable_path(&executable).expect("plugin dirs should resolve");
+        assert_eq!(
+            plugin_dirs,
+            vec![profile_dir.clone(), profile_dir.join("plugins")]
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 }
