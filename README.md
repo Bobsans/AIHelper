@@ -18,7 +18,7 @@ The binary command is `ah`.
 - `run` (`check`)
 - `task` (`save`, `list`, `run`)
 - Plugin management commands are available: `ah plugins list|enable|disable|reset`.
-- External dynamic plugin sources are included: `plugins/ah-plugin-github`, `plugins/ah-plugin-gitlab`, `plugins/ah-plugin-ollama`.
+- External dynamic plugin sources are included: `plugins/ah-plugin-github`, `plugins/ah-plugin-gitlab`, `plugins/ah-plugin-ollama`, `plugins/ah-plugin-postgres`.
 
 ## Quick Start
 ```bash

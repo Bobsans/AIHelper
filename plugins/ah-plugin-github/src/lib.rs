@@ -105,8 +105,8 @@ struct IssueArgs {
 
 #[derive(Debug, Subcommand)]
 enum IssueCommand {
-    #[command(about = "Get issue metadata")]
-    Get(IssueNumberArgs),
+    #[command(about = "View issue metadata")]
+    View(IssueNumberArgs),
     #[command(about = "Create an issue")]
     Create(CreateIssueArgs),
     #[command(about = "Update an issue")]
@@ -792,7 +792,7 @@ fn execute_issue(
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
     match args.command {
-        IssueCommand::Get(args) => {
+        IssueCommand::View(args) => {
             let issue = match get_issue(context, args.number) {
                 Ok(value) => value,
                 Err(error) => return error,
@@ -800,7 +800,7 @@ fn execute_issue(
             render_success(
                 globals,
                 &IssueOutput {
-                    command: "github.issue.get",
+                    command: "github.issue.view",
                     repository: context.repo.full_name(),
                     issue: issue.clone(),
                 },
@@ -2088,10 +2088,10 @@ fn plugin_manual() -> PluginManual {
                 examples: vec![manual_example("List open bugs", &["issues", "--label", "bug"])],
             },
             ManualCommand {
-                name: "issue get".to_owned(),
-                summary: "Get issue metadata.".to_owned(),
-                usage: "issue get <number>".to_owned(),
-                examples: vec![manual_example("Inspect issue", &["issue", "get", "42"])],
+                name: "issue view".to_owned(),
+                summary: "View issue metadata.".to_owned(),
+                usage: "issue view <number>".to_owned(),
+                examples: vec![manual_example("Inspect issue", &["issue", "view", "42"])],
             },
             ManualCommand {
                 name: "issue create".to_owned(),
@@ -2421,6 +2421,28 @@ mod tests {
         let request = only_request(&server);
         assert!(request.path.starts_with("/search/issues?q="));
         assert!(request.path.contains("per_page=3"));
+    }
+
+    #[test]
+    fn issue_view_uses_expected_request() {
+        let server = MockServer::new(vec![MockResponse::json(200, &issue_json(21, "open"))]);
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "issue",
+            "view",
+            "21",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "github.issue.view");
+        assert_eq!(payload["issue"]["number"], 21);
+        let request = only_request(&server);
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/repos/acme/tool/issues/21");
     }
 
     #[test]

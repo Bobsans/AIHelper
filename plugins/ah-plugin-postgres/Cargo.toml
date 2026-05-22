@@ -1,0 +1,17 @@
+[package]
+name = "ah-plugin-postgres"
+version = "0.6.1"
+edition = "2024"
+description = "Dynamic AIHelper plugin for PostgreSQL database workflows"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ah-plugin-api = { path = "../../crates/ah-plugin-api" }
+clap = { version = "4.5.39", features = ["derive"] }
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }

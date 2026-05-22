@@ -78,12 +78,12 @@ ah gitlab issues [--state opened|closed|all] [--label LABEL ...] [--assignee USE
 
 `--since` maps to GitLab's `updated_after` filter. Custom GitLab hosts keep using the same global `--host` and `--api-url` options as the rest of the plugin.
 
-## `ah gitlab issue get`
+## `ah gitlab issue view`
 
-Get issue metadata by internal issue id (`iid`).
+View issue metadata by internal issue id (`iid`).
 
 ```bash
-ah gitlab issue get <iid>
+ah gitlab issue view <iid>
 ```
 
 ## `ah gitlab issue create`
@@ -191,7 +191,7 @@ Stable command identifiers in JSON include:
 - `gitlab.release.get`
 - `gitlab.release.create`
 - `gitlab.issues`
-- `gitlab.issue.get`
+- `gitlab.issue.view`
 - `gitlab.issue.create`
 - `gitlab.issue.update`
 - `gitlab.issue.close`

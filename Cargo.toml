@@ -12,6 +12,7 @@ members = [
     "plugins/ah-plugin-github",
     "plugins/ah-plugin-gitlab",
     "plugins/ah-plugin-ollama",
+    "plugins/ah-plugin-postgres",
 ]
 resolver = "2"
 

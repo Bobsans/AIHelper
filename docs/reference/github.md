@@ -44,12 +44,12 @@ ah github issues [--state open|closed|all] [--label LABEL ...] [--assignee USER]
 
 `--search` uses GitHub issue search scoped to the selected repository.
 
-## `ah github issue get`
+## `ah github issue view`
 
-Get issue metadata by issue number.
+View issue metadata by issue number.
 
 ```bash
-ah github issue get <number>
+ah github issue view <number>
 ```
 
 ## `ah github issue create`
@@ -220,7 +220,7 @@ Stable command identifiers in JSON include:
 
 - `github.repo`
 - `github.issues`
-- `github.issue.get`
+- `github.issue.view`
 - `github.issue.create`
 - `github.issue.update`
 - `github.issue.close`

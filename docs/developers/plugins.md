@@ -63,6 +63,59 @@ Plugin returns JSON response:
   - optional `error_code`
   - optional `error_message`
 
+## Managed External Tool Commands
+
+Dynamic plugins that depend on third-party command-line tools must expose a
+predictable `tool` command group instead of plugin-specific verbs such as
+`install`.
+
+Standard commands:
+
+- `ah <domain> tool status`
+  - Show the selected binary or toolchain path, resolver source, detected version, minimum/target version, cache path, companion executable availability, and warnings.
+- `ah <domain> tool download [--version VERSION] [--force]`
+  - Download and extract a portable/vendor-provided archive into AIHelper's per-user managed cache.
+  - This must not perform a system installation, register services, modify registry, or mutate global `PATH`.
+- `ah <domain> tool use --path PATH`
+  - Persist an explicit user-selected binary or toolchain path for the plugin domain.
+- `ah <domain> tool cleanup [--version VERSION]`
+  - Remove managed cached tool versions for that plugin domain.
+  - This must not delete explicit/user-provided tool paths.
+
+Operational commands may offer `--ensure-tool` to lazily perform the same
+download/extract flow when the managed toolchain is missing. Without this flag
+or an explicit plugin setting, commands should fail with a clear diagnostic and
+suggest `ah <domain> tool download`.
+
+When no acceptable tool is resolved, operational commands must fail before doing
+domain work and return a stable missing-tool error such as `TOOL_UNAVAILABLE` or
+a domain-specific code like `POSTGRES_TOOL_UNAVAILABLE`. Text output should
+include concrete remediation commands, usually `ah <domain> tool download` and
+`ah <domain> tool use --path PATH`. JSON output should include the searched
+locations, rejected candidate when available, detected version when available,
+required minimum/target version, and a remediation command.
+
+If a user provides an explicit path through CLI, environment, or persisted
+`tool use`, the plugin must not silently fall back to another tool when that
+explicit path is invalid. Explicit user intent should either work or fail with a
+clear diagnostic. If the managed cache is missing or corrupt and `--ensure-tool`
+is present, the plugin may download or repair the managed toolchain atomically
+before continuing.
+
+Tool resolvers should use this order:
+
+1. Explicit CLI path flag.
+2. Domain-specific environment variable.
+3. Persisted domain setting from `tool use`.
+4. Managed AIHelper cache.
+5. System `PATH`, only if the detected version is acceptable.
+
+External tool handling must not pass secrets in process argv. It must not modify
+global `PATH`; update only the child process environment when a tool needs
+adjacent DLL/runtime lookup. Downloads must use an allowlisted HTTPS source,
+verify archive integrity when a pinned checksum is available, and extract
+atomically under a lock to avoid corrupted caches.
+
 ## Best Practices
 
 - Keep plugin command behavior deterministic.
@@ -77,6 +130,7 @@ Repository includes dynamic plugin sources at:
 - `plugins/ah-plugin-github`
 - `plugins/ah-plugin-gitlab`
 - `plugins/ah-plugin-ollama`
+- `plugins/ah-plugin-postgres`
 
 Build and install one plugin (Windows):
 

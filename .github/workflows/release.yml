@@ -38,6 +38,7 @@ jobs:
           cargo build --release --locked -p ah-plugin-github
           cargo build --release --locked -p ah-plugin-gitlab
           cargo build --release --locked -p ah-plugin-ollama
+          cargo build --release --locked -p ah-plugin-postgres
 
       - name: Compute archive name
         id: meta
@@ -57,6 +58,7 @@ jobs:
           Copy-Item -LiteralPath "target/release/ah_plugin_github.dll" -Destination "dist/plugins/ah-plugin-github.dll" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_gitlab.dll" -Destination "dist/plugins/ah-plugin-gitlab.dll" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_ollama.dll" -Destination "dist/plugins/ah-plugin-ollama.dll" -Force
+          Copy-Item -LiteralPath "target/release/ah_plugin_postgres.dll" -Destination "dist/plugins/ah-plugin-postgres.dll" -Force
           Push-Location "dist"
           Compress-Archive -Path "ah.exe", "plugins" -DestinationPath "..\$archive" -Force
           Pop-Location
@@ -72,10 +74,12 @@ jobs:
             cp "target/release/libah_plugin_github.so" "dist/plugins/ah-plugin-github.so"
             cp "target/release/libah_plugin_gitlab.so" "dist/plugins/ah-plugin-gitlab.so"
             cp "target/release/libah_plugin_ollama.so" "dist/plugins/ah-plugin-ollama.so"
+            cp "target/release/libah_plugin_postgres.so" "dist/plugins/ah-plugin-postgres.so"
           else
             cp "target/release/libah_plugin_github.dylib" "dist/plugins/ah-plugin-github.dylib"
             cp "target/release/libah_plugin_gitlab.dylib" "dist/plugins/ah-plugin-gitlab.dylib"
             cp "target/release/libah_plugin_ollama.dylib" "dist/plugins/ah-plugin-ollama.dylib"
+            cp "target/release/libah_plugin_postgres.dylib" "dist/plugins/ah-plugin-postgres.dylib"
           fi
           (
             cd dist

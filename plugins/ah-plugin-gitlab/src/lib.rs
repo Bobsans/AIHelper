@@ -106,8 +106,8 @@ struct IssueArgs {
 
 #[derive(Debug, Subcommand)]
 enum IssueCommand {
-    #[command(about = "Get issue metadata")]
-    Get(IssueIidArgs),
+    #[command(about = "View issue metadata")]
+    View(IssueIidArgs),
     #[command(about = "Create an issue")]
     Create(CreateIssueArgs),
     #[command(about = "Update an issue")]
@@ -694,7 +694,7 @@ fn execute_issue(
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
     match args.command {
-        IssueCommand::Get(args) => {
+        IssueCommand::View(args) => {
             let issue = match get_issue(context, args.iid) {
                 Ok(value) => value,
                 Err(error) => return error,
@@ -702,7 +702,7 @@ fn execute_issue(
             render_success(
                 globals,
                 &IssueOutput {
-                    command: "gitlab.issue.get",
+                    command: "gitlab.issue.view",
                     project: context.project.value.clone(),
                     issue: issue.clone(),
                 },
@@ -1860,10 +1860,10 @@ fn plugin_manual() -> PluginManual {
                 examples: vec![manual_example("List open bugs", &["issues", "--label", "bug"])],
             },
             ManualCommand {
-                name: "issue get".to_owned(),
-                summary: "Get issue metadata.".to_owned(),
-                usage: "issue get <iid>".to_owned(),
-                examples: vec![manual_example("Inspect issue", &["issue", "get", "42"])],
+                name: "issue view".to_owned(),
+                summary: "View issue metadata.".to_owned(),
+                usage: "issue view <iid>".to_owned(),
+                examples: vec![manual_example("Inspect issue", &["issue", "view", "42"])],
             },
             ManualCommand {
                 name: "issue create".to_owned(),
@@ -2301,6 +2301,28 @@ mod tests {
             request.path,
             "/projects/group%2Ftool/issues?scope=all&state=all&per_page=5&labels=bug&assignee_username=bob&author_username=alice&updated_after=2026-05-07T00%3A00%3A00Z&search=crash"
         );
+    }
+
+    #[test]
+    fn issue_view_uses_expected_request() {
+        let server = MockServer::new(vec![MockResponse::json(200, issue_json(21, "opened"))]);
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "issue",
+            "view",
+            "21",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "gitlab.issue.view");
+        assert_eq!(payload["issue"]["iid"], 21);
+        let request = only_request(&server);
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/projects/group%2Ftool/issues/21");
     }
 
     #[test]

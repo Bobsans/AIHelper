@@ -16,3 +16,4 @@ Reference docs for all command domains and flags.
 - [github (dynamic plugin)](github.md)
 - [gitlab (dynamic plugin)](gitlab.md)
 - [ollama (dynamic plugin)](ollama.md)
+- [postgres (dynamic plugin)](postgres.md)
