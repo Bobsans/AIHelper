@@ -115,6 +115,32 @@ fn search_text_json_contains_mode_fields() {
 }
 
 #[test]
+fn search_uses_stable_ignore_aware_discovery() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    fs::create_dir(temp_dir.path().join(".git")).expect("git marker should be created");
+    fs::write(temp_dir.path().join(".gitignore"), "ignored.txt\n")
+        .expect("gitignore should be written");
+    fs::write(temp_dir.path().join("visible.txt"), "needle\n")
+        .expect("visible file should be written");
+    fs::write(temp_dir.path().join("ignored.txt"), "needle\n")
+        .expect("ignored file should be written");
+    fs::write(temp_dir.path().join(".hidden.txt"), "needle\n")
+        .expect("hidden file should be written");
+
+    let root = temp_dir.path().to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "search", "text", "needle", &root])
+        .assert()
+        .success();
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output");
+    assert_eq!(payload["backend"], "ignore+rust");
+    assert_eq!(payload["match_count"], 1);
+    assert_eq!(payload["matches"][0]["path"], "visible.txt");
+}
+
+#[test]
 fn search_text_json_reports_character_column_for_unicode_lines() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     fs::write(temp_dir.path().join("unicode.txt"), "a\u{00e9}needle\n")

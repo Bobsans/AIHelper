@@ -95,6 +95,8 @@ pub struct RequestOptionsArgs {
     pub query: Vec<String>,
     #[arg(long, value_name = "SECONDS")]
     pub timeout_secs: Option<u64>,
+    #[arg(long, value_name = "BYTES")]
+    pub max_response_bytes: Option<usize>,
     #[arg(long, value_name = "TOKEN")]
     pub bearer: Option<String>,
     #[arg(long, value_name = "USER:PASS")]

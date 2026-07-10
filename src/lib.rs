@@ -5,6 +5,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub(crate) mod git_status;
 pub mod output;
 pub mod plugin_settings;
 pub mod plugins;

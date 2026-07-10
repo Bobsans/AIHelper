@@ -26,6 +26,66 @@ fn git_changed_reports_modified_file() {
 }
 
 #[test]
+fn git_and_ctx_changed_preserve_unusual_paths_and_renames() {
+    if !git_available() {
+        return;
+    }
+
+    let temp_dir = init_git_repo_with_one_commit();
+    let cwd = temp_dir.path();
+    fs::rename(cwd.join("app.txt"), cwd.join("renamed app.txt"))
+        .expect("tracked file should be renamed");
+    #[cfg(not(windows))]
+    fs::write(cwd.join("literal -> arrow.txt"), "new\n").expect("untracked file should be written");
+    let status = ProcessCommand::new("git")
+        .current_dir(cwd)
+        .args(["add", "-A"])
+        .status()
+        .expect("git add should run");
+    assert!(status.success());
+
+    let cwd_str = cwd.to_string_lossy().to_string();
+    let git_output = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "--cwd", &cwd_str, "git", "changed"])
+        .output()
+        .expect("git changed should run");
+    assert!(git_output.status.success(), "{git_output:?}");
+    let git_payload: serde_json::Value =
+        serde_json::from_slice(&git_output.stdout).expect("git output should be JSON");
+
+    let rename = git_payload["entries"]
+        .as_array()
+        .expect("entries array")
+        .iter()
+        .find(|entry| entry["status"] == "R")
+        .expect("rename entry");
+    assert_eq!(rename["path"], "renamed app.txt");
+    assert_eq!(rename["old_path"], "app.txt");
+
+    #[cfg(not(windows))]
+    {
+        let literal_arrow = git_payload["entries"]
+            .as_array()
+            .expect("entries array")
+            .iter()
+            .find(|entry| entry["path"] == "literal -> arrow.txt")
+            .expect("literal arrow entry");
+        assert!(literal_arrow["old_path"].is_null());
+    }
+
+    let ctx_output = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "--cwd", &cwd_str, "ctx", "changed"])
+        .output()
+        .expect("ctx changed should run");
+    assert!(ctx_output.status.success(), "{ctx_output:?}");
+    let ctx_payload: serde_json::Value =
+        serde_json::from_slice(&ctx_output.stdout).expect("ctx output should be JSON");
+    assert_eq!(git_payload["entries"], ctx_payload["entries"]);
+}
+
+#[test]
 fn git_diff_with_path_returns_patch() {
     if !git_available() {
         return;

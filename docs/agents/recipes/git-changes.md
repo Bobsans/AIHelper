@@ -18,7 +18,7 @@ ah git blame src/commands/search.rs --line 120 --json
 ```
 
 ## Output Shape
-- `git changed --json`: `entries[]` with status/path/old_path
+- `git changed --json`: NUL-safe `entries[]` with exact status/path/old_path, including renames and unusual path text
 - `git diff --json`: diff text + truncation flag
 - `git blame --json`: author/commit metadata per line
 

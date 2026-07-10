@@ -33,13 +33,17 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
     let command_args = args.command.iter().skip(1).cloned().collect::<Vec<_>>();
     let command_label = args.command.join(" ");
 
-    let execution =
-        adapters::io::run_command(&program, &command_args, args.timeout_secs, &command_label)?;
+    let execution = adapters::io::run_command(
+        &program,
+        &command_args,
+        args.timeout_secs,
+        &command_label,
+        args.max_output_bytes,
+        args.tail_lines,
+    )?;
 
-    let (stdout, stdout_truncated) =
-        adapters::io::prepare_output(&execution.stdout, args.max_output_bytes, args.tail_lines);
-    let (stderr, stderr_truncated) =
-        adapters::io::prepare_output(&execution.stderr, args.max_output_bytes, args.tail_lines);
+    let stdout = adapters::io::render_output(&execution.stdout, args.tail_lines);
+    let stderr = adapters::io::render_output(&execution.stderr, args.tail_lines);
 
     Ok(RunCheckOutput {
         command: "run.check",
@@ -50,7 +54,7 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
         duration_ms: execution.duration_ms,
         stdout,
         stderr,
-        stdout_truncated,
-        stderr_truncated,
+        stdout_truncated: execution.stdout.truncated,
+        stderr_truncated: execution.stderr.truncated,
     })
 }

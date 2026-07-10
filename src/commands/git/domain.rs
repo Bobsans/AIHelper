@@ -2,7 +2,10 @@ use regex::Regex;
 use serde::Serialize;
 use std::sync::OnceLock;
 
-use crate::error::AppError;
+use crate::{
+    error::AppError,
+    git_status::{StatusEntry, count_statuses, parse_porcelain_v1_z},
+};
 use ah_runtime::core::apply_limit;
 
 use super::{
@@ -179,13 +182,16 @@ pub(crate) enum GitResult {
 
 pub(crate) fn execute_status(_args: StatusArgs) -> Result<GitResult, AppError> {
     let in_repo = adapters::io::is_inside_git_repo()?;
-    let raw_status = if in_repo {
-        adapters::io::read_git_output(["status".to_owned(), "--porcelain".to_owned()])?
+    let status_entries = if in_repo {
+        parse_porcelain_v1_z(&adapters::io::read_git_output_bytes([
+            "status".to_owned(),
+            "--porcelain=v1".to_owned(),
+            "-z".to_owned(),
+        ])?)?
     } else {
-        String::new()
+        Vec::new()
     };
-    let entries = parse_porcelain_status(&raw_status);
-    let (staged_count, unstaged_count, untracked_count) = count_porcelain_status(&raw_status);
+    let counts = count_statuses(&status_entries);
     let branch = if in_repo {
         adapters::io::read_git_trimmed(["branch", "--show-current"])
     } else {
@@ -233,11 +239,11 @@ pub(crate) fn execute_status(_args: StatusArgs) -> Result<GitResult, AppError> {
         upstream,
         ahead,
         behind,
-        clean: entries.is_empty(),
-        staged_count,
-        unstaged_count,
-        untracked_count,
-        changed_count: entries.len(),
+        clean: status_entries.is_empty(),
+        staged_count: counts.staged,
+        unstaged_count: counts.unstaged,
+        untracked_count: counts.untracked,
+        changed_count: status_entries.len(),
         latest_commit,
         latest_tag,
     }))
@@ -295,10 +301,14 @@ pub(crate) fn execute_changed(
 ) -> Result<GitResult, AppError> {
     let in_repo = adapters::io::is_inside_git_repo()?;
     let mut entries = if in_repo {
-        parse_porcelain_status(&adapters::io::read_git_output([
+        parse_porcelain_v1_z(&adapters::io::read_git_output_bytes([
             "status".to_owned(),
-            "--porcelain".to_owned(),
-        ])?)
+            "--porcelain=v1".to_owned(),
+            "-z".to_owned(),
+        ])?)?
+        .into_iter()
+        .map(changed_entry)
+        .collect()
     } else {
         Vec::new()
     };
@@ -581,61 +591,12 @@ fn read_commit_files(reference: &str) -> Result<Vec<CommitFile>, AppError> {
     Ok(files)
 }
 
-fn parse_porcelain_status(raw: &str) -> Vec<ChangedEntry> {
-    let mut entries = Vec::new();
-    for line in raw.lines() {
-        let mut chars = line.chars();
-        let x = chars.next().unwrap_or(' ');
-        let y = chars.next().unwrap_or(' ');
-        let _ = chars.next();
-        let rest: String = chars.collect();
-        if rest.is_empty() {
-            continue;
-        }
-        let status = format!("{x}{y}").trim().to_owned();
-        if let Some((old_path, new_path)) = rest.split_once(" -> ") {
-            entries.push(ChangedEntry {
-                status,
-                path: normalize_slashes(new_path),
-                old_path: Some(normalize_slashes(old_path)),
-            });
-        } else {
-            entries.push(ChangedEntry {
-                status,
-                path: normalize_slashes(&rest),
-                old_path: None,
-            });
-        }
+fn changed_entry(entry: StatusEntry) -> ChangedEntry {
+    ChangedEntry {
+        status: entry.status,
+        path: normalize_slashes(&entry.path),
+        old_path: entry.old_path.map(|path| normalize_slashes(&path)),
     }
-    entries
-}
-
-fn count_porcelain_status(raw: &str) -> (usize, usize, usize) {
-    let mut staged_count = 0usize;
-    let mut unstaged_count = 0usize;
-    let mut untracked_count = 0usize;
-
-    for line in raw.lines() {
-        if line.len() < 2 {
-            continue;
-        }
-        let mut status = line.chars().take(2);
-        let index_status = status.next().unwrap_or(' ');
-        let worktree_status = status.next().unwrap_or(' ');
-
-        if index_status == '?' && worktree_status == '?' {
-            untracked_count += 1;
-            continue;
-        }
-        if index_status != ' ' {
-            staged_count += 1;
-        }
-        if worktree_status != ' ' {
-            unstaged_count += 1;
-        }
-    }
-
-    (staged_count, unstaged_count, untracked_count)
 }
 
 fn blame_header_regex() -> &'static Regex {

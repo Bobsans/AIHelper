@@ -85,30 +85,12 @@ pub(crate) fn execute_text(args: TextArgs, limit: Option<usize>) -> Result<Searc
     let matcher = build_matcher(&args.pattern, args.regex, args.ignore_case)?;
     let globset = build_globset(&args.globs)?;
 
-    let backend_supports_rg = adapters::io::rg_is_available();
-    let candidate_files = if backend_supports_rg {
-        if let Some(files) = adapters::io::candidate_files_with_rg(&args, &scope.roots) {
-            files
-        } else {
-            adapters::io::collect_files_from_roots(
-                &scope.roots,
-                globset.as_ref(),
-                args.follow_symlinks,
-            )?
-        }
-    } else {
-        adapters::io::collect_files_from_roots(
-            &scope.roots,
-            globset.as_ref(),
-            args.follow_symlinks,
-        )?
-    };
-
-    let backend = if backend_supports_rg {
-        "rg+rust".to_owned()
-    } else {
-        "rust".to_owned()
-    };
+    let candidate_files = adapters::io::collect_files_from_roots(
+        &scope.roots,
+        globset.as_ref(),
+        args.follow_symlinks,
+    )?;
+    let backend = "ignore+rust".to_owned();
 
     let (matches, stats, truncated) = adapters::io::collect_text_matches(
         candidate_files,
@@ -150,21 +132,9 @@ pub(crate) fn execute_files(
 ) -> Result<SearchResult, AppError> {
     let scope = adapters::io::resolve_scope(&args.paths, args.follow_symlinks)?;
 
-    let (all_files, backend) = if adapters::io::rg_is_available() {
-        if let Some(files) = adapters::io::files_with_rg(&scope.roots, args.follow_symlinks) {
-            (files, "rg+rust".to_owned())
-        } else {
-            (
-                adapters::io::collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?,
-                "rust".to_owned(),
-            )
-        }
-    } else {
-        (
-            adapters::io::collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?,
-            "rust".to_owned(),
-        )
-    };
+    let all_files =
+        adapters::io::collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?;
+    let backend = "ignore+rust".to_owned();
 
     let mut matched = Vec::new();
     let mut truncated = false;

@@ -15,7 +15,7 @@ pub(crate) fn emit_request(
         return Ok(());
     }
 
-    let (body_rendered, truncated) = truncate_lines(&payload.body, options.limit);
+    let (body_rendered, line_truncated) = truncate_lines(&payload.body, options.limit);
     match options.output {
         crate::output::OutputMode::Text => {
             if !body_rendered.trim().is_empty() {
@@ -23,14 +23,17 @@ pub(crate) fn emit_request(
             } else {
                 println!("HTTP {} {}", payload.status, payload.status_text);
             }
-            if truncated {
+            if payload.body_truncated {
+                eprintln!("warning: response body truncated by --max-response-bytes");
+            }
+            if line_truncated {
                 eprintln!("warning: output truncated by --limit");
             }
         }
         crate::output::OutputMode::Json => {
             let mut rendered = payload;
             rendered.body = body_rendered;
-            rendered.truncated = truncated;
+            rendered.truncated |= line_truncated;
             println!("{}", serde_json::to_string_pretty(&rendered)?);
         }
     }

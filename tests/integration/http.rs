@@ -53,6 +53,70 @@ fn http_get_supports_expectations() {
 }
 
 #[test]
+fn http_get_bounds_oversized_response_body() {
+    let responses = vec![MockResponse {
+        expected_method: "GET",
+        expected_path: "/large",
+        status: 200,
+        headers: vec![("Content-Type", "text/plain")],
+        body: "abcdefghijklmnop".to_owned(),
+    }];
+    let (base_url, handle) = spawn_mock_server(responses);
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let assert = cmd
+        .args([
+            "--json",
+            "http",
+            "get",
+            &format!("{base_url}/large"),
+            "--max-response-bytes",
+            "8",
+            "--expect-status",
+            "200",
+        ])
+        .assert()
+        .success();
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output");
+    assert_eq!(payload["body"], "abcdefgh");
+    assert_eq!(payload["body_truncated"], true);
+    assert_eq!(payload["truncated"], true);
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn http_body_assertion_fails_when_response_is_truncated() {
+    let responses = vec![MockResponse {
+        expected_method: "GET",
+        expected_path: "/large",
+        status: 200,
+        headers: vec![("Content-Type", "text/plain")],
+        body: "abcdefghijklmnop".to_owned(),
+    }];
+    let (base_url, handle) = spawn_mock_server(responses);
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "--json",
+        "http",
+        "get",
+        &format!("{base_url}/large"),
+        "--max-response-bytes",
+        "8",
+        "--expect-body-contains",
+        "abc",
+    ])
+    .assert()
+    .failure()
+    .stdout(contains("response body was truncated"))
+    .stderr(contains("HTTP_ASSERTION_FAILED"));
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
 fn http_assert_json_report_is_machine_readable() {
     let responses = vec![MockResponse {
         expected_method: "GET",
@@ -71,6 +135,7 @@ fn http_assert_json_report_is_machine_readable() {
 version: 1
 defaults:
   base_url: {base_url}
+  max_response_bytes: 1024
 cases:
   - name: health
     request:

@@ -3,9 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ah_runtime::core;
-
 use globset::GlobSet;
-use walkdir::WalkDir;
+use ignore::WalkBuilder;
 
 use crate::commands::search::domain::{ContextLine, PatternMatcher, TextCollectStats, TextMatch};
 use crate::error::AppError;
@@ -17,10 +16,6 @@ pub(crate) struct SearchScope {
     pub(crate) display_root: PathBuf,
     pub(crate) root_label: String,
     pub(crate) root_labels: Vec<String>,
-}
-
-pub(crate) fn rg_is_available() -> bool {
-    core::run_command_ok("rg", ["--version"])
 }
 
 pub(crate) fn resolve_scope(
@@ -79,75 +74,6 @@ pub(crate) fn resolve_scope(
     })
 }
 
-pub(crate) fn candidate_files_with_rg(
-    args: &crate::commands::search::TextArgs,
-    roots: &[PathBuf],
-) -> Option<Vec<PathBuf>> {
-    let mut command_args = vec![
-        "-l".to_owned(),
-        "--color".to_owned(),
-        "never".to_owned(),
-        "--no-messages".to_owned(),
-    ];
-    if args.follow_symlinks {
-        command_args.push("-L".to_owned());
-    }
-    if args.ignore_case {
-        command_args.push("-i".to_owned());
-    }
-    for glob in &args.globs {
-        command_args.push("-g".to_owned());
-        command_args.push(glob.to_owned());
-    }
-    if !args.regex {
-        command_args.push("-F".to_owned());
-    }
-    command_args.push("--".to_owned());
-    command_args.push(args.pattern.clone());
-    for root in roots {
-        command_args.push(root.to_string_lossy().to_string());
-    }
-
-    let output = core::run_command("rg", &command_args).ok()?;
-    if !output.status.success() && output.status.code() != Some(1) {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut files: Vec<PathBuf> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(PathBuf::from)
-        .collect();
-    files.sort();
-    files.dedup();
-    Some(files)
-}
-
-pub(crate) fn files_with_rg(roots: &[PathBuf], follow_symlinks: bool) -> Option<Vec<PathBuf>> {
-    let mut command_args = vec!["--files".to_owned()];
-    if follow_symlinks {
-        command_args.push("-L".to_owned());
-    }
-    for root in roots {
-        command_args.push(root.to_string_lossy().to_string());
-    }
-    let output = core::run_command("rg", &command_args).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut files: Vec<PathBuf> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(PathBuf::from)
-        .collect();
-    files.sort();
-    files.dedup();
-    Some(files)
-}
-
 pub(crate) fn collect_files_from_roots(
     roots: &[PathBuf],
     globset: Option<&GlobSet>,
@@ -155,14 +81,14 @@ pub(crate) fn collect_files_from_roots(
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
     for root in roots {
-        files.extend(collect_files_fallback(root, globset, follow_symlinks)?);
+        files.extend(collect_files_ignore_aware(root, globset, follow_symlinks)?);
     }
     files.sort();
     files.dedup();
     Ok(files)
 }
 
-fn collect_files_fallback(
+fn collect_files_ignore_aware(
     root: &Path,
     globset: Option<&GlobSet>,
     follow_symlinks: bool,
@@ -183,19 +109,18 @@ fn collect_files_fallback(
         )));
     }
 
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .follow_links(follow_symlinks)
+        .add_custom_ignore_filename(".rgignore");
     let mut files = Vec::new();
-    for entry in WalkDir::new(root).follow_links(follow_symlinks) {
-        let entry = match entry {
-            Ok(value) => value,
-            Err(error) if error.loop_ancestor().is_some() => continue,
-            Err(error) => {
-                return Err(AppError::directory_read(
-                    root.to_path_buf(),
-                    std::io::Error::other(error),
-                ));
-            }
-        };
-        if entry.file_type().is_file() && file_matches_globs(entry.path(), root, globset) {
+    for entry in builder.build() {
+        let entry = entry.map_err(|error| {
+            AppError::directory_read(root.to_path_buf(), std::io::Error::other(error))
+        })?;
+        if entry.file_type().is_some_and(|kind| kind.is_file())
+            && file_matches_globs(entry.path(), root, globset)
+        {
             files.push(entry.path().to_path_buf());
         }
     }

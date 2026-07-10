@@ -17,7 +17,9 @@ ah search text "fn\\s+execute" src --regex --context 2
 
 ## Output Shape
 - Text mode: `path:line:text` entries with optional context lines
-- JSON mode (`--json`): `matches[]` with path/line/column/text/context
+- JSON mode (`--json`): stable `backend: "ignore+rust"` plus `matches[]` with path/line/column/text/context
+
+Traversal honors repository ignore files and hidden-file rules. The result is independent of whether `rg` is installed.
 
 ## When To Use
 - Locate function/class usage before refactor

@@ -14,6 +14,8 @@ Behavior:
 - default mode is literal/plain search (`pattern` treated as text)
 - add `--regex` to treat `pattern` as regular expression
 - omit `path` to search from the current directory, or pass multiple paths to search them together
+- traversal is deterministic and ignore-aware: `.gitignore`, `.ignore`, `.rgignore`, Git global excludes, hidden-file rules, and parent ignore files are honored
+- the stable JSON backend identifier is `ignore+rust`; results do not depend on whether `rg` is installed
 
 Flags:
 - `--glob <pattern>`: limit files by glob (repeatable)
@@ -49,6 +51,7 @@ Flags:
 
 Behavior:
 - omit `path` to search from the current directory, or pass multiple paths to search them together
+- uses the same deterministic ignore-aware traversal as `search text`
 
 Output:
 - text mode: one matched path per line

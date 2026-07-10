@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{collections::BTreeMap, io::Read, path::Path, time::Duration};
 
 use reqwest::{Method, blocking::Client};
 use serde_json::Value;
@@ -81,13 +81,24 @@ pub(crate) fn send_request(request: &RequestConfig) -> Result<ResponseSnapshot, 
             .or_insert(value_text);
     }
 
-    let body = response.text().map_err(|error| {
+    let mut limited = response.take(request.max_response_bytes.saturating_add(1) as u64);
+    let mut body_bytes = Vec::with_capacity(request.max_response_bytes.min(64 * 1024));
+    limited.read_to_end(&mut body_bytes).map_err(|error| {
         AppError::external(
             "HTTP_RESPONSE_READ_FAILED",
             format!("failed to read response body: {error}"),
         )
     })?;
-    let body_json = serde_json::from_str::<Value>(&body).ok();
+    let body_truncated = body_bytes.len() > request.max_response_bytes;
+    if body_truncated {
+        body_bytes.truncate(request.max_response_bytes);
+    }
+    let body = String::from_utf8_lossy(&body_bytes).into_owned();
+    let body_json = if body_truncated {
+        None
+    } else {
+        serde_json::from_str::<Value>(&body).ok()
+    };
 
     Ok(ResponseSnapshot {
         status_code,
@@ -95,5 +106,6 @@ pub(crate) fn send_request(request: &RequestConfig) -> Result<ResponseSnapshot, 
         headers,
         body,
         body_json,
+        body_truncated,
     })
 }

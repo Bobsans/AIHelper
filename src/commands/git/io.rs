@@ -26,6 +26,28 @@ where
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+pub(crate) fn read_git_output_bytes<I, S>(args: I) -> Result<Vec<u8>, AppError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let command_args: Vec<String> = args
+        .into_iter()
+        .map(|value| value.as_ref().to_owned())
+        .collect();
+    let printable = format!("git {}", command_args.join(" "));
+    let output = core::run_command("git", &command_args)
+        .map_err(|source| AppError::command_execution(printable.clone(), source))?;
+    if !output.status.success() {
+        return Err(AppError::command_failed(
+            printable,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(output.stdout)
+}
+
 pub(crate) fn read_git_trimmed<I, S>(args: I) -> Option<String>
 where
     I: IntoIterator<Item = S>,

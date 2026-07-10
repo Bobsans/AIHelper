@@ -51,7 +51,7 @@ ah ctx changed [--json]
 ```
 
 Behavior:
-- when inside a git repo: returns `git status --porcelain` summary
+- when inside a git repo: returns the same NUL-safe parsed entries as `ah git changed`, including exact rename/copy `path` and `old_path`
 - outside git repo: returns "not a git repository" (or `in_git_repo=false` in JSON)
 
 Status: implemented.

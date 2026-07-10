@@ -1,10 +1,13 @@
 use std::{
-    io::{self, Read},
+    collections::VecDeque,
+    io::{self, ErrorKind, Read},
     path::PathBuf,
     process::{Command, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+use command_group::CommandGroup;
 
 #[cfg(windows)]
 use std::env;
@@ -18,8 +21,14 @@ pub(crate) struct CapturedOutput {
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub duration_ms: u128,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    pub stdout: CapturedStream,
+    pub stderr: CapturedStream,
+}
+
+#[derive(Debug)]
+pub(crate) struct CapturedStream {
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
 }
 
 pub(crate) fn run_command(
@@ -27,29 +36,25 @@ pub(crate) fn run_command(
     args: &[String],
     timeout_secs: u64,
     command_label: &str,
+    max_output_bytes: usize,
+    tail_lines: Option<usize>,
 ) -> Result<CapturedOutput, AppError> {
     let started = Instant::now();
     let spawn_program = resolve_program_for_spawn(program);
-    let mut child = Command::new(&spawn_program)
+    let mut command = Command::new(&spawn_program);
+    command
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    let mut child = command
+        .group_spawn()
         .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?;
 
-    let stdout_handle = child.stdout.take().map(|mut stdout| {
-        thread::spawn(move || {
-            let mut output = Vec::new();
-            stdout.read_to_end(&mut output)?;
-            Ok::<Vec<u8>, io::Error>(output)
-        })
+    let stdout_handle = child.inner().stdout.take().map(|stdout| {
+        thread::spawn(move || capture_reader(stdout, max_output_bytes, tail_lines.is_some()))
     });
-    let stderr_handle = child.stderr.take().map(|mut stderr| {
-        thread::spawn(move || {
-            let mut output = Vec::new();
-            stderr.read_to_end(&mut output)?;
-            Ok::<Vec<u8>, io::Error>(output)
-        })
+    let stderr_handle = child.inner().stderr.take().map(|stderr| {
+        thread::spawn(move || capture_reader(stderr, max_output_bytes, tail_lines.is_some()))
     });
 
     let timeout = Duration::from_secs(timeout_secs.max(1));
@@ -64,7 +69,14 @@ pub(crate) fn run_command(
 
         if started.elapsed() >= timeout {
             timed_out = true;
-            let _ = child.kill();
+            if let Err(source) = child.kill()
+                && source.kind() != ErrorKind::InvalidInput
+            {
+                return Err(AppError::command_execution(
+                    format!("{command_label} (terminate process group)"),
+                    source,
+                ));
+            }
             break child
                 .wait()
                 .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?;
@@ -73,39 +85,71 @@ pub(crate) fn run_command(
         thread::sleep(Duration::from_millis(25));
     };
 
-    let stdout_raw = join_output_reader(stdout_handle, command_label)?;
-    let stderr_raw = join_output_reader(stderr_handle, command_label)?;
+    let stdout = join_output_reader(stdout_handle, command_label)?;
+    let stderr = join_output_reader(stderr_handle, command_label)?;
 
     Ok(CapturedOutput {
         exit_code: status.code(),
         timed_out,
         duration_ms: started.elapsed().as_millis(),
-        stdout: stdout_raw,
-        stderr: stderr_raw,
+        stdout,
+        stderr,
     })
 }
 
-pub(crate) fn prepare_output(
-    raw: &[u8],
+pub(crate) fn render_output(stream: &CapturedStream, tail_lines: Option<usize>) -> String {
+    let text = String::from_utf8_lossy(&stream.bytes).into_owned();
+    let Some(tail) = tail_lines else {
+        return text;
+    };
+    if tail == 0 {
+        return String::new();
+    }
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.len() <= tail {
+        text
+    } else {
+        lines[lines.len() - tail..].join("\n")
+    }
+}
+
+fn capture_reader<R: Read>(
+    mut reader: R,
     max_output_bytes: usize,
-    tail_lines: Option<usize>,
-) -> (String, bool) {
-    let mut text = String::from_utf8_lossy(raw).into_owned();
-    if let Some(tail) = tail_lines {
-        let lines = text.lines().collect::<Vec<_>>();
-        if lines.len() > tail {
-            text = lines[lines.len() - tail..].join("\n");
+    keep_tail: bool,
+) -> io::Result<CapturedStream> {
+    let mut prefix = Vec::with_capacity(max_output_bytes.min(8192));
+    let mut suffix = VecDeque::with_capacity(max_output_bytes.min(8192));
+    let mut buffer = [0_u8; 8192];
+    let mut seen_bytes = 0usize;
+
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        seen_bytes = seen_bytes.saturating_add(read);
+        if keep_tail {
+            for byte in &buffer[..read] {
+                if suffix.len() == max_output_bytes {
+                    suffix.pop_front();
+                }
+                suffix.push_back(*byte);
+            }
+        } else if prefix.len() < max_output_bytes {
+            let remaining = max_output_bytes - prefix.len();
+            prefix.extend_from_slice(&buffer[..read.min(remaining)]);
         }
     }
-    let bytes = text.as_bytes();
-    if bytes.len() <= max_output_bytes {
-        return (text, false);
-    }
-    let mut end = max_output_bytes;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    (text[..end].to_owned(), true)
+
+    Ok(CapturedStream {
+        bytes: if keep_tail {
+            suffix.into_iter().collect()
+        } else {
+            prefix
+        },
+        truncated: seen_bytes > max_output_bytes,
+    })
 }
 
 fn resolve_program_for_spawn(program: &str) -> PathBuf {
@@ -209,11 +253,14 @@ fn has_path_separator(program: &str) -> bool {
 }
 
 fn join_output_reader(
-    handle: Option<JoinHandle<io::Result<Vec<u8>>>>,
+    handle: Option<JoinHandle<io::Result<CapturedStream>>>,
     command_label: &str,
-) -> Result<Vec<u8>, AppError> {
+) -> Result<CapturedStream, AppError> {
     let Some(handle) = handle else {
-        return Ok(Vec::new());
+        return Ok(CapturedStream {
+            bytes: Vec::new(),
+            truncated: false,
+        });
     };
     handle
         .join()
@@ -224,4 +271,33 @@ fn join_output_reader(
             )
         })?
         .map_err(|source| AppError::command_execution(command_label.to_owned(), source))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn capture_reader_keeps_bounded_prefix() {
+        let captured = capture_reader(Cursor::new(b"abcdef"), 4, false).expect("capture");
+        assert_eq!(captured.bytes, b"abcd");
+        assert!(captured.truncated);
+    }
+
+    #[test]
+    fn capture_reader_keeps_bounded_suffix() {
+        let captured = capture_reader(Cursor::new(b"abcdef"), 4, true).expect("capture");
+        assert_eq!(captured.bytes, b"cdef");
+        assert!(captured.truncated);
+    }
+
+    #[test]
+    fn render_output_selects_tail_lines() {
+        let captured =
+            capture_reader(Cursor::new(b"one\ntwo\nthree\n"), 64, true).expect("capture");
+        assert_eq!(render_output(&captured, Some(2)), "two\nthree");
+        assert_eq!(render_output(&captured, Some(0)), "");
+    }
 }

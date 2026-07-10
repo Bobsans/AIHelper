@@ -62,7 +62,7 @@ Status: implemented.
 
 ## `ah git changed`
 
-Show working tree changes from `git status --porcelain`.
+Show working tree changes from Git porcelain output.
 
 ```bash
 ah git changed [--limit N] [--json]
@@ -71,6 +71,7 @@ ah git changed [--limit N] [--json]
 Behavior:
 - inside git repo: returns changed entries with statuses
 - outside git repo: returns "not a git repository" (or `in_git_repo=false` in JSON)
+- parses NUL-delimited porcelain records, preserving spaces, newlines, literal ` -> ` text, and rename/copy `path` plus `old_path` without heuristic splitting
 
 Status: implemented.
 

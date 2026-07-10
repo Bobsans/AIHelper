@@ -11,7 +11,7 @@ Designed to support both:
 Universal request command for any method.
 
 ```bash
-ah http request --method <METHOD> <url> [--header "K: V"] [--query "k=v"] [--timeout-secs N] [--bearer TOKEN] [--basic USER:PASS] [--json "<obj>"|--json-file <path>] [--body "<text>"|--body-file <path>] [--expect-status <code|range>] [--expect-header "K: V"] [--expect-body-contains "<text>"] [--expect-json "<PATH:OP[:VALUE]>"]
+ah http request --method <METHOD> <url> [--header "K: V"] [--query "k=v"] [--timeout-secs N] [--max-response-bytes BYTES] [--bearer TOKEN] [--basic USER:PASS] [--json "<obj>"|--json-file <path>] [--body "<text>"|--body-file <path>] [--expect-status <code|range>] [--expect-header "K: V"] [--expect-body-contains "<text>"] [--expect-json "<PATH:OP[:VALUE]>"]
 ```
 
 ## `ah http get|post|put|patch|delete`
@@ -29,6 +29,9 @@ ah http delete <url> [same flags as request]
 Behavior:
 - no duplicated transport logic; method commands map to `request`
 - assertion flags can be used in one-off calls
+- response bodies are bounded while read; `--max-response-bytes` defaults to `8388608`
+- JSON output sets `body_truncated=true` and `truncated=true` when the body exceeds the limit
+- status and header assertions still run for truncated bodies; body and JSON assertions fail explicitly because the complete body is unavailable
 
 ## `ah http replay`
 
@@ -99,6 +102,7 @@ version: 1
 defaults:
   base_url: http://127.0.0.1:8080
   timeout_secs: 10
+  max_response_bytes: 8388608
 vars:
   token: dev-token
 cases:
@@ -112,6 +116,8 @@ cases:
         - path: status
           eq: ok
 ```
+
+`max_response_bytes` can be set in `defaults` and overridden for an individual case under `request`.
 
 ## Assertion Model (`path + operator`)
 

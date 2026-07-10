@@ -20,7 +20,7 @@ Public project reads may work without a token. Creating releases and reading pri
 Common flags:
 
 ```bash
-ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https://gitlab.com] [--api-url https://gitlab.example.com/api/v4] [--token TOKEN] [--use-git-credential] <command>
+ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https://gitlab.com] [--api-url https://gitlab.example.com/api/v4] [--graphql-url https://gitlab.example.com/api/graphql] [--token TOKEN] [--use-git-credential] <command>
 ```
 
 If `--project` is omitted, the plugin tries to parse a GitLab project path from `git remote get-url origin`.
@@ -32,6 +32,8 @@ ah gitlab --host https://gitlab.example.com project
 ```
 
 Use `--api-url` when the REST API root is not the standard `<host>/api/v4`.
+
+Use `--graphql-url` when the GraphQL endpoint cannot be derived from `--api-url`. Otherwise an API URL ending in `/api/v4` maps to `/api/graphql`; if it does not, the endpoint defaults to `<host>/api/graphql`.
 
 ## `ah gitlab project`
 
@@ -83,8 +85,10 @@ ah gitlab issues [--state opened|closed|all] [--label LABEL ...] [--assignee USE
 View issue metadata by internal issue id (`iid`).
 
 ```bash
-ah gitlab issue view <iid>
+ah gitlab issue view <iid> [--full]
 ```
+
+Use `--full` to include the issue description, labels, timestamps, comments, and issue designs in one response. Comments come from GitLab's issue notes API. Designs are read through GitLab GraphQL; if that query is unavailable on the selected GitLab instance, the command still returns the issue and comments with a warning. Global `--limit` caps fetched comments and designs; `--full` defaults to 100. Responses expose only the documented issue, note, and design fields; unknown upstream fields are ignored.
 
 ## `ah gitlab issue create`
 

@@ -26,6 +26,27 @@ const DEFAULT_REMOTE: &str = "origin";
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 1800;
+const ISSUE_DESIGNS_QUERY: &str = r#"
+query IssueDesigns($fullPath: ID!, $iid: String!, $first: Int!) {
+  project(fullPath: $fullPath) {
+    issue(iid: $iid) {
+      designCollection {
+        designs(first: $first) {
+          nodes {
+            id
+            filename
+            fullPath
+            image
+            imageV432x230
+            notesCount
+            event
+          }
+        }
+      }
+    }
+  }
+}
+"#;
 
 static PLUGIN_NAME_C: &[u8] = b"external-gitlab\0";
 static DOMAIN_C: &[u8] = b"gitlab\0";
@@ -60,6 +81,8 @@ struct GitlabConnectionArgs {
     host: String,
     #[arg(long, global = true, value_name = "URL")]
     api_url: Option<String>,
+    #[arg(long, global = true, value_name = "URL")]
+    graphql_url: Option<String>,
     #[arg(long, global = true, value_name = "TOKEN")]
     token: Option<String>,
     #[arg(long, global = true)]
@@ -113,7 +136,7 @@ struct IssueArgs {
 #[derive(Debug, Subcommand)]
 enum IssueCommand {
     #[command(about = "View issue metadata")]
-    View(IssueIidArgs),
+    View(IssueViewArgs),
     #[command(about = "Create an issue")]
     Create(CreateIssueArgs),
     #[command(about = "Update an issue")]
@@ -129,6 +152,13 @@ enum IssueCommand {
 #[derive(Debug, Args)]
 struct IssueIidArgs {
     iid: u64,
+}
+
+#[derive(Debug, Args)]
+struct IssueViewArgs {
+    iid: u64,
+    #[arg(long)]
+    full: bool,
 }
 
 #[derive(Debug, Args)]
@@ -292,6 +322,7 @@ struct GitlabContext {
     client: Client,
     host: String,
     api_url: String,
+    graphql_url: String,
     token: Option<String>,
     project: ProjectRef,
     remote_url: Option<String>,
@@ -393,6 +424,73 @@ struct IssueNoteOutput {
     project: String,
     iid: u64,
     comment: IssueNoteResponse,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct IssueDesignResponse {
+    id: Option<String>,
+    filename: Option<String>,
+    #[serde(rename = "fullPath")]
+    full_path: Option<String>,
+    image: Option<String>,
+    #[serde(rename = "imageV432x230")]
+    image_v432x230: Option<String>,
+    #[serde(rename = "notesCount")]
+    notes_count: Option<u64>,
+    event: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphqlEnvelope<T> {
+    data: Option<T>,
+    #[serde(default)]
+    errors: Vec<GraphqlError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphqlError {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueDesignsGraphqlData {
+    project: Option<IssueDesignsGraphqlProject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueDesignsGraphqlProject {
+    issue: Option<IssueDesignsGraphqlIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueDesignsGraphqlIssue {
+    #[serde(rename = "designCollection")]
+    design_collection: Option<IssueDesignCollection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueDesignCollection {
+    designs: Option<IssueDesignConnection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueDesignConnection {
+    #[serde(default)]
+    nodes: Vec<IssueDesignResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueFullOutput {
+    command: &'static str,
+    project: String,
+    iid: u64,
+    full: bool,
+    issue: IssueResponse,
+    comment_count: usize,
+    comments: Vec<IssueNoteResponse>,
+    design_count: usize,
+    designs: Vec<IssueDesignResponse>,
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -610,6 +708,9 @@ fn execute_issue(
                 Ok(value) => value,
                 Err(error) => return error,
             };
+            if args.full {
+                return issue_view_full(context, globals, args, issue);
+            }
             render_success(
                 globals,
                 &IssueOutput {
@@ -626,6 +727,39 @@ fn execute_issue(
         IssueCommand::Comment(args) => comment_issue(context, args, globals),
         IssueCommand::Comments(args) => issue_comments(context, args.iid, globals),
     }
+}
+
+fn issue_view_full(
+    context: &GitlabContext,
+    globals: &GlobalOptionsWire,
+    args: IssueViewArgs,
+    issue: IssueResponse,
+) -> InvocationResponse {
+    let per_page = globals.limit.unwrap_or(100).clamp(1, 100);
+    let comments = match get_issue_comments(context, args.iid, per_page) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let (designs, warnings) = match get_issue_designs_best_effort(context, args.iid, per_page) {
+        Ok(value) => (value, Vec::new()),
+        Err(warning) => (Vec::new(), vec![warning]),
+    };
+    render_success(
+        globals,
+        &IssueFullOutput {
+            command: "gitlab.issue.view",
+            project: context.project.value.clone(),
+            iid: args.iid,
+            full: true,
+            issue: issue.clone(),
+            comment_count: comments.len(),
+            comments: comments.clone(),
+            design_count: designs.len(),
+            designs: designs.clone(),
+            warnings: warnings.clone(),
+        },
+        render_issue_full_text(&issue, &comments, &designs, &warnings),
+    )
 }
 
 fn create_issue(
@@ -797,11 +931,7 @@ fn issue_comments(
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
     let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
-    let path = format!(
-        "/projects/{}/issues/{iid}/notes?per_page={per_page}&activity_filter=only_comments",
-        context.project.encoded()
-    );
-    let comments = match gitlab_json::<Vec<IssueNoteResponse>>(context, Method::GET, &path, None) {
+    let comments = match get_issue_comments(context, iid, per_page) {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1138,6 +1268,7 @@ fn get_pipeline(
 fn gitlab_context(args: &GitlabConnectionArgs) -> Result<GitlabContext, InvocationResponse> {
     let host = normalize_host(&args.host)?;
     let api_url = normalize_api_url(args.api_url.as_deref(), &host)?;
+    let graphql_url = normalize_graphql_url(args.graphql_url.as_deref(), &api_url, &host)?;
     let (project, remote_url) = resolve_project(args, &host)?;
     let token = resolve_token(args, &host);
     let client = Client::builder()
@@ -1154,6 +1285,7 @@ fn gitlab_context(args: &GitlabConnectionArgs) -> Result<GitlabContext, Invocati
         client,
         host,
         api_url,
+        graphql_url,
         token,
         project,
         remote_url,
@@ -1305,6 +1437,28 @@ fn normalize_api_url(value: Option<&str>, host: &str) -> Result<String, Invocati
     Ok(normalized)
 }
 
+fn normalize_graphql_url(
+    explicit_graphql_url: Option<&str>,
+    api_url: &str,
+    host: &str,
+) -> Result<String, InvocationResponse> {
+    let graphql_url = if let Some(value) = explicit_graphql_url {
+        value.to_owned()
+    } else if let Some(prefix) = api_url.strip_suffix("/api/v4") {
+        format!("{prefix}/api/graphql")
+    } else {
+        format!("{host}/api/graphql")
+    };
+    let normalized = graphql_url.trim().trim_end_matches('/').to_owned();
+    if normalized.is_empty() {
+        return Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "GraphQL URL must not be empty",
+        ));
+    }
+    Ok(normalized)
+}
+
 fn host_authority(host: &str) -> Option<String> {
     let without_scheme = host
         .strip_prefix("https://")
@@ -1383,6 +1537,38 @@ where
     })
 }
 
+fn gitlab_graphql<T>(context: &GitlabContext, body: Value) -> Result<GraphqlEnvelope<T>, String>
+where
+    T: DeserializeOwned,
+{
+    let mut request = context
+        .client
+        .request(Method::POST, &context.graphql_url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "AIHelper-gitlab-plugin");
+    if let Some(token) = &context.token {
+        request = request.header("PRIVATE-TOKEN", token);
+    }
+    let response = request
+        .json(&body)
+        .send()
+        .map_err(|error| format!("request to '{}' failed: {error}", context.graphql_url))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
+        return Err(format!(
+            "GitLab returned HTTP {status} for '{}': {}",
+            context.graphql_url,
+            truncate_for_error(&body, 500)
+        ));
+    }
+    response
+        .json::<GraphqlEnvelope<T>>()
+        .map_err(|error| format!("failed to decode GitLab GraphQL response: {error}"))
+}
+
 fn gitlab_response(
     context: &GitlabContext,
     method: Method,
@@ -1440,6 +1626,75 @@ fn download_job_trace(context: &GitlabContext, job_id: u64) -> Result<String, In
 fn get_issue(context: &GitlabContext, iid: u64) -> Result<IssueResponse, InvocationResponse> {
     let path = format!("/projects/{}/issues/{iid}", context.project.encoded());
     gitlab_json::<IssueResponse>(context, Method::GET, &path, None)
+}
+
+fn get_issue_comments(
+    context: &GitlabContext,
+    iid: u64,
+    per_page: usize,
+) -> Result<Vec<IssueNoteResponse>, InvocationResponse> {
+    let path = format!(
+        "/projects/{}/issues/{iid}/notes?per_page={per_page}&activity_filter=only_comments",
+        context.project.encoded()
+    );
+    gitlab_json::<Vec<IssueNoteResponse>>(context, Method::GET, &path, None)
+}
+
+fn get_issue_designs_best_effort(
+    context: &GitlabContext,
+    iid: u64,
+    first: usize,
+) -> Result<Vec<IssueDesignResponse>, String> {
+    let project_path = graphql_project_path(context)?;
+    let envelope = gitlab_graphql::<IssueDesignsGraphqlData>(
+        context,
+        json!({
+            "query": ISSUE_DESIGNS_QUERY,
+            "variables": {
+                "fullPath": project_path,
+                "iid": iid.to_string(),
+                "first": first,
+            },
+        }),
+    )?;
+    if !envelope.errors.is_empty() {
+        let messages = envelope
+            .errors
+            .iter()
+            .map(|error| error.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("GitLab GraphQL designs query failed: {messages}"));
+    }
+    let Some(data) = envelope.data else {
+        return Err("GitLab GraphQL designs query returned no data".to_owned());
+    };
+    let designs = data
+        .project
+        .and_then(|project| project.issue)
+        .and_then(|issue| issue.design_collection)
+        .and_then(|collection| collection.designs)
+        .map(|connection| connection.nodes)
+        .unwrap_or_default();
+    Ok(designs)
+}
+
+fn graphql_project_path(context: &GitlabContext) -> Result<String, String> {
+    if context.project.value.contains('/') {
+        return Ok(context.project.value.clone());
+    }
+    let path = format!("/projects/{}", context.project.encoded());
+    let project = gitlab_json::<GitlabProjectResponse>(context, Method::GET, &path, None).map_err(
+        |error| {
+            error
+                .error_message
+                .unwrap_or_else(|| "failed to resolve project path for GraphQL".to_owned())
+        },
+    )?;
+    project.path_with_namespace.ok_or_else(|| {
+        "GitLab project response did not include path_with_namespace for GraphQL designs query"
+            .to_owned()
+    })
 }
 
 fn create_issue_note(
@@ -1630,6 +1885,136 @@ fn render_comments_text(comments: &[IssueNoteResponse]) -> String {
         + "\n"
 }
 
+fn render_issue_full_text(
+    issue: &IssueResponse,
+    comments: &[IssueNoteResponse],
+    designs: &[IssueDesignResponse],
+    warnings: &[String],
+) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("#{} {} {}\n", issue.iid, issue.state, issue.title));
+    if let Some(web_url) = &issue.web_url {
+        output.push_str(&format!("url: {web_url}\n"));
+    }
+    if let Some(author) = &issue.author {
+        output.push_str(&format!("author: {}\n", render_user(author)));
+    }
+    let assignees = issue
+        .assignees
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(render_user)
+        .collect::<Vec<_>>()
+        .join(", ");
+    output.push_str(&format!(
+        "assignees: {}\n",
+        if assignees.is_empty() {
+            "-"
+        } else {
+            assignees.as_str()
+        }
+    ));
+    let labels = if issue.labels.is_empty() {
+        "-".to_owned()
+    } else {
+        issue.labels.join(", ")
+    };
+    output.push_str(&format!("labels: {labels}\n"));
+    output.push_str(&format!(
+        "created: {}\nupdated: {}\nclosed: {}\n",
+        issue.created_at.as_deref().unwrap_or("-"),
+        issue.updated_at.as_deref().unwrap_or("-"),
+        issue.closed_at.as_deref().unwrap_or("-")
+    ));
+    if let Some(description) = issue
+        .description
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        output.push_str("\ndescription:\n");
+        output.push_str(description);
+        if !description.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    output.push_str(&format!("\ncomments ({}):\n", comments.len()));
+    if comments.is_empty() {
+        output.push_str("(none)\n");
+    } else {
+        output.push_str(&render_full_comments_text(comments));
+    }
+    output.push_str(&format!("\ndesigns ({}):\n", designs.len()));
+    if designs.is_empty() {
+        output.push_str("(none)\n");
+    } else {
+        output.push_str(&render_designs_text(designs));
+    }
+    if !warnings.is_empty() {
+        output.push_str("\nwarnings:\n");
+        for warning in warnings {
+            output.push_str(&format!("- {warning}\n"));
+        }
+    }
+    output
+}
+
+fn render_full_comments_text(comments: &[IssueNoteResponse]) -> String {
+    comments
+        .iter()
+        .map(|comment| {
+            let body = comment.body.as_deref().unwrap_or("");
+            let mut rendered = format!(
+                "- {} {} {}\n",
+                comment.id,
+                comment
+                    .author
+                    .as_ref()
+                    .map(render_user)
+                    .unwrap_or_else(|| "-".to_owned()),
+                comment.created_at.as_deref().unwrap_or("-")
+            );
+            if !body.is_empty() {
+                rendered.push_str(body);
+                if !body.ends_with('\n') {
+                    rendered.push('\n');
+                }
+            }
+            rendered
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_designs_text(designs: &[IssueDesignResponse]) -> String {
+    designs
+        .iter()
+        .map(|design| {
+            format!(
+                "{} {} {} {}",
+                design.filename.as_deref().unwrap_or("-"),
+                design.event.as_deref().unwrap_or("-"),
+                design.notes_count.unwrap_or(0),
+                design.image.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_user(user: &GitlabUser) -> String {
+    if let Some(username) = &user.username {
+        return format!("@{username}");
+    }
+    if let Some(name) = &user.name {
+        return name.clone();
+    }
+    user.id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "-".to_owned())
+}
+
 fn render_releases_text(releases: &[ReleaseResponse]) -> String {
     if releases.is_empty() {
         return String::new();
@@ -1740,7 +2125,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "project".to_owned(),
                 summary: "Detect GitLab project context.".to_owned(),
-                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--token TOKEN] [--use-git-credential]".to_owned(),
+                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--graphql-url URL] [--token TOKEN] [--use-git-credential]".to_owned(),
                 examples: vec![manual_example("Inspect current GitLab project", &["project"])],
             },
             ManualCommand {
@@ -1772,8 +2157,8 @@ fn plugin_manual() -> PluginManual {
             },
             ManualCommand {
                 name: "issue view".to_owned(),
-                summary: "View issue metadata.".to_owned(),
-                usage: "issue view <iid>".to_owned(),
+                summary: "View issue metadata, optionally with comments and designs.".to_owned(),
+                usage: "issue view <iid> [--full]".to_owned(),
                 examples: vec![manual_example("Inspect issue", &["issue", "view", "42"])],
             },
             ManualCommand {
@@ -1846,7 +2231,7 @@ fn plugin_manual() -> PluginManual {
         notes: vec![
             "GitLab-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
             "Project defaults to a GitLab path parsed from `origin`; override with --project group/project or numeric id.".to_owned(),
-            "Use --host for self-managed GitLab and --api-url for nonstandard API roots.".to_owned(),
+            "Use --host for self-managed GitLab, --api-url for nonstandard REST roots, and --graphql-url for a separately configured GraphQL endpoint.".to_owned(),
             "Authentication checks --token, GITLAB_TOKEN, then GL_TOKEN; use --use-git-credential to opt into git credential helper lookup.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap releases, pipelines, or trace matches.".to_owned(),
         ],
@@ -2237,6 +2622,152 @@ mod tests {
     }
 
     #[test]
+    fn issue_view_full_reads_comments_and_designs() {
+        let server = MockServer::new(vec![
+            MockResponse::json(200, issue_json(21, "opened")),
+            MockResponse::json(200, &format!("[{}]", issue_note_json(101))),
+            MockResponse::json(
+                200,
+                r#"{
+                    "data": {
+                        "project": {
+                            "issue": {
+                                "designCollection": {
+                                    "designs": {
+                                        "nodes": [{
+                                            "id": "gid://gitlab/DesignManagement::Design/1",
+                                            "filename": "mockup.png",
+                                            "fullPath": "designs/mockup.png",
+                                            "image": "https://gitlab.example.com/group/tool/uploads/designs/mockup.png",
+                                            "imageV432x230": "https://gitlab.example.com/group/tool/uploads/designs/mockup.thumb.png",
+                                            "notesCount": 2,
+                                            "event": "NONE",
+                                            "upstream_only": "ignored"
+                                        }]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }"#,
+            ),
+        ]);
+
+        let response = invoke_json_with_limit(
+            &[
+                "--project",
+                "group/tool",
+                "--api-url",
+                &server.url(),
+                "--graphql-url",
+                &format!("{}/graphql", server.url()),
+                "issue",
+                "view",
+                "21",
+                "--full",
+            ],
+            Some(2),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["command"], "gitlab.issue.view");
+        assert_eq!(payload["full"], true);
+        assert_eq!(payload["comment_count"], 1);
+        assert_eq!(payload["comments"][0]["body"], "I can reproduce this");
+        assert_eq!(payload["design_count"], 1);
+        assert_eq!(payload["designs"][0]["filename"], "mockup.png");
+        assert!(payload["issue"].get("upstream_only").is_none());
+        assert!(payload["comments"][0].get("upstream_only").is_none());
+        assert!(payload["designs"][0].get("upstream_only").is_none());
+        assert_eq!(
+            payload["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .len(),
+            0
+        );
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[0].path, "/projects/group%2Ftool/issues/21");
+        assert_eq!(requests[1].method, "GET");
+        assert_eq!(
+            requests[1].path,
+            "/projects/group%2Ftool/issues/21/notes?per_page=2&activity_filter=only_comments"
+        );
+        assert_eq!(requests[2].method, "POST");
+        assert_eq!(requests[2].path, "/graphql");
+        assert!(requests[2].body.contains("IssueDesigns"));
+        assert!(requests[2].body.contains("\"fullPath\":\"group/tool\""));
+        assert!(requests[2].body.contains("\"iid\":\"21\""));
+        assert!(requests[2].body.contains("\"first\":2"));
+    }
+
+    #[test]
+    fn issue_view_full_keeps_issue_when_design_query_fails() {
+        let server = MockServer::new(vec![
+            MockResponse::json(200, issue_json(21, "opened")),
+            MockResponse::json(200, &format!("[{}]", issue_note_json(101))),
+            MockResponse::json(
+                200,
+                r#"{"errors":[{"message":"Field 'designCollection' doesn't exist"}]}"#,
+            ),
+        ]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "--graphql-url",
+            &format!("{}/graphql", server.url()),
+            "issue",
+            "view",
+            "21",
+            "--full",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["full"], true);
+        assert_eq!(payload["comment_count"], 1);
+        assert_eq!(payload["design_count"], 0);
+        assert_eq!(
+            payload["warnings"][0],
+            "GitLab GraphQL designs query failed: Field 'designCollection' doesn't exist"
+        );
+    }
+
+    #[test]
+    fn graphql_url_normalization_is_explicit_and_predictable() {
+        assert_eq!(
+            normalize_graphql_url(
+                Some("https://proxy.example/graphql"),
+                "https://gitlab.example/api/v4",
+                "https://gitlab.example",
+            )
+            .expect("explicit GraphQL URL"),
+            "https://proxy.example/graphql"
+        );
+        assert_eq!(
+            normalize_graphql_url(
+                None,
+                "https://gitlab.example/api/v4",
+                "https://gitlab.example",
+            )
+            .expect("standard API suffix"),
+            "https://gitlab.example/api/graphql"
+        );
+        assert_eq!(
+            normalize_graphql_url(None, "https://proxy.example/rest", "https://gitlab.example",)
+                .expect("host fallback"),
+            "https://gitlab.example/api/graphql"
+        );
+    }
+
+    #[test]
     fn issue_create_and_update_send_expected_bodies() {
         let create_server =
             MockServer::new(vec![MockResponse::json(201, issue_json(21, "opened"))]);
@@ -2465,7 +2996,8 @@ mod tests {
                 "labels": ["bug"],
                 "created_at": "2026-05-07T00:00:00Z",
                 "updated_at": "2026-05-07T00:01:00Z",
-                "closed_at": null
+                "closed_at": null,
+                "upstream_only": "ignored"
             }}"#
         );
         Box::leak(raw.into_boxed_str())
@@ -2479,7 +3011,8 @@ mod tests {
                 "author": {{"id": 10, "username": "bob", "name": "Bob"}},
                 "created_at": "2026-05-07T00:00:00Z",
                 "updated_at": "2026-05-07T00:01:00Z",
-                "system": false
+                "system": false,
+                "upstream_only": "ignored"
             }}"#
         );
         Box::leak(raw.into_boxed_str())

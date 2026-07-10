@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::commands::ctx_symbols::{Symbol, extract_symbols};
 use crate::error::AppError;
+use crate::git_status::{StatusEntry, parse_porcelain_v1_z};
 use crate::safety::{TextFileDecision, TextFilePolicy, TextFileSkipReason};
 
 use super::{ChangedArgs, PackArgs, SymbolsArgs, adapters};
@@ -350,7 +351,10 @@ fn collect_symbols_for_file(
 pub(crate) fn execute_changed(_args: ChangedArgs) -> Result<CtxResult, AppError> {
     let in_repo = adapters::io::is_inside_git_repo()?;
     let entries = if in_repo {
-        parse_changed_entries(adapters::io::read_git_status_lines()?)
+        parse_porcelain_v1_z(&adapters::io::read_git_status_bytes()?)?
+            .into_iter()
+            .map(changed_entry)
+            .collect()
     } else {
         Vec::new()
     };
@@ -363,31 +367,12 @@ pub(crate) fn execute_changed(_args: ChangedArgs) -> Result<CtxResult, AppError>
     }))
 }
 
-fn parse_changed_entries(lines: Vec<String>) -> Vec<ChangedEntry> {
-    let mut entries = Vec::new();
-
-    for line in lines {
-        if line.len() < 4 {
-            continue;
-        }
-        let status = line[0..2].trim().to_owned();
-        let rest = line[3..].to_owned();
-        if let Some((old_path, new_path)) = rest.split_once(" -> ") {
-            entries.push(ChangedEntry {
-                status,
-                path: normalize_path(new_path),
-                old_path: Some(normalize_path(old_path)),
-            });
-        } else {
-            entries.push(ChangedEntry {
-                status,
-                path: normalize_path(&rest),
-                old_path: None,
-            });
-        }
+fn changed_entry(entry: StatusEntry) -> ChangedEntry {
+    ChangedEntry {
+        status: entry.status,
+        path: normalize_path(&entry.path),
+        old_path: entry.old_path.map(|path| normalize_path(&path)),
     }
-
-    entries
 }
 
 fn register_skip_reason(skip_stats: &mut SkipStats, reason: TextFileSkipReason) {

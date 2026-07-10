@@ -63,8 +63,8 @@ pub(crate) fn is_inside_git_repo() -> Result<bool, AppError> {
     Ok(stdout.trim() == "true")
 }
 
-pub(crate) fn read_git_status_lines() -> Result<Vec<String>, AppError> {
-    let output = core::run_command("git", ["status", "--porcelain"]).map_err(|error| {
+pub(crate) fn read_git_status_bytes() -> Result<Vec<u8>, AppError> {
+    let output = core::run_command("git", ["status", "--porcelain=v1", "-z"]).map_err(|error| {
         AppError::invalid_argument(format!("failed to run git status: {error}"))
     })?;
     if !output.status.success() {
@@ -73,10 +73,7 @@ pub(crate) fn read_git_status_lines() -> Result<Vec<String>, AppError> {
         ));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect())
+    Ok(output.stdout)
 }
 
 pub(crate) fn normalize_path(path: &Path) -> String {

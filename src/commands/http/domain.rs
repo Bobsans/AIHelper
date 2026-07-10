@@ -16,6 +16,7 @@ use super::{
 };
 
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 30;
+pub(crate) const DEFAULT_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RequestConfig {
@@ -24,6 +25,7 @@ pub(crate) struct RequestConfig {
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) query: Vec<(String, String)>,
     pub(crate) timeout_secs: u64,
+    pub(crate) max_response_bytes: usize,
     pub(crate) auth: AuthConfig,
     pub(crate) body: Option<RequestBody>,
 }
@@ -78,6 +80,7 @@ pub(crate) struct ResponseSnapshot {
     pub(crate) headers: BTreeMap<String, String>,
     pub(crate) body: String,
     pub(crate) body_json: Option<Value>,
+    pub(crate) body_truncated: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -99,6 +102,7 @@ pub(crate) struct HttpRequestOutput {
     pub(crate) ok: bool,
     pub(crate) duration_ms: u64,
     pub(crate) truncated: bool,
+    pub(crate) body_truncated: bool,
     pub(crate) headers: BTreeMap<String, String>,
     pub(crate) body: String,
     pub(crate) assertions: AssertionSummary,
@@ -119,6 +123,7 @@ struct HttpSpec {
 struct SpecDefaults {
     base_url: Option<String>,
     timeout_secs: Option<u64>,
+    max_response_bytes: Option<usize>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
     #[serde(default)]
@@ -145,6 +150,7 @@ struct SpecRequest {
     #[serde(default)]
     query: BTreeMap<String, String>,
     timeout_secs: Option<u64>,
+    max_response_bytes: Option<usize>,
     bearer: Option<String>,
     basic: Option<String>,
     json: Option<Value>,
@@ -253,7 +259,8 @@ pub(crate) fn run_request_command(
         status_text: response.status_text,
         ok: assertions.failed == 0,
         duration_ms,
-        truncated: false,
+        truncated: response.body_truncated,
+        body_truncated: response.body_truncated,
         headers: response.headers,
         body: response.body,
         assertions,
@@ -420,12 +427,22 @@ fn build_request_config(
     let auth = parse_auth(args.bearer.as_deref(), args.basic.as_deref())?;
     let body = parse_payload(args, None)?;
 
+    let max_response_bytes = args
+        .max_response_bytes
+        .unwrap_or(DEFAULT_MAX_RESPONSE_BYTES);
+    if max_response_bytes == 0 {
+        return Err(AppError::invalid_argument(
+            "--max-response-bytes must be >= 1",
+        ));
+    }
+
     Ok(RequestConfig {
         method: method_normalized,
         url: parsed_url.to_owned(),
         headers,
         query,
         timeout_secs: args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1),
+        max_response_bytes,
         auth,
         body,
     })
@@ -557,7 +574,13 @@ fn evaluate_assertions(
 
     for expected in &expectations.body_contains {
         summary.total += 1;
-        if response.body.contains(expected) {
+        if response.body_truncated {
+            summary.failed += 1;
+            summary.failures.push(format!(
+                "response body was truncated; cannot evaluate body contains '{}'",
+                expected
+            ));
+        } else if response.body.contains(expected) {
             summary.passed += 1;
         } else {
             summary.failed += 1;
@@ -569,6 +592,14 @@ fn evaluate_assertions(
 
     for expectation in &expectations.json {
         summary.total += 1;
+        if response.body_truncated {
+            summary.failed += 1;
+            summary.failures.push(format!(
+                "response body was truncated; cannot evaluate json expectation: {}",
+                expectation.source
+            ));
+            continue;
+        }
         match &response.body_json {
             Some(json) => {
                 if evaluate_json_expectation(json, expectation) {
@@ -1143,6 +1174,17 @@ fn build_case_request(
         .or(defaults.timeout_secs)
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
         .max(1);
+    let max_response_bytes = case
+        .request
+        .max_response_bytes
+        .or(defaults.max_response_bytes)
+        .unwrap_or(DEFAULT_MAX_RESPONSE_BYTES);
+    if max_response_bytes == 0 {
+        return Err(AppError::invalid_argument(format!(
+            "case '{}' max_response_bytes must be >= 1",
+            case.name
+        )));
+    }
 
     let bearer = case
         .request
@@ -1164,6 +1206,7 @@ fn build_case_request(
         headers: Vec::new(),
         query: Vec::new(),
         timeout_secs: Some(timeout_secs),
+        max_response_bytes: Some(max_response_bytes),
         bearer,
         basic,
         json: None,
@@ -1179,6 +1222,7 @@ fn build_case_request(
         headers,
         query,
         timeout_secs,
+        max_response_bytes,
         auth,
         body,
     };
