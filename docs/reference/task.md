@@ -32,12 +32,15 @@ Status: implemented.
 Run saved task command through system shell.
 
 ```bash
-ah task run <name> [--limit N] [--json]
+ah task run <name> [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--limit N] [--json]
 ```
 
 Behavior:
 - Windows: runs command through `powershell -NoProfile -Command`
 - Unix-like: runs command through `sh -lc`
+- `--timeout-secs` terminates the task process tree after the deadline (default: `600`)
+- `--max-output-bytes` bounds stdout and stderr separately while reading (default: `65536`)
 - global `--limit` truncates captured stdout/stderr lines
+- timeout returns `TASK_TIMEOUT`; byte or line truncation sets `truncated=true`
 
 Status: implemented.

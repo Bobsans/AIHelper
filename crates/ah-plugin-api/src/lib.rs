@@ -1,5 +1,6 @@
 use std::{
     ffi::{CStr, CString, c_char},
+    panic::{AssertUnwindSafe, catch_unwind},
     ptr,
 };
 
@@ -49,6 +50,10 @@ pub fn normalize_invocation_argv(
     let mut index = 0usize;
     while index < argv.len() {
         match argv[index].as_str() {
+            "--" => {
+                normalized.extend_from_slice(&argv[index..]);
+                break;
+            }
             "--json" => {
                 globals.json = true;
                 index += 1;
@@ -423,6 +428,30 @@ where
     execute(parsed, &normalized.globals).with_error_domain(expected_domain)
 }
 
+/// Runs a plugin parser and executor without allowing an unwind to cross the C ABI boundary.
+#[allow(clippy::result_large_err)]
+pub fn invoke_request_with_parser_catch_unwind<TArgs, TParse, TExecute>(
+    expected_domain: &str,
+    request_json: *const c_char,
+    parse_args: TParse,
+    execute: TExecute,
+) -> InvocationResponse
+where
+    TParse: Fn(&[String]) -> Result<TArgs, InvocationResponse>,
+    TExecute: Fn(TArgs, &GlobalOptionsWire) -> InvocationResponse,
+{
+    match catch_unwind(AssertUnwindSafe(|| {
+        invoke_request_with_parser(expected_domain, request_json, parse_args, execute)
+    })) {
+        Ok(response) => response,
+        Err(_) => InvocationResponse::error(
+            "PLUGIN_PANIC",
+            format!("plugin '{expected_domain}' panicked while handling invocation"),
+        )
+        .with_error_domain(expected_domain),
+    }
+}
+
 /// Generates the standardized ABI surface for an `AhPluginApiV1` dynamic plugin.
 #[macro_export]
 macro_rules! define_plugin_entrypoint_v1 {
@@ -518,7 +547,12 @@ macro_rules! define_plugin_entrypoint_v1 {
         fn invoke_from_raw(
             request_json: *const ::std::os::raw::c_char,
         ) -> $crate::InvocationResponse {
-            $crate::invoke_request_with_parser($domain, request_json, $parse_fn, $execute_fn)
+            $crate::invoke_request_with_parser_catch_unwind(
+                $domain,
+                request_json,
+                $parse_fn,
+                $execute_fn,
+            )
         }
     };
 }
@@ -650,5 +684,80 @@ mod tests {
         let normalized = normalize_invocation_argv(&argv, base_globals()).expect("no-op normalize");
         assert_eq!(normalized.argv, argv);
         assert_eq!(normalized.globals, base_globals());
+    }
+
+    #[test]
+    fn normalize_invocation_preserves_opaque_suffix() {
+        let argv = vec![
+            "check".to_owned(),
+            "--".to_owned(),
+            "child".to_owned(),
+            "--json".to_owned(),
+            "--limit".to_owned(),
+            "invalid-for-host".to_owned(),
+            "--cwd".to_owned(),
+            "nested".to_owned(),
+        ];
+        let normalized = normalize_invocation_argv(&argv, base_globals())
+            .expect("opaque suffix should not be normalized");
+
+        assert_eq!(normalized.argv, argv);
+        assert_eq!(normalized.globals, base_globals());
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)]
+    fn plugin_parser_panic_becomes_structured_error() {
+        let request = InvocationRequest {
+            domain: "test".to_owned(),
+            argv: vec!["run".to_owned()],
+            globals: base_globals(),
+        };
+        let raw = CString::new(serde_json::to_string(&request).expect("request should serialize"))
+            .expect("request should be a cstring");
+        let response = invoke_request_with_parser_catch_unwind(
+            "test",
+            raw.as_ptr(),
+            |_| -> Result<(), InvocationResponse> { panic!("parser secret") },
+            |_, _| InvocationResponse::ok(None),
+        );
+
+        assert_eq!(response.error_code.as_deref(), Some("PLUGIN_PANIC"));
+        assert_eq!(
+            response.error_message.as_deref(),
+            Some("plugin 'test' panicked while handling invocation")
+        );
+        assert_eq!(
+            response.diagnostic.and_then(|value| value.domain),
+            Some("test".to_owned())
+        );
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)]
+    fn plugin_executor_panic_does_not_poison_later_invocation() {
+        let request = InvocationRequest {
+            domain: "test".to_owned(),
+            argv: vec!["run".to_owned()],
+            globals: base_globals(),
+        };
+        let raw = CString::new(serde_json::to_string(&request).expect("request should serialize"))
+            .expect("request should be a cstring");
+        let panic_response = invoke_request_with_parser_catch_unwind(
+            "test",
+            raw.as_ptr(),
+            |_| Ok(()),
+            |_, _| -> InvocationResponse { panic!("executor secret") },
+        );
+        assert_eq!(panic_response.error_code.as_deref(), Some("PLUGIN_PANIC"));
+
+        let success_response = invoke_request_with_parser_catch_unwind(
+            "test",
+            raw.as_ptr(),
+            |_| Ok(()),
+            |_, _| InvocationResponse::ok(Some("ok".to_owned())),
+        );
+        assert!(success_response.success);
+        assert_eq!(success_response.message.as_deref(), Some("ok"));
     }
 }

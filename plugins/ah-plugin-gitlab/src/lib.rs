@@ -2,7 +2,7 @@
 
 use std::{
     env, fs,
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -26,6 +26,7 @@ const DEFAULT_REMOTE: &str = "origin";
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 1800;
+const DEFAULT_MAX_TRACE_BODY_BYTES: usize = 8 * 1024 * 1024;
 const ISSUE_DESIGNS_QUERY: &str = r#"
 query IssueDesigns($fullPath: ID!, $iid: String!, $first: Int!) {
   project(fullPath: $fullPath) {
@@ -291,7 +292,7 @@ enum JobCommand {
     #[command(about = "Read job trace")]
     Trace(JobTraceArgs),
     #[command(about = "Extract warning-like lines from job trace")]
-    Warnings(JobIdArgs),
+    Warnings(JobTraceReadArgs),
 }
 
 #[derive(Debug, Args)]
@@ -299,11 +300,25 @@ struct JobTraceArgs {
     job_id: u64,
     #[arg(long)]
     grep: Option<String>,
+    #[command(flatten)]
+    limits: JobTraceLimitArgs,
 }
 
 #[derive(Debug, Args)]
-struct JobIdArgs {
+struct JobTraceReadArgs {
     job_id: u64,
+    #[command(flatten)]
+    limits: JobTraceLimitArgs,
+}
+
+#[derive(Debug, Args)]
+struct JobTraceLimitArgs {
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_TRACE_BODY_BYTES,
+        value_name = "BYTES"
+    )]
+    max_body_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1063,8 +1078,12 @@ fn execute_job(
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
     match args.command {
-        JobCommand::Trace(args) => job_trace(context, args.job_id, args.grep, globals, false),
-        JobCommand::Warnings(args) => job_trace(context, args.job_id, None, globals, true),
+        JobCommand::Trace(args) => {
+            job_trace(context, args.job_id, args.grep, args.limits, globals, false)
+        }
+        JobCommand::Warnings(args) => {
+            job_trace(context, args.job_id, None, args.limits, globals, true)
+        }
     }
 }
 
@@ -1153,17 +1172,25 @@ fn wait_pipeline(
             );
         }
 
-        if start.elapsed() >= timeout {
-            return InvocationResponse::error(
-                "GITLAB_PIPELINE_TIMEOUT",
-                format!(
-                    "pipeline {} did not complete within {} seconds",
-                    args.pipeline_id, args.timeout_secs
-                ),
-            );
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            return pipeline_timeout_response(&args);
         }
-        thread::sleep(interval);
+        thread::sleep(interval.min(timeout - elapsed));
+        if start.elapsed() >= timeout {
+            return pipeline_timeout_response(&args);
+        }
     }
+}
+
+fn pipeline_timeout_response(args: &WaitPipelineArgs) -> InvocationResponse {
+    InvocationResponse::error(
+        "GITLAB_PIPELINE_TIMEOUT",
+        format!(
+            "pipeline {} did not complete within {} seconds",
+            args.pipeline_id, args.timeout_secs
+        ),
+    )
 }
 
 fn pipeline_jobs(
@@ -1197,29 +1224,24 @@ fn job_trace(
     context: &GitlabContext,
     job_id: u64,
     grep: Option<String>,
+    limits: JobTraceLimitArgs,
     globals: &GlobalOptionsWire,
     warnings_only: bool,
 ) -> InvocationResponse {
-    let trace = match download_job_trace(context, job_id) {
+    if limits.max_body_bytes == 0 {
+        return InvocationResponse::error("INVALID_ARGUMENT", "--max-body-bytes must be >= 1");
+    }
+    let (matches, truncated) = match collect_job_trace(
+        context,
+        job_id,
+        grep.as_deref(),
+        warnings_only,
+        globals.limit,
+        limits.max_body_bytes,
+    ) {
         Ok(value) => value,
         Err(error) => return error,
     };
-    let lines = trace
-        .lines()
-        .enumerate()
-        .map(|(index, line)| TraceLine {
-            line: index + 1,
-            text: strip_ansi_sequences(line),
-        })
-        .collect::<Vec<_>>();
-    let mut matches = if warnings_only {
-        warning_lines(&lines)
-    } else if let Some(pattern) = &grep {
-        grep_lines(&lines, pattern)
-    } else {
-        lines
-    };
-    let truncated = apply_limit(&mut matches, globals.limit);
     let text = matches
         .iter()
         .map(|line| format!("{}: {}", line.line, line.text))
@@ -1609,18 +1631,90 @@ fn gitlab_response(
     Ok(response)
 }
 
-fn download_job_trace(context: &GitlabContext, job_id: u64) -> Result<String, InvocationResponse> {
+fn collect_job_trace(
+    context: &GitlabContext,
+    job_id: u64,
+    grep: Option<&str>,
+    warnings_only: bool,
+    line_limit: Option<usize>,
+    max_body_bytes: usize,
+) -> Result<(Vec<TraceLine>, bool), InvocationResponse> {
     let path = format!(
         "/projects/{}/jobs/{job_id}/trace",
         context.project.encoded()
     );
     let response = gitlab_response(context, Method::GET, &path, None)?;
-    response.text().map_err(|error| {
-        InvocationResponse::error(
-            "GITLAB_RESPONSE_INVALID",
-            format!("failed to read job trace for job {job_id}: {error}"),
-        )
-    })
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_body_bytes as u64)
+    {
+        return Err(InvocationResponse::error(
+            "GITLAB_RESPONSE_TOO_LARGE",
+            format!("job trace exceeds --max-body-bytes {max_body_bytes}"),
+        ));
+    }
+
+    let max_lines = line_limit.unwrap_or(usize::MAX);
+    let grep_lower = grep.map(str::to_lowercase);
+    let mut reader = BufReader::new(response);
+    let mut body_bytes = 0usize;
+    let mut line_bytes = Vec::new();
+    let mut line_number = 0usize;
+    let mut matches = Vec::new();
+    loop {
+        line_bytes.clear();
+        let remaining = max_body_bytes.saturating_sub(body_bytes);
+        let read = reader
+            .by_ref()
+            .take(remaining.saturating_add(1) as u64)
+            .read_until(b'\n', &mut line_bytes)
+            .map_err(|error| {
+                InvocationResponse::error(
+                    "GITLAB_RESPONSE_INVALID",
+                    format!("failed to read job trace for job {job_id}: {error}"),
+                )
+            })?;
+        if read == 0 {
+            break;
+        }
+        body_bytes = body_bytes.saturating_add(read);
+        if body_bytes > max_body_bytes {
+            return Err(InvocationResponse::error(
+                "GITLAB_RESPONSE_TOO_LARGE",
+                format!("job trace exceeds --max-body-bytes {max_body_bytes}"),
+            ));
+        }
+
+        line_number += 1;
+        while line_bytes
+            .last()
+            .is_some_and(|byte| matches!(*byte, b'\n' | b'\r'))
+        {
+            line_bytes.pop();
+        }
+        let Ok(line) = std::str::from_utf8(&line_bytes) else {
+            continue;
+        };
+        let text = strip_ansi_sequences(line);
+        let selected = if warnings_only {
+            is_warning_like(&text)
+        } else if let Some(needle) = &grep_lower {
+            text.to_lowercase().contains(needle)
+        } else {
+            true
+        };
+        if !selected {
+            continue;
+        }
+        if matches.len() == max_lines {
+            return Ok((matches, true));
+        }
+        matches.push(TraceLine {
+            line: line_number,
+            text,
+        });
+    }
+    Ok((matches, false))
 }
 
 fn get_issue(context: &GitlabContext, iid: u64) -> Result<IssueResponse, InvocationResponse> {
@@ -1780,23 +1874,6 @@ fn resolve_required_text(
             format!("--{field_name} or --{field_name}-file is required"),
         )),
     }
-}
-
-fn grep_lines(lines: &[TraceLine], pattern: &str) -> Vec<TraceLine> {
-    let needle = pattern.to_lowercase();
-    lines
-        .iter()
-        .filter(|line| line.text.to_lowercase().contains(&needle))
-        .cloned()
-        .collect()
-}
-
-fn warning_lines(lines: &[TraceLine]) -> Vec<TraceLine> {
-    lines
-        .iter()
-        .filter(|line| is_warning_like(&line.text))
-        .cloned()
-        .collect()
 }
 
 fn is_warning_like(line: &str) -> bool {
@@ -2079,16 +2156,6 @@ fn render_jobs_text(jobs: &[JobResponse]) -> String {
         + "\n"
 }
 
-fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit
-        && items.len() > limit_value
-    {
-        items.truncate(limit_value);
-        return true;
-    }
-    false
-}
-
 fn truncate_for_error(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_owned();
@@ -2218,13 +2285,13 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "job trace".to_owned(),
                 summary: "Read or search a job trace.".to_owned(),
-                usage: "job trace <job-id> [--grep TEXT]".to_owned(),
+                usage: "job trace <job-id> [--grep TEXT] [--max-body-bytes BYTES]".to_owned(),
                 examples: vec![manual_example("Search job trace", &["job", "trace", "7", "--grep", "warning"])],
             },
             ManualCommand {
                 name: "job warnings".to_owned(),
                 summary: "Extract warning-like lines from a job trace.".to_owned(),
-                usage: "job warnings <job-id>".to_owned(),
+                usage: "job warnings <job-id> [--max-body-bytes BYTES]".to_owned(),
                 examples: vec![manual_example("List job warnings", &["job", "warnings", "7"])],
             },
         ],
@@ -2234,6 +2301,7 @@ fn plugin_manual() -> PluginManual {
             "Use --host for self-managed GitLab, --api-url for nonstandard REST roots, and --graphql-url for a separately configured GraphQL endpoint.".to_owned(),
             "Authentication checks --token, GITLAB_TOKEN, then GL_TOKEN; use --use-git-credential to opt into git credential helper lookup.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap releases, pipelines, or trace matches.".to_owned(),
+            "Job traces default to an 8 MiB response budget; override with --max-body-bytes.".to_owned(),
         ],
     }
 }
@@ -2487,6 +2555,33 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_wait_does_not_poll_after_deadline() {
+        let server = MockServer::new(vec![MockResponse::json(200, pipeline_json(42, "running"))]);
+        let started = Instant::now();
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "pipeline",
+            "wait",
+            "42",
+            "--interval-secs",
+            "60",
+            "--timeout-secs",
+            "1",
+        ]);
+
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("GITLAB_PIPELINE_TIMEOUT")
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(server.requests().len(), 1);
+    }
+
+    #[test]
     fn pipeline_jobs_decodes_list() {
         let server = MockServer::new(vec![MockResponse::json(
             200,
@@ -2554,6 +2649,32 @@ mod tests {
         assert_eq!(
             payload["matches"][1]["text"], "will be removed soon",
             "ANSI escape sequences should be stripped"
+        );
+    }
+
+    #[test]
+    fn job_trace_rejects_oversized_body() {
+        let server = MockServer::new(vec![MockResponse::bytes(
+            200,
+            "text/plain",
+            b"0123456789\n".to_vec(),
+        )]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "job",
+            "trace",
+            "7",
+            "--max-body-bytes",
+            "5",
+        ]);
+
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("GITLAB_RESPONSE_TOO_LARGE")
         );
     }
 

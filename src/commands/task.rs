@@ -1,6 +1,9 @@
 use crate::{cli::GlobalOptions, error::AppError};
 use clap::{Args, Subcommand};
 
+const DEFAULT_TIMEOUT_SECS: u64 = 600;
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Args)]
 pub struct TaskArgs {
     #[command(subcommand)]
@@ -26,6 +29,10 @@ pub struct SaveArgs {
 #[derive(Debug, Args)]
 pub struct RunArgs {
     pub name: String,
+    #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    pub timeout_secs: u64,
+    #[arg(long, default_value_t = DEFAULT_MAX_OUTPUT_BYTES, value_name = "BYTES")]
+    pub max_output_bytes: usize,
 }
 
 #[derive(Debug, Args)]

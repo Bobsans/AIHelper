@@ -2,7 +2,7 @@
 
 use std::{
     env, fs,
-    io::{Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -27,6 +27,8 @@ const DEFAULT_REMOTE: &str = "origin";
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 1800;
+const DEFAULT_MAX_LOG_BODY_BYTES: usize = 8 * 1024 * 1024;
+const DEFAULT_MAX_EXPANDED_LOG_BYTES: usize = 32 * 1024 * 1024;
 
 static PLUGIN_NAME_C: &[u8] = b"external-github\0";
 static DOMAIN_C: &[u8] = b"github\0";
@@ -263,7 +265,7 @@ enum RunCommand {
     #[command(about = "Search workflow run logs")]
     Logs(LogArgs),
     #[command(about = "Extract warning-like lines from workflow run logs")]
-    Warnings(RunIdArgs),
+    Warnings(LogReadArgs),
     #[command(about = "List workflow run artifacts")]
     Artifacts(RunIdArgs),
 }
@@ -289,6 +291,27 @@ struct LogArgs {
     run_id: u64,
     #[arg(long)]
     grep: Option<String>,
+    #[command(flatten)]
+    limits: LogLimitArgs,
+}
+
+#[derive(Debug, Args)]
+struct LogReadArgs {
+    run_id: u64,
+    #[command(flatten)]
+    limits: LogLimitArgs,
+}
+
+#[derive(Debug, Args)]
+struct LogLimitArgs {
+    #[arg(long, default_value_t = DEFAULT_MAX_LOG_BODY_BYTES, value_name = "BYTES")]
+    max_body_bytes: usize,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_EXPANDED_LOG_BYTES,
+        value_name = "BYTES"
+    )]
+    max_expanded_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -663,21 +686,19 @@ fn execute_issues(
     context: &GithubContext,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let per_page = globals.limit.unwrap_or(20).clamp(1, 100);
-    let mut issues = if let Some(search) = &args.search {
-        let path = github_issue_search_path(context, &args, search, per_page);
+    let target = globals.limit.unwrap_or(20).clamp(1, 100);
+    let issues = if let Some(search) = &args.search {
+        let path = github_issue_search_path(context, &args, search, target);
         match github_json::<IssueSearchResponse>(context, Method::GET, &path, None) {
-            Ok(value) => value.items,
+            Ok(value) => value.items.into_iter().take(target).collect(),
             Err(error) => return error,
         }
     } else {
-        let path = github_issues_list_path(context, &args, per_page);
-        match github_json::<Vec<IssueResponse>>(context, Method::GET, &path, None) {
+        match list_github_issues(context, &args, target) {
             Ok(value) => value,
             Err(error) => return error,
         }
     };
-    issues.retain(|issue| issue.pull_request.is_none());
     let text = render_issues_text(&issues);
     render_success(
         globals,
@@ -1060,8 +1081,12 @@ fn execute_run(
         }
         RunCommand::Wait(args) => wait_run(context, args, globals),
         RunCommand::Jobs(args) => run_jobs(context, args.run_id, globals),
-        RunCommand::Logs(args) => run_logs(context, args.run_id, args.grep, globals, false),
-        RunCommand::Warnings(args) => run_logs(context, args.run_id, None, globals, true),
+        RunCommand::Logs(args) => {
+            run_logs(context, args.run_id, args.grep, args.limits, globals, false)
+        }
+        RunCommand::Warnings(args) => {
+            run_logs(context, args.run_id, None, args.limits, globals, true)
+        }
         RunCommand::Artifacts(args) => run_artifacts(context, args.run_id, globals),
     }
 }
@@ -1253,21 +1278,28 @@ fn run_logs(
     context: &GithubContext,
     run_id: u64,
     grep: Option<String>,
+    limits: LogLimitArgs,
     globals: &GlobalOptionsWire,
     warnings_only: bool,
 ) -> InvocationResponse {
-    let logs = match download_run_logs(context, run_id) {
+    if limits.max_body_bytes == 0 {
+        return InvocationResponse::error("INVALID_ARGUMENT", "--max-body-bytes must be >= 1");
+    }
+    if limits.max_expanded_bytes == 0 {
+        return InvocationResponse::error("INVALID_ARGUMENT", "--max-expanded-bytes must be >= 1");
+    }
+    let (matches, truncated) = match download_run_logs(
+        context,
+        run_id,
+        grep.as_deref(),
+        warnings_only,
+        globals.limit,
+        limits.max_body_bytes,
+        limits.max_expanded_bytes,
+    ) {
         Ok(value) => value,
         Err(error) => return error,
     };
-    let mut matches = if warnings_only {
-        warning_lines(&logs)
-    } else if let Some(pattern) = &grep {
-        grep_lines(&logs, pattern)
-    } else {
-        logs
-    };
-    let truncated = apply_limit(&mut matches, globals.limit);
     let text = matches
         .iter()
         .map(|line| format!("{}:{}: {}", line.file, line.line, line.text))
@@ -1350,7 +1382,40 @@ fn create_issue_comment(
     github_json::<IssueCommentResponse>(context, Method::POST, &path, Some(json!({ "body": body })))
 }
 
-fn github_issues_list_path(context: &GithubContext, args: &IssuesArgs, per_page: usize) -> String {
+fn list_github_issues(
+    context: &GithubContext,
+    args: &IssuesArgs,
+    target: usize,
+) -> Result<Vec<IssueResponse>, InvocationResponse> {
+    let per_page = target.min(100);
+    let mut page = 1usize;
+    let mut issues = Vec::with_capacity(target);
+
+    while issues.len() < target {
+        let path = github_issues_list_path(context, args, per_page, page);
+        let page_items = github_json::<Vec<IssueResponse>>(context, Method::GET, &path, None)?;
+        let page_len = page_items.len();
+        issues.extend(
+            page_items
+                .into_iter()
+                .filter(|issue| issue.pull_request.is_none())
+                .take(target - issues.len()),
+        );
+        if page_len < per_page {
+            break;
+        }
+        page = page.saturating_add(1);
+    }
+
+    Ok(issues)
+}
+
+fn github_issues_list_path(
+    context: &GithubContext,
+    args: &IssuesArgs,
+    per_page: usize,
+    page: usize,
+) -> String {
     let mut query = vec![
         format!("state={}", urlencoding::encode(&args.state)),
         format!("per_page={per_page}"),
@@ -1370,12 +1435,16 @@ fn github_issues_list_path(context: &GithubContext, args: &IssuesArgs, per_page:
     if let Some(since) = &args.since {
         query.push(format!("since={}", urlencoding::encode(since)));
     }
-    format!(
+    let mut path = format!(
         "/repos/{}/{}/issues?{}",
         context.repo.owner,
         context.repo.repo,
         query.join("&")
-    )
+    );
+    if page > 1 {
+        path.push_str(&format!("&page={page}"));
+    }
+    path
 }
 
 fn github_issue_search_path(
@@ -1674,27 +1743,30 @@ fn github_response(
 fn download_run_logs(
     context: &GithubContext,
     run_id: u64,
-) -> Result<Vec<LogLine>, InvocationResponse> {
+    grep: Option<&str>,
+    warnings_only: bool,
+    line_limit: Option<usize>,
+    max_body_bytes: usize,
+    max_expanded_bytes: usize,
+) -> Result<(Vec<LogLine>, bool), InvocationResponse> {
     let path = format!(
         "/repos/{}/{}/actions/runs/{run_id}/logs",
         context.repo.owner, context.repo.repo
     );
     let response = github_response(context, Method::GET, &path, None)?;
-    let bytes = response.bytes().map_err(|error| {
-        InvocationResponse::error(
-            "GITHUB_RESPONSE_INVALID",
-            format!("failed to read log archive for run {run_id}: {error}"),
-        )
-    })?;
+    let bytes = read_bounded_log_body(response, run_id, max_body_bytes)?;
     let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
         InvocationResponse::error(
             "GITHUB_RESPONSE_INVALID",
             format!("failed to open log archive for run {run_id}: {error}"),
         )
     })?;
-    let mut lines = Vec::new();
+    let max_lines = line_limit.unwrap_or(usize::MAX);
+    let grep_lower = grep.map(str::to_lowercase);
+    let mut matches = Vec::new();
+    let mut expanded_bytes = 0usize;
     for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(|error| {
+        let file = archive.by_index(index).map_err(|error| {
             InvocationResponse::error(
                 "GITHUB_RESPONSE_INVALID",
                 format!("failed to read log archive entry {index}: {error}"),
@@ -1704,19 +1776,102 @@ fn download_run_logs(
             continue;
         }
         let file_name = file.name().to_owned();
-        let mut content = String::new();
-        if file.read_to_string(&mut content).is_err() {
-            continue;
-        }
-        for (line_index, line) in content.lines().enumerate() {
-            lines.push(LogLine {
+        let mut reader = BufReader::new(file);
+        let mut line_bytes = Vec::new();
+        let mut line_number = 0usize;
+        loop {
+            line_bytes.clear();
+            let remaining = max_expanded_bytes.saturating_sub(expanded_bytes);
+            let read = reader
+                .by_ref()
+                .take(remaining.saturating_add(1) as u64)
+                .read_until(b'\n', &mut line_bytes)
+                .map_err(|error| {
+                    InvocationResponse::error(
+                        "GITHUB_RESPONSE_INVALID",
+                        format!("failed to read log archive entry {index}: {error}"),
+                    )
+                })?;
+            if read == 0 {
+                break;
+            }
+            expanded_bytes = expanded_bytes.saturating_add(read);
+            if expanded_bytes > max_expanded_bytes {
+                return Err(InvocationResponse::error(
+                    "GITHUB_RESPONSE_TOO_LARGE",
+                    format!(
+                        "expanded workflow logs exceed --max-expanded-bytes {max_expanded_bytes}"
+                    ),
+                ));
+            }
+
+            line_number += 1;
+            while line_bytes
+                .last()
+                .is_some_and(|byte| matches!(*byte, b'\n' | b'\r'))
+            {
+                line_bytes.pop();
+            }
+            let Ok(line) = std::str::from_utf8(&line_bytes) else {
+                continue;
+            };
+            let text = strip_ansi_sequences(line);
+            let selected = if warnings_only {
+                is_warning_like(&text)
+            } else if let Some(needle) = &grep_lower {
+                text.to_lowercase().contains(needle)
+            } else {
+                true
+            };
+            if !selected {
+                continue;
+            }
+            if matches.len() == max_lines {
+                return Ok((matches, true));
+            }
+            matches.push(LogLine {
                 file: file_name.clone(),
-                line: line_index + 1,
-                text: strip_ansi_sequences(line),
+                line: line_number,
+                text,
             });
         }
     }
-    Ok(lines)
+    Ok((matches, false))
+}
+
+fn read_bounded_log_body(
+    mut response: reqwest::blocking::Response,
+    run_id: u64,
+    max_body_bytes: usize,
+) -> Result<Vec<u8>, InvocationResponse> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_body_bytes as u64)
+    {
+        return Err(InvocationResponse::error(
+            "GITHUB_RESPONSE_TOO_LARGE",
+            format!("workflow log archive exceeds --max-body-bytes {max_body_bytes}"),
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(max_body_bytes.min(64 * 1024));
+    response
+        .by_ref()
+        .take(max_body_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            InvocationResponse::error(
+                "GITHUB_RESPONSE_INVALID",
+                format!("failed to read log archive for run {run_id}: {error}"),
+            )
+        })?;
+    if bytes.len() > max_body_bytes {
+        return Err(InvocationResponse::error(
+            "GITHUB_RESPONSE_TOO_LARGE",
+            format!("workflow log archive exceeds --max-body-bytes {max_body_bytes}"),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn parse_key_values(values: &[String], flag_name: &str) -> Result<Value, InvocationResponse> {
@@ -1772,23 +1927,6 @@ fn resolve_required_text(
             format!("--{field_name} or --{field_name}-file is required"),
         )),
     }
-}
-
-fn grep_lines(lines: &[LogLine], pattern: &str) -> Vec<LogLine> {
-    let needle = pattern.to_lowercase();
-    lines
-        .iter()
-        .filter(|line| line.text.to_lowercase().contains(&needle))
-        .cloned()
-        .collect()
-}
-
-fn warning_lines(lines: &[LogLine]) -> Vec<LogLine> {
-    lines
-        .iter()
-        .filter(|line| is_warning_like(&line.text))
-        .cloned()
-        .collect()
 }
 
 fn is_warning_like(line: &str) -> bool {
@@ -1919,17 +2057,6 @@ fn render_runs_text(runs: &[WorkflowRunResponse]) -> String {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
-}
-
-fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
-    if let Some(limit_value) = limit
-        && limit_value > 0
-        && items.len() > limit_value
-    {
-        items.truncate(limit_value);
-        return true;
-    }
-    false
 }
 
 fn truncate_for_error(text: &str, max_chars: usize) -> String {
@@ -2100,7 +2227,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "run logs".to_owned(),
                 summary: "Search workflow run logs.".to_owned(),
-                usage: "run logs <run-id> [--grep TEXT]".to_owned(),
+                usage: "run logs <run-id> [--grep TEXT] [--max-body-bytes BYTES] [--max-expanded-bytes BYTES]".to_owned(),
                 examples: vec![manual_example(
                     "Search logs for Node warning",
                     &["run", "logs", "25451983278", "--grep", "Node.js 20 actions are deprecated"],
@@ -2109,7 +2236,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "run warnings".to_owned(),
                 summary: "Extract warning-like lines from workflow run logs.".to_owned(),
-                usage: "run warnings <run-id>".to_owned(),
+                usage: "run warnings <run-id> [--max-body-bytes BYTES] [--max-expanded-bytes BYTES]".to_owned(),
                 examples: vec![manual_example("List run warnings", &["run", "warnings", "25451983278"])],
             },
             ManualCommand {
@@ -2124,6 +2251,7 @@ fn plugin_manual() -> PluginManual {
             "Repository defaults to GitHub owner/repo parsed from `origin`; override with --repo OWNER/REPO.".to_owned(),
             "Authentication checks --token, GITHUB_TOKEN, then GH_TOKEN; use --use-git-credential to opt into git credential helper lookup.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap runs/log matches.".to_owned(),
+            "Run logs default to an 8 MiB archive budget and 32 MiB expanded budget; override with command-local max byte flags.".to_owned(),
         ],
     }
 }
@@ -2292,6 +2420,41 @@ mod tests {
         assert_eq!(
             request.path,
             "/repos/acme/tool/issues?state=all&per_page=5&labels=bug&assignee=bob&creator=alice&since=2026-05-07T00%3A00%3A00Z"
+        );
+    }
+
+    #[test]
+    fn issues_list_pages_past_pull_requests() {
+        let first_page = format!(
+            "[{},{}]",
+            pull_request_issue_json(1),
+            pull_request_issue_json(2)
+        );
+        let second_page = format!("[{},{}]", issue_json(3, "open"), issue_json(4, "open"));
+        let server = MockServer::new(vec![
+            MockResponse::json(200, &first_page),
+            MockResponse::json(200, &second_page),
+        ]);
+
+        let response = invoke_json_with_limit(
+            &["--repo", "acme/tool", "--api-url", &server.url(), "issues"],
+            Some(2),
+        );
+
+        assert!(response.success, "{response:?}");
+        let payload = response_json(&response);
+        assert_eq!(payload["issue_count"], 2);
+        assert_eq!(payload["issues"][0]["number"], 3);
+        assert_eq!(payload["issues"][1]["number"], 4);
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0].path,
+            "/repos/acme/tool/issues?state=open&per_page=2"
+        );
+        assert_eq!(
+            requests[1].path,
+            "/repos/acme/tool/issues?state=open&per_page=2&page=2"
         );
     }
 
@@ -2822,6 +2985,50 @@ mod tests {
     }
 
     #[test]
+    fn run_logs_rejects_compressed_and_expanded_overflow() {
+        let zip_bytes = log_zip_bytes(&[("Build/step.txt", "0123456789abcdef\n")]);
+        let compressed_limit = zip_bytes.len().saturating_sub(1).to_string();
+        let compressed_server = MockServer::new(vec![MockResponse::bytes(
+            200,
+            "application/zip",
+            zip_bytes.clone(),
+        )]);
+        let compressed_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &compressed_server.url(),
+            "run",
+            "logs",
+            "42",
+            "--max-body-bytes",
+            &compressed_limit,
+        ]);
+        assert_eq!(
+            compressed_response.error_code.as_deref(),
+            Some("GITHUB_RESPONSE_TOO_LARGE")
+        );
+
+        let expanded_server =
+            MockServer::new(vec![MockResponse::bytes(200, "application/zip", zip_bytes)]);
+        let expanded_response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &expanded_server.url(),
+            "run",
+            "logs",
+            "42",
+            "--max-expanded-bytes",
+            "8",
+        ]);
+        assert_eq!(
+            expanded_response.error_code.as_deref(),
+            Some("GITHUB_RESPONSE_TOO_LARGE")
+        );
+    }
+
+    #[test]
     fn github_api_failure_has_stable_error_code() {
         let server = MockServer::new(vec![MockResponse::json(
             404,
@@ -2910,6 +3117,13 @@ mod tests {
                 "closed_at": null
             }}"#
         )
+    }
+
+    fn pull_request_issue_json(number: u64) -> String {
+        let mut value = serde_json::from_str::<Value>(&issue_json(number, "open"))
+            .expect("issue fixture should be JSON");
+        value["pull_request"] = json!({ "url": format!("https://api.github.com/pulls/{number}") });
+        serde_json::to_string(&value).expect("pull request fixture should serialize")
     }
 
     fn issue_comment_json(id: u64) -> String {

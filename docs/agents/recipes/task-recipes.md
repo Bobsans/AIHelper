@@ -7,7 +7,7 @@ Save repetitive command chains once and execute by short name.
 ```bash
 ah task save <name> <command>
 ah task list
-ah task run <name>
+ah task run <name> [--timeout-secs 600] [--max-output-bytes 65536]
 ```
 
 ## Example
@@ -20,6 +20,7 @@ ah task run quick-diff
 ## Output Shape
 - `task list --json`: task catalog from `.ah/tasks.json`
 - `task run --json`: exit status + captured stdout/stderr
+- task output is byte-bounded while read; timeout terminates descendant processes
 
 ## When To Use
 - Standardize repetitive AI support workflows

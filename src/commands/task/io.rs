@@ -1,11 +1,9 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Output,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use ah_runtime::core;
 use serde_json;
 
 use crate::commands::task::domain::TaskStore;
@@ -42,9 +40,19 @@ pub(crate) fn save_store(path: &Path, store: &TaskStore) -> Result<(), AppError>
     fs::write(path, raw).map_err(|source| AppError::file_write(path.to_path_buf(), source))
 }
 
-pub(crate) fn run_shell_command(command: &str) -> Result<Output, AppError> {
-    core::run_shell_command(command)
-        .map_err(|source| AppError::command_execution(format!("shell command: {command}"), source))
+pub(crate) fn shell_command(command: &str) -> (String, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        (
+            "powershell".to_owned(),
+            vec![
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                command.to_owned(),
+            ],
+        )
+    } else {
+        ("sh".to_owned(), vec!["-lc".to_owned(), command.to_owned()])
+    }
 }
 
 pub(crate) fn now_unix_seconds() -> u64 {

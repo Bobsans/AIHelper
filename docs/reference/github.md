@@ -36,7 +36,7 @@ ah --json github --repo Bobsans/AIHelper repo
 
 ## `ah github issues`
 
-List repository issues. Pull requests are filtered out of the returned issue list.
+List repository issues. Pull requests are filtered while pages are fetched, so PR-heavy pages do not reduce the requested issue count.
 
 ```bash
 ah github issues [--state open|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT] [--limit N]
@@ -189,17 +189,17 @@ ah github run jobs <run-id>
 Download workflow run logs and search them.
 
 ```bash
-ah github run logs <run-id> [--grep TEXT] [--limit N]
+ah github run logs <run-id> [--grep TEXT] [--max-body-bytes BYTES] [--max-expanded-bytes BYTES] [--limit N]
 ```
 
-GitHub exposes run logs as a zip archive; the plugin reads text files from the archive and emits matching lines.
+GitHub exposes run logs as a zip archive. The compressed response is capped at `8388608` bytes and cumulative expanded content at `33554432` bytes by default; both limits can be overridden. Filtering and `--limit` are applied while entries are read. Overflow returns `GITHUB_RESPONSE_TOO_LARGE`.
 
 ## `ah github run warnings`
 
 Extract warning-like lines from workflow run logs.
 
 ```bash
-ah github run warnings <run-id> [--limit N]
+ah github run warnings <run-id> [--max-body-bytes BYTES] [--max-expanded-bytes BYTES] [--limit N]
 ```
 
 The warning matcher is intentionally broad for AI-agent triage. It matches lines containing terms such as `warning`, `deprecated`, `deprecation`, and `will be removed`.

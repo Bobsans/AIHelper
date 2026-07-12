@@ -158,6 +158,8 @@ ah gitlab pipeline wait <pipeline-id> [--interval-secs SECONDS] [--timeout-secs 
 
 Terminal statuses are `success`, `failed`, `canceled`, `skipped`, and `manual`.
 
+The polling deadline is checked before every follow-up request; the sleep interval is shortened to the remaining timeout when necessary.
+
 ## `ah gitlab pipeline jobs`
 
 List jobs for a pipeline.
@@ -171,15 +173,17 @@ ah gitlab pipeline jobs <pipeline-id>
 Read or search a job trace.
 
 ```bash
-ah gitlab job trace <job-id> [--grep TEXT] [--limit N]
+ah gitlab job trace <job-id> [--grep TEXT] [--max-body-bytes BYTES] [--limit N]
 ```
+
+The trace is filtered while read and is capped at `8388608` bytes by default. Override the cap with `--max-body-bytes`; overflow returns `GITLAB_RESPONSE_TOO_LARGE`.
 
 ## `ah gitlab job warnings`
 
 Extract warning-like lines from a job trace.
 
 ```bash
-ah gitlab job warnings <job-id> [--limit N]
+ah gitlab job warnings <job-id> [--max-body-bytes BYTES] [--limit N]
 ```
 
 The warning matcher is intentionally broad for AI-agent triage. It matches lines containing terms such as `warning`, `deprecated`, `deprecation`, and `will be removed`.

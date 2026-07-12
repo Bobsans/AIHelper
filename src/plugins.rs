@@ -493,7 +493,7 @@ fn task_manual() -> PluginManual {
             ManualCommand {
                 name: "run".to_owned(),
                 summary: "Run saved task by name.".to_owned(),
-                usage: "run <name>".to_owned(),
+                usage: "run <name> [--timeout-secs SECONDS] [--max-output-bytes BYTES]".to_owned(),
                 examples: vec![manual_example(
                     "Execute saved workflow",
                     &["run", "print-working-dir"],

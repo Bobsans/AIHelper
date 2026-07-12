@@ -382,16 +382,14 @@ pub fn classify_file(rel: &str, name: &str) -> Vec<FileRuleDetection> {
             Some("docusaurus"),
             Some("docs"),
         )),
-        "conf.py" => {
-            if lower_rel.contains("docs/") || lower_rel.contains("doc/") {
-                detections.push(grouped(
-                    FileGroup::Docs,
-                    "sphinx",
-                    Some("python"),
-                    Some("sphinx"),
-                    Some("docs"),
-                ));
-            }
+        "conf.py" if lower_rel.contains("docs/") || lower_rel.contains("doc/") => {
+            detections.push(grouped(
+                FileGroup::Docs,
+                "sphinx",
+                Some("python"),
+                Some("sphinx"),
+                Some("docs"),
+            ));
         }
         _ => {}
     }

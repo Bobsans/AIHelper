@@ -7,7 +7,7 @@ Command execution helpers for agents.
 Run an explicit command directly and return a bounded result.
 
 ```bash
-ah run check [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--tail-lines N] <command...> [--json]
+ah [--json] run check [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--tail-lines N] [--] <command...>
 ```
 
 Flags:
@@ -17,6 +17,8 @@ Flags:
 
 Behavior:
 - executes the command directly without a shell
+- treats the child command and every following token as opaque; use `--` to make the boundary explicit when child arguments resemble `ah` global flags
+- place host-global flags such as `--json`, `--quiet`, `--limit`, and `--cwd` before the child command
 - captures stdout and stderr separately
 - bounds stdout and stderr while they are read, so child output cannot grow memory without limit
 - on timeout, terminates the command and its descendant process tree

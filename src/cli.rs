@@ -89,9 +89,10 @@ pub fn apply_initial_cwd_from_raw_args(raw_args: &[OsString]) -> Result<(), AppE
 }
 
 pub fn parse_runtime_command(
-    raw_args: Vec<OsString>,
+    mut raw_args: Vec<OsString>,
     plugins: &[PluginMetadata],
 ) -> Result<CliParseResult, AppError> {
+    let run_check_argv = prepare_run_check_passthrough(&mut raw_args)?;
     let mut command = build_cli_command(plugins);
     let matches = match command.try_get_matches_from_mut(raw_args) {
         Ok(matches) => matches,
@@ -118,8 +119,6 @@ pub fn parse_runtime_command(
     if options.limit == Some(0) {
         return Err(AppError::invalid_argument("--limit must be >= 1"));
     }
-    let deferred_cwd = matches.get_one::<PathBuf>("cwd").cloned();
-
     let runtime_command = match matches.subcommand() {
         Some((HOST_COMMAND_AI, ai_matches)) => {
             let Some((subcommand, ai_submatches)) = ai_matches.subcommand() else {
@@ -175,7 +174,11 @@ pub fn parse_runtime_command(
             }
         }
         Some((domain, domain_matches)) => {
-            let mut argv = collect_domain_argv(domain_matches)?;
+            let mut argv = if domain == "run" {
+                run_check_argv.unwrap_or(collect_domain_argv(domain_matches)?)
+            } else {
+                collect_domain_argv(domain_matches)?
+            };
             let normalized =
                 normalize_invocation_argv(&argv, options.to_wire()).map_err(|error| {
                     AppError::invalid_argument(
@@ -194,10 +197,6 @@ pub fn parse_runtime_command(
         }
         None => return Err(AppError::invalid_argument("missing command domain")),
     };
-
-    if let Some(cwd) = deferred_cwd {
-        std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
-    }
 
     Ok(CliParseResult::Command(runtime_command))
 }
@@ -374,13 +373,132 @@ fn collect_domain_argv(matches: &ArgMatches) -> Result<Vec<String>, AppError> {
     Ok(Vec::new())
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RunCheckLayout {
+    domain_index: usize,
+    prefix_end: usize,
+    child_start: usize,
+}
+
+fn prepare_run_check_passthrough(
+    raw_args: &mut [OsString],
+) -> Result<Option<Vec<String>>, AppError> {
+    let Some(layout) = run_check_layout(raw_args) else {
+        return Ok(None);
+    };
+
+    let mut argv = os_args_to_strings(&raw_args[(layout.domain_index + 1)..layout.prefix_end])?;
+    argv.push("--".to_owned());
+    argv.extend(os_args_to_strings(&raw_args[layout.child_start..])?);
+
+    for (offset, value) in raw_args[layout.child_start..].iter_mut().enumerate() {
+        *value = OsString::from(format!("__ah_opaque_child_arg_{offset}__"));
+    }
+
+    Ok(Some(argv))
+}
+
+fn os_args_to_strings(values: &[OsString]) -> Result<Vec<String>, AppError> {
+    values
+        .iter()
+        .map(|value| {
+            value.to_str().map(str::to_owned).ok_or_else(|| {
+                AppError::invalid_argument("external subcommand contains non-UTF8 argument")
+            })
+        })
+        .collect()
+}
+
+fn run_check_layout(raw_args: &[OsString]) -> Option<RunCheckLayout> {
+    let mut index = 1usize;
+    while index < raw_args.len() {
+        if let Some(next) = host_option_end(raw_args, index) {
+            index = next;
+            continue;
+        }
+        break;
+    }
+    if raw_args.get(index)? != "run" {
+        return None;
+    }
+    let domain_index = index;
+    index += 1;
+
+    while index < raw_args.len() {
+        if let Some(next) = host_option_end(raw_args, index) {
+            index = next;
+            continue;
+        }
+        break;
+    }
+    if raw_args.get(index)? != "check" {
+        return None;
+    }
+    index += 1;
+
+    while index < raw_args.len() {
+        if raw_args[index] == "--" {
+            return Some(RunCheckLayout {
+                domain_index,
+                prefix_end: index,
+                child_start: index + 1,
+            });
+        }
+        if let Some(next) =
+            host_option_end(raw_args, index).or_else(|| run_check_option_end(raw_args, index))
+        {
+            index = next;
+            continue;
+        }
+        return Some(RunCheckLayout {
+            domain_index,
+            prefix_end: index,
+            child_start: index,
+        });
+    }
+
+    None
+}
+
+fn host_option_end(raw_args: &[OsString], index: usize) -> Option<usize> {
+    let value = raw_args.get(index)?.to_str()?;
+    match value {
+        "--json" | "--quiet" => Some(index + 1),
+        "--cwd" | "--limit" => Some((index + 2).min(raw_args.len())),
+        _ if value.starts_with("--cwd=") || value.starts_with("--limit=") => Some(index + 1),
+        _ => None,
+    }
+}
+
+fn run_check_option_end(raw_args: &[OsString], index: usize) -> Option<usize> {
+    let value = raw_args.get(index)?.to_str()?;
+    match value {
+        "--timeout-secs" | "--max-output-bytes" | "--tail-lines" => {
+            Some((index + 2).min(raw_args.len()))
+        }
+        _ if value.starts_with("--timeout-secs=")
+            || value.starts_with("--max-output-bytes=")
+            || value.starts_with("--tail-lines=") =>
+        {
+            Some(index + 1)
+        }
+        _ => None,
+    }
+}
+
 fn extract_last_cwd(raw_args: &[OsString]) -> Result<Option<PathBuf>, AppError> {
     let mut cwd = None;
     let mut index = 1usize;
-    while index < raw_args.len() {
+    let scan_end = run_check_layout(raw_args)
+        .map(|layout| layout.prefix_end)
+        .unwrap_or(raw_args.len());
+    while index < scan_end {
         let arg = &raw_args[index];
+        if arg == "--" {
+            break;
+        }
         if arg == "--cwd" {
-            let Some(value) = raw_args.get(index + 1) else {
+            let Some(value) = raw_args.get(index + 1).filter(|_| index + 1 < scan_end) else {
                 return Err(AppError::invalid_argument(
                     "missing value for trailing --cwd",
                 ));
@@ -507,6 +625,61 @@ mod tests {
         ];
         let cwd = extract_last_cwd(&raw_args).expect("cwd extraction should succeed");
         assert_eq!(cwd, Some(PathBuf::from("tmp/workdir")));
+    }
+
+    #[test]
+    fn extract_last_cwd_ignores_run_check_child_arguments() {
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("--cwd=workspace"),
+            OsString::from("run"),
+            OsString::from("check"),
+            OsString::from("child"),
+            OsString::from("--cwd"),
+            OsString::from("nested"),
+        ];
+
+        let cwd = extract_last_cwd(&raw_args).expect("cwd extraction should succeed");
+        assert_eq!(cwd, Some(PathBuf::from("workspace")));
+    }
+
+    #[test]
+    fn prepare_run_check_preserves_opaque_child_suffix() {
+        let mut raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("--json"),
+            OsString::from("run"),
+            OsString::from("check"),
+            OsString::from("--timeout-secs"),
+            OsString::from("5"),
+            OsString::from("child"),
+            OsString::from("--json"),
+            OsString::from("--limit"),
+            OsString::from("not-a-host-limit"),
+            OsString::from("--cwd"),
+            OsString::from("nested"),
+        ];
+
+        let argv = prepare_run_check_passthrough(&mut raw_args)
+            .expect("passthrough preparation should succeed")
+            .expect("run check should be detected");
+        assert_eq!(
+            argv,
+            vec![
+                "check",
+                "--timeout-secs",
+                "5",
+                "--",
+                "child",
+                "--json",
+                "--limit",
+                "not-a-host-limit",
+                "--cwd",
+                "nested",
+            ]
+        );
+        assert_eq!(raw_args[6], "__ah_opaque_child_arg_0__");
+        assert_eq!(raw_args[11], "__ah_opaque_child_arg_5__");
     }
 
     #[test]

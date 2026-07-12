@@ -123,6 +123,14 @@ fn run_list(_args: super::ListArgs, limit: Option<usize>) -> Result<TaskListOutp
 
 fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, AppError> {
     validation::validate_task_name(&args.name)?;
+    if args.timeout_secs == 0 {
+        return Err(AppError::invalid_argument("--timeout-secs must be >= 1"));
+    }
+    if args.max_output_bytes == 0 {
+        return Err(AppError::invalid_argument(
+            "--max-output-bytes must be >= 1",
+        ));
+    }
 
     let store = adapters::io::load_store(&adapters::io::task_store_path())?;
     let task = store
@@ -131,24 +139,44 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
         .find(|entry| entry.name == args.name)
         .ok_or_else(|| AppError::invalid_argument(format!("task not found: {}", args.name)))?;
 
-    let output = adapters::io::run_shell_command(&task.command)?;
-    let success = output.status.success();
-    let exit_code = output.status.code().unwrap_or_default();
-    let stdout_raw = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr_raw = String::from_utf8_lossy(&output.stderr).into_owned();
+    let (program, command_args) = adapters::io::shell_command(&task.command);
+    let output = crate::commands::run::io::run_command(
+        &program,
+        &command_args,
+        args.timeout_secs,
+        &format!("task {}", args.name),
+        args.max_output_bytes,
+        None,
+    )?;
+    let stdout_raw = crate::commands::run::io::render_output(&output.stdout, None);
+    let stderr_raw = crate::commands::run::io::render_output(&output.stderr, None);
     let (stdout, stdout_truncated) = truncate_lines(&stdout_raw, limit);
     let (stderr, stderr_truncated) = truncate_lines(&stderr_raw, limit);
-    let truncated = stdout_truncated || stderr_truncated;
+    let truncated =
+        output.stdout.truncated || output.stderr.truncated || stdout_truncated || stderr_truncated;
 
-    if !success {
+    if output.timed_out {
+        return Err(AppError::external(
+            "TASK_TIMEOUT",
+            format!(
+                "task '{}' did not complete within {} seconds",
+                args.name, args.timeout_secs
+            ),
+        ));
+    }
+
+    if output.exit_code != Some(0) {
         let stderr_message = if stderr.trim().is_empty() {
-            format!("task '{}' failed with exit code {}", args.name, exit_code)
+            match output.exit_code {
+                Some(code) => format!("task '{}' failed with exit code {code}", args.name),
+                None => format!("task '{}' terminated without an exit code", args.name),
+            }
         } else {
             stderr.trim().to_owned()
         };
         return Err(AppError::command_failed(
             format!("task {}", args.name),
-            Some(exit_code),
+            output.exit_code,
             stderr_message,
         ));
     }
@@ -157,8 +185,8 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
         command: "task.run",
         name: args.name,
         task_command: task.command,
-        exit_code,
-        success,
+        exit_code: output.exit_code.unwrap_or(0),
+        success: true,
         truncated,
         stdout,
         stderr,
