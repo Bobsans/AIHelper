@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-07-13
+
+### Added
+- Configurable response and output limits for HTTP bodies, GitHub workflow logs, GitLab job traces, and saved task execution.
+- GitLab `--graphql-url` routing and `issue view --full` aggregation for issue details, comments, and designs.
+
+### Changed
+- `run check` and `task run` now bound output while reading and terminate descendant process trees on timeout.
+- Search traversal is deterministic and ignore-aware, independent of whether `rg` is installed.
+- Git and context change detection now parses NUL-delimited porcelain output, preserving unusual paths and rename metadata.
+- GitHub and GitLab log processing streams bounded content; issue pagination and pipeline deadline handling are more robust.
+- Plugin metadata, manual, invocation, and command boundaries now fail deterministically without changing the plugin ABI.
+
+### Fixed
+- Relative `--cwd` handling is applied once, and `run check` preserves child arguments that resemble host-global flags.
+- Valid UTF-8 files are no longer classified as binary when the sniff buffer ends inside a multibyte character.
+
 ## [0.6.2] - 2026-05-22
 
 ### Added
