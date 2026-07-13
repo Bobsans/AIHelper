@@ -21,6 +21,22 @@ fn file_read_rejects_binary_file() {
 }
 
 #[test]
+fn file_read_accepts_utf8_character_split_at_sniff_boundary() {
+    let temp = NamedTempFile::new().expect("temporary file should be created");
+    let mut content = vec![b'a'; 8191];
+    content.extend_from_slice("а\n".as_bytes());
+    fs::write(temp.path(), content).expect("UTF-8 content should be written");
+
+    let file_path = temp.path().to_string_lossy().to_string();
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["file", "read", &file_path])
+        .assert()
+        .success()
+        .stdout(contains("а"));
+}
+
+#[test]
 fn file_read_respects_max_bytes() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "0123456789\n").expect("content should be written");

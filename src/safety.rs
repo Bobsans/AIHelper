@@ -87,7 +87,11 @@ pub fn is_probably_binary(prefix: &[u8]) -> bool {
     if prefix.contains(&0) {
         return true;
     }
-    std::str::from_utf8(prefix).is_err()
+    // A fixed-size prefix may end inside an otherwise valid multibyte character.
+    match std::str::from_utf8(prefix) {
+        Ok(_) => false,
+        Err(error) => error.error_len().is_some(),
+    }
 }
 
 pub fn skip_reason_message(path: &Path, reason: TextFileSkipReason) -> String {
@@ -130,4 +134,30 @@ fn read_prefix(path: &Path, max_bytes: usize) -> Result<Vec<u8>, AppError> {
         .map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
     buffer.truncate(bytes_read);
     Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_probably_binary;
+
+    #[test]
+    fn incomplete_utf8_at_prefix_boundary_is_not_binary() {
+        for prefix in [
+            &[b'a', 0xd0][..],
+            &[b'a', 0xe2, 0x82][..],
+            &[b'a', 0xf0, 0x9f, 0x92][..],
+        ] {
+            assert!(!is_probably_binary(prefix));
+        }
+    }
+
+    #[test]
+    fn malformed_utf8_is_binary() {
+        assert!(is_probably_binary(&[b'a', 0xc3, b'(']));
+    }
+
+    #[test]
+    fn nul_byte_is_binary() {
+        assert!(is_probably_binary(&[b'a', 0, b'b']));
+    }
 }
