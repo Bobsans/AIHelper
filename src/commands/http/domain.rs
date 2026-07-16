@@ -1503,27 +1503,6 @@ fn interpolate_json_value(
     }
 }
 
-pub(crate) fn render_assert_text(report: &HttpAssertOutput) {
-    println!("spec: {}", report.spec_path);
-    for case in &report.cases {
-        if case.passed {
-            println!("PASS {}", case.name);
-        } else {
-            println!("FAIL {}", case.name);
-            for failure in &case.failures {
-                println!("  - {}", failure);
-            }
-        }
-    }
-    println!(
-        "summary: total={}, passed={}, failed={}, duration_ms={}",
-        report.summary.total,
-        report.summary.passed,
-        report.summary.failed,
-        report.summary.duration_ms
-    );
-}
-
 pub(crate) fn render_assert_junit(report: &HttpAssertOutput) -> String {
     let mut xml = String::new();
     xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);

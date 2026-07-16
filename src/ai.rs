@@ -2,7 +2,11 @@ use ah_plugin_api::PluginManual;
 use ah_runtime::PluginManager;
 use serde::Serialize;
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
+use crate::{
+    cli::GlobalOptions,
+    error::AppError,
+    output::{OutputMode, TextFormatter, TextStyle},
+};
 
 pub fn execute_info(
     manager: &PluginManager,
@@ -26,7 +30,12 @@ pub fn execute_info(
     }
 
     match options.output {
-        OutputMode::Text => render_text(domain_filter, &host_commands, &manuals),
+        OutputMode::Text => render_text(
+            domain_filter,
+            &host_commands,
+            &manuals,
+            TextFormatter::stdout(),
+        ),
         OutputMode::Json => render_json(domain_filter, host_commands, manuals)?,
     }
 
@@ -37,46 +46,85 @@ fn render_text(
     domain_filter: Option<&str>,
     host_commands: &[HostCommandDoc],
     manuals: &[PluginManual],
+    formatter: TextFormatter,
 ) {
-    println!("AIHelper agent manual");
-    println!("usage: ah <domain> <command> [options]");
+    println!(
+        "{}",
+        formatter.paint(TextStyle::Heading, "AIHelper agent manual")
+    );
+    println!(
+        "{}",
+        formatter.paint(TextStyle::Key, "usage: ah <domain> <command> [options]")
+    );
     if let Some(filter) = domain_filter {
-        println!("domain filter: {filter}");
+        println!(
+            "{} {}",
+            formatter.paint(TextStyle::Heading, "domain filter:"),
+            formatter.paint(TextStyle::Key, filter)
+        );
     }
     println!();
 
-    println!("Global flags:");
+    println!("{}", formatter.paint(TextStyle::Heading, "Global flags:"));
     for option in global_options_docs() {
-        println!("  {}  {}", option.flag, option.description);
+        println!(
+            "  {}  {}",
+            formatter.paint(TextStyle::Key, option.flag),
+            option.description
+        );
     }
     println!();
 
-    println!("Host commands:");
+    println!("{}", formatter.paint(TextStyle::Heading, "Host commands:"));
     for command in host_commands {
-        println!("  ah {}", command.usage);
+        println!(
+            "  {}",
+            formatter.paint(TextStyle::Key, format!("ah {}", command.usage))
+        );
         println!("    {}", command.summary);
         for example in &command.examples {
-            println!("    e.g. {}: {}", example.description, example.command);
+            println!(
+                "    {} {}: {}",
+                formatter.paint(TextStyle::Muted, "e.g."),
+                example.description,
+                formatter.paint(TextStyle::Key, &example.command)
+            );
         }
     }
     println!();
 
     for manual in manuals {
-        println!("Domain: {} ({})", manual.domain, manual.plugin_name);
+        println!(
+            "{} {} ({})",
+            formatter.paint(TextStyle::Heading, "Domain:"),
+            formatter.paint(TextStyle::Key, &manual.domain),
+            formatter.paint(TextStyle::Muted, &manual.plugin_name)
+        );
         println!("  {}", manual.description);
         if !manual.notes.is_empty() {
-            println!("  Notes:");
+            println!("  {}", formatter.paint(TextStyle::Heading, "Notes:"));
             for note in &manual.notes {
                 println!("    - {}", note);
             }
         }
-        println!("  Commands:");
+        println!("  {}", formatter.paint(TextStyle::Heading, "Commands:"));
         for command in &manual.commands {
-            println!("    ah {} {}", manual.domain, command.usage);
+            println!(
+                "    {}",
+                formatter.paint(
+                    TextStyle::Key,
+                    format!("ah {} {}", manual.domain, command.usage)
+                )
+            );
             println!("      {}", command.summary);
             for example in &command.examples {
                 let rendered = render_plugin_example(&manual.domain, &example.argv);
-                println!("      e.g. {}: {}", example.description, rendered);
+                println!(
+                    "      {} {}: {}",
+                    formatter.paint(TextStyle::Muted, "e.g."),
+                    example.description,
+                    formatter.paint(TextStyle::Key, rendered)
+                );
             }
         }
         println!();

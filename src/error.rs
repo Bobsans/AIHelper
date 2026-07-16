@@ -3,6 +3,8 @@ use std::{ffi::OsStr, io, path::PathBuf};
 use ah_plugin_api::ErrorDiagnostic;
 use thiserror::Error;
 
+use crate::output::{TextFormatter, TextStyle};
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("{message}")]
@@ -115,9 +117,10 @@ impl AppError {
         }
 
         let rendered = self.rendered();
-        eprintln!("{}: {}", rendered.code, concise_error_message(&rendered));
+        let formatter = TextFormatter::stderr();
+        eprintln!("{}", render_error_line(&rendered, formatter));
         if let Some(hint) = concise_hint(&rendered.code) {
-            eprintln!("hint: {hint}");
+            eprintln!("{}", render_hint_line(hint, formatter));
         }
     }
 
@@ -510,6 +513,18 @@ fn concise_hint(code: &str) -> Option<&'static str> {
     }
 }
 
+fn render_error_line(error: &RenderedError, formatter: TextFormatter) -> String {
+    format!(
+        "{}: {}",
+        formatter.paint(TextStyle::Error, &error.code),
+        concise_error_message(error)
+    )
+}
+
+fn render_hint_line(hint: &str, formatter: TextFormatter) -> String {
+    format!("{} {hint}", formatter.paint(TextStyle::Warning, "hint:"))
+}
+
 fn wants_json_error_output() -> bool {
     std::env::args_os().any(|arg| arg == OsStr::new("--json"))
 }
@@ -629,5 +644,43 @@ fn render_external(code: &str, message: &str) -> RenderedError {
         code: code.to_owned(),
         message: normalized_message,
         context: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppError, render_error_line, render_hint_line};
+    use crate::output::TextFormatter;
+
+    #[test]
+    fn text_error_rendering_preserves_plain_contract() {
+        let rendered =
+            AppError::external("DOMAIN_DISABLED", "plugin domain is disabled: file").rendered();
+        let formatter = TextFormatter::with_color(false);
+
+        assert_eq!(
+            render_error_line(&rendered, formatter),
+            "DOMAIN_DISABLED: file"
+        );
+        assert_eq!(
+            render_hint_line("enable domain or choose another", formatter),
+            "hint: enable domain or choose another"
+        );
+    }
+
+    #[test]
+    fn text_error_rendering_styles_code_and_hint_label() {
+        let rendered =
+            AppError::external("DOMAIN_DISABLED", "plugin domain is disabled: file").rendered();
+        let formatter = TextFormatter::with_color(true);
+
+        assert_eq!(
+            render_error_line(&rendered, formatter),
+            "\u{1b}[1;31mDOMAIN_DISABLED\u{1b}[0m: file"
+        );
+        assert_eq!(
+            render_hint_line("enable domain or choose another", formatter),
+            "\u{1b}[33mhint:\u{1b}[0m enable domain or choose another"
+        );
     }
 }

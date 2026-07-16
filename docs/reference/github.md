@@ -6,6 +6,12 @@ This domain is provided by external plugin `ah-plugin-github` and is loaded from
 
 GitHub-specific commands intentionally live outside `ah git`; local Git helpers remain provider-neutral.
 
+Interactive structured output uses semantic colors for repository names, issue
+states and numbers, release tags, workflow/run/job states, refs, assets, and
+URLs. Issue titles and CI log lines remain unformatted. Colors are disabled
+automatically for pipes, redirects, captured output, and JSON. Set `NO_COLOR`
+to disable colors explicitly.
+
 ## Authentication
 
 The plugin resolves a token in this order:

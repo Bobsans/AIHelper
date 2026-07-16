@@ -12,6 +12,7 @@ use std::{
 use ah_plugin_api::InvocationRequest;
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
+    TextFormatter, TextStyle,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
@@ -678,7 +679,14 @@ fn execute_repo(context: &GithubContext, globals: &GlobalOptionsWire) -> Invocat
         private,
     };
 
-    render_success(globals, &output, format!("{}\n", output.repository))
+    render_success(
+        globals,
+        &output,
+        format!(
+            "{}\n",
+            TextFormatter::stdout().paint(TextStyle::Key, &output.repository)
+        ),
+    )
 }
 
 fn execute_issues(
@@ -699,7 +707,7 @@ fn execute_issues(
             Err(error) => return error,
         }
     };
-    let text = render_issues_text(&issues);
+    let text = render_issues_text(&issues, TextFormatter::stdout());
     render_success(
         globals,
         &IssuesOutput {
@@ -736,7 +744,7 @@ fn execute_issue(
                     repository: context.repo.full_name(),
                     issue: issue.clone(),
                 },
-                render_issues_text(std::slice::from_ref(&issue)),
+                render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
             )
         }
         IssueCommand::Create(args) => create_issue(context, args, globals),
@@ -781,7 +789,7 @@ fn create_issue(
             repository: context.repo.full_name(),
             issue: issue.clone(),
         },
-        render_issues_text(std::slice::from_ref(&issue)),
+        render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
     )
 }
 
@@ -836,7 +844,7 @@ fn update_issue(
             repository: context.repo.full_name(),
             issue: issue.clone(),
         },
-        render_issues_text(std::slice::from_ref(&issue)),
+        render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
     )
 }
 
@@ -874,7 +882,7 @@ fn close_issue(
             repository: context.repo.full_name(),
             issue: issue.clone(),
         },
-        render_issues_text(std::slice::from_ref(&issue)),
+        render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
     )
 }
 
@@ -899,7 +907,7 @@ fn comment_issue(
             number: args.number,
             comment: comment.clone(),
         },
-        render_comments_text(std::slice::from_ref(&comment)),
+        render_comments_text(std::slice::from_ref(&comment), TextFormatter::stdout()),
     )
 }
 
@@ -927,7 +935,7 @@ fn issue_comments(
             comment_count: comments.len(),
             comments: comments.clone(),
         },
-        render_comments_text(&comments),
+        render_comments_text(&comments, TextFormatter::stdout()),
     )
 }
 
@@ -942,7 +950,7 @@ fn execute_release(
                 Ok(value) => value,
                 Err(error) => return error,
             };
-            let text = render_release_text(&release);
+            let text = render_release_text(&release, TextFormatter::stdout());
             render_success(
                 globals,
                 &ReleaseOutput {
@@ -959,7 +967,7 @@ fn execute_release(
                 Err(error) => return error,
             };
             let assets = release.assets;
-            let text = render_assets_text(&assets);
+            let text = render_assets_text(&assets, TextFormatter::stdout());
             render_success(
                 globals,
                 &ReleaseAssetsOutput {
@@ -985,12 +993,7 @@ fn execute_workflows(context: &GithubContext, globals: &GlobalOptionsWire) -> In
         Ok(value) => value.workflows,
         Err(error) => return error,
     };
-    let text = workflows
-        .iter()
-        .map(|workflow| format!("{} {} {}", workflow.id, workflow.state, workflow.path))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    let text = render_workflows_text(&workflows, TextFormatter::stdout());
     render_success(
         globals,
         &WorkflowsOutput {
@@ -1042,7 +1045,7 @@ fn execute_runs(
         Ok(value) => value.workflow_runs,
         Err(error) => return error,
     };
-    let text = render_runs_text(&runs);
+    let text = render_runs_text(&runs, TextFormatter::stdout());
     render_success(
         globals,
         &RunsOutput {
@@ -1068,7 +1071,7 @@ fn execute_run(
                 Ok(value) => value,
                 Err(error) => return error,
             };
-            let text = render_runs_text(std::slice::from_ref(&run));
+            let text = render_runs_text(std::slice::from_ref(&run), TextFormatter::stdout());
             render_success(
                 globals,
                 &RunOutput {
@@ -1131,7 +1134,7 @@ fn create_release(
         Ok(value) => value,
         Err(error) => return error,
     };
-    let text = render_release_text(&release);
+    let text = render_release_text(&release, TextFormatter::stdout());
     render_success(
         globals,
         &ReleaseOutput {
@@ -1166,7 +1169,14 @@ fn dispatch_workflow(
         return error;
     }
 
-    let text = format!("dispatched {} on {}\n", args.workflow, args.r#ref);
+    let formatter = TextFormatter::stdout();
+    let text = format!(
+        "{} {} {} {}\n",
+        formatter.paint(TextStyle::Success, "dispatched"),
+        formatter.paint(TextStyle::Key, &args.workflow),
+        formatter.paint(TextStyle::Muted, "on"),
+        formatter.paint(TextStyle::Key, &args.r#ref)
+    );
     render_success(
         globals,
         &WorkflowDispatchOutput {
@@ -1206,7 +1216,7 @@ fn wait_run(
                 );
             }
             let elapsed_secs = start.elapsed().as_secs();
-            let text = render_runs_text(std::slice::from_ref(&run));
+            let text = render_runs_text(std::slice::from_ref(&run), TextFormatter::stdout());
             return render_success(
                 globals,
                 &WaitRunOutput {
@@ -1248,19 +1258,7 @@ fn run_jobs(
         Ok(value) => value.jobs,
         Err(error) => return error,
     };
-    let text = jobs
-        .iter()
-        .map(|job| {
-            format!(
-                "{} {} {}",
-                job.name,
-                job.status,
-                job.conclusion.as_deref().unwrap_or("-")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    let text = render_jobs_text(&jobs, TextFormatter::stdout());
     render_success(
         globals,
         &JobsOutput {
@@ -1338,17 +1336,7 @@ fn run_artifacts(
         Ok(value) => value.artifacts,
         Err(error) => return error,
     };
-    let text = artifacts
-        .iter()
-        .map(|artifact| {
-            format!(
-                "{} {} expired={}",
-                artifact.name, artifact.size_in_bytes, artifact.expired
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    let text = render_artifacts_text(&artifacts, TextFormatter::stdout());
     render_success(
         globals,
         &ArtifactsOutput {
@@ -1958,7 +1946,7 @@ fn render_success<T: Serialize>(
     }
 }
 
-fn render_issues_text(issues: &[IssueResponse]) -> String {
+fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> String {
     if issues.is_empty() {
         return String::new();
     }
@@ -1967,10 +1955,14 @@ fn render_issues_text(issues: &[IssueResponse]) -> String {
         .map(|issue| {
             format!(
                 "#{} {} {} {}",
-                issue.number,
-                issue.state,
+                formatter.paint(TextStyle::Key, issue.number),
+                formatter.paint(issue_state_style(&issue.state), &issue.state),
                 issue.title,
-                issue.html_url.as_deref().unwrap_or("")
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    issue.html_url.as_deref().unwrap_or("")
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -1978,7 +1970,7 @@ fn render_issues_text(issues: &[IssueResponse]) -> String {
         + "\n"
 }
 
-fn render_comments_text(comments: &[IssueCommentResponse]) -> String {
+fn render_comments_text(comments: &[IssueCommentResponse], formatter: TextFormatter) -> String {
     if comments.is_empty() {
         return String::new();
     }
@@ -1994,12 +1986,15 @@ fn render_comments_text(comments: &[IssueCommentResponse]) -> String {
                 .unwrap_or("");
             format!(
                 "{} {} {}",
-                comment.id,
-                comment
-                    .user
-                    .as_ref()
-                    .map(|user| user.login.as_str())
-                    .unwrap_or("-"),
+                formatter.paint(TextStyle::Key, comment.id),
+                formatter.paint(
+                    TextStyle::Key,
+                    comment
+                        .user
+                        .as_ref()
+                        .map(|user| user.login.as_str())
+                        .unwrap_or("-")
+                ),
                 first_line
             )
         })
@@ -2008,18 +2003,22 @@ fn render_comments_text(comments: &[IssueCommentResponse]) -> String {
         + "\n"
 }
 
-fn render_release_text(release: &ReleaseResponse) -> String {
+fn render_release_text(release: &ReleaseResponse, formatter: TextFormatter) -> String {
     format!(
         "{} draft={} prerelease={} assets={} {}\n",
-        release.tag_name,
-        release.draft,
-        release.prerelease,
-        release.assets.len(),
-        release.html_url.as_deref().unwrap_or("")
+        formatter.paint(TextStyle::Key, &release.tag_name),
+        formatter.paint(bool_warning_style(release.draft), release.draft),
+        formatter.paint(bool_warning_style(release.prerelease), release.prerelease),
+        formatter.paint(TextStyle::Muted, release.assets.len()),
+        paint_if_present(
+            formatter,
+            TextStyle::Key,
+            release.html_url.as_deref().unwrap_or("")
+        )
     )
 }
 
-fn render_assets_text(assets: &[ReleaseAsset]) -> String {
+fn render_assets_text(assets: &[ReleaseAsset], formatter: TextFormatter) -> String {
     if assets.is_empty() {
         return String::new();
     }
@@ -2028,9 +2027,13 @@ fn render_assets_text(assets: &[ReleaseAsset]) -> String {
         .map(|asset| {
             format!(
                 "{} {} {}",
-                asset.name,
-                asset.size,
-                asset.browser_download_url.as_deref().unwrap_or("")
+                formatter.paint(TextStyle::Key, &asset.name),
+                formatter.paint(TextStyle::Muted, asset.size),
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    asset.browser_download_url.as_deref().unwrap_or("")
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -2038,25 +2041,146 @@ fn render_assets_text(assets: &[ReleaseAsset]) -> String {
         + "\n"
 }
 
-fn render_runs_text(runs: &[WorkflowRunResponse]) -> String {
-    if runs.is_empty() {
+fn render_workflows_text(workflows: &[WorkflowResponse], formatter: TextFormatter) -> String {
+    if workflows.is_empty() {
         return String::new();
     }
-    runs.iter()
-        .map(|run| {
+    workflows
+        .iter()
+        .map(|workflow| {
             format!(
-                "{} {} {} {} {} {}",
-                run.id,
-                run.name.as_deref().unwrap_or("-"),
-                run.event,
-                run.status,
-                run.conclusion.as_deref().unwrap_or("-"),
-                run.html_url.as_deref().unwrap_or("")
+                "{} {} {}",
+                formatter.paint(TextStyle::Key, workflow.id),
+                formatter.paint(workflow_state_style(&workflow.state), &workflow.state),
+                formatter.paint(TextStyle::Key, &workflow.path)
             )
         })
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
+}
+
+fn render_runs_text(runs: &[WorkflowRunResponse], formatter: TextFormatter) -> String {
+    if runs.is_empty() {
+        return String::new();
+    }
+    runs.iter()
+        .map(|run| {
+            let conclusion = run.conclusion.as_deref().unwrap_or("-");
+            format!(
+                "{} {} {} {} {} {}",
+                formatter.paint(TextStyle::Key, run.id),
+                run.name.as_deref().unwrap_or("-"),
+                formatter.paint(TextStyle::Muted, &run.event),
+                formatter.paint(execution_status_style(&run.status), &run.status),
+                formatter.paint(conclusion_style(conclusion), conclusion),
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    run.html_url.as_deref().unwrap_or("")
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_jobs_text(jobs: &[JobResponse], formatter: TextFormatter) -> String {
+    if jobs.is_empty() {
+        return String::new();
+    }
+    jobs.iter()
+        .map(|job| {
+            let conclusion = job.conclusion.as_deref().unwrap_or("-");
+            format!(
+                "{} {} {}",
+                formatter.paint(TextStyle::Key, &job.name),
+                formatter.paint(execution_status_style(&job.status), &job.status),
+                formatter.paint(conclusion_style(conclusion), conclusion)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_artifacts_text(artifacts: &[ArtifactResponse], formatter: TextFormatter) -> String {
+    if artifacts.is_empty() {
+        return String::new();
+    }
+    artifacts
+        .iter()
+        .map(|artifact| {
+            format!(
+                "{} {} expired={}",
+                formatter.paint(TextStyle::Key, &artifact.name),
+                formatter.paint(TextStyle::Muted, artifact.size_in_bytes),
+                formatter.paint(
+                    if artifact.expired {
+                        TextStyle::Error
+                    } else {
+                        TextStyle::Success
+                    },
+                    artifact.expired
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn issue_state_style(state: &str) -> TextStyle {
+    match state {
+        "open" => TextStyle::Success,
+        "closed" => TextStyle::Muted,
+        _ => TextStyle::Warning,
+    }
+}
+
+fn workflow_state_style(state: &str) -> TextStyle {
+    match state {
+        "active" => TextStyle::Success,
+        value if value.starts_with("disabled") => TextStyle::Warning,
+        _ => TextStyle::Muted,
+    }
+}
+
+fn execution_status_style(status: &str) -> TextStyle {
+    match status {
+        "queued" | "pending" | "in_progress" | "requested" | "waiting" => TextStyle::Warning,
+        "success" | "active" => TextStyle::Success,
+        "failure" | "failed" | "cancelled" | "timed_out" | "action_required" => TextStyle::Error,
+        _ => TextStyle::Muted,
+    }
+}
+
+fn conclusion_style(conclusion: &str) -> TextStyle {
+    match conclusion {
+        "success" => TextStyle::Success,
+        "failure" | "cancelled" | "timed_out" | "action_required" | "startup_failure" => {
+            TextStyle::Error
+        }
+        "neutral" | "skipped" | "-" => TextStyle::Muted,
+        _ => TextStyle::Warning,
+    }
+}
+
+fn bool_warning_style(value: bool) -> TextStyle {
+    if value {
+        TextStyle::Warning
+    } else {
+        TextStyle::Muted
+    }
+}
+
+fn paint_if_present(formatter: TextFormatter, style: TextStyle, value: &str) -> String {
+    if value.is_empty() {
+        String::new()
+    } else {
+        formatter.paint(style, value)
+    }
 }
 
 fn truncate_for_error(text: &str, max_chars: usize) -> String {
@@ -2275,6 +2399,88 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::*;
+
+    #[test]
+    fn issue_renderer_preserves_plain_contract_and_styles_metadata() {
+        let issue = IssueResponse {
+            number: 42,
+            title: "Fix formatter".to_owned(),
+            body: Some("raw body".to_owned()),
+            state: "open".to_owned(),
+            html_url: Some("https://github.com/acme/tool/issues/42".to_owned()),
+            user: None,
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            comments: Some(0),
+            created_at: None,
+            updated_at: None,
+            closed_at: None,
+            pull_request: None,
+        };
+
+        assert_eq!(
+            render_issues_text(
+                std::slice::from_ref(&issue),
+                TextFormatter::with_color(false)
+            ),
+            "#42 open Fix formatter https://github.com/acme/tool/issues/42\n"
+        );
+
+        let rendered = render_issues_text(&[issue], TextFormatter::with_color(true));
+        assert!(rendered.contains("#\u{1b}[36m42\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[32mopen\u{1b}[0m"));
+        assert!(rendered.contains("Fix formatter"));
+        assert!(!rendered.contains("\u{1b}[0mFix formatter"));
+    }
+
+    #[test]
+    fn workflow_renderers_map_execution_states() {
+        let run = WorkflowRunResponse {
+            id: 7,
+            name: Some("CI".to_owned()),
+            event: "push".to_owned(),
+            status: "completed".to_owned(),
+            conclusion: Some("failure".to_owned()),
+            head_branch: Some("main".to_owned()),
+            head_sha: "abc123".to_owned(),
+            html_url: Some("https://github.com/acme/tool/actions/runs/7".to_owned()),
+            created_at: None,
+            updated_at: None,
+        };
+
+        assert_eq!(
+            render_runs_text(std::slice::from_ref(&run), TextFormatter::with_color(false)),
+            "7 CI push completed failure https://github.com/acme/tool/actions/runs/7\n"
+        );
+
+        let rendered = render_runs_text(&[run], TextFormatter::with_color(true));
+        assert!(rendered.contains("\u{1b}[36m7\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[2mcompleted\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[1;31mfailure\u{1b}[0m"));
+    }
+
+    #[test]
+    fn artifact_renderer_styles_expiration_without_changing_plain_shape() {
+        let artifact = ArtifactResponse {
+            id: 8,
+            name: "ah-windows.zip".to_owned(),
+            size_in_bytes: 123,
+            expired: true,
+            archive_download_url: None,
+        };
+
+        assert_eq!(
+            render_artifacts_text(
+                std::slice::from_ref(&artifact),
+                TextFormatter::with_color(false)
+            ),
+            "ah-windows.zip 123 expired=true\n"
+        );
+
+        let rendered = render_artifacts_text(&[artifact], TextFormatter::with_color(true));
+        assert!(rendered.contains("\u{1b}[36mah-windows.zip\u{1b}[0m"));
+        assert!(rendered.contains("expired=\u{1b}[1;31mtrue\u{1b}[0m"));
+    }
 
     #[test]
     fn manual_examples_parse() {

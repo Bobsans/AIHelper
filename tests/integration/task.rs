@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -21,7 +21,8 @@ fn task_save_and_list_json() {
         .args(["--cwd", &cwd, "task", "save", "hello", task_echo_command()])
         .assert()
         .success()
-        .stdout(contains("saved task 'hello'"));
+        .stdout(contains("saved task 'hello'"))
+        .stdout(contains("\u{1b}").not());
 
     let mut list_cmd = Command::cargo_bin("ah").expect("binary should compile");
     list_cmd
@@ -30,6 +31,14 @@ fn task_save_and_list_json() {
         .success()
         .stdout(contains("\"command\": \"task.list\""))
         .stdout(contains("\"name\": \"hello\""));
+
+    let mut text_list_cmd = Command::cargo_bin("ah").expect("binary should compile");
+    text_list_cmd
+        .args(["--cwd", &cwd, "task", "list"])
+        .assert()
+        .success()
+        .stdout(contains("hello =>"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -48,7 +57,8 @@ fn task_run_executes_saved_command() {
         .args(["--cwd", &cwd, "task", "run", "echo"])
         .assert()
         .success()
-        .stdout(contains("task-ok"));
+        .stdout(contains("task-ok"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]

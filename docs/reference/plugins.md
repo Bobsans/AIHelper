@@ -11,10 +11,22 @@ ah plugins list [--state <enabled|disabled>] [--json]
 ```
 
 Output:
-- text mode: `<domain> (<plugin-name>) [<source>|<state>] - <description>`
+- text mode: aligned `DOMAIN`, `PLUGIN`, `SOURCE`, `STATE`, and `DESCRIPTION` columns
 - json mode: array of plugin metadata objects with additional fields:
   - `source`: `builtin` or `dynamic`
   - `state`: `enabled` or `disabled`
+
+Example text output:
+
+```text
+DOMAIN    PLUGIN             SOURCE   STATE     DESCRIPTION
+file      builtin-file       builtin  enabled   File inspection helpers
+ollama    external-ollama    dynamic  disabled  Ollama Local API plugin
+```
+
+Interactive terminal output uses semantic colors for headings, plugin domains,
+sources, and states. Colors are disabled automatically for pipes, redirects,
+captured output, and JSON mode. Set `NO_COLOR` to disable colors explicitly.
 
 ## `ah plugins disable`
 
@@ -59,3 +71,4 @@ Notes:
 - disabled domains return `DOMAIN_DISABLED` on invocation
 - invalid dynamic plugins are still skipped at startup; built-in plugins remain available
 - dynamic plugins can optionally expose manual data consumed by `ah ai info`
+- text errors emphasize diagnostic codes and hint labels in interactive terminals

@@ -6,7 +6,7 @@ use std::{
 };
 
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
 #[derive(Clone)]
@@ -47,7 +47,8 @@ fn http_get_supports_expectations() {
     ])
     .assert()
     .success()
-    .stdout(contains("\"status\":\"ok\""));
+    .stdout(contains("\"status\":\"ok\""))
+    .stdout(contains("\u{1b}").not());
 
     handle.join().expect("server thread should finish");
 }
@@ -162,7 +163,8 @@ cases:
     .assert()
     .success()
     .stdout(contains("\"command\": \"http.assert\""))
-    .stdout(contains("\"failed\": 0"));
+    .stdout(contains("\"failed\": 0"))
+    .stdout(contains("\u{1b}").not());
 
     handle.join().expect("server thread should finish");
 }
@@ -203,6 +205,7 @@ cases:
         .assert()
         .failure()
         .stdout(contains("FAIL unhealthy"))
+        .stdout(contains("\u{1b}").not())
         .stderr(contains("HTTP_ASSERTION_FAILED"));
 
     handle.join().expect("server thread should finish");

@@ -5,7 +5,9 @@ use crate::{
         GitResult, GitStatusOutput, GitTagCreateOutput, GitTagsOutput,
     },
     error::AppError,
-    output::OutputMode,
+    output::{
+        OutputMode, TextFormatter, TextStyle, emit_warning, git_status_style, render_semantic_count,
+    },
 };
 
 pub(crate) fn emit(result: GitResult, options: &GlobalOptions) -> Result<(), AppError> {
@@ -32,36 +34,13 @@ fn emit_status(payload: GitStatusOutput, options: &GlobalOptions) -> Result<(), 
     match options.output {
         OutputMode::Text => {
             if !payload.in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
-            println!(
-                "branch={} upstream={} ahead={} behind={} clean={}",
-                payload.branch.as_deref().unwrap_or("-"),
-                payload.upstream.as_deref().unwrap_or("-"),
-                payload
-                    .ahead
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "-".to_owned()),
-                payload
-                    .behind
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "-".to_owned()),
-                payload.clean
-            );
-            println!(
-                "changed={} staged={} unstaged={} untracked={}",
-                payload.changed_count,
-                payload.staged_count,
-                payload.unstaged_count,
-                payload.untracked_count
-            );
-            if let Some(commit) = &payload.latest_commit {
-                println!("commit={} {}", commit.short_hash, commit.subject);
-            }
-            if let Some(tag) = &payload.latest_tag {
-                println!("latest_tag={tag}");
-            }
+            println!("{}", render_status_text(&payload, TextFormatter::stdout()));
         }
         OutputMode::Json => {
             println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -74,14 +53,18 @@ fn emit_tags(payload: GitTagsOutput, options: &GlobalOptions) -> Result<(), AppE
     match options.output {
         OutputMode::Text => {
             if !payload.in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
+            let formatter = TextFormatter::stdout();
             for tag in &payload.tags {
-                println!("{}", tag.name);
+                println!("{}", formatter.paint(TextStyle::Key, &tag.name));
             }
             if payload.truncated {
-                eprintln!("warning: output truncated by --limit");
+                emit_warning("output truncated by --limit");
             }
         }
         OutputMode::Json => {
@@ -95,16 +78,26 @@ fn emit_remotes(payload: GitRemotesOutput, options: &GlobalOptions) -> Result<()
     match options.output {
         OutputMode::Text => {
             if !payload.in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
+            let formatter = TextFormatter::stdout();
             for remote in &payload.remotes {
                 println!(
-                    "{} fetch={} push={} provider={}",
-                    remote.name,
-                    remote.fetch_url.as_deref().unwrap_or("-"),
-                    remote.push_url.as_deref().unwrap_or("-"),
-                    remote.provider
+                    "{} {} {} {}",
+                    formatter.paint(TextStyle::Key, &remote.name),
+                    formatter.paint(
+                        TextStyle::Muted,
+                        format!("fetch={}", remote.fetch_url.as_deref().unwrap_or("-"))
+                    ),
+                    formatter.paint(
+                        TextStyle::Muted,
+                        format!("push={}", remote.push_url.as_deref().unwrap_or("-"))
+                    ),
+                    formatter.paint(TextStyle::Key, format!("provider={}", remote.provider))
                 );
             }
         }
@@ -119,21 +112,25 @@ fn emit_changed(payload: GitChangedOutput, options: &GlobalOptions) -> Result<()
     match options.output {
         OutputMode::Text => {
             if !payload.in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
             if payload.entries.is_empty() {
-                println!("working tree is clean");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Success, "working tree is clean")
+                );
                 return Ok(());
             }
+            let formatter = TextFormatter::stdout();
             for entry in &payload.entries {
-                match &entry.old_path {
-                    Some(old_path) => println!("{} {} -> {}", entry.status, old_path, entry.path),
-                    None => println!("{} {}", entry.status, entry.path),
-                }
+                println!("{}", render_changed_entry(entry, formatter));
             }
             if payload.truncated {
-                eprintln!("warning: output truncated by --limit");
+                emit_warning("output truncated by --limit");
             }
         }
         OutputMode::Json => {
@@ -147,16 +144,22 @@ fn emit_diff(payload: GitDiffOutput, options: &GlobalOptions) -> Result<(), AppE
     match options.output {
         OutputMode::Text => {
             if !payload.in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
             if payload.diff.is_empty() {
-                println!("no local diff");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Muted, "no local diff")
+                );
                 return Ok(());
             }
             println!("{}", payload.diff);
             if payload.truncated {
-                eprintln!("warning: output truncated by --limit");
+                emit_warning("output truncated by --limit");
             }
         }
         OutputMode::Json => {
@@ -174,25 +177,35 @@ fn emit_blame(
     match options.output {
         OutputMode::Text => {
             if !in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
             if !payload.entries.is_empty() {
+                let formatter = TextFormatter::stdout();
                 for entry in &payload.entries {
                     println!(
-                        "{:>5} {} {} | {}",
-                        entry.line,
-                        entry.commit.chars().take(8).collect::<String>(),
-                        entry.author,
+                        "{} {} {} | {}",
+                        formatter.paint(TextStyle::Muted, format!("{:>5}", entry.line)),
+                        formatter.paint(
+                            TextStyle::Key,
+                            entry.commit.chars().take(8).collect::<String>()
+                        ),
+                        formatter.paint(TextStyle::Key, &entry.author),
                         entry.text
                     );
                 }
                 if payload.truncated {
-                    eprintln!("warning: output truncated by --limit");
+                    emit_warning("output truncated by --limit");
                 }
             }
             if payload.entries.is_empty() {
-                println!("no blame data");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Muted, "no blame data")
+                );
             }
             Ok(())
         }
@@ -207,48 +220,48 @@ fn emit_commit_info(payload: CommitInfoOutput, options: &GlobalOptions) -> Resul
     match options.output {
         OutputMode::Text => {
             if !payload.in_git_repo {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 return Ok(());
             }
             let Some(commit) = &payload.commit else {
-                println!("commit not found");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "commit not found")
+                );
                 return Ok(());
             };
+            let formatter = TextFormatter::stdout();
             println!(
-                "commit={} author=\"{} <{}>\" date={} subject={}",
-                commit.short_hash,
-                commit.author.name,
-                commit.author.email,
-                commit.author_date.as_deref().unwrap_or("-"),
+                "{} {} {} {}{}",
+                formatter.paint(TextStyle::Key, format!("commit={}", commit.short_hash)),
+                formatter.paint(
+                    TextStyle::Muted,
+                    format!(
+                        "author=\"{} <{}>\"",
+                        commit.author.name, commit.author.email
+                    )
+                ),
+                formatter.paint(
+                    TextStyle::Muted,
+                    format!("date={}", commit.author_date.as_deref().unwrap_or("-"))
+                ),
+                formatter.paint(TextStyle::Muted, "subject="),
                 commit.subject
             );
             println!(
-                "files={} additions={} deletions={}",
-                commit.file_count,
-                commit
-                    .additions
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "-".to_owned()),
-                commit
-                    .deletions
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "-".to_owned())
+                "{} {} {}",
+                formatter.paint(TextStyle::Muted, format!("files={}", commit.file_count)),
+                render_optional_stat("additions", commit.additions, TextStyle::Success, formatter),
+                render_optional_stat("deletions", commit.deletions, TextStyle::Error, formatter)
             );
             for file in &commit.files {
-                println!(
-                    "{} +{} -{} {}",
-                    file.status.as_deref().unwrap_or("-"),
-                    file.additions
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "-".to_owned()),
-                    file.deletions
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "-".to_owned()),
-                    file.path
-                );
+                println!("{}", render_commit_file(file, formatter));
             }
             if commit.truncated {
-                eprintln!("warning: output truncated by --limit");
+                emit_warning("output truncated by --limit");
             }
         }
         OutputMode::Json => {
@@ -262,7 +275,10 @@ fn emit_tag_create(payload: GitTagCreateOutput, options: &GlobalOptions) -> Resu
     if !payload.in_git_repo {
         match options.output {
             OutputMode::Text => {
-                println!("not a git repository");
+                println!(
+                    "{}",
+                    TextFormatter::stdout().paint(TextStyle::Warning, "not a git repository")
+                );
                 Ok::<(), AppError>(())
             }
             OutputMode::Json => {
@@ -275,14 +291,20 @@ fn emit_tag_create(payload: GitTagCreateOutput, options: &GlobalOptions) -> Resu
 
     match options.output {
         OutputMode::Text => {
+            let formatter = TextFormatter::stdout();
             println!(
-                "created tag {} at {}",
-                payload.tag,
-                payload
-                    .target_commit
-                    .as_ref()
-                    .map(|commit| commit.short_hash.as_str())
-                    .unwrap_or("-")
+                "{} {} {} {}",
+                formatter.paint(TextStyle::Success, "created tag"),
+                formatter.paint(TextStyle::Key, &payload.tag),
+                formatter.paint(TextStyle::Success, "at"),
+                formatter.paint(
+                    TextStyle::Key,
+                    payload
+                        .target_commit
+                        .as_ref()
+                        .map(|commit| commit.short_hash.as_str())
+                        .unwrap_or("-")
+                )
             );
         }
         OutputMode::Json => {
@@ -290,4 +312,221 @@ fn emit_tag_create(payload: GitTagCreateOutput, options: &GlobalOptions) -> Resu
         }
     }
     Ok(())
+}
+
+fn render_status_text(payload: &GitStatusOutput, formatter: TextFormatter) -> String {
+    let clean_style = if payload.clean {
+        TextStyle::Success
+    } else {
+        TextStyle::Warning
+    };
+    let mut lines = vec![
+        format!(
+            "{} {} {} {} {}",
+            formatter.paint(
+                TextStyle::Key,
+                format!("branch={}", payload.branch.as_deref().unwrap_or("-"))
+            ),
+            formatter.paint(
+                TextStyle::Key,
+                format!("upstream={}", payload.upstream.as_deref().unwrap_or("-"))
+            ),
+            render_optional_count("ahead", payload.ahead, TextStyle::Warning, formatter),
+            render_optional_count("behind", payload.behind, TextStyle::Warning, formatter),
+            formatter.paint(clean_style, format!("clean={}", payload.clean))
+        ),
+        format!(
+            "{} {} {} {}",
+            render_semantic_count(
+                "changed",
+                payload.changed_count,
+                TextStyle::Warning,
+                formatter
+            ),
+            render_semantic_count(
+                "staged",
+                payload.staged_count,
+                TextStyle::Success,
+                formatter
+            ),
+            render_semantic_count(
+                "unstaged",
+                payload.unstaged_count,
+                TextStyle::Warning,
+                formatter
+            ),
+            render_semantic_count(
+                "untracked",
+                payload.untracked_count,
+                TextStyle::Warning,
+                formatter
+            )
+        ),
+    ];
+    if let Some(commit) = &payload.latest_commit {
+        lines.push(format!(
+            "{} {}",
+            formatter.paint(TextStyle::Key, format!("commit={}", commit.short_hash)),
+            commit.subject
+        ));
+    }
+    if let Some(tag) = &payload.latest_tag {
+        lines.push(formatter.paint(TextStyle::Key, format!("latest_tag={tag}")));
+    }
+    lines.join("\n")
+}
+
+fn render_changed_entry(
+    entry: &crate::commands::git::domain::ChangedEntry,
+    formatter: TextFormatter,
+) -> String {
+    let status = formatter.paint(git_status_style(&entry.status), &entry.status);
+    match &entry.old_path {
+        Some(old_path) => format!(
+            "{} {} -> {}",
+            status,
+            formatter.paint(TextStyle::Key, old_path),
+            formatter.paint(TextStyle::Key, &entry.path)
+        ),
+        None => format!(
+            "{} {}",
+            status,
+            formatter.paint(TextStyle::Key, &entry.path)
+        ),
+    }
+}
+
+fn render_commit_file(
+    file: &crate::commands::git::domain::CommitFile,
+    formatter: TextFormatter,
+) -> String {
+    let status = file.status.as_deref().unwrap_or("-");
+    format!(
+        "{} {} {} {}",
+        formatter.paint(git_status_style(status), status),
+        render_prefixed_stat("+", file.additions, TextStyle::Success, formatter),
+        render_prefixed_stat("-", file.deletions, TextStyle::Error, formatter),
+        formatter.paint(TextStyle::Key, &file.path)
+    )
+}
+
+fn render_optional_count(
+    label: &str,
+    value: Option<usize>,
+    non_zero_style: TextStyle,
+    formatter: TextFormatter,
+) -> String {
+    match value {
+        Some(value) => render_semantic_count(label, value, non_zero_style, formatter),
+        None => formatter.paint(TextStyle::Muted, format!("{label}=-")),
+    }
+}
+
+fn render_optional_stat(
+    label: &str,
+    value: Option<usize>,
+    non_zero_style: TextStyle,
+    formatter: TextFormatter,
+) -> String {
+    match value {
+        Some(value) => render_semantic_count(label, value, non_zero_style, formatter),
+        None => formatter.paint(TextStyle::Muted, format!("{label}=-")),
+    }
+}
+
+fn render_prefixed_stat(
+    prefix: &str,
+    value: Option<usize>,
+    non_zero_style: TextStyle,
+    formatter: TextFormatter,
+) -> String {
+    match value {
+        Some(value) => {
+            let style = if value == 0 {
+                TextStyle::Muted
+            } else {
+                non_zero_style
+            };
+            formatter.paint(style, format!("{prefix}{value}"))
+        }
+        None => formatter.paint(TextStyle::Muted, format!("{prefix}-")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_changed_entry, render_commit_file, render_status_text};
+    use crate::{
+        commands::git::domain::{ChangedEntry, CommitFile, CommitSummary, GitStatusOutput},
+        output::TextFormatter,
+    };
+
+    #[test]
+    fn status_renderer_preserves_plain_contract() {
+        let payload = status_output();
+
+        assert_eq!(
+            render_status_text(&payload, TextFormatter::with_color(false)),
+            "branch=main upstream=origin/main ahead=2 behind=0 clean=false\n\
+             changed=2 staged=1 unstaged=1 untracked=0\n\
+             commit=abc1234 initial\n\
+             latest_tag=v1.0.0"
+        );
+    }
+
+    #[test]
+    fn changed_renderer_styles_status_and_paths() {
+        let entry = ChangedEntry {
+            status: "R ".to_owned(),
+            path: "new.rs".to_owned(),
+            old_path: Some("old.rs".to_owned()),
+        };
+
+        assert_eq!(
+            render_changed_entry(&entry, TextFormatter::with_color(false)),
+            "R  old.rs -> new.rs"
+        );
+        let rendered = render_changed_entry(&entry, TextFormatter::with_color(true));
+        assert!(rendered.contains("\u{1b}[36mR \u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[36mold.rs\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[36mnew.rs\u{1b}[0m"));
+    }
+
+    #[test]
+    fn commit_file_renderer_preserves_plain_contract() {
+        let file = CommitFile {
+            status: Some("M".to_owned()),
+            path: "src/lib.rs".to_owned(),
+            old_path: None,
+            additions: Some(3),
+            deletions: Some(1),
+        };
+
+        assert_eq!(
+            render_commit_file(&file, TextFormatter::with_color(false)),
+            "M +3 -1 src/lib.rs"
+        );
+    }
+
+    fn status_output() -> GitStatusOutput {
+        GitStatusOutput {
+            command: "git.status",
+            in_git_repo: true,
+            branch: Some("main".to_owned()),
+            upstream: Some("origin/main".to_owned()),
+            ahead: Some(2),
+            behind: Some(0),
+            clean: false,
+            staged_count: 1,
+            unstaged_count: 1,
+            untracked_count: 0,
+            changed_count: 2,
+            latest_commit: Some(CommitSummary {
+                hash: "abc123456789".to_owned(),
+                short_hash: "abc1234".to_owned(),
+                subject: "initial".to_owned(),
+            }),
+            latest_tag: Some("v1.0.0".to_owned()),
+        }
+    }
 }

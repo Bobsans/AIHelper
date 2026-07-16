@@ -12,6 +12,7 @@ use std::{
 use ah_plugin_api::InvocationRequest;
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
+    TextFormatter, TextStyle,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
@@ -680,7 +681,14 @@ fn execute_project(context: &GitlabContext, globals: &GlobalOptionsWire) -> Invo
         visibility,
     };
 
-    render_success(globals, &output, format!("{}\n", output.project))
+    render_success(
+        globals,
+        &output,
+        format!(
+            "{}\n",
+            TextFormatter::stdout().paint(TextStyle::Key, &output.project)
+        ),
+    )
 }
 
 fn execute_issues(
@@ -708,7 +716,7 @@ fn execute_issues(
             issue_count: issues.len(),
             issues: issues.clone(),
         },
-        render_issues_text(&issues),
+        render_issues_text(&issues, TextFormatter::stdout()),
     )
 }
 
@@ -733,7 +741,7 @@ fn execute_issue(
                     project: context.project.value.clone(),
                     issue: issue.clone(),
                 },
-                render_issues_text(std::slice::from_ref(&issue)),
+                render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
             )
         }
         IssueCommand::Create(args) => create_issue(context, args, globals),
@@ -773,7 +781,13 @@ fn issue_view_full(
             designs: designs.clone(),
             warnings: warnings.clone(),
         },
-        render_issue_full_text(&issue, &comments, &designs, &warnings),
+        render_issue_full_text(
+            &issue,
+            &comments,
+            &designs,
+            &warnings,
+            TextFormatter::stdout(),
+        ),
     )
 }
 
@@ -812,7 +826,7 @@ fn create_issue(
             project: context.project.value.clone(),
             issue: issue.clone(),
         },
-        render_issues_text(std::slice::from_ref(&issue)),
+        render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
     )
 }
 
@@ -872,7 +886,7 @@ fn update_issue(
             project: context.project.value.clone(),
             issue: issue.clone(),
         },
-        render_issues_text(std::slice::from_ref(&issue)),
+        render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
     )
 }
 
@@ -911,7 +925,7 @@ fn close_issue(
             project: context.project.value.clone(),
             issue: issue.clone(),
         },
-        render_issues_text(std::slice::from_ref(&issue)),
+        render_issues_text(std::slice::from_ref(&issue), TextFormatter::stdout()),
     )
 }
 
@@ -936,7 +950,7 @@ fn comment_issue(
             iid: args.iid,
             comment: comment.clone(),
         },
-        render_comments_text(std::slice::from_ref(&comment)),
+        render_comments_text(std::slice::from_ref(&comment), TextFormatter::stdout()),
     )
 }
 
@@ -959,7 +973,7 @@ fn issue_comments(
             comment_count: comments.len(),
             comments: comments.clone(),
         },
-        render_comments_text(&comments),
+        render_comments_text(&comments, TextFormatter::stdout()),
     )
 }
 
@@ -973,7 +987,7 @@ fn execute_releases(context: &GitlabContext, globals: &GlobalOptionsWire) -> Inv
         Ok(value) => value,
         Err(error) => return error,
     };
-    let text = render_releases_text(&releases);
+    let text = render_releases_text(&releases, TextFormatter::stdout());
     render_success(
         globals,
         &ReleasesOutput {
@@ -997,7 +1011,7 @@ fn execute_release(
                 Ok(value) => value,
                 Err(error) => return error,
             };
-            let text = render_release_text(&release);
+            let text = render_release_text(&release, TextFormatter::stdout());
             render_success(
                 globals,
                 &ReleaseOutput {
@@ -1031,7 +1045,7 @@ fn execute_pipelines(
         Ok(value) => value,
         Err(error) => return error,
     };
-    let text = render_pipelines_text(&pipelines);
+    let text = render_pipelines_text(&pipelines, TextFormatter::stdout());
     render_success(
         globals,
         &PipelinesOutput {
@@ -1056,7 +1070,8 @@ fn execute_pipeline(
                 Ok(value) => value,
                 Err(error) => return error,
             };
-            let text = render_pipelines_text(std::slice::from_ref(&pipeline));
+            let text =
+                render_pipelines_text(std::slice::from_ref(&pipeline), TextFormatter::stdout());
             render_success(
                 globals,
                 &PipelineOutput {
@@ -1122,7 +1137,7 @@ fn create_release(
         Ok(value) => value,
         Err(error) => return error,
     };
-    let text = render_release_text(&release);
+    let text = render_release_text(&release, TextFormatter::stdout());
     render_success(
         globals,
         &ReleaseOutput {
@@ -1159,7 +1174,8 @@ fn wait_pipeline(
                 );
             }
             let elapsed_secs = start.elapsed().as_secs();
-            let text = render_pipelines_text(std::slice::from_ref(&pipeline));
+            let text =
+                render_pipelines_text(std::slice::from_ref(&pipeline), TextFormatter::stdout());
             return render_success(
                 globals,
                 &WaitPipelineOutput {
@@ -1206,7 +1222,7 @@ fn pipeline_jobs(
         Ok(value) => value,
         Err(error) => return error,
     };
-    let text = render_jobs_text(&jobs);
+    let text = render_jobs_text(&jobs, TextFormatter::stdout());
     render_success(
         globals,
         &JobsOutput {
@@ -1912,7 +1928,7 @@ fn render_success<T: Serialize>(
     }
 }
 
-fn render_issues_text(issues: &[IssueResponse]) -> String {
+fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> String {
     if issues.is_empty() {
         return String::new();
     }
@@ -1921,10 +1937,14 @@ fn render_issues_text(issues: &[IssueResponse]) -> String {
         .map(|issue| {
             format!(
                 "#{} {} {} {}",
-                issue.iid,
-                issue.state,
+                formatter.paint(TextStyle::Key, issue.iid),
+                formatter.paint(issue_state_style(&issue.state), &issue.state),
                 issue.title,
-                issue.web_url.as_deref().unwrap_or("")
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    issue.web_url.as_deref().unwrap_or("")
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -1932,7 +1952,7 @@ fn render_issues_text(issues: &[IssueResponse]) -> String {
         + "\n"
 }
 
-fn render_comments_text(comments: &[IssueNoteResponse]) -> String {
+fn render_comments_text(comments: &[IssueNoteResponse], formatter: TextFormatter) -> String {
     if comments.is_empty() {
         return String::new();
     }
@@ -1948,12 +1968,15 @@ fn render_comments_text(comments: &[IssueNoteResponse]) -> String {
                 .unwrap_or("");
             format!(
                 "{} {} {}",
-                comment.id,
-                comment
-                    .author
-                    .as_ref()
-                    .and_then(|user| user.username.as_deref())
-                    .unwrap_or("-"),
+                formatter.paint(TextStyle::Key, comment.id),
+                formatter.paint(
+                    TextStyle::Key,
+                    comment
+                        .author
+                        .as_ref()
+                        .and_then(|user| user.username.as_deref())
+                        .unwrap_or("-")
+                ),
                 first_line
             )
         })
@@ -1967,14 +1990,28 @@ fn render_issue_full_text(
     comments: &[IssueNoteResponse],
     designs: &[IssueDesignResponse],
     warnings: &[String],
+    formatter: TextFormatter,
 ) -> String {
     let mut output = String::new();
-    output.push_str(&format!("#{} {} {}\n", issue.iid, issue.state, issue.title));
+    output.push_str(&format!(
+        "#{} {} {}\n",
+        formatter.paint(TextStyle::Key, issue.iid),
+        formatter.paint(issue_state_style(&issue.state), &issue.state),
+        issue.title
+    ));
     if let Some(web_url) = &issue.web_url {
-        output.push_str(&format!("url: {web_url}\n"));
+        output.push_str(&format!(
+            "{} {}\n",
+            formatter.paint(TextStyle::Muted, "url:"),
+            formatter.paint(TextStyle::Key, web_url)
+        ));
     }
     if let Some(author) = &issue.author {
-        output.push_str(&format!("author: {}\n", render_user(author)));
+        output.push_str(&format!(
+            "{} {}\n",
+            formatter.paint(TextStyle::Muted, "author:"),
+            formatter.paint(TextStyle::Key, render_user(author))
+        ));
     }
     let assignees = issue
         .assignees
@@ -1984,72 +2021,111 @@ fn render_issue_full_text(
         .map(render_user)
         .collect::<Vec<_>>()
         .join(", ");
+    let assignees = if assignees.is_empty() {
+        "-".to_owned()
+    } else {
+        assignees
+    };
     output.push_str(&format!(
-        "assignees: {}\n",
-        if assignees.is_empty() {
-            "-"
-        } else {
-            assignees.as_str()
-        }
+        "{} {}\n",
+        formatter.paint(TextStyle::Muted, "assignees:"),
+        formatter.paint(optional_value_style(&assignees), &assignees)
     ));
     let labels = if issue.labels.is_empty() {
         "-".to_owned()
     } else {
         issue.labels.join(", ")
     };
-    output.push_str(&format!("labels: {labels}\n"));
     output.push_str(&format!(
-        "created: {}\nupdated: {}\nclosed: {}\n",
-        issue.created_at.as_deref().unwrap_or("-"),
-        issue.updated_at.as_deref().unwrap_or("-"),
-        issue.closed_at.as_deref().unwrap_or("-")
+        "{} {}\n",
+        formatter.paint(TextStyle::Muted, "labels:"),
+        formatter.paint(optional_value_style(&labels), &labels)
+    ));
+    output.push_str(&format!(
+        "{} {}\n{} {}\n{} {}\n",
+        formatter.paint(TextStyle::Muted, "created:"),
+        formatter.paint(TextStyle::Muted, issue.created_at.as_deref().unwrap_or("-")),
+        formatter.paint(TextStyle::Muted, "updated:"),
+        formatter.paint(TextStyle::Muted, issue.updated_at.as_deref().unwrap_or("-")),
+        formatter.paint(TextStyle::Muted, "closed:"),
+        formatter.paint(TextStyle::Muted, issue.closed_at.as_deref().unwrap_or("-"))
     ));
     if let Some(description) = issue
         .description
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        output.push_str("\ndescription:\n");
+        output.push_str(&format!(
+            "\n{}\n",
+            formatter.paint(TextStyle::Heading, "description:")
+        ));
         output.push_str(description);
         if !description.ends_with('\n') {
             output.push('\n');
         }
     }
-    output.push_str(&format!("\ncomments ({}):\n", comments.len()));
+    output.push_str(&format!(
+        "\n{}\n",
+        formatter.paint(
+            TextStyle::Heading,
+            format!("comments ({}):", comments.len())
+        )
+    ));
     if comments.is_empty() {
-        output.push_str("(none)\n");
+        output.push_str(&format!(
+            "{}\n",
+            formatter.paint(TextStyle::Muted, "(none)")
+        ));
     } else {
-        output.push_str(&render_full_comments_text(comments));
+        output.push_str(&render_full_comments_text(comments, formatter));
     }
-    output.push_str(&format!("\ndesigns ({}):\n", designs.len()));
+    output.push_str(&format!(
+        "\n{}\n",
+        formatter.paint(TextStyle::Heading, format!("designs ({}):", designs.len()))
+    ));
     if designs.is_empty() {
-        output.push_str("(none)\n");
+        output.push_str(&format!(
+            "{}\n",
+            formatter.paint(TextStyle::Muted, "(none)")
+        ));
     } else {
-        output.push_str(&render_designs_text(designs));
+        output.push_str(&render_designs_text(designs, formatter));
     }
     if !warnings.is_empty() {
-        output.push_str("\nwarnings:\n");
+        output.push_str(&format!(
+            "\n{}\n",
+            formatter.paint(TextStyle::Warning, "warnings:")
+        ));
         for warning in warnings {
-            output.push_str(&format!("- {warning}\n"));
+            output.push_str(&format!(
+                "- {}\n",
+                formatter.paint(TextStyle::Warning, warning)
+            ));
         }
     }
     output
 }
 
-fn render_full_comments_text(comments: &[IssueNoteResponse]) -> String {
+fn render_full_comments_text(comments: &[IssueNoteResponse], formatter: TextFormatter) -> String {
     comments
         .iter()
         .map(|comment| {
             let body = comment.body.as_deref().unwrap_or("");
             let mut rendered = format!(
                 "- {} {} {}\n",
-                comment.id,
-                comment
-                    .author
-                    .as_ref()
-                    .map(render_user)
-                    .unwrap_or_else(|| "-".to_owned()),
-                comment.created_at.as_deref().unwrap_or("-")
+                formatter.paint(TextStyle::Key, comment.id),
+                formatter.paint(
+                    TextStyle::Key,
+                    comment
+                        .author
+                        .as_ref()
+                        .map(render_user)
+                        .unwrap_or_else(|| "-".to_owned())
+                ),
+                formatter.paint(
+                    TextStyle::Muted,
+                    comment.created_at.as_deref().unwrap_or("-")
+                )
             );
             if !body.is_empty() {
                 rendered.push_str(body);
@@ -2063,16 +2139,21 @@ fn render_full_comments_text(comments: &[IssueNoteResponse]) -> String {
         .join("\n")
 }
 
-fn render_designs_text(designs: &[IssueDesignResponse]) -> String {
+fn render_designs_text(designs: &[IssueDesignResponse], formatter: TextFormatter) -> String {
     designs
         .iter()
         .map(|design| {
+            let event = design.event.as_deref().unwrap_or("-");
             format!(
                 "{} {} {} {}",
-                design.filename.as_deref().unwrap_or("-"),
-                design.event.as_deref().unwrap_or("-"),
-                design.notes_count.unwrap_or(0),
-                design.image.as_deref().unwrap_or("")
+                formatter.paint(TextStyle::Key, design.filename.as_deref().unwrap_or("-")),
+                formatter.paint(execution_status_style(event), event),
+                formatter.paint(TextStyle::Muted, design.notes_count.unwrap_or(0)),
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    design.image.as_deref().unwrap_or("")
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -2092,32 +2173,35 @@ fn render_user(user: &GitlabUser) -> String {
         .unwrap_or_else(|| "-".to_owned())
 }
 
-fn render_releases_text(releases: &[ReleaseResponse]) -> String {
+fn render_releases_text(releases: &[ReleaseResponse], formatter: TextFormatter) -> String {
     if releases.is_empty() {
         return String::new();
     }
     releases
         .iter()
-        .map(render_release_line)
+        .map(|release| render_release_line(release, formatter))
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
 }
 
-fn render_release_text(release: &ReleaseResponse) -> String {
-    render_release_line(release) + "\n"
+fn render_release_text(release: &ReleaseResponse, formatter: TextFormatter) -> String {
+    render_release_line(release, formatter) + "\n"
 }
 
-fn render_release_line(release: &ReleaseResponse) -> String {
+fn render_release_line(release: &ReleaseResponse, formatter: TextFormatter) -> String {
     format!(
         "{} {} {}",
-        release.tag_name,
+        formatter.paint(TextStyle::Key, &release.tag_name),
         release.name.as_deref().unwrap_or("-"),
-        release.released_at.as_deref().unwrap_or("-")
+        formatter.paint(
+            TextStyle::Muted,
+            release.released_at.as_deref().unwrap_or("-")
+        )
     )
 }
 
-fn render_pipelines_text(pipelines: &[PipelineResponse]) -> String {
+fn render_pipelines_text(pipelines: &[PipelineResponse], formatter: TextFormatter) -> String {
     if pipelines.is_empty() {
         return String::new();
     }
@@ -2126,10 +2210,14 @@ fn render_pipelines_text(pipelines: &[PipelineResponse]) -> String {
         .map(|pipeline| {
             format!(
                 "{} {} {} {}",
-                pipeline.id,
-                pipeline.r#ref.as_deref().unwrap_or("-"),
-                pipeline.status,
-                pipeline.web_url.as_deref().unwrap_or("")
+                formatter.paint(TextStyle::Key, pipeline.id),
+                formatter.paint(TextStyle::Key, pipeline.r#ref.as_deref().unwrap_or("-")),
+                formatter.paint(execution_status_style(&pipeline.status), &pipeline.status),
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    pipeline.web_url.as_deref().unwrap_or("")
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -2137,7 +2225,7 @@ fn render_pipelines_text(pipelines: &[PipelineResponse]) -> String {
         + "\n"
 }
 
-fn render_jobs_text(jobs: &[JobResponse]) -> String {
+fn render_jobs_text(jobs: &[JobResponse], formatter: TextFormatter) -> String {
     if jobs.is_empty() {
         return String::new();
     }
@@ -2145,15 +2233,59 @@ fn render_jobs_text(jobs: &[JobResponse]) -> String {
         .map(|job| {
             format!(
                 "{} {} {} {}",
-                job.id,
-                job.name,
-                job.status,
-                job.web_url.as_deref().unwrap_or("")
+                formatter.paint(TextStyle::Key, job.id),
+                formatter.paint(TextStyle::Key, &job.name),
+                formatter.paint(execution_status_style(&job.status), &job.status),
+                paint_if_present(
+                    formatter,
+                    TextStyle::Key,
+                    job.web_url.as_deref().unwrap_or("")
+                )
             )
         })
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
+}
+
+fn issue_state_style(state: &str) -> TextStyle {
+    match state {
+        "opened" | "open" => TextStyle::Success,
+        "closed" => TextStyle::Muted,
+        _ => TextStyle::Warning,
+    }
+}
+
+fn execution_status_style(status: &str) -> TextStyle {
+    match status {
+        "success" | "passed" | "active" => TextStyle::Success,
+        "failed" | "failure" | "canceled" | "cancelled" | "timed_out" => TextStyle::Error,
+        "created"
+        | "waiting_for_resource"
+        | "preparing"
+        | "pending"
+        | "running"
+        | "scheduled"
+        | "manual" => TextStyle::Warning,
+        "skipped" | "-" => TextStyle::Muted,
+        _ => TextStyle::Muted,
+    }
+}
+
+fn optional_value_style(value: &str) -> TextStyle {
+    if value == "-" {
+        TextStyle::Muted
+    } else {
+        TextStyle::Key
+    }
+}
+
+fn paint_if_present(formatter: TextFormatter, style: TextStyle, value: &str) -> String {
+    if value.is_empty() {
+        String::new()
+    } else {
+        formatter.paint(style, value)
+    }
 }
 
 fn truncate_for_error(text: &str, max_chars: usize) -> String {
@@ -2325,6 +2457,117 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::*;
+
+    #[test]
+    fn issue_renderer_preserves_plain_contract_and_styles_metadata() {
+        let issue = issue_fixture();
+
+        assert_eq!(
+            render_issues_text(
+                std::slice::from_ref(&issue),
+                TextFormatter::with_color(false)
+            ),
+            "#42 opened Fix formatter https://gitlab.example/acme/tool/-/issues/42\n"
+        );
+
+        let rendered = render_issues_text(&[issue], TextFormatter::with_color(true));
+        assert!(rendered.contains("#\u{1b}[36m42\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[32mopened\u{1b}[0m"));
+        assert!(rendered.contains("Fix formatter"));
+        assert!(!rendered.contains("\u{1b}[0mFix formatter"));
+    }
+
+    #[test]
+    fn full_issue_renderer_keeps_description_and_comment_bodies_raw() {
+        let issue = issue_fixture();
+        let comments = vec![IssueNoteResponse {
+            id: 9,
+            body: Some("raw comment body".to_owned()),
+            author: Some(GitlabUser {
+                id: Some(1),
+                username: Some("alice".to_owned()),
+                name: None,
+            }),
+            created_at: Some("2026-07-16".to_owned()),
+            updated_at: None,
+            system: Some(false),
+            web_url: None,
+        }];
+        let warnings = vec!["designs unavailable".to_owned()];
+
+        let plain = render_issue_full_text(
+            &issue,
+            &comments,
+            &[],
+            &warnings,
+            TextFormatter::with_color(false),
+        );
+        let styled = render_issue_full_text(
+            &issue,
+            &comments,
+            &[],
+            &warnings,
+            TextFormatter::with_color(true),
+        );
+
+        assert_eq!(strip_ansi_sequences(&styled), plain);
+        assert!(styled.contains("\nraw description\n"));
+        assert!(styled.contains("\nraw comment body\n"));
+        assert!(!styled.contains("\u{1b}[36mraw description"));
+        assert!(!styled.contains("\u{1b}[36mraw comment body"));
+        assert!(styled.contains("\u{1b}[33mwarnings:\u{1b}[0m"));
+    }
+
+    #[test]
+    fn pipeline_renderer_maps_failed_status_to_error() {
+        let pipeline = PipelineResponse {
+            id: 7,
+            iid: None,
+            project_id: Some(1),
+            sha: Some("abc123".to_owned()),
+            r#ref: Some("main".to_owned()),
+            status: "failed".to_owned(),
+            source: Some("push".to_owned()),
+            web_url: Some("https://gitlab.example/acme/tool/-/pipelines/7".to_owned()),
+            created_at: None,
+            updated_at: None,
+        };
+
+        assert_eq!(
+            render_pipelines_text(
+                std::slice::from_ref(&pipeline),
+                TextFormatter::with_color(false)
+            ),
+            "7 main failed https://gitlab.example/acme/tool/-/pipelines/7\n"
+        );
+
+        let rendered = render_pipelines_text(&[pipeline], TextFormatter::with_color(true));
+        assert!(rendered.contains("\u{1b}[36m7\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[36mmain\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[1;31mfailed\u{1b}[0m"));
+    }
+
+    fn issue_fixture() -> IssueResponse {
+        IssueResponse {
+            id: 100,
+            iid: 42,
+            project_id: Some(1),
+            title: "Fix formatter".to_owned(),
+            description: Some("raw description".to_owned()),
+            state: "opened".to_owned(),
+            web_url: Some("https://gitlab.example/acme/tool/-/issues/42".to_owned()),
+            author: Some(GitlabUser {
+                id: Some(1),
+                username: Some("alice".to_owned()),
+                name: None,
+            }),
+            assignees: Some(Vec::new()),
+            labels: vec!["bug".to_owned()],
+            created_at: Some("2026-07-16".to_owned()),
+            updated_at: Some("2026-07-16".to_owned()),
+            closed_at: None,
+        }
+    }
 
     #[test]
     fn manual_examples_parse() {

@@ -14,7 +14,7 @@ ah file tree src --depth 2 --limit 80
 ```
 
 ## Output Shape
-- Text mode: indented list (`root/`, nested `- item`)
+- Text mode: indented list (`root/`, nested `- item`) with semantic colors only in an interactive terminal
 - JSON mode (`--json`): flattened `entries[]` with `depth`, `kind`, `name`, `path`
 
 ## When To Use

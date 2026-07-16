@@ -1,7 +1,7 @@
 use std::fs;
 
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
 #[test]
@@ -16,6 +16,22 @@ fn plugins_list_reports_builtin_domains() {
         .stdout(contains("\"domain\": \"git\""))
         .stdout(contains("\"domain\": \"http\""))
         .stdout(contains("\"domain\": \"task\""));
+}
+
+#[test]
+fn plugins_list_formats_plain_text_as_table() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["plugins", "list"])
+        .assert()
+        .success()
+        .stdout(contains("DOMAIN"))
+        .stdout(contains("PLUGIN"))
+        .stdout(contains("SOURCE"))
+        .stdout(contains("STATE"))
+        .stdout(contains("DESCRIPTION"))
+        .stdout(contains("file"))
+        .stdout(contains("builtin-file"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]

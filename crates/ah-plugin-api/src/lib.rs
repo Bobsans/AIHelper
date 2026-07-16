@@ -1,5 +1,7 @@
 use std::{
     ffi::{CStr, CString, c_char},
+    fmt::Display,
+    io::{self, IsTerminal},
     panic::{AssertUnwindSafe, catch_unwind},
     ptr,
 };
@@ -17,6 +19,67 @@ pub mod plugin_capabilities {
     pub const MANUAL_JSON: &str = "manual_json";
     pub const REQUIRED_TOOLS: &str = "required_tools";
     pub const ERROR_DIAGNOSTIC: &str = "error_diagnostic";
+}
+
+const ANSI_RESET: &str = "\u{1b}[0m";
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum TextStyle {
+    Heading,
+    Key,
+    Success,
+    Warning,
+    Error,
+    Muted,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct TextFormatter {
+    color: bool,
+}
+
+impl TextFormatter {
+    pub fn stdout() -> Self {
+        Self::automatic(io::stdout().is_terminal())
+    }
+
+    pub fn stderr() -> Self {
+        Self::automatic(io::stderr().is_terminal())
+    }
+
+    pub const fn with_color(color: bool) -> Self {
+        Self { color }
+    }
+
+    pub fn paint(self, style: TextStyle, value: impl Display) -> String {
+        if !self.color {
+            return value.to_string();
+        }
+
+        format!("{}{value}{ANSI_RESET}", ansi_prefix(style))
+    }
+
+    fn automatic(is_terminal: bool) -> Self {
+        Self::with_color(color_enabled(
+            is_terminal,
+            std::env::var_os("NO_COLOR").is_some(),
+        ))
+    }
+}
+
+const fn color_enabled(is_terminal: bool, no_color: bool) -> bool {
+    is_terminal && !no_color
+}
+
+const fn ansi_prefix(style: TextStyle) -> &'static str {
+    match style {
+        TextStyle::Heading => "\u{1b}[1;36m",
+        TextStyle::Key => "\u{1b}[36m",
+        TextStyle::Success => "\u{1b}[32m",
+        TextStyle::Warning => "\u{1b}[33m",
+        TextStyle::Error => "\u{1b}[1;31m",
+        TextStyle::Muted => "\u{1b}[2m",
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -622,6 +685,34 @@ pub fn null_response_ptr() -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formatter_applies_semantic_ansi_style_when_enabled() {
+        let formatter = TextFormatter::with_color(true);
+
+        assert_eq!(
+            formatter.paint(TextStyle::Success, "enabled"),
+            "\u{1b}[32menabled\u{1b}[0m"
+        );
+        assert_eq!(
+            formatter.paint(TextStyle::Error, "ERROR"),
+            "\u{1b}[1;31mERROR\u{1b}[0m"
+        );
+    }
+
+    #[test]
+    fn formatter_preserves_plain_text_when_disabled() {
+        let formatter = TextFormatter::with_color(false);
+
+        assert_eq!(formatter.paint(TextStyle::Heading, "DOMAIN"), "DOMAIN");
+    }
+
+    #[test]
+    fn automatic_color_requires_terminal_and_no_no_color_request() {
+        assert!(color_enabled(true, false));
+        assert!(!color_enabled(false, false));
+        assert!(!color_enabled(true, true));
+    }
 
     fn base_globals() -> GlobalOptionsWire {
         GlobalOptionsWire {

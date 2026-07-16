@@ -1,7 +1,7 @@
 use std::{fs, process::Command as ProcessCommand};
 
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 
 use crate::common::{git_available, init_git_repo_with_one_commit};
 
@@ -23,6 +23,14 @@ fn git_changed_reports_modified_file() {
         .stdout(contains("\"command\": \"git.changed\""))
         .stdout(contains("\"in_git_repo\": true"))
         .stdout(contains("\"path\": \"app.txt\""));
+
+    let mut text_cmd = Command::cargo_bin("ah").expect("binary should compile");
+    text_cmd
+        .args(["--cwd", &cwd_str, "git", "changed"])
+        .assert()
+        .success()
+        .stdout(contains("app.txt"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -101,7 +109,8 @@ fn git_diff_with_path_returns_patch() {
         .assert()
         .success()
         .stdout(contains("diff --git"))
-        .stdout(contains("app.txt"));
+        .stdout(contains("app.txt"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -213,6 +222,17 @@ fn git_status_reports_compact_counts() {
         .stdout(contains("\"untracked_count\": 1"))
         .stdout(contains("\"changed_count\": 2"))
         .stdout(contains("\"subject\": \"initial\""));
+
+    let mut text_cmd = Command::cargo_bin("ah").expect("binary should compile");
+    text_cmd
+        .args(["--cwd", &cwd_str, "git", "status"])
+        .assert()
+        .success()
+        .stdout(contains("branch=main"))
+        .stdout(contains("clean=false"))
+        .stdout(contains("unstaged=1"))
+        .stdout(contains("untracked=1"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]

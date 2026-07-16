@@ -7,6 +7,7 @@ use crate::{
     cli::{self, CliParseResult, RuntimeCommand},
     config::ConfigContext,
     error::AppError,
+    output::{emit_muted_stderr, emit_warning},
     plugin_settings::PluginSettings,
     plugins,
 };
@@ -84,24 +85,24 @@ fn render_discovery_diagnostics(load_report: &mut PluginLoadReport, command: &Ru
         .warnings
         .sort_by(|left, right| left.path.cmp(&right.path));
     for warning in &load_report.warnings {
-        eprintln!(
-            "warning: skipped plugin {}: {}",
+        emit_warning(format!(
+            "skipped plugin {}: {}",
             warning.path.display(),
             warning.error
-        );
+        ));
     }
     for conflict in &load_report.conflicts {
-        eprintln!(
-            "warning: domain '{}' conflict: {}",
+        emit_warning(format!(
+            "domain '{}' conflict: {}",
             conflict.domain, conflict.reason
-        );
-        eprintln!(
+        ));
+        emit_muted_stderr(format!(
             "  keeping {} plugin '{}', ignored {} plugin '{}'",
             plugin_source_name(conflict.winner_source),
             conflict.winner.plugin_name,
             plugin_source_name(conflict.loser_source),
             conflict.loser.plugin_name
-        );
+        ));
     }
 }
 

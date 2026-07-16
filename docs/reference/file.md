@@ -2,6 +2,12 @@
 
 File utilities for reading and inspecting files.
 
+Interactive `stat` and `tree` output uses semantic colors for paths, file
+kinds, metadata, symlinks, and readonly state. File content returned by `read`,
+`head`, and `tail` is never formatted. Colors are disabled automatically for
+pipes, redirects, captured output, and JSON. Set `NO_COLOR` to disable colors
+explicitly.
+
 ## `ah file read`
 
 Read full file or selected line range.

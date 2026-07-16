@@ -1,6 +1,7 @@
 use std::fs;
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -19,8 +20,26 @@ fn ctx_symbols_extracts_rust_symbols() {
     cmd.args(["ctx", "symbols", &file_path_str])
         .assert()
         .success()
+        .stdout(contains("\u{1b}").not())
         .stdout(contains("struct User"))
         .stdout(contains("fn create_user"));
+}
+
+#[test]
+fn ctx_pack_text_output_has_no_ansi_when_captured() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let file_path = temp_dir.path().join("lib.rs");
+    fs::write(&file_path, "pub fn run() {}\n").expect("test file should be written");
+
+    let file_path = file_path.to_string_lossy().to_string();
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["ctx", "pack", &file_path])
+        .assert()
+        .success()
+        .stdout(contains("preset: review"))
+        .stdout(contains("file |"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -78,6 +97,20 @@ fn ctx_changed_reports_non_git_directory() {
         .stdout(contains("\"command\": \"ctx.changed\""))
         .stdout(contains("\"in_git_repo\": false"))
         .stdout(contains("\"changed_count\": 0"));
+}
+
+#[test]
+fn ctx_changed_text_output_has_no_ansi_when_captured() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let cwd = temp_dir.path().to_string_lossy().to_string();
+
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--cwd", &cwd, "ctx", "changed"])
+        .assert()
+        .success()
+        .stdout("not a git repository\n")
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]

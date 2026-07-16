@@ -18,6 +18,7 @@ ah ctx symbols src/commands --preset summary --limit 50
 ```
 
 ## Output Shape
+- Interactive text mode highlights presets, paths, symbol kinds, skipped counters, and change statuses
 - `ctx pack --json`: `items[]` with `path`, `kind`, `line_count`, `symbol_count`, `symbols`
 - `ctx symbols --json`: grouped symbols per file
 - `ctx changed --json`: git change entries with statuses

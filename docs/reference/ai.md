@@ -20,6 +20,12 @@ Output includes:
 - per-plugin command descriptions
 - per-command examples intended for AI agents
 
+Interactive text output uses semantic colors for section headings, domains,
+flags, command usages, and examples. Colors are disabled automatically for
+pipes, redirects, captured output, and JSON mode. Set `NO_COLOR` to disable
+colors explicitly.
+
 Notes:
 - plugin examples are stored in plugin source code and validated by tests
 - dynamic plugins may optionally provide manual via `ah_plugin_manual_json_v1`
+- warning labels emitted by host and domain commands use the shared text formatter

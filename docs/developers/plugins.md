@@ -63,6 +63,31 @@ Plugin returns JSON response:
   - optional `error_code`
   - optional `error_message`
 
+## Semantic Text Formatting
+
+Dynamic plugins can use the shared formatter from `ah-plugin-api`:
+
+```rust
+use ah_plugin_api::{TextFormatter, TextStyle};
+
+let formatter = TextFormatter::stdout();
+let rendered = formatter.paint(TextStyle::Success, "success");
+```
+
+`TextFormatter::stdout()` and `TextFormatter::stderr()` enable ANSI styles only
+when the corresponding stream is an interactive terminal and `NO_COLOR` is not
+set. Piped, redirected, and captured output therefore stays plain without
+changing the plugin invocation contract.
+
+Use semantic styles for structured metadata and statuses. Do not format raw
+file content, HTTP bodies, model responses, SQL result payloads, CI logs, or
+other content intended for downstream processing. JSON output must never
+contain ANSI sequences.
+
+Renderer tests can use `TextFormatter::with_color(true)` and
+`TextFormatter::with_color(false)` to verify styled and plain contracts
+deterministically.
+
 ## Managed External Tool Commands
 
 Dynamic plugins that depend on third-party command-line tools must expose a

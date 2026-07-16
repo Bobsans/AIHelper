@@ -32,6 +32,11 @@ Behavior:
 - reads `package.json` dependency names to infer common JS roles/tools such as Next/Vite/Astro, Express/Fastify/Nest, React Native/Expo, Electron/Tauri, Docusaurus, Playwright/Cypress/Vitest/Jest, ESLint/Prettier, and Semgrep
 - JSON output keeps legacy fields (`package_files`, `ci_files`, `docs_files`, `changelog_files`) and adds richer `tools`, `roles`, `files`, `versions`, and `commands` fields
 
+Interactive text output uses semantic colors for project roots, ecosystems,
+tools, roles, file groups, paths, command kinds, versions, and confidence.
+Colors are disabled automatically for pipes, redirects, captured output, and
+JSON. Set `NO_COLOR` to disable colors explicitly.
+
 Status: implemented.
 
 ## `ah project commands`
@@ -48,6 +53,9 @@ Examples of suggestions:
 - .NET: `dotnet restore`, `dotnet test`, `dotnet build`
 - Go: `go test ./...`, `go build ./...`
 - PHP/Ruby/Elixir/Dart/Swift/Scala/Clojure/Haskell/OCaml/Julia/R/Zig/PlatformIO/CMake/Meson/Bazel/Make/Terraform/OpenTofu/Pulumi/Docker/security tooling: common safe suggestions based on detected files
+
+Text formatting does not add confidence or reason fields that are otherwise
+available in JSON output.
 
 Status: implemented.
 

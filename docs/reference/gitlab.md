@@ -6,6 +6,12 @@ This domain is provided by external plugin `ah-plugin-gitlab` and is loaded from
 
 GitLab-specific commands intentionally live outside `ah git`; local Git helpers remain provider-neutral.
 
+Interactive structured output uses semantic colors for projects, issue states
+and IDs, release tags, pipeline/job states, refs, users, designs, and URLs.
+Issue descriptions, comment bodies, and job traces remain unformatted. Colors
+are disabled automatically for pipes, redirects, captured output, and JSON.
+Set `NO_COLOR` to disable colors explicitly.
+
 ## Authentication
 
 The plugin resolves a token in this order:

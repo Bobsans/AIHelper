@@ -6,6 +6,13 @@ This domain is provided by external plugin `ah-plugin-postgres` and is loaded fr
 
 The plugin uses `psql` non-interactively with `-X`, `ON_ERROR_STOP=1`, and `--no-password`. Pass passwords through `--password-env`, `.pgpass`, or libpq service files; do not pass secrets in command arguments.
 
+Interactive structured output uses semantic colors for tool availability,
+versions, paths, database objects, activity states, locks, sizes, and describe
+metadata. SQL query results, execution output, explain plans, SQL definitions,
+and active query text remain unformatted. Colors are disabled automatically
+for pipes, redirects, captured output, and JSON. Set `NO_COLOR` to disable
+colors explicitly.
+
 ## Toolchain
 
 ```bash

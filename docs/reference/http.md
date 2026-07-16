@@ -32,6 +32,8 @@ Behavior:
 - response bodies are bounded while read; `--max-response-bytes` defaults to `8388608`
 - JSON output sets `body_truncated=true` and `truncated=true` when the body exceeds the limit
 - status and header assertions still run for truncated bodies; body and JSON assertions fail explicitly because the complete body is unavailable
+- interactive fallback status lines use status-class colors (`2xx`, `3xx`, `4xx`, `5xx`)
+- response body content is never recolored
 
 ## `ah http replay`
 
@@ -63,6 +65,7 @@ Behavior:
 - default mode runs all cases and returns summary at end
 - returns non-zero exit when at least one case fails
 - `--report junit` writes XML to stdout
+- interactive text reports color `PASS`, `FAIL`, and summary counters semantically
 
 ## `ah http run`
 
@@ -86,6 +89,9 @@ ah http run <spec-path> [same flags as assert]
 
 Conflict rule:
 - if `--json` and `--report` are both set and conflict, command returns `INVALID_ARGUMENT`
+
+Colors are disabled automatically for pipes, redirects, captured output, JSON,
+and JUnit reports. Set `NO_COLOR` to disable colors explicitly.
 
 ## Spec Format (`assert`/`run`)
 

@@ -1,7 +1,7 @@
 use std::fs;
 
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
 #[test]
@@ -19,6 +19,17 @@ fn project_detect_reports_ecosystems_and_key_files() {
         .stdout(contains("\"github-actions\""))
         .stdout(contains("\"README.md\""))
         .stdout(contains("\"CHANGELOG.md\""));
+
+    let mut text_cmd = Command::cargo_bin("ah").expect("binary should compile");
+    text_cmd
+        .args(["project", "detect", &cwd])
+        .assert()
+        .success()
+        .stdout(contains("root="))
+        .stdout(contains("ecosystems="))
+        .stdout(contains("rust"))
+        .stdout(contains("node"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -35,6 +46,14 @@ fn project_commands_suggests_common_commands() {
         .stdout(contains("\"test\""))
         .stdout(contains("\"npm\""))
         .stdout(contains("\"build\""));
+
+    let mut text_cmd = Command::cargo_bin("ah").expect("binary should compile");
+    text_cmd
+        .args(["project", "commands", &cwd])
+        .assert()
+        .success()
+        .stdout(contains("test:"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -59,6 +78,15 @@ fn project_version_reports_manifest_versions() {
         .stdout(contains("\"version\": \"1.2.3\""))
         .stdout(contains("\"kind\": \"python\""))
         .stdout(contains("\"version\": \"2.3.4\""));
+
+    let mut text_cmd = Command::cargo_bin("ah").expect("binary should compile");
+    text_cmd
+        .args(["project", "version", &cwd])
+        .assert()
+        .success()
+        .stdout(contains("version=0.1.0"))
+        .stdout(contains("confidence=high"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]

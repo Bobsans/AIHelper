@@ -14,6 +14,7 @@ Behavior:
 - tasks are stored in local project file: `.ah/tasks.json`
 - save is upsert by task name
 - task name supports letters, numbers, `-`, `_`, `.`
+- interactive text output highlights successful saves, task names, and stored commands
 
 Status: implemented.
 
@@ -24,6 +25,9 @@ List saved tasks.
 ```bash
 ah task list [--limit N] [--json]
 ```
+
+Task names and commands use semantic terminal formatting. Colors are disabled
+for pipes, redirects, captured output, JSON, and when `NO_COLOR` is set.
 
 Status: implemented.
 
@@ -42,5 +46,6 @@ Behavior:
 - `--max-output-bytes` bounds stdout and stderr separately while reading (default: `65536`)
 - global `--limit` truncates captured stdout/stderr lines
 - timeout returns `TASK_TIMEOUT`; byte or line truncation sets `truncated=true`
+- executed task stdout and stderr are never recolored or otherwise modified
 
 Status: implemented.

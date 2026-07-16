@@ -564,7 +564,8 @@ fn file_stat_emits_text_contract() {
         .expect("binary should compile")
         .args(["file", "stat", &file_path])
         .assert()
-        .success();
+        .success()
+        .stdout(contains("\u{1b}").not());
     let stdout =
         String::from_utf8(assert.get_output().stdout.clone()).expect("stdout should be UTF-8");
     let lines = stdout.lines().collect::<Vec<_>>();
@@ -679,6 +680,7 @@ fn file_tree_text_output_is_deterministic() {
         .args(["file", "tree", &root_path])
         .assert()
         .success()
+        .stdout(contains("\u{1b}").not())
         .stdout("root/\n  - alpha.txt\n  - Beta.txt\n  - nested/\n    - deep.txt\n");
 }
 

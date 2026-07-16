@@ -15,6 +15,7 @@ ah file read src/main.rs -n --from 1 --to 80
 
 ## Output Shape
 - Text mode: numbered lines (`"   1: ..."`)
+- File content stays unformatted, including in an interactive terminal
 - JSON mode (`--json`): object with `command`, `path`, `line_count`, `content`, and range flags
 
 ## When To Use

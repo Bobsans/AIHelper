@@ -2,6 +2,11 @@
 
 Context-reduction utilities for AI workflows.
 
+Interactive text output uses semantic colors for presets, paths, counters,
+symbol kinds, skipped-file warnings, and Git-like change statuses. Colors are
+disabled automatically for pipes, redirects, captured output, and JSON. Set
+`NO_COLOR` to disable colors explicitly.
+
 ## `ah ctx pack`
 
 Create a compact structured digest of files/directories with lightweight symbol extraction.

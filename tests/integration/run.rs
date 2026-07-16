@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 use std::fs;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -15,6 +15,20 @@ fn run_check_reports_successful_command() {
         .stdout(contains("\"command\": \"run.check\""))
         .stdout(contains("\"success\": true"))
         .stdout(contains("\"timed_out\": false"));
+}
+
+#[test]
+fn run_check_text_output_preserves_plain_contract() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let mut args = vec!["run", "check"];
+    args.extend(platform_exit_command(true));
+    cmd.args(args)
+        .assert()
+        .success()
+        .stdout(contains(
+            "success=true exit_code=0 timed_out=false duration_ms=",
+        ))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]

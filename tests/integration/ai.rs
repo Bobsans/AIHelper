@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use predicates::str::contains;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 
 #[test]
 fn ai_info_text_outputs_domain_manual() {
@@ -8,7 +8,8 @@ fn ai_info_text_outputs_domain_manual() {
         .assert()
         .success()
         .stdout(contains("Domain: file"))
-        .stdout(contains("ah file read"));
+        .stdout(contains("ah file read"))
+        .stdout(contains("\u{1b}").not());
 }
 
 #[test]
@@ -19,5 +20,6 @@ fn ai_info_json_outputs_structured_manual() {
         .success()
         .stdout(contains("\"command\": \"ai.info\""))
         .stdout(contains("\"domain\": \"search\""))
-        .stdout(contains("\"name\": \"text\""));
+        .stdout(contains("\"name\": \"text\""))
+        .stdout(contains("\u{1b}").not());
 }

@@ -2,6 +2,11 @@
 
 Search utilities (text and file discovery).
 
+Interactive text output uses semantic colors for paths, line numbers, context
+locations, and context separators. Matched source text and context source text
+remain unformatted. Colors are disabled automatically for pipes, redirects,
+captured output, and JSON. Set `NO_COLOR` to disable colors explicitly.
+
 ## `ah search text`
 
 Search by content in files.

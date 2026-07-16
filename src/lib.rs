@@ -21,7 +21,7 @@ use serde::Serialize;
 use crate::{
     cli::{PluginStateFilter, RuntimeCommand},
     error::AppError,
-    output::OutputMode,
+    output::{OutputMode, TextFormatter, TextStyle},
     plugin_settings::PluginSettings,
 };
 
@@ -61,16 +61,10 @@ fn execute_plugins_list(
                 println!("no plugins registered");
                 return Ok(());
             }
-            for plugin in plugins {
-                println!(
-                    "{} ({}) [{}|{}] - {}",
-                    plugin.domain,
-                    plugin.plugin_name,
-                    plugin.source,
-                    plugin.state,
-                    plugin.description
-                );
-            }
+            println!(
+                "{}",
+                render_plugins_table(&plugins, TextFormatter::stdout())
+            );
         }
         OutputMode::Json => {
             println!("{}", serde_json::to_string_pretty(&plugins)?);
@@ -195,7 +189,12 @@ fn render_plugin_state_mutation(
     }
     match options.output {
         OutputMode::Text => {
-            println!("{text_message}");
+            let style = if changed {
+                TextStyle::Success
+            } else {
+                TextStyle::Warning
+            };
+            println!("{}", TextFormatter::stdout().paint(style, text_message));
         }
         OutputMode::Json => {
             let payload = PluginStateMutationOutput {
@@ -216,6 +215,64 @@ fn matches_plugin_filter(plugin: &PluginListEntry, filter: PluginStateFilter) ->
         PluginStateFilter::Enabled => plugin.state == "enabled",
         PluginStateFilter::Disabled => plugin.state == "disabled",
     }
+}
+
+fn render_plugins_table(plugins: &[PluginListEntry], formatter: TextFormatter) -> String {
+    let domain_width = column_width(
+        "DOMAIN",
+        plugins.iter().map(|plugin| plugin.domain.as_str()),
+    );
+    let plugin_width = column_width(
+        "PLUGIN",
+        plugins.iter().map(|plugin| plugin.plugin_name.as_str()),
+    );
+    let source_width = column_width("SOURCE", plugins.iter().map(|plugin| plugin.source));
+    let state_width = column_width("STATE", plugins.iter().map(|plugin| plugin.state));
+
+    let mut lines = Vec::with_capacity(plugins.len() + 1);
+    lines.push(format!(
+        "{}  {}  {}  {}  {}",
+        formatter.paint(TextStyle::Heading, pad_column("DOMAIN", domain_width)),
+        formatter.paint(TextStyle::Heading, pad_column("PLUGIN", plugin_width)),
+        formatter.paint(TextStyle::Heading, pad_column("SOURCE", source_width)),
+        formatter.paint(TextStyle::Heading, pad_column("STATE", state_width)),
+        formatter.paint(TextStyle::Heading, "DESCRIPTION")
+    ));
+
+    for plugin in plugins {
+        let source_style = if plugin.source == "dynamic" {
+            TextStyle::Key
+        } else {
+            TextStyle::Muted
+        };
+        let state_style = if plugin.state == "enabled" {
+            TextStyle::Success
+        } else {
+            TextStyle::Error
+        };
+        lines.push(format!(
+            "{}  {}  {}  {}  {}",
+            formatter.paint(TextStyle::Key, pad_column(&plugin.domain, domain_width)),
+            pad_column(&plugin.plugin_name, plugin_width),
+            formatter.paint(source_style, pad_column(plugin.source, source_width)),
+            formatter.paint(state_style, pad_column(plugin.state, state_width)),
+            plugin.description
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn column_width<'a>(heading: &str, values: impl Iterator<Item = &'a str>) -> usize {
+    values
+        .map(str::chars)
+        .map(Iterator::count)
+        .fold(heading.chars().count(), usize::max)
+}
+
+fn pad_column(value: &str, width: usize) -> String {
+    let padding = width.saturating_sub(value.chars().count());
+    format!("{value}{}", " ".repeat(padding))
 }
 
 fn plugin_source_label(source: PluginSource) -> &'static str {
@@ -400,4 +457,68 @@ fn load_dynamic_plugins_from_dirs(
         merged.conflicts.extend(report.conflicts);
     }
     merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PluginListEntry, render_plugins_table};
+    use crate::output::TextFormatter;
+
+    #[test]
+    fn plugins_table_aligns_plain_text_columns() {
+        let plugins = vec![
+            plugin_entry("file", "builtin-file", "builtin", "enabled", "Read files"),
+            plugin_entry(
+                "postgres",
+                "external-postgres",
+                "dynamic",
+                "disabled",
+                "Query databases",
+            ),
+        ];
+
+        let rendered = render_plugins_table(&plugins, TextFormatter::with_color(false));
+
+        assert_eq!(
+            rendered,
+            "DOMAIN    PLUGIN             SOURCE   STATE     DESCRIPTION\n\
+             file      builtin-file       builtin  enabled   Read files\n\
+             postgres  external-postgres  dynamic  disabled  Query databases"
+        );
+    }
+
+    #[test]
+    fn plugins_table_applies_styles_after_padding() {
+        let plugins = vec![plugin_entry(
+            "http",
+            "builtin-http",
+            "builtin",
+            "enabled",
+            "HTTP helpers",
+        )];
+
+        let rendered = render_plugins_table(&plugins, TextFormatter::with_color(true));
+
+        assert!(rendered.contains("\u{1b}[1;36mDOMAIN\u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[36mhttp  \u{1b}[0m"));
+        assert!(rendered.contains("\u{1b}[32menabled\u{1b}[0m"));
+    }
+
+    fn plugin_entry(
+        domain: &str,
+        plugin_name: &str,
+        source: &'static str,
+        state: &'static str,
+        description: &str,
+    ) -> PluginListEntry {
+        PluginListEntry {
+            plugin_name: plugin_name.to_owned(),
+            domain: domain.to_owned(),
+            description: description.to_owned(),
+            abi_version: 1,
+            required_tools: Vec::new(),
+            source,
+            state,
+        }
+    }
 }

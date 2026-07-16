@@ -25,4 +25,9 @@ Behavior:
 - reports `success`, `timed_out`, `exit_code`, and `duration_ms`
 - `ah` exits successfully even when the checked command fails; inspect `success=false`
 
+Interactive text output uses semantic colors for success, failure, timeout, and
+stdout/stderr headings. Child process output is never recolored. Colors are
+disabled automatically for pipes, redirects, captured output, and JSON mode.
+Set `NO_COLOR` to disable colors explicitly.
+
 Status: implemented.
