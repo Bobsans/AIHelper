@@ -21,6 +21,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-ollama\0";
 static DOMAIN_C: &[u8] = b"ollama\0";
 static DESCRIPTION_C: &[u8] = b"Ollama Local API plugin (dynamic)\0";
 
+mod typed;
+
 ah_plugin_api::define_plugin_entrypoint_v1!(
     plugin_name_c: PLUGIN_NAME_C,
     domain_c: DOMAIN_C,
@@ -29,6 +31,9 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     parse_fn: parse_args,
     execute_fn: execute,
     manual_fn: plugin_manual,
+    typed_catalog_fn: typed::command_catalog,
+    typed_execute_fn: typed::invoke,
+    typed_cancel_fn: typed::cancel,
 );
 
 #[derive(Debug, Parser)]

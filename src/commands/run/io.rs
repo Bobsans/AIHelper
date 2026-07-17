@@ -31,21 +31,39 @@ pub(crate) struct CapturedStream {
     pub truncated: bool,
 }
 
+pub(crate) struct RunCommandOptions<'a> {
+    pub timeout: Duration,
+    pub command_label: &'a str,
+    pub max_output_bytes: usize,
+    pub tail_lines: Option<usize>,
+    pub cwd: Option<&'a std::path::Path>,
+    pub cancelled: fn() -> bool,
+}
+
 pub(crate) fn run_command(
     program: &str,
     args: &[String],
-    timeout_secs: u64,
-    command_label: &str,
-    max_output_bytes: usize,
-    tail_lines: Option<usize>,
+    options: RunCommandOptions<'_>,
 ) -> Result<CapturedOutput, AppError> {
+    let RunCommandOptions {
+        timeout,
+        command_label,
+        max_output_bytes,
+        tail_lines,
+        cwd,
+        cancelled,
+    } = options;
     let started = Instant::now();
-    let spawn_program = resolve_program_for_spawn(program);
+    let spawn_program = resolve_program_for_spawn(program, cwd);
     let mut command = Command::new(&spawn_program);
     command
         .args(args)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     let mut child = command
         .group_spawn()
         .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?;
@@ -57,7 +75,6 @@ pub(crate) fn run_command(
         thread::spawn(move || capture_reader(stderr, max_output_bytes, tail_lines.is_some()))
     });
 
-    let timeout = Duration::from_secs(timeout_secs.max(1));
     let mut timed_out = false;
     let status = loop {
         if let Some(status) = child
@@ -67,8 +84,8 @@ pub(crate) fn run_command(
             break status;
         }
 
-        if started.elapsed() >= timeout {
-            timed_out = true;
+        if started.elapsed() >= timeout || cancelled() {
+            timed_out = started.elapsed() >= timeout;
             if let Err(source) = child.kill()
                 && source.kind() != ErrorKind::InvalidInput
             {
@@ -152,19 +169,31 @@ fn capture_reader<R: Read>(
     })
 }
 
-fn resolve_program_for_spawn(program: &str) -> PathBuf {
+fn resolve_program_for_spawn(program: &str, cwd: Option<&std::path::Path>) -> PathBuf {
     #[cfg(windows)]
     {
-        if let Some(resolved) = resolve_windows_program(program) {
+        if let Some(resolved) = resolve_windows_program_from(program, cwd) {
             return resolved;
         }
     }
 
-    PathBuf::from(program)
+    let path = PathBuf::from(program);
+    if path.is_relative()
+        && (program.contains('/') || program.contains('\\'))
+        && let Some(cwd) = cwd
+    {
+        return cwd.join(path);
+    }
+    path
 }
 
 #[cfg(windows)]
 pub(crate) fn resolve_windows_program(program: &str) -> Option<PathBuf> {
+    resolve_windows_program_from(program, env::current_dir().ok().as_deref())
+}
+
+#[cfg(windows)]
+fn resolve_windows_program_from(program: &str, current_dir: Option<&Path>) -> Option<PathBuf> {
     let original = Path::new(program);
     if original.extension().is_some() {
         return None;
@@ -174,14 +203,8 @@ pub(crate) fn resolve_windows_program(program: &str) -> Option<PathBuf> {
         return find_existing_with_extensions(original, &path_exts);
     }
 
-    let current_dir = env::current_dir().ok();
     let path_dirs = env::var_os("PATH").map(|paths| env::split_paths(&paths).collect::<Vec<_>>());
-    resolve_windows_program_in(
-        program,
-        current_dir.as_deref(),
-        path_dirs.as_deref(),
-        &path_exts,
-    )
+    resolve_windows_program_in(program, current_dir, path_dirs.as_deref(), &path_exts)
 }
 
 #[cfg(windows)]

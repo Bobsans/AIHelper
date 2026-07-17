@@ -15,6 +15,8 @@ Output:
 - json mode: array of plugin metadata objects with additional fields:
   - `source`: `builtin` or `dynamic`
   - `state`: `enabled` or `disabled`
+  - `mcp_exposed`: whether the domain contributes typed MCP tools
+  - `mcp_omission_reason`: present when a plugin cannot be exposed over MCP
 
 Example text output:
 
@@ -39,6 +41,10 @@ ah plugins disable <domain> [--json]
 Examples:
 - `ah plugins disable http`
 - `ah plugins disable ollama`
+
+State mutations use a bounded cross-process lock and atomically replace the
+global `plugins.json`. If persistence fails, the live and retained in-memory
+state is left unchanged; lock contention reports `PERSISTENCE_LOCK_TIMEOUT`.
 
 ## `ah plugins enable`
 
@@ -71,4 +77,6 @@ Notes:
 - disabled domains return `DOMAIN_DISABLED` on invocation
 - invalid dynamic plugins are still skipped at startup; built-in plugins remain available
 - dynamic plugins can optionally expose manual data consumed by `ah ai info`
+- MCP tools `ah.plugins.list|enable|disable|reset` update the live stdio
+  server catalog; clients receive a tool-list-changed notification
 - text errors emphasize diagnostic codes and hint labels in interactive terminals

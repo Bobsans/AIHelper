@@ -6,6 +6,22 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+- `ah mcp serve` exposes every enabled typed command as a separate MCP tool over
+  stdio, with input/output schemas, structured results, cancellation, and live
+  tool-list updates.
+- Transport-neutral typed command contracts and dynamic plugin sidecar symbols
+  for catalogs, invocation, and cancellation.
+- Risk, impact, effects, and reversibility metadata for built-in, host, GitHub,
+  GitLab, Ollama, and PostgreSQL tools.
+
+### Changed
+- Runtime execution now uses a bounded sequential FIFO abstraction with
+  request-scoped cwd, limits, deadlines, and cancellation, ready for a future
+  resource-aware parallel scheduler.
+- Cargo profile plugin artifacts take precedence over older executable-adjacent
+  development copies while packaged plugin discovery remains unchanged.
+
 ## [0.6.3] - 2026-07-13
 
 ### Added

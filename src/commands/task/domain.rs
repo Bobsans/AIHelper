@@ -1,3 +1,8 @@
+use std::{
+    path::Path,
+    time::Duration,
+};
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -74,25 +79,28 @@ pub(crate) fn execute(args: TaskArgs, limit: Option<usize>) -> Result<TaskResult
 
 fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
     validation::validate_task_name(&args.name)?;
-    let store_path = adapters::io::task_store_path();
-    let mut store = adapters::io::load_store(&store_path)?;
-    let updated_unix_seconds = adapters::io::now_unix_seconds();
+    let store_path = task_store_path(args.cwd.as_deref());
+    let updated_unix_seconds = crate::persistence::transaction(&store_path, || {
+        let mut store = adapters::io::load_store(&store_path)?;
+        let updated_unix_seconds = adapters::io::now_unix_seconds();
 
-    if let Some(existing) = store.tasks.iter_mut().find(|task| task.name == args.name) {
-        existing.command = args.command.clone();
-        existing.updated_unix_seconds = updated_unix_seconds;
-    } else {
-        store.tasks.push(TaskEntry {
-            name: args.name.clone(),
-            command: args.command.clone(),
-            updated_unix_seconds,
-        });
-    }
+        if let Some(existing) = store.tasks.iter_mut().find(|task| task.name == args.name) {
+            existing.command = args.command.clone();
+            existing.updated_unix_seconds = updated_unix_seconds;
+        } else {
+            store.tasks.push(TaskEntry {
+                name: args.name.clone(),
+                command: args.command.clone(),
+                updated_unix_seconds,
+            });
+        }
 
-    store
-        .tasks
-        .sort_by(|left, right| left.name.cmp(&right.name));
-    adapters::io::save_store(&store_path, &store)?;
+        store
+            .tasks
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        adapters::io::save_store(&store_path, &store)?;
+        Ok(updated_unix_seconds)
+    })?;
 
     Ok(TaskSaveOutput {
         command: "task.save",
@@ -104,7 +112,7 @@ fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
 }
 
 fn run_list(_args: super::ListArgs, limit: Option<usize>) -> Result<TaskListOutput, AppError> {
-    let store_path = adapters::io::task_store_path();
+    let store_path = task_store_path(_args.cwd.as_deref());
     let mut store = adapters::io::load_store(&store_path)?;
     store
         .tasks
@@ -132,7 +140,7 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
         ));
     }
 
-    let store = adapters::io::load_store(&adapters::io::task_store_path())?;
+    let store = adapters::io::load_store(&task_store_path(args.cwd.as_deref()))?;
     let task = store
         .tasks
         .into_iter()
@@ -143,10 +151,17 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
     let output = crate::commands::run::io::run_command(
         &program,
         &command_args,
-        args.timeout_secs,
-        &format!("task {}", args.name),
-        args.max_output_bytes,
-        None,
+        crate::commands::run::io::RunCommandOptions {
+            timeout: args
+                .timeout_ms
+                .map(Duration::from_millis)
+                .unwrap_or_else(|| Duration::from_secs(args.timeout_secs.max(1))),
+            command_label: &format!("task {}", args.name),
+            max_output_bytes: args.max_output_bytes,
+            tail_lines: None,
+            cwd: args.cwd.as_deref(),
+            cancelled: super::current_request_cancelled,
+        },
     )?;
     let stdout_raw = crate::commands::run::io::render_output(&output.stdout, None);
     let stderr_raw = crate::commands::run::io::render_output(&output.stderr, None);
@@ -193,6 +208,13 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
     })
 }
 
+fn task_store_path(cwd: Option<&Path>) -> std::path::PathBuf {
+    match cwd {
+        Some(cwd) => adapters::io::task_store_path_at(cwd),
+        None => adapters::io::task_store_path(),
+    }
+}
+
 mod validation {
     use crate::error::AppError;
 
@@ -209,5 +231,40 @@ mod validation {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+
+    #[test]
+    fn concurrent_task_saves_preserve_unrelated_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for (name, command) in [("first", "echo first"), ("second", "echo second")] {
+            let cwd = directory.path().to_path_buf();
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                run_save(super::super::SaveArgs {
+                    name: name.to_owned(),
+                    command: command.to_owned(),
+                    cwd: Some(cwd),
+                })
+                .unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let store = adapters::io::load_store(&task_store_path(Some(directory.path()))).unwrap();
+        assert_eq!(store.tasks.len(), 2);
+        assert_eq!(store.tasks[0].name, "first");
+        assert_eq!(store.tasks[1].name, "second");
     }
 }

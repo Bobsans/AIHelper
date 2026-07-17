@@ -13,6 +13,8 @@ ah task save <name> <command> [--json]
 Behavior:
 - tasks are stored in local project file: `.ah/tasks.json`
 - save is upsert by task name
+- concurrent saves are serialized per store and replace the JSON document
+  atomically, preserving unrelated task updates
 - task name supports letters, numbers, `-`, `_`, `.`
 - interactive text output highlights successful saves, task names, and stored commands
 

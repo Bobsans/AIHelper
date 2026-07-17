@@ -16,6 +16,10 @@ pub(crate) fn task_store_path() -> PathBuf {
     PathBuf::from(TASKS_DIR).join(TASKS_FILE)
 }
 
+pub(crate) fn task_store_path_at(cwd: &Path) -> PathBuf {
+    cwd.join(TASKS_DIR).join(TASKS_FILE)
+}
+
 pub(crate) fn load_store(path: &Path) -> Result<TaskStore, AppError> {
     if !path.exists() {
         return Ok(TaskStore::default());
@@ -32,12 +36,7 @@ pub(crate) fn load_store(path: &Path) -> Result<TaskStore, AppError> {
 }
 
 pub(crate) fn save_store(path: &Path, store: &TaskStore) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
-    }
-    let raw = serde_json::to_string_pretty(store)?;
-    fs::write(path, raw).map_err(|source| AppError::file_write(path.to_path_buf(), source))
+    crate::persistence::atomic_write_json(path, store)
 }
 
 pub(crate) fn shell_command(command: &str) -> (String, Vec<String>) {

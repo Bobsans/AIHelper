@@ -42,6 +42,30 @@ pub fn execute_info(
     Ok(())
 }
 
+pub(crate) fn typed_info_value(
+    manager: &PluginManager,
+    domain_filter: Option<&str>,
+) -> Result<serde_json::Value, AppError> {
+    let mut manuals = manager.collect_plugin_manuals();
+    if let Some(filter) = domain_filter {
+        manuals.retain(|manual| manual.domain.eq_ignore_ascii_case(filter));
+        if manuals.is_empty() {
+            return Err(AppError::invalid_argument(format!(
+                "unknown domain for ai info: {filter}"
+            )));
+        }
+    }
+    let payload = AiInfoOutput {
+        command: "ai.info",
+        domain_filter: domain_filter.map(str::to_owned),
+        global_options: global_options_docs(),
+        host_commands: host_command_docs(),
+        plugin_count: manuals.len(),
+        plugins: manuals,
+    };
+    Ok(serde_json::to_value(payload)?)
+}
+
 fn render_text(
     domain_filter: Option<&str>,
     host_commands: &[HostCommandDoc],
@@ -174,6 +198,15 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
                     command: "ah ai info --domain search".to_owned(),
                 },
             ],
+        },
+        HostCommandDoc {
+            name: "mcp.serve".to_owned(),
+            summary: "Serve typed AIHelper tools over MCP stdio.".to_owned(),
+            usage: "mcp serve [--max-queued N] [--default-timeout-ms MILLISECONDS]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Start the stdio MCP server".to_owned(),
+                command: "ah mcp serve".to_owned(),
+            }],
         },
         HostCommandDoc {
             name: "plugins.list".to_owned(),

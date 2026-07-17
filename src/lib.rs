@@ -6,7 +6,9 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub(crate) mod git_status;
+pub(crate) mod host_commands;
 pub mod output;
+mod persistence;
 pub mod plugin_settings;
 pub mod plugins;
 mod runtime_flow;
@@ -38,22 +40,7 @@ fn execute_plugins_list(
         return Ok(());
     }
 
-    let mut plugins = manager
-        .list_registered_plugins()
-        .into_iter()
-        .map(|plugin| PluginListEntry {
-            abi_version: plugin.metadata.abi_version,
-            description: plugin.metadata.description,
-            domain: plugin.metadata.domain,
-            plugin_name: plugin.metadata.plugin_name,
-            required_tools: plugin.metadata.required_tools,
-            source: plugin_source_label(plugin.source),
-            state: plugin_state_label(plugin.enabled),
-        })
-        .collect::<Vec<_>>();
-    if let Some(filter) = state_filter {
-        plugins.retain(|plugin| matches_plugin_filter(plugin, filter));
-    }
+    let plugins = collect_plugin_list_entries(manager, state_filter)?;
 
     match options.output {
         OutputMode::Text => {
@@ -73,6 +60,38 @@ fn execute_plugins_list(
     Ok(())
 }
 
+fn collect_plugin_list_entries(
+    manager: &PluginManager,
+    state_filter: Option<PluginStateFilter>,
+) -> Result<Vec<PluginListEntry>, AppError> {
+    let mut plugins = manager
+        .list_registered_plugins()
+        .into_iter()
+        .map(|plugin| {
+            let mcp_exposed = manager
+                .command_catalog_for_domain(&plugin.metadata.domain)
+                .map_err(map_runtime_error)?
+                .is_some();
+            Ok(PluginListEntry {
+                abi_version: plugin.metadata.abi_version,
+                description: plugin.metadata.description,
+                domain: plugin.metadata.domain,
+                mcp_exposed,
+                mcp_omission_reason: (!mcp_exposed)
+                    .then_some("plugin does not provide typed_commands_v1"),
+                plugin_name: plugin.metadata.plugin_name,
+                required_tools: plugin.metadata.required_tools,
+                source: plugin_source_label(plugin.source),
+                state: plugin_state_label(plugin.enabled),
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    if let Some(filter) = state_filter {
+        plugins.retain(|plugin| matches_plugin_filter(plugin, filter));
+    }
+    Ok(plugins)
+}
+
 fn execute_plugins_enable(
     manager: &PluginManager,
     settings: &mut PluginSettings,
@@ -80,10 +99,8 @@ fn execute_plugins_enable(
     options: cli::GlobalOptions,
 ) -> Result<(), AppError> {
     let normalized_domain = validate_known_domain(manager, domain)?;
-    let changed = settings.enable_domain(&normalized_domain)?;
-    if changed {
-        settings.save()?;
-    }
+    let changed = settings.update(|candidate| candidate.enable_domain(&normalized_domain))?;
+    manager.set_disabled_domains(settings.disabled_domains().cloned());
     render_plugin_state_mutation(
         "plugins.enable",
         settings,
@@ -105,10 +122,8 @@ fn execute_plugins_disable(
     options: cli::GlobalOptions,
 ) -> Result<(), AppError> {
     let normalized_domain = validate_known_domain(manager, domain)?;
-    let changed = settings.disable_domain(&normalized_domain)?;
-    if changed {
-        settings.save()?;
-    }
+    let changed = settings.update(|candidate| candidate.disable_domain(&normalized_domain))?;
+    manager.set_disabled_domains(settings.disabled_domains().cloned());
     render_plugin_state_mutation(
         "plugins.disable",
         settings,
@@ -131,10 +146,8 @@ fn execute_plugins_reset(
     options: cli::GlobalOptions,
 ) -> Result<(), AppError> {
     if all {
-        let changed = settings.clear_all();
-        if changed {
-            settings.save()?;
-        }
+        let changed = settings.update(|candidate| Ok(candidate.clear_all()))?;
+        manager.set_disabled_domains(settings.disabled_domains().cloned());
         return render_plugin_state_mutation(
             "plugins.reset",
             settings,
@@ -155,10 +168,8 @@ fn execute_plugins_reset(
         ));
     };
     let normalized_domain = validate_known_domain(manager, raw_domain)?;
-    let changed = settings.reset_domain(&normalized_domain)?;
-    if changed {
-        settings.save()?;
-    }
+    let changed = settings.update(|candidate| candidate.reset_domain(&normalized_domain))?;
+    manager.set_disabled_domains(settings.disabled_domains().cloned());
     render_plugin_state_mutation(
         "plugins.reset",
         settings,
@@ -410,11 +421,53 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
         RuntimeError::ResponseParse(message) => {
             AppError::external("PLUGIN_RESPONSE_PARSE_FAILED", message)
         }
+        RuntimeError::InvalidCommandCatalog { domain, reason } => AppError::external(
+            "COMMAND_CATALOG_INVALID",
+            format!("invalid typed command catalog for domain '{domain}': {reason}"),
+        ),
+        RuntimeError::TypedCommandNotFound(command) => AppError::external(
+            "TYPED_COMMAND_NOT_FOUND",
+            format!("typed command not found: {command}"),
+        ),
+        RuntimeError::TypedInvocation(message) => {
+            AppError::external("TYPED_INVOCATION_FAILED", message)
+        }
+        RuntimeError::TypedResponseValidation { command, reason } => AppError::external(
+            "OUTPUT_SCHEMA_VIOLATION",
+            format!("typed command response failed validation for '{command}': {reason}"),
+        ),
+        RuntimeError::InvalidExecutionRequest(message) => {
+            AppError::external("EXECUTION_REQUEST_INVALID", message)
+        }
+        RuntimeError::ExecutionQueueFull { capacity } => AppError::external(
+            "EXECUTION_QUEUE_FULL",
+            format!("typed execution queue is full (capacity {capacity})"),
+        ),
+        RuntimeError::ExecutionCancelled { request_id } => AppError::external(
+            "EXECUTION_CANCELLED",
+            format!("typed execution request '{request_id}' was cancelled"),
+        ),
+        RuntimeError::ExecutionTimeout { request_id } => AppError::external(
+            "EXECUTION_TIMEOUT",
+            format!("typed execution request '{request_id}' timed out"),
+        ),
+        RuntimeError::ExecutionDraining { request_id } => AppError::external(
+            "EXECUTOR_DRAINING",
+            format!("timed-out execution request '{request_id}' is still draining"),
+        ),
+        RuntimeError::ExecutionWorker(message) => {
+            AppError::external("EXECUTION_WORKER_FAILED", message)
+        }
+        RuntimeError::ExecutionPanic { request_id } => AppError::external(
+            "EXECUTION_HANDLER_PANIC",
+            format!("typed execution handler panicked for request '{request_id}'"),
+        ),
     }
 }
 
 fn command_is_quiet(command: &RuntimeCommand) -> bool {
     match command {
+        RuntimeCommand::McpServe { options, .. } => options.quiet,
         RuntimeCommand::PluginsList { options, .. } => options.quiet,
         RuntimeCommand::PluginsEnable { options, .. } => options.quiet,
         RuntimeCommand::PluginsDisable { options, .. } => options.quiet,
@@ -433,6 +486,9 @@ struct PluginListEntry {
     required_tools: Vec<RequiredTool>,
     source: &'static str,
     state: &'static str,
+    mcp_exposed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_omission_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -449,7 +505,10 @@ fn load_dynamic_plugins_from_dirs(
     dirs: &[PathBuf],
 ) -> ah_runtime::PluginLoadReport {
     let mut merged = ah_runtime::PluginLoadReport::default();
-    for dir in dirs {
+    // Configured directories are ordered from highest to lowest priority,
+    // while the plugin manager intentionally gives the last loaded dynamic
+    // plugin precedence for a domain.
+    for dir in dirs.iter().rev() {
         let report = manager.load_dynamic_plugins_from_dir(dir);
         merged.loaded += report.loaded;
         merged.skipped += report.skipped;
@@ -519,6 +578,8 @@ mod tests {
             required_tools: Vec::new(),
             source,
             state,
+            mcp_exposed: false,
+            mcp_omission_reason: Some("test fixture"),
         }
     }
 }

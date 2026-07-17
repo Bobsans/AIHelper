@@ -18,6 +18,8 @@ The binary command is `ah`.
 - `run` (`check`)
 - `task` (`save`, `list`, `run`)
 - Plugin management commands are available: `ah plugins list|enable|disable|reset`.
+- MCP stdio server is available through `ah mcp serve`; every enabled typed
+  command is exposed as a separate `ah.*` tool with schemas and risk metadata.
 - External dynamic plugin sources are included: `plugins/ah-plugin-github`, `plugins/ah-plugin-gitlab`, `plugins/ah-plugin-ollama`, `plugins/ah-plugin-postgres`.
 
 ## Quick Start
@@ -26,6 +28,7 @@ cargo build
 cargo run --bin ah -- --help
 cargo run --bin ah -- plugins list
 cargo run --bin ah -- file read README.md -n --from 1 --to 40
+cargo run --bin ah -- --cwd . mcp serve
 ```
 
 ## Runtime Layout
@@ -47,4 +50,5 @@ cargo run --bin ah -- file read README.md -n --from 1 --to 40
 - [Agents guide](docs/agents/README.md)
 - [Developer guide](docs/developers/README.md)
 - [Command reference](docs/reference/README.md)
+- [MCP stdio reference](docs/reference/mcp.md)
 - [Changelog](CHANGELOG.md)

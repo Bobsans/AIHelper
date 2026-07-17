@@ -103,17 +103,29 @@ impl PluginSettings {
         true
     }
 
-    pub fn save(&self) -> Result<(), AppError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
-        }
+    pub fn update(
+        &mut self,
+        mutation: impl FnOnce(&mut PluginSettings) -> Result<bool, AppError>,
+    ) -> Result<bool, AppError> {
+        let path = self.path.clone();
+        let (candidate, changed) = crate::persistence::transaction(&path, || {
+            let mut candidate = Self::load_from_path(path.clone())?;
+            let changed = mutation(&mut candidate)?;
+            if changed {
+                candidate.save_unlocked()?;
+            }
+            Ok((candidate, changed))
+        })?;
+        *self = candidate;
+        Ok(changed)
+    }
+
+    fn save_unlocked(&self) -> Result<(), AppError> {
         let payload = PluginSettingsStore {
             version: SETTINGS_VERSION,
             disabled_domains: self.disabled_domains.iter().cloned().collect(),
         };
-        let raw = serde_json::to_string_pretty(&payload)?;
-        fs::write(&self.path, raw).map_err(|source| AppError::file_write(self.path.clone(), source))
+        crate::persistence::atomic_write_json(&self.path, &payload)
     }
 }
 
@@ -141,4 +153,53 @@ fn normalize_domain_key(domain: &str) -> String {
 struct PluginSettingsStore {
     version: u32,
     disabled_domains: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+
+    #[test]
+    fn failed_update_leaves_in_memory_settings_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocked_parent = directory.path().join("blocked");
+        fs::write(&blocked_parent, "not a directory").unwrap();
+        let mut settings =
+            PluginSettings::load_from_path(blocked_parent.join("plugins.json")).unwrap();
+
+        let error = settings
+            .update(|candidate| candidate.disable_domain("search"))
+            .expect_err("update should fail before publishing the candidate");
+
+        assert_eq!(error.code(), "FILE_WRITE_FAILED");
+        assert!(!settings.is_disabled("search"));
+    }
+
+    #[test]
+    fn concurrent_updates_preserve_unrelated_domains() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("plugins.json");
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for domain in ["search", "task"] {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let mut settings = PluginSettings::load_from_path(path).unwrap();
+                barrier.wait();
+                settings
+                    .update(|candidate| candidate.disable_domain(domain))
+                    .unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let settings = PluginSettings::load_from_path(path).unwrap();
+        assert!(settings.is_disabled("search"));
+        assert!(settings.is_disabled("task"));
+    }
 }

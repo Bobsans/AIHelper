@@ -3,8 +3,8 @@
 use std::{
     env, fs,
     io::{BufRead, BufReader, Cursor, Read, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -18,6 +18,8 @@ use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+#[cfg(test)]
+use std::thread;
 use zip::ZipArchive;
 
 const DOMAIN: &str = "github";
@@ -35,6 +37,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-github\0";
 static DOMAIN_C: &[u8] = b"github\0";
 static DESCRIPTION_C: &[u8] = b"GitHub Releases and Actions plugin (dynamic)\0";
 
+mod typed;
+
 ah_plugin_api::define_plugin_entrypoint_v1!(
     plugin_name_c: PLUGIN_NAME_C,
     domain_c: DOMAIN_C,
@@ -43,6 +47,9 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     parse_fn: parse_args,
     execute_fn: execute,
     manual_fn: plugin_manual,
+    typed_catalog_fn: typed::command_catalog,
+    typed_execute_fn: typed::invoke,
+    typed_cancel_fn: typed::cancel,
 );
 
 #[derive(Debug, Parser)]
@@ -68,6 +75,8 @@ struct GithubConnectionArgs {
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
     timeout_secs: u64,
+    #[arg(skip)]
+    cwd: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1241,7 +1250,12 @@ fn wait_run(
         }
 
         let remaining = timeout - elapsed;
-        thread::sleep(interval.min(remaining));
+        if typed::wait_or_cancel(interval.min(remaining)) {
+            return InvocationResponse::error(
+                "CANCELLED",
+                format!("workflow run wait {} was cancelled", args.run_id),
+            );
+        }
     }
 }
 
@@ -1521,7 +1535,7 @@ fn resolve_repo(
             .ok_or_else(|| invalid_repo(repo));
     }
 
-    let remote_url = read_git_remote_url(&args.remote)?;
+    let remote_url = read_git_remote_url(&args.remote, args.cwd.as_deref())?;
     parse_github_remote_url(&remote_url)
         .map(|slug| (slug, Some(remote_url.clone())))
         .ok_or_else(|| {
@@ -1535,16 +1549,18 @@ fn resolve_repo(
         })
 }
 
-fn read_git_remote_url(remote: &str) -> Result<String, InvocationResponse> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", remote])
-        .output()
-        .map_err(|error| {
-            InvocationResponse::error(
-                "COMMAND_EXECUTION_FAILED",
-                format!("failed to execute git remote get-url {remote}: {error}"),
-            )
-        })?;
+fn read_git_remote_url(remote: &str, cwd: Option<&Path>) -> Result<String, InvocationResponse> {
+    let mut command = Command::new("git");
+    command.args(["remote", "get-url", remote]);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let output = command.output().map_err(|error| {
+        InvocationResponse::error(
+            "COMMAND_EXECUTION_FAILED",
+            format!("failed to execute git remote get-url {remote}: {error}"),
+        )
+    })?;
     if !output.status.success() {
         return Err(InvocationResponse::error(
             "COMMAND_FAILED",

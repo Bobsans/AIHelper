@@ -8,6 +8,7 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 - Use `--json` when the result must be parsed by another tool or step.
 
 ## Recipe Index
+- [Use AIHelper as an MCP stdio server](recipes/mcp-stdio.md)
 - [Read file with line numbers](recipes/file-read.md)
 - [Inspect directory tree](recipes/file-tree.md)
 - [Search text in files](recipes/search-text.md)

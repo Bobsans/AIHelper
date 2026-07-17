@@ -54,7 +54,13 @@ pub(crate) fn walk_entries(root: &Path, follow_symlinks: bool) -> Result<Vec<Wal
 }
 
 pub(crate) fn is_inside_git_repo() -> Result<bool, AppError> {
-    let output = core::run_command("git", ["rev-parse", "--is-inside-work-tree"])
+    let cwd =
+        std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))?;
+    is_inside_git_repo_at(&cwd)
+}
+
+pub(crate) fn is_inside_git_repo_at(cwd: &Path) -> Result<bool, AppError> {
+    let output = core::run_command_in_dir("git", ["rev-parse", "--is-inside-work-tree"], cwd)
         .map_err(|error| AppError::invalid_argument(format!("failed to run git: {error}")))?;
     if !output.status.success() {
         return Ok(false);
@@ -64,9 +70,15 @@ pub(crate) fn is_inside_git_repo() -> Result<bool, AppError> {
 }
 
 pub(crate) fn read_git_status_bytes() -> Result<Vec<u8>, AppError> {
-    let output = core::run_command("git", ["status", "--porcelain=v1", "-z"]).map_err(|error| {
-        AppError::invalid_argument(format!("failed to run git status: {error}"))
-    })?;
+    let cwd =
+        std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))?;
+    read_git_status_bytes_at(&cwd)
+}
+
+pub(crate) fn read_git_status_bytes_at(cwd: &Path) -> Result<Vec<u8>, AppError> {
+    let output = core::run_command_in_dir("git", ["status", "--porcelain=v1", "-z"], cwd).map_err(
+        |error| AppError::invalid_argument(format!("failed to run git status: {error}")),
+    )?;
     if !output.status.success() {
         return Err(AppError::invalid_argument(
             "git status failed for current repository",

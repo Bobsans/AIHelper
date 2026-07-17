@@ -367,6 +367,25 @@ pub(crate) fn execute_changed(_args: ChangedArgs) -> Result<CtxResult, AppError>
     }))
 }
 
+pub(crate) fn execute_changed_at(_args: ChangedArgs, cwd: &Path) -> Result<CtxResult, AppError> {
+    let in_repo = adapters::io::is_inside_git_repo_at(cwd)?;
+    let entries = if in_repo {
+        parse_porcelain_v1_z(&adapters::io::read_git_status_bytes_at(cwd)?)?
+            .into_iter()
+            .map(changed_entry)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(CtxResult::Changed(CtxChangedOutput {
+        command: "ctx.changed",
+        in_git_repo: in_repo,
+        changed_count: entries.len(),
+        entries,
+    }))
+}
+
 fn changed_entry(entry: StatusEntry) -> ChangedEntry {
     ChangedEntry {
         status: entry.status,

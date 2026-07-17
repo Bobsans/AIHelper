@@ -40,6 +40,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-postgres\0";
 static DOMAIN_C: &[u8] = b"postgres\0";
 static DESCRIPTION_C: &[u8] = b"PostgreSQL database workflow plugin (dynamic)\0";
 
+mod typed;
+
 ah_plugin_api::define_plugin_entrypoint_v1!(
     plugin_name_c: PLUGIN_NAME_C,
     domain_c: DOMAIN_C,
@@ -48,6 +50,9 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     parse_fn: parse_args,
     execute_fn: execute,
     manual_fn: plugin_manual,
+    typed_catalog_fn: typed::command_catalog,
+    typed_execute_fn: typed::invoke,
+    typed_cancel_fn: typed::cancel,
 );
 
 #[derive(Debug, Parser)]
@@ -158,6 +163,8 @@ struct ToolDownloadArgs {
     version: String,
     #[arg(long)]
     force: bool,
+    #[arg(skip = DEFAULT_DOWNLOAD_TIMEOUT_SECS)]
+    download_timeout_secs: u64,
 }
 
 #[derive(Debug, Args)]
@@ -668,7 +675,7 @@ fn execute_tool_download(
     args: ToolDownloadArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    match download_managed_tool(&args.version, args.force) {
+    match download_managed_tool(&args.version, args.force, args.download_timeout_secs) {
         Ok(output) => render_success(
             globals,
             &output,
@@ -824,7 +831,11 @@ fn resolve_operational_tool(args: &ToolResolverArgs) -> Result<ToolContext, Invo
     }
 
     if args.ensure_tool {
-        download_managed_tool(DEFAULT_POSTGRES_VERSION, false)?;
+        download_managed_tool(
+            DEFAULT_POSTGRES_VERSION,
+            false,
+            DEFAULT_DOWNLOAD_TIMEOUT_SECS,
+        )?;
         let candidates = inspect_tool_candidates(args);
         if let Some(candidate) = candidates.iter().find(|candidate| candidate.accepted) {
             return accepted_candidate_to_context(candidate)
@@ -1116,7 +1127,10 @@ fn psql_exe_name() -> &'static str {
 fn download_managed_tool(
     version: &str,
     force: bool,
+    timeout_secs: u64,
 ) -> Result<ToolDownloadOutput, InvocationResponse> {
+    let download_started = Instant::now();
+    let timeout_secs = timeout_secs.max(1);
     let manifest = match download_manifest(version) {
         Some(value) => value,
         None => {
@@ -1142,7 +1156,11 @@ fn download_managed_tool(
             ),
         )
     })?;
-    let _download_lock = acquire_download_lock(&cache_root, version)?;
+    let _download_lock = acquire_download_lock(
+        &cache_root,
+        version,
+        Duration::from_secs(timeout_secs.min(120)),
+    )?;
 
     if psql_path.exists()
         && !force
@@ -1165,7 +1183,15 @@ fn download_managed_tool(
         "postgresql-{}-{}.zip.download",
         version, manifest.platform
     ));
-    download_archive(manifest.url, manifest.sha256, &archive_path)?;
+    let remaining_timeout = Duration::from_secs(timeout_secs)
+        .saturating_sub(download_started.elapsed())
+        .max(Duration::from_secs(1));
+    download_archive(
+        manifest.url,
+        manifest.sha256,
+        &archive_path,
+        remaining_timeout,
+    )?;
 
     let temp_dir = cache_root.join(format!("{}.tmp.{}", version, std::process::id()));
     if temp_dir.exists() {
@@ -1234,6 +1260,7 @@ impl Drop for DownloadLock {
 fn acquire_download_lock(
     cache_root: &Path,
     version: &str,
+    timeout: Duration,
 ) -> Result<DownloadLock, InvocationResponse> {
     let lock_path = cache_root.join(format!("{version}.lock"));
     let start = Instant::now();
@@ -1252,7 +1279,7 @@ fn acquire_download_lock(
                     let _ = fs::remove_file(&lock_path);
                     continue;
                 }
-                if start.elapsed() >= Duration::from_secs(120) {
+                if start.elapsed() >= timeout {
                     return Err(InvocationResponse::error(
                         "POSTGRES_TOOL_DOWNLOAD_FAILED",
                         format!(
@@ -1312,9 +1339,10 @@ fn download_archive(
     url: &str,
     expected_sha256: &str,
     archive_path: &Path,
+    timeout: Duration,
 ) -> Result<(), InvocationResponse> {
     let client = Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_DOWNLOAD_TIMEOUT_SECS))
+        .timeout(timeout)
         .build()
         .map_err(|error| {
             InvocationResponse::error(

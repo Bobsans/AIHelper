@@ -80,7 +80,8 @@ pub(crate) enum SearchResult {
 
 pub(crate) fn execute_text(args: TextArgs, limit: Option<usize>) -> Result<SearchResult, AppError> {
     crate::safety::validate_max_bytes(args.max_bytes)?;
-    let scope = adapters::io::resolve_scope(&args.paths, args.follow_symlinks)?;
+    let scope =
+        adapters::io::resolve_scope_at(&args.paths, args.follow_symlinks, args.cwd.as_deref())?;
     let context_lines = args.context.unwrap_or(0);
     let matcher = build_matcher(&args.pattern, args.regex, args.ignore_case)?;
     let globset = build_globset(&args.globs)?;
@@ -130,7 +131,8 @@ pub(crate) fn execute_files(
     args: FilesArgs,
     limit: Option<usize>,
 ) -> Result<SearchResult, AppError> {
-    let scope = adapters::io::resolve_scope(&args.paths, args.follow_symlinks)?;
+    let scope =
+        adapters::io::resolve_scope_at(&args.paths, args.follow_symlinks, args.cwd.as_deref())?;
 
     let all_files =
         adapters::io::collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?;

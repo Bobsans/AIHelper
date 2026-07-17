@@ -4,6 +4,7 @@ Reference docs for all command domains and flags.
 
 ## Domains
 - [ai](ai.md)
+- [mcp](mcp.md)
 - [file](file.md)
 - [search](search.md)
 - [ctx](ctx.md)

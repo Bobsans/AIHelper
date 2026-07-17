@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,12 +17,17 @@ pub(crate) struct SearchScope {
     pub(crate) root_labels: Vec<String>,
 }
 
-pub(crate) fn resolve_scope(
+pub(crate) fn resolve_scope_at(
     paths: &[PathBuf],
     follow_symlinks: bool,
+    cwd: Option<&Path>,
 ) -> Result<SearchScope, AppError> {
+    let current_dir = match cwd {
+        Some(path) => path.to_path_buf(),
+        None => current_dir()?,
+    };
     let requested_roots = if paths.is_empty() {
-        vec![PathBuf::from(".")]
+        vec![current_dir.clone()]
     } else {
         paths.to_vec()
     };
@@ -45,12 +49,11 @@ pub(crate) fn resolve_scope(
 
     let mut roots = requested_roots
         .iter()
-        .map(|root| absolutize_path(root))
+        .map(|root| absolutize_path_at(root, &current_dir))
         .collect::<Result<Vec<_>, _>>()?;
     roots.sort();
     roots.dedup();
 
-    let current_dir = current_dir()?;
     let display_root = if roots.len() == 1 {
         roots[0].clone()
     } else {
@@ -81,6 +84,12 @@ pub(crate) fn collect_files_from_roots(
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
     for root in roots {
+        if crate::commands::search::current_request_cancelled() {
+            return Err(AppError::external(
+                "EXECUTION_CANCELLED",
+                "search request was cancelled",
+            ));
+        }
         files.extend(collect_files_ignore_aware(root, globset, follow_symlinks)?);
     }
     files.sort();
@@ -115,6 +124,12 @@ fn collect_files_ignore_aware(
         .add_custom_ignore_filename(".rgignore");
     let mut files = Vec::new();
     for entry in builder.build() {
+        if crate::commands::search::current_request_cancelled() {
+            return Err(AppError::external(
+                "EXECUTION_CANCELLED",
+                "search request was cancelled",
+            ));
+        }
         let entry = entry.map_err(|error| {
             AppError::directory_read(root.to_path_buf(), std::io::Error::other(error))
         })?;
@@ -141,10 +156,15 @@ pub(crate) fn collect_text_matches(
     let mut matches = Vec::new();
     let mut stats = TextCollectStats::default();
     let mut truncated = false;
-    let mut seen: HashSet<(String, usize)> = HashSet::new();
 
-    'file_loop: for path in files {
-        let file_matches = match_file(
+    for path in files {
+        if crate::commands::search::current_request_cancelled() {
+            return Err(AppError::external(
+                "EXECUTION_CANCELLED",
+                "search request was cancelled",
+            ));
+        }
+        let (file_matches, file_truncated) = match_file(
             &path,
             root,
             matcher,
@@ -152,19 +172,12 @@ pub(crate) fn collect_text_matches(
             max_bytes,
             follow_symlinks,
             &mut stats,
+            max_count.saturating_sub(matches.len()),
         )?;
-        for item in file_matches {
-            let key = (item.path.clone(), item.line);
-            if seen.contains(&key) {
-                continue;
-            }
-            if matches.len() < max_count {
-                seen.insert(key);
-                matches.push(item);
-            } else {
-                truncated = true;
-                break 'file_loop;
-            }
+        matches.extend(file_matches);
+        if file_truncated {
+            truncated = true;
+            break;
         }
     }
 
@@ -179,7 +192,8 @@ fn match_file(
     max_bytes: u64,
     follow_symlinks: bool,
     stats: &mut TextCollectStats,
-) -> Result<Vec<TextMatch>, AppError> {
+    match_limit: usize,
+) -> Result<(Vec<TextMatch>, bool), AppError> {
     let policy = TextFilePolicy {
         max_bytes,
         follow_symlinks,
@@ -188,7 +202,7 @@ fn match_file(
         TextFileDecision::Allow(_) => {}
         TextFileDecision::Skip(reason) => {
             register_skip_reason(stats, reason);
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
     }
 
@@ -197,40 +211,49 @@ fn match_file(
         Ok(value) => value,
         Err(_) => {
             register_skip_reason(stats, TextFileSkipReason::Binary);
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
     };
     if text.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
-    let lines: Vec<String> = text.lines().map(|line| line.to_owned()).collect();
+    let lines = text.lines().collect::<Vec<_>>();
 
     let mut matches = Vec::new();
     let normalized_path = display_path(path, root);
     for (index, line) in lines.iter().enumerate() {
+        if crate::commands::search::current_request_cancelled() {
+            return Err(AppError::external(
+                "EXECUTION_CANCELLED",
+                "search request was cancelled",
+            ));
+        }
         if let Some(column) = crate::commands::search::domain::find_match_column(matcher, line) {
+            if matches.len() >= match_limit {
+                return Ok((matches, true));
+            }
             let line_number = index + 1;
             let (before, after) = build_context_lines(context_lines, index, &lines);
             matches.push(TextMatch {
                 path: normalized_path.clone(),
                 line: line_number,
                 column,
-                text: line.clone(),
+                text: (*line).to_owned(),
                 context_before: before,
                 context_after: after,
             });
         }
     }
 
-    Ok(matches)
+    Ok((matches, false))
 }
 
 fn build_context_lines(
     context_lines: usize,
     index: usize,
-    lines: &[String],
+    lines: &[&str],
 ) -> (Vec<ContextLine>, Vec<ContextLine>) {
-    let before_start = index.saturating_sub(context_lines + 1);
+    let before_start = index.saturating_sub(context_lines);
     let before = if context_lines == 0 {
         Vec::new()
     } else {
@@ -239,7 +262,7 @@ fn build_context_lines(
             .enumerate()
             .map(|(offset, content)| ContextLine {
                 line: before_start + offset + 1,
-                text: content.clone(),
+                text: (*content).to_owned(),
             })
             .collect()
     };
@@ -255,7 +278,7 @@ fn build_context_lines(
             .enumerate()
             .map(|(offset, content)| ContextLine {
                 line: index + offset + 2,
-                text: content.clone(),
+                text: (*content).to_owned(),
             })
             .collect()
     };
@@ -294,11 +317,10 @@ pub(crate) fn display_path(path: &Path, root: &Path) -> String {
     core::normalize_path(relative)
 }
 
-fn absolutize_path(path: &Path) -> Result<PathBuf, AppError> {
+fn absolutize_path_at(path: &Path, current_dir: &Path) -> Result<PathBuf, AppError> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    let current_dir = current_dir()?;
     Ok(current_dir.join(path))
 }
 
@@ -317,5 +339,93 @@ fn register_skip_reason(stats: &mut TextCollectStats, reason: TextFileSkipReason
             stats.skipped_symlink_files += 1;
         }
         TextFileSkipReason::NotAFile => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn literal(needle: &str) -> PatternMatcher {
+        PatternMatcher::Literal {
+            needle: needle.to_owned(),
+            needle_lower: None,
+            ignore_case: false,
+        }
+    }
+
+    #[test]
+    fn context_before_contains_exactly_requested_lines() {
+        let lines = vec!["one", "two", "hit", "four"];
+
+        let (before, after) = build_context_lines(1, 2, &lines);
+
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].line, 2);
+        assert_eq!(before[0].text, "two");
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].line, 4);
+        assert_eq!(after[0].text, "four");
+    }
+
+    #[test]
+    fn context_is_bounded_at_first_and_last_lines() {
+        let lines = vec!["first", "second", "third", "last"];
+
+        let (first_before, first_after) = build_context_lines(2, 0, &lines);
+        assert!(first_before.is_empty());
+        assert_eq!(
+            first_after.iter().map(|line| line.line).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+
+        let (last_before, last_after) = build_context_lines(2, 3, &lines);
+        assert_eq!(
+            last_before.iter().map(|line| line.line).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert!(last_after.is_empty());
+    }
+
+    #[test]
+    fn text_match_limit_uses_one_extra_result_for_truncation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("matches.txt");
+        fs::write(&path, "hit one\nhit two\nhit three\nhit four\n").unwrap();
+
+        let (matches, _, truncated) = collect_text_matches(
+            vec![path],
+            directory.path(),
+            &literal("hit"),
+            0,
+            1_024,
+            false,
+            Some(2),
+        )
+        .unwrap();
+
+        assert_eq!(matches.len(), 2);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn text_match_limit_is_not_truncated_without_an_extra_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("matches.txt");
+        fs::write(&path, "hit one\nhit two\n").unwrap();
+
+        let (matches, _, truncated) = collect_text_matches(
+            vec![path],
+            directory.path(),
+            &literal("hit"),
+            0,
+            1_024,
+            false,
+            Some(2),
+        )
+        .unwrap();
+
+        assert_eq!(matches.len(), 2);
+        assert!(!truncated);
     }
 }

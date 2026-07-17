@@ -12,6 +12,8 @@ mod git;
 mod help;
 #[path = "integration/http.rs"]
 mod http;
+#[path = "integration/mcp.rs"]
+mod mcp;
 #[path = "integration/plugins.rs"]
 mod plugins;
 #[path = "integration/project.rs"]

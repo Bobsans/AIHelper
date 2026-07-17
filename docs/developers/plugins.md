@@ -25,6 +25,10 @@ Dynamic plugins must expose symbol:
 
 - `ah_plugin_entry_v1`
 - optional: `ah_plugin_manual_json_v1`
+- optional typed-command capability (all symbols are required together):
+  - `ah_plugin_command_catalog_json_v1`
+  - `ah_plugin_invoke_command_json_v1`
+  - `ah_plugin_cancel_command_v1`
 
 Entry returns pointer to:
 
@@ -46,6 +50,46 @@ Optional symbol behavior:
 
 The host validates `abi_version` against `AH_PLUGIN_ABI_VERSION`.
 
+Typed plugins must advertise `typed_commands_v1` in compatibility metadata.
+The catalog declares one `CommandDescriptor` per operation with object-root
+input/output JSON Schemas and conservative `CommandEffects`. The runtime
+rejects duplicate ids, reserved input properties, invalid schemas, incomplete
+sidecars, and responses that do not satisfy the declared output schema.
+
+Typed input schemas must use a canonical root object so the host can inject the
+optional MCP `context` property safely. Root keywords are limited to `$schema`,
+`$id`, `$defs`, `definitions`, `title`, `description`, `default`, `examples`,
+`deprecated`, `readOnly`, `writeOnly`, `type`, `properties`, `required`, and
+`additionalProperties`. Nested schemas remain unrestricted. Root composition,
+conditionals, property dependencies, object-count constraints, `enum`, `const`,
+`patternProperties`, `propertyNames`, and `unevaluatedProperties` are rejected.
+Document cross-field rules in the command and property descriptions and enforce
+them again in the typed handler, because those rules cannot use root composition.
+
+The application reserves dynamic domains `ai`, `plugins`, and `mcp` for host
+control-plane commands. A shared library declaring one of these domains is
+skipped during discovery with a deterministic diagnostic.
+
+Use the extended entrypoint macro form:
+
+```rust
+ah_plugin_api::define_plugin_entrypoint_v1!(
+    plugin_name_c: PLUGIN_NAME_C,
+    domain_c: DOMAIN_C,
+    description_c: DESCRIPTION_C,
+    domain: DOMAIN,
+    parse_fn: parse_args,
+    execute_fn: execute,
+    manual_fn: plugin_manual,
+    typed_catalog_fn: typed::command_catalog,
+    typed_execute_fn: typed::invoke,
+    typed_cancel_fn: typed::cancel,
+);
+```
+
+Keep these contracts transport-neutral. Dynamic plugins must not depend on the
+MCP SDK.
+
 ## Invocation Model
 
 Host sends JSON request:
@@ -62,6 +106,20 @@ Plugin returns JSON response:
   - optional `message`
   - optional `error_code`
   - optional `error_message`
+
+Typed invocation uses:
+
+- `TypedInvocationRequest`
+  - stable command id
+  - validated JSON arguments
+  - `ExecutionContextWire` (`request_id`, `cwd`, `limit`, remaining deadline)
+- `TypedInvocationResponse`
+  - structured data on success
+  - structured `CommandError` on failure
+
+Relative paths and child process working directories must derive from the
+request context. Do not read or change the process-global current directory.
+Bound network and child-process work by the remaining request deadline.
 
 ## Semantic Text Formatting
 
@@ -147,6 +205,11 @@ atomically under a lock to avoid corrupted caches.
 - Do not print partial/broken output on parse failures.
 - Use stable error codes for machine handling.
 - Treat ABI changes as versioned events (bump API version intentionally).
+- Describe worst-case effects when behavior depends on input flags.
+- Make active cancellation wake polling loops or terminate child process groups
+  where practical.
+- Protect shared caches/configuration for a future parallel executor; never
+  assume handlers will remain globally serialized.
 
 ## Example Dynamic Plugins
 

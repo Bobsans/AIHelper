@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use ah_plugin_api::{
-    GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand, ManualExample,
-    PluginManual, PluginMetadata, RequiredTool, normalize_invocation_argv,
+    CommandCatalog, GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand,
+    ManualExample, PluginCompatibility, PluginManual, PluginMetadata, RequiredTool,
+    TypedInvocationRequest, TypedInvocationResponse, normalize_invocation_argv,
+    plugin_capabilities,
 };
 use ah_runtime::BuiltinPlugin;
 use clap::{CommandFactory, Parser, error::ErrorKind};
@@ -86,7 +88,8 @@ fn file_metadata() -> PluginMetadata {
         description: "File operations plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -97,7 +100,8 @@ fn search_metadata() -> PluginMetadata {
         description: "Search operations plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -108,7 +112,8 @@ fn ctx_metadata() -> PluginMetadata {
         description: "Context utilities plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -119,7 +124,8 @@ fn git_metadata() -> PluginMetadata {
         description: "Git utilities plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: vec![git_required_tool()],
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -130,7 +136,8 @@ fn project_metadata() -> PluginMetadata {
         description: "Project detection plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -141,7 +148,8 @@ fn run_metadata() -> PluginMetadata {
         description: "Command execution check plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -152,7 +160,8 @@ fn task_metadata() -> PluginMetadata {
         description: "Task recipe plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -163,7 +172,8 @@ fn http_metadata() -> PluginMetadata {
         description: "HTTP workflow plugin (built-in)".to_owned(),
         abi_version: 1,
         required_tools: Vec::new(),
-        compatibility: Default::default(),
+        compatibility: PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
     }
 }
 
@@ -607,6 +617,14 @@ impl BuiltinPlugin for FileBuiltinPlugin {
             };
         map_execute("file", commands::file::execute(parsed.args, &options))
     }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::file::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::file::invoke_typed(request)
+    }
 }
 
 impl BuiltinPlugin for SearchBuiltinPlugin {
@@ -626,6 +644,18 @@ impl BuiltinPlugin for SearchBuiltinPlugin {
             };
         map_execute("search", commands::search::execute(parsed.args, &options))
     }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::search::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::search::invoke_typed(request)
+    }
+
+    fn cancel_typed(&self, request_id: &str) -> bool {
+        commands::search::cancel_typed(request_id)
+    }
 }
 
 impl BuiltinPlugin for CtxBuiltinPlugin {
@@ -643,6 +673,22 @@ impl BuiltinPlugin for CtxBuiltinPlugin {
         } else {
             Vec::new()
         }
+    }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::ctx::command_catalog())
+    }
+
+    fn required_tools_typed(&self, request: &TypedInvocationRequest) -> Vec<RequiredTool> {
+        if request.command == "ctx.changed" {
+            vec![git_required_tool()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::ctx::invoke_typed(request)
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
@@ -672,6 +718,14 @@ impl BuiltinPlugin for GitBuiltinPlugin {
             };
         map_execute("git", commands::git::execute(parsed.args, &options))
     }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::git::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::git::invoke_typed(request)
+    }
 }
 
 impl BuiltinPlugin for ProjectBuiltinPlugin {
@@ -692,6 +746,14 @@ impl BuiltinPlugin for ProjectBuiltinPlugin {
             };
         map_execute("project", commands::project::execute(parsed.args, &options))
     }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::project::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::project::invoke_typed(request)
+    }
 }
 
 impl BuiltinPlugin for RunBuiltinPlugin {
@@ -710,6 +772,18 @@ impl BuiltinPlugin for RunBuiltinPlugin {
                 ParseOutcome::Response(response) => return response,
             };
         map_execute("run", commands::run::execute(parsed.args, &options))
+    }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::run::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::run::invoke_typed(request)
+    }
+
+    fn cancel_typed(&self, request_id: &str) -> bool {
+        commands::run::cancel_typed(request_id)
     }
 }
 
@@ -730,6 +804,14 @@ impl BuiltinPlugin for HttpBuiltinPlugin {
             };
         map_execute("http", commands::http::execute(parsed.args, &options))
     }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::http::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::http::invoke_typed(request)
+    }
 }
 
 impl BuiltinPlugin for TaskBuiltinPlugin {
@@ -748,6 +830,18 @@ impl BuiltinPlugin for TaskBuiltinPlugin {
                 ParseOutcome::Response(response) => return response,
             };
         map_execute("task", commands::task::execute(parsed.args, &options))
+    }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(commands::task::command_catalog())
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        commands::task::invoke_typed(request)
+    }
+
+    fn cancel_typed(&self, request_id: &str) -> bool {
+        commands::task::cancel_typed(request_id)
     }
 }
 
@@ -804,14 +898,117 @@ fn map_execute(domain: &str, result: Result<(), AppError>) -> InvocationResponse
 
 #[cfg(test)]
 mod tests {
+    use ah_runtime::PluginManager;
     use clap::{CommandFactory, Parser};
 
     use super::*;
 
     #[test]
+    fn builtin_catalogs_use_mcp_compatible_input_roots() {
+        const ALLOWED_ROOT_KEYWORDS: &[&str] = &[
+            "$schema",
+            "$id",
+            "$defs",
+            "definitions",
+            "title",
+            "description",
+            "default",
+            "examples",
+            "deprecated",
+            "readOnly",
+            "writeOnly",
+            "type",
+            "properties",
+            "required",
+            "additionalProperties",
+        ];
+        let mut manager = PluginManager::new();
+        for plugin in builtins() {
+            manager.register_builtin(plugin);
+        }
+
+        let commands = manager
+            .list_enabled_commands()
+            .expect("built-in typed catalogs should compile");
+
+        assert!(!commands.is_empty());
+        for command in commands {
+            let root = command
+                .descriptor
+                .input_schema
+                .as_object()
+                .expect("input schema should have an object root");
+            assert!(
+                root.keys()
+                    .all(|keyword| ALLOWED_ROOT_KEYWORDS.contains(&keyword.as_str())),
+                "{} has an incompatible input root",
+                command.descriptor.id
+            );
+        }
+    }
+
+    #[test]
     fn file_manual_examples_parse() {
         let manual = file_manual();
         assert_examples_parse::<FilePluginCli>(&manual);
+    }
+
+    #[test]
+    fn file_typed_read_uses_context_cwd_and_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("sample.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        let mut manager = PluginManager::new();
+        let file = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "file")
+            .unwrap();
+        manager.register_builtin(file);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "file.read",
+                serde_json::json!({"path": "sample.txt", "number_lines": true}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "file-test",
+                    temp.path().to_string_lossy(),
+                    Some(2),
+                    1_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["command"], "file.read");
+        assert_eq!(data["line_count"], 2);
+        assert_eq!(data["truncated"], true);
+        assert_eq!(data["content"], "   1: alpha\n   2: beta");
+    }
+
+    #[test]
+    fn file_typed_read_returns_structured_range_error() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("sample.txt"), "alpha\n").unwrap();
+        let mut manager = PluginManager::new();
+        let file = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "file")
+            .unwrap();
+        manager.register_builtin(file);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "file.read",
+                serde_json::json!({"path": "sample.txt", "from": 3, "to": 2}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "file-test-error",
+                    temp.path().to_string_lossy(),
+                    None,
+                    1_000,
+                ),
+            ))
+            .unwrap();
+        assert!(!response.success);
+        let error = response.error.unwrap();
+        assert_eq!(error.domain.as_deref(), Some("file"));
+        assert_eq!(error.operation.as_deref(), Some("file.read"));
     }
 
     #[test]
@@ -827,9 +1024,132 @@ mod tests {
     }
 
     #[test]
+    fn ctx_typed_symbols_uses_explicit_context_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("sample.rs"), "fn sample() {}\n").unwrap();
+        let mut manager = PluginManager::new();
+        let ctx = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "ctx")
+            .unwrap();
+        manager.register_builtin(ctx);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "ctx.symbols",
+                serde_json::json!({"path": "sample.rs", "preset": "summary"}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "ctx-test",
+                    temp.path().to_string_lossy(),
+                    None,
+                    1_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["command"], "ctx.symbols");
+        assert_eq!(data["symbol_count"], 1);
+        assert!(data["root"].as_str().unwrap().ends_with("sample.rs"));
+    }
+
+    #[test]
+    fn ctx_typed_symbols_rejects_missing_path() {
+        let mut manager = PluginManager::new();
+        let ctx = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "ctx")
+            .unwrap();
+        manager.register_builtin(ctx);
+        let error = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "ctx.symbols",
+                serde_json::json!({}),
+                ah_plugin_api::ExecutionContextWire::new("ctx-test-invalid", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ah_runtime::RuntimeError::TypedInvocation(_)
+        ));
+    }
+
+    #[test]
     fn git_manual_examples_parse() {
         let manual = git_manual();
         assert_examples_parse::<GitPluginCli>(&manual);
+    }
+
+    #[test]
+    fn git_typed_status_uses_explicit_context_cwd() {
+        if !git_is_available() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let mut manager = PluginManager::new();
+        let git = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "git")
+            .unwrap();
+        manager.register_builtin(git);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "git.status",
+                serde_json::json!({}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "git-status-test",
+                    temp.path().to_string_lossy(),
+                    None,
+                    2_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["command"], "git.status");
+        assert_eq!(data["in_git_repo"], false);
+    }
+
+    #[test]
+    fn git_typed_tag_create_mutates_context_repository() {
+        if !git_is_available() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        std::fs::write(temp.path().join("sample.txt"), "sample\n").unwrap();
+        run_git(temp.path(), &["add", "sample.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        let mut manager = PluginManager::new();
+        let git = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "git")
+            .unwrap();
+        manager.register_builtin(git);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "git.tag.create",
+                serde_json::json!({"tag": "v-test", "message": "test tag"}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "git-tag-test",
+                    temp.path().to_string_lossy(),
+                    None,
+                    2_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["tag"], "v-test");
+        assert_eq!(data["annotated"], true);
+        let output = std::process::Command::new("git")
+            .current_dir(temp.path())
+            .args(["tag", "--list", "v-test"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "v-test");
     }
 
     #[test]
@@ -839,9 +1159,124 @@ mod tests {
     }
 
     #[test]
+    fn project_typed_detect_uses_explicit_context_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"sample\"\nversion = \"1.2.3\"\n",
+        )
+        .unwrap();
+        let mut manager = PluginManager::new();
+        let project = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "project")
+            .unwrap();
+        manager.register_builtin(project);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "project.detect",
+                serde_json::json!({}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "project-detect-test",
+                    temp.path().to_string_lossy(),
+                    None,
+                    2_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["command"], "project.detect");
+        assert!(
+            data["ecosystems"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "rust")
+        );
+        assert!(
+            data["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value["version"] == "1.2.3")
+        );
+    }
+
+    #[test]
     fn run_manual_examples_parse() {
         let manual = run_manual();
         assert_examples_parse::<RunPluginCli>(&manual);
+    }
+
+    #[test]
+    fn run_typed_check_runs_in_explicit_context_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let command = if cfg!(windows) {
+            serde_json::json!(["cmd", "/C", "cd"])
+        } else {
+            serde_json::json!(["pwd"])
+        };
+        let mut manager = PluginManager::new();
+        let run = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "run")
+            .unwrap();
+        manager.register_builtin(run);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "run.check",
+                serde_json::json!({"command": command}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "run-check-test",
+                    temp.path().to_string_lossy(),
+                    None,
+                    5_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["success"], true);
+        let reported = std::path::PathBuf::from(data["stdout"].as_str().unwrap().trim());
+        assert_eq!(
+            std::fs::canonicalize(reported).unwrap(),
+            std::fs::canonicalize(temp.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn search_typed_text_uses_explicit_context_cwd_and_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("sample.txt"),
+            "needle one\nother\nneedle two\n",
+        )
+        .unwrap();
+        let mut manager = PluginManager::new();
+        let search = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "search")
+            .unwrap();
+        manager.register_builtin(search);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "search.text",
+                serde_json::json!({"pattern": "needle"}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "search-text-test",
+                    temp.path().to_string_lossy(),
+                    Some(1),
+                    2_000,
+                ),
+            ))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["command"], "search.text");
+        assert_eq!(data["match_count"], 1);
+        assert_eq!(data["truncated"], true);
+        assert_eq!(data["matches"][0]["path"], "sample.txt");
     }
 
     #[test]
@@ -851,9 +1286,99 @@ mod tests {
     }
 
     #[test]
+    fn http_typed_get_returns_valid_structured_response() {
+        let (url, server) = serve_http_once(200, r#"{"status":"ok"}"#);
+        let mut manager = PluginManager::new();
+        let http = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "http")
+            .unwrap();
+        manager.register_builtin(http);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "http.get",
+                serde_json::json!({
+                    "url": url,
+                    "expect_status": "200",
+                    "expect_json": ["status:eq:ok"]
+                }),
+                ah_plugin_api::ExecutionContextWire::new("http-get-test", ".", None, 2_000),
+            ))
+            .unwrap();
+        server.join().unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data["command"], "http.get");
+        assert_eq!(data["status"], 200);
+        assert_eq!(data["ok"], true);
+    }
+
+    #[test]
+    fn http_typed_expectation_failure_is_structured_error() {
+        let (url, server) = serve_http_once(200, "ok");
+        let mut manager = PluginManager::new();
+        let http = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "http")
+            .unwrap();
+        manager.register_builtin(http);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "http.get",
+                serde_json::json!({"url": url, "expect_status": "201"}),
+                ah_plugin_api::ExecutionContextWire::new("http-get-error-test", ".", None, 2_000),
+            ))
+            .unwrap();
+        server.join().unwrap();
+        assert!(!response.success);
+        assert_eq!(response.error.unwrap().code, "HTTP_ASSERTION_FAILED");
+    }
+
+    #[test]
     fn task_manual_examples_parse() {
         let manual = task_manual();
         assert_examples_parse::<TaskPluginCli>(&manual);
+    }
+
+    #[test]
+    fn task_typed_save_and_list_use_explicit_context_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut manager = PluginManager::new();
+        let task = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "task")
+            .unwrap();
+        manager.register_builtin(task);
+        let context = || {
+            ah_plugin_api::ExecutionContextWire::new(
+                "task-test",
+                temp.path().to_string_lossy(),
+                None,
+                2_000,
+            )
+        };
+        let saved = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "task.save",
+                serde_json::json!({"name": "check", "command": "cargo check"}),
+                context(),
+            ))
+            .unwrap();
+        assert!(saved.success);
+        assert!(temp.path().join(".ah").join("tasks.json").is_file());
+
+        let listed = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "task.list",
+                serde_json::json!({}),
+                context(),
+            ))
+            .unwrap();
+        assert!(listed.success);
+        let data = listed.data.unwrap();
+        assert_eq!(data["count"], 1);
+        assert_eq!(data["tasks"][0]["name"], "check");
+        assert_eq!(data["tasks"][0]["command"], "cargo check");
     }
 
     fn assert_examples_parse<T>(manual: &PluginManual)
@@ -875,5 +1400,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn git_is_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
+    fn run_git(cwd: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {} failed", args.join(" "));
+    }
+
+    fn serve_http_once(status: u16, body: &'static str) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let reason = if status == 200 { "OK" } else { "Error" };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (format!("http://{address}/test"), server)
     }
 }

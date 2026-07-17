@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::Serialize;
 
 use crate::error::AppError;
@@ -36,10 +38,17 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
     let execution = adapters::io::run_command(
         &program,
         &command_args,
-        args.timeout_secs,
-        &command_label,
-        args.max_output_bytes,
-        args.tail_lines,
+        adapters::io::RunCommandOptions {
+            timeout: args
+                .timeout_ms
+                .map(Duration::from_millis)
+                .unwrap_or_else(|| Duration::from_secs(args.timeout_secs.max(1))),
+            command_label: &command_label,
+            max_output_bytes: args.max_output_bytes,
+            tail_lines: args.tail_lines,
+            cwd: args.cwd.as_deref(),
+            cancelled: super::current_request_cancelled,
+        },
     )?;
 
     let stdout = adapters::io::render_output(&execution.stdout, args.tail_lines);

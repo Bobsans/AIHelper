@@ -8,9 +8,15 @@ use clap::{
 use crate::{error::AppError, output::OutputMode};
 
 const HOST_COMMAND_AI: &str = "ai";
+const HOST_COMMAND_MCP: &str = "mcp";
 const HOST_COMMAND_PLUGINS: &str = "plugins";
 
 pub enum RuntimeCommand {
+    McpServe {
+        max_queued: usize,
+        default_timeout_ms: u64,
+        options: GlobalOptions,
+    },
     PluginsList {
         state_filter: Option<PluginStateFilter>,
         options: GlobalOptions,
@@ -120,6 +126,40 @@ pub fn parse_runtime_command(
         return Err(AppError::invalid_argument("--limit must be >= 1"));
     }
     let runtime_command = match matches.subcommand() {
+        Some((HOST_COMMAND_MCP, mcp_matches)) => {
+            let Some((subcommand, mcp_submatches)) = mcp_matches.subcommand() else {
+                return Err(AppError::invalid_argument("missing mcp subcommand"));
+            };
+            match subcommand {
+                "serve" => {
+                    if options.output == OutputMode::Json {
+                        return Err(AppError::invalid_argument(
+                            "--json cannot be used with mcp serve because stdout is the MCP transport",
+                        ));
+                    }
+                    let max_queued = *mcp_submatches
+                        .get_one::<usize>("max-queued")
+                        .expect("mcp max queue has a default");
+                    if max_queued == 0 {
+                        return Err(AppError::invalid_argument("--max-queued must be >= 1"));
+                    }
+                    let default_timeout_ms = *mcp_submatches
+                        .get_one::<u64>("default-timeout-ms")
+                        .expect("mcp timeout has a default");
+                    if default_timeout_ms == 0 {
+                        return Err(AppError::invalid_argument(
+                            "--default-timeout-ms must be >= 1",
+                        ));
+                    }
+                    RuntimeCommand::McpServe {
+                        max_queued,
+                        default_timeout_ms,
+                        options,
+                    }
+                }
+                _ => return Err(AppError::invalid_argument("unsupported mcp subcommand")),
+            }
+        }
         Some((HOST_COMMAND_AI, ai_matches)) => {
             let Some((subcommand, ai_submatches)) = ai_matches.subcommand() else {
                 return Err(AppError::invalid_argument("missing ai subcommand"));
@@ -237,17 +277,44 @@ fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
                 .help("Cap output lines/items when supported"),
         )
         .subcommand(build_ai_command())
+        .subcommand(build_mcp_command())
         .subcommand(build_plugins_command())
         .allow_external_subcommands(true);
 
     for (domain, description) in plugin_domains_for_help(plugins) {
-        if domain == HOST_COMMAND_AI || domain == HOST_COMMAND_PLUGINS {
+        if domain == HOST_COMMAND_AI || domain == HOST_COMMAND_MCP || domain == HOST_COMMAND_PLUGINS
+        {
             continue;
         }
         command = command.subcommand(build_domain_command(&domain, &description));
     }
 
     command
+}
+
+fn build_mcp_command() -> Command {
+    Command::new(HOST_COMMAND_MCP)
+        .about("Model Context Protocol server")
+        .subcommand(
+            Command::new("serve")
+                .about("Serve typed AIHelper tools over MCP stdio")
+                .arg(
+                    Arg::new("max-queued")
+                        .long("max-queued")
+                        .value_name("N")
+                        .value_parser(value_parser!(usize))
+                        .default_value("32")
+                        .help("Maximum number of queued tool calls"),
+                )
+                .arg(
+                    Arg::new("default-timeout-ms")
+                        .long("default-timeout-ms")
+                        .value_name("MILLISECONDS")
+                        .value_parser(value_parser!(u64))
+                        .default_value("300000")
+                        .help("Default total queue and execution timeout"),
+                ),
+        )
 }
 
 fn build_ai_command() -> Command {
@@ -612,6 +679,46 @@ mod tests {
         assert!(options.quiet);
         assert_eq!(options.limit, Some(3));
         assert_eq!(argv, vec!["ask", "--prompt", "ping"]);
+    }
+
+    #[test]
+    fn parser_routes_mcp_stdio_server_with_defaults() {
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("mcp"),
+            OsString::from("serve"),
+        ];
+        let parsed = parse_runtime_command(raw_args, &[]).expect("mcp serve should parse");
+        let CliParseResult::Command(RuntimeCommand::McpServe {
+            max_queued,
+            default_timeout_ms,
+            options,
+        }) = parsed
+        else {
+            panic!("unexpected parse result");
+        };
+        assert_eq!(max_queued, 32);
+        assert_eq!(default_timeout_ms, 300_000);
+        assert_eq!(options.limit, None);
+        assert!(!options.quiet);
+    }
+
+    #[test]
+    fn parser_rejects_json_for_mcp_stdio_server() {
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("--json"),
+            OsString::from("mcp"),
+            OsString::from("serve"),
+        ];
+        let error = parse_runtime_command(raw_args, &[])
+            .err()
+            .expect("--json must be rejected");
+        assert!(
+            error
+                .detail_message()
+                .contains("stdout is the MCP transport")
+        );
     }
 
     #[test]

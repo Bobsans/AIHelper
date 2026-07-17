@@ -10,15 +10,19 @@ use serde::{Deserialize, Serialize};
 
 pub const AH_PLUGIN_ABI_VERSION: u32 = 1;
 pub const AH_PLUGIN_API_MAJOR_VERSION: u16 = 1;
-pub const AH_PLUGIN_API_MINOR_VERSION: u16 = 0;
+pub const AH_PLUGIN_API_MINOR_VERSION: u16 = 1;
 pub const AH_PLUGIN_ENTRY_V1_SYMBOL: &[u8] = b"ah_plugin_entry_v1\0";
 pub const AH_PLUGIN_METADATA_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_metadata_json_v1\0";
 pub const AH_PLUGIN_MANUAL_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_manual_json_v1\0";
+pub const AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_command_catalog_json_v1\0";
+pub const AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_invoke_command_json_v1\0";
+pub const AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL: &[u8] = b"ah_plugin_cancel_command_v1\0";
 
 pub mod plugin_capabilities {
     pub const MANUAL_JSON: &str = "manual_json";
     pub const REQUIRED_TOOLS: &str = "required_tools";
     pub const ERROR_DIAGNOSTIC: &str = "error_diagnostic";
+    pub const TYPED_COMMANDS_V1: &str = "typed_commands_v1";
 }
 
 const ANSI_RESET: &str = "\u{1b}[0m";
@@ -285,6 +289,292 @@ impl InvocationResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandEffect {
+    FilesystemRead,
+    FilesystemWrite,
+    FilesystemDelete,
+    ProcessSpawn,
+    NetworkRead,
+    NetworkWrite,
+    ConfigurationRead,
+    ConfigurationWrite,
+    ExternalRead,
+    ExternalWrite,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Reversibility {
+    Yes,
+    No,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandEffects {
+    pub read_only: bool,
+    pub destructive: bool,
+    pub idempotent: bool,
+    pub open_world: bool,
+    pub effects: Vec<CommandEffect>,
+    pub risk: RiskLevel,
+    pub impact: String,
+    pub reversibility: Reversibility,
+}
+
+impl CommandEffects {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        read_only: bool,
+        destructive: bool,
+        idempotent: bool,
+        open_world: bool,
+        effects: Vec<CommandEffect>,
+        risk: RiskLevel,
+        impact: impl Into<String>,
+        reversibility: Reversibility,
+    ) -> Self {
+        Self {
+            read_only,
+            destructive,
+            idempotent,
+            open_world,
+            effects,
+            risk,
+            impact: impact.into(),
+            reversibility,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommandExample {
+    pub description: String,
+    pub arguments: serde_json::Value,
+}
+
+impl CommandExample {
+    pub fn new(description: impl Into<String>, arguments: serde_json::Value) -> Self {
+        Self {
+            description: description.into(),
+            arguments,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommandDescriptor {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub output_schema: serde_json::Value,
+    pub effects: CommandEffects,
+    #[serde(default)]
+    pub examples: Vec<CommandExample>,
+}
+
+impl CommandDescriptor {
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        input_schema: serde_json::Value,
+        output_schema: serde_json::Value,
+        effects: CommandEffects,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            description: description.into(),
+            input_schema,
+            output_schema,
+            effects,
+            examples: Vec::new(),
+        }
+    }
+
+    pub fn with_example(mut self, example: CommandExample) -> Self {
+        self.examples.push(example);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommandCatalog {
+    pub plugin_name: String,
+    pub domain: String,
+    pub commands: Vec<CommandDescriptor>,
+}
+
+impl CommandCatalog {
+    pub fn new(
+        plugin_name: impl Into<String>,
+        domain: impl Into<String>,
+        commands: Vec<CommandDescriptor>,
+    ) -> Self {
+        Self {
+            plugin_name: plugin_name.into(),
+            domain: domain.into(),
+            commands,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionContextWire {
+    pub request_id: String,
+    pub cwd: String,
+    pub limit: Option<usize>,
+    pub remaining_timeout_ms: u64,
+}
+
+impl ExecutionContextWire {
+    pub fn new(
+        request_id: impl Into<String>,
+        cwd: impl Into<String>,
+        limit: Option<usize>,
+        remaining_timeout_ms: u64,
+    ) -> Self {
+        Self {
+            request_id: request_id.into(),
+            cwd: cwd.into(),
+            limit,
+            remaining_timeout_ms,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TypedInvocationRequest {
+    pub command: String,
+    pub arguments: serde_json::Value,
+    pub context: ExecutionContextWire,
+}
+
+impl TypedInvocationRequest {
+    pub fn new(
+        command: impl Into<String>,
+        arguments: serde_json::Value,
+        context: ExecutionContextWire,
+    ) -> Self {
+        Self {
+            command: command.into(),
+            arguments,
+            context,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandNotice {
+    pub code: String,
+    pub message: String,
+}
+
+impl CommandNotice {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandError {
+    pub domain: Option<String>,
+    pub operation: Option<String>,
+    pub code: String,
+    pub message: String,
+    pub cause: String,
+    pub exit_code_hint: i32,
+    pub retryable: bool,
+}
+
+impl CommandError {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        domain: Option<String>,
+        operation: Option<String>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        cause: impl Into<String>,
+        exit_code_hint: i32,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            domain,
+            operation,
+            code: code.into(),
+            message: message.into(),
+            cause: cause.into(),
+            exit_code_hint,
+            retryable,
+        }
+    }
+
+    pub fn from_diagnostic(diagnostic: ErrorDiagnostic, retryable: bool) -> Self {
+        Self {
+            domain: diagnostic.domain,
+            operation: diagnostic.operation,
+            code: diagnostic.code,
+            message: diagnostic.message,
+            cause: diagnostic.cause,
+            exit_code_hint: diagnostic.exit_code_hint,
+            retryable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TypedInvocationResponse {
+    pub success: bool,
+    pub data: Option<serde_json::Value>,
+    pub text: Option<String>,
+    #[serde(default)]
+    pub notices: Vec<CommandNotice>,
+    pub error: Option<CommandError>,
+}
+
+impl TypedInvocationResponse {
+    pub fn success(data: serde_json::Value, text: Option<String>) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            text,
+            notices: Vec::new(),
+            error: None,
+        }
+    }
+
+    pub fn error(error: CommandError) -> Self {
+        Self {
+            success: false,
+            data: None,
+            text: None,
+            notices: Vec::new(),
+            error: Some(error),
+        }
+    }
+
+    pub fn with_notice(mut self, notice: CommandNotice) -> Self {
+        self.notices.push(notice);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginApiVersion {
     pub major: u16,
     pub minor: u16,
@@ -413,6 +703,10 @@ pub struct AhPluginApiV1 {
 pub type AhPluginEntryV1 = unsafe extern "C" fn() -> *const AhPluginApiV1;
 pub type AhPluginMetadataJsonV1 = unsafe extern "C" fn() -> *mut c_char;
 pub type AhPluginManualJsonV1 = unsafe extern "C" fn() -> *mut c_char;
+pub type AhPluginCommandCatalogJsonV1 = unsafe extern "C" fn() -> *mut c_char;
+pub type AhPluginInvokeCommandJsonV1 =
+    unsafe extern "C" fn(request_json: *const c_char) -> *mut c_char;
+pub type AhPluginCancelCommandV1 = unsafe extern "C" fn(request_id: *const c_char) -> i32;
 
 pub fn to_c_string_ptr(value: &str) -> *const c_char {
     let sanitized = value.replace('\0', "\\0");
@@ -526,6 +820,11 @@ macro_rules! define_plugin_entrypoint_v1 {
         parse_fn: $parse_fn:path,
         execute_fn: $execute_fn:path,
         manual_fn: $manual_fn:path,
+        $(
+            typed_catalog_fn: $typed_catalog_fn:path,
+            typed_execute_fn: $typed_execute_fn:path,
+            typed_cancel_fn: $typed_cancel_fn:path,
+        )?
     ) => {
         static PLUGIN_API_PTR: ::std::sync::atomic::AtomicPtr<$crate::AhPluginApiV1> =
             ::std::sync::atomic::AtomicPtr::new(::std::ptr::null_mut());
@@ -584,17 +883,102 @@ macro_rules! define_plugin_entrypoint_v1 {
         /// The returned pointer must be freed through `free_c_string`.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn ah_plugin_metadata_json_v1() -> *mut ::std::os::raw::c_char {
+            let mut compatibility = $crate::PluginCompatibility::current()
+                .with_capability($crate::plugin_capabilities::MANUAL_JSON);
+            $(
+                let _ = ::std::stringify!($typed_catalog_fn);
+                compatibility = compatibility
+                    .with_capability($crate::plugin_capabilities::TYPED_COMMANDS_V1);
+            )?
             let metadata = $crate::PluginMetadata {
                 plugin_name: $crate::nul_terminated_bytes_to_string($plugin_name_c),
                 domain: $crate::nul_terminated_bytes_to_string($domain_c),
                 description: $crate::nul_terminated_bytes_to_string($description_c),
                 abi_version: $crate::AH_PLUGIN_ABI_VERSION,
                 required_tools: ::std::vec::Vec::new(),
-                compatibility: $crate::PluginCompatibility::current()
-                    .with_capability($crate::plugin_capabilities::MANUAL_JSON),
+                compatibility,
             };
             $crate::metadata_to_c_string(&metadata)
         }
+
+        $(
+            /// Returns the typed plugin command catalog as an owned C string.
+            ///
+            /// # Safety
+            ///
+            /// The returned pointer must be freed through `free_c_string`.
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn ah_plugin_command_catalog_json_v1(
+            ) -> *mut ::std::os::raw::c_char {
+                match ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                    $typed_catalog_fn()
+                })) {
+                    Ok(catalog) => $crate::command_catalog_to_c_string(&catalog),
+                    Err(_) => ::std::ptr::null_mut(),
+                }
+            }
+
+            /// Invokes one typed plugin command.
+            ///
+            /// # Safety
+            ///
+            /// `request_json` must be a valid C string owned by the caller.
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn ah_plugin_invoke_command_json_v1(
+                request_json: *const ::std::os::raw::c_char,
+            ) -> *mut ::std::os::raw::c_char {
+                let response = match ::std::panic::catch_unwind(
+                    ::std::panic::AssertUnwindSafe(|| {
+                        let request =
+                            unsafe { $crate::typed_request_from_c_ptr(request_json) }?;
+                        Ok::<$crate::TypedInvocationResponse, ::std::string::String>(
+                            $typed_execute_fn(&request),
+                        )
+                    }),
+                ) {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(error)) => $crate::TypedInvocationResponse::error(
+                        $crate::CommandError::new(
+                            Some($domain.to_owned()),
+                            None,
+                            "INVALID_TYPED_REQUEST",
+                            "failed to decode typed plugin request",
+                            error,
+                            2,
+                            false,
+                        ),
+                    ),
+                    Err(_) => $crate::TypedInvocationResponse::error($crate::CommandError::new(
+                        Some($domain.to_owned()),
+                        None,
+                        "PLUGIN_PANIC",
+                        "plugin panicked while handling typed invocation",
+                        "panic was caught at the dynamic plugin ABI boundary",
+                        1,
+                        false,
+                    )),
+                };
+                $crate::typed_response_to_c_string(&response)
+            }
+
+            /// Requests cancellation of one typed plugin invocation.
+            ///
+            /// # Safety
+            ///
+            /// `request_id` must be a valid C string owned by the caller.
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn ah_plugin_cancel_command_v1(
+                request_id: *const ::std::os::raw::c_char,
+            ) -> i32 {
+                match ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                    let request_id = unsafe { $crate::c_ptr_to_string(request_id) }.ok()?;
+                    Some($typed_cancel_fn(&request_id))
+                })) {
+                    Ok(Some(true)) => 1,
+                    _ => 0,
+                }
+            }
+        )?
 
         unsafe extern "C" fn ah_plugin_invoke_json(
             request_json: *const ::std::os::raw::c_char,
@@ -637,6 +1021,19 @@ pub unsafe fn c_ptr_to_string(ptr_value: *const c_char) -> Result<String, String
         .map_err(|error| format!("invalid utf8 in c string: {error}"))
 }
 
+/// Decodes a typed invocation request from a borrowed C string.
+///
+/// # Safety
+///
+/// `request_json` must point to a valid, nul-terminated C string for the
+/// duration of this call.
+pub unsafe fn typed_request_from_c_ptr(
+    request_json: *const c_char,
+) -> Result<TypedInvocationRequest, String> {
+    let raw = unsafe { c_ptr_to_string(request_json) }?;
+    serde_json::from_str(&raw).map_err(|error| error.to_string())
+}
+
 pub fn response_to_c_string(response: &InvocationResponse) -> *mut c_char {
     match serde_json::to_string(response) {
         Ok(raw) => CString::new(raw)
@@ -669,6 +1066,39 @@ pub fn metadata_to_c_string(metadata: &PluginMetadata) -> *mut c_char {
             .expect("JSON should not contain interior null bytes")
             .into_raw(),
         Err(_) => null_response_ptr(),
+    }
+}
+
+pub fn command_catalog_to_c_string(catalog: &CommandCatalog) -> *mut c_char {
+    match serde_json::to_string(catalog) {
+        Ok(raw) => CString::new(raw)
+            .expect("JSON should not contain interior null bytes")
+            .into_raw(),
+        Err(_) => null_response_ptr(),
+    }
+}
+
+pub fn typed_response_to_c_string(response: &TypedInvocationResponse) -> *mut c_char {
+    match serde_json::to_string(response) {
+        Ok(raw) => CString::new(raw)
+            .expect("JSON should not contain interior null bytes")
+            .into_raw(),
+        Err(error) => {
+            let fallback = TypedInvocationResponse::error(CommandError::new(
+                None,
+                None,
+                "JSON_SERIALIZATION_FAILED",
+                "failed to serialize typed plugin response",
+                error.to_string(),
+                1,
+                false,
+            ));
+            let raw = serde_json::to_string(&fallback)
+                .expect("typed serialization fallback should always serialize");
+            CString::new(raw)
+                .expect("fallback JSON must be a valid cstring")
+                .into_raw()
+        }
     }
 }
 
@@ -720,6 +1150,110 @@ mod tests {
             quiet: false,
             limit: None,
         }
+    }
+
+    fn sample_descriptor() -> CommandDescriptor {
+        CommandDescriptor::new(
+            "test.inspect",
+            "Inspect test data",
+            "Inspect test data without modifying it.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": { "type": "string" }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+            }),
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": { "type": "string" }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+            }),
+            CommandEffects::new(
+                true,
+                false,
+                true,
+                false,
+                vec![CommandEffect::FilesystemRead],
+                RiskLevel::Low,
+                "Reads test data.",
+                Reversibility::Yes,
+            ),
+        )
+        .with_example(CommandExample::new(
+            "Inspect one value",
+            serde_json::json!({ "value": "demo" }),
+        ))
+    }
+
+    #[test]
+    fn current_plugin_api_version_is_1_1() {
+        assert_eq!(
+            PluginApiVersion::current(),
+            PluginApiVersion { major: 1, minor: 1 }
+        );
+    }
+
+    #[test]
+    fn typed_command_contract_round_trips() {
+        let catalog = CommandCatalog::new("test-plugin", "test", vec![sample_descriptor()]);
+        let raw = serde_json::to_string(&catalog).expect("catalog should serialize");
+        let decoded =
+            serde_json::from_str::<CommandCatalog>(&raw).expect("catalog should deserialize");
+
+        assert_eq!(decoded, catalog);
+        assert_eq!(decoded.commands[0].effects.risk, RiskLevel::Low);
+        assert_eq!(
+            serde_json::to_value(CommandEffect::FilesystemRead).expect("effect should serialize"),
+            serde_json::json!("filesystem_read")
+        );
+    }
+
+    #[test]
+    fn typed_invocation_success_and_error_are_exclusive() {
+        let success = TypedInvocationResponse::success(
+            serde_json::json!({ "value": "ok" }),
+            Some("ok".to_owned()),
+        )
+        .with_notice(CommandNotice::new("TRUNCATED", "Output was truncated."));
+        assert!(success.success);
+        assert!(success.data.is_some());
+        assert!(success.error.is_none());
+        assert_eq!(success.notices.len(), 1);
+
+        let error = TypedInvocationResponse::error(CommandError::new(
+            Some("test".to_owned()),
+            Some("test.inspect".to_owned()),
+            "INVALID_ARGUMENT",
+            "value is required",
+            "missing field",
+            2,
+            false,
+        ));
+        assert!(!error.success);
+        assert!(error.data.is_none());
+        assert_eq!(
+            error.error.as_ref().map(|value| value.code.as_str()),
+            Some("INVALID_ARGUMENT")
+        );
+    }
+
+    #[test]
+    fn typed_response_c_string_contains_valid_json() {
+        let response = TypedInvocationResponse::success(serde_json::json!({ "value": "ok" }), None);
+        let ptr = typed_response_to_c_string(&response);
+        assert!(!ptr.is_null());
+
+        let raw = unsafe { c_ptr_to_string(ptr.cast_const()) }
+            .expect("typed response should be valid utf8");
+        unsafe { free_c_string_ptr(ptr) };
+        let decoded = serde_json::from_str::<TypedInvocationResponse>(&raw)
+            .expect("typed response should be valid JSON");
+        assert_eq!(decoded, response);
     }
 
     #[test]

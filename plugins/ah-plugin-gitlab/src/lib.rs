@@ -3,8 +3,8 @@
 use std::{
     env, fs,
     io::{BufRead, BufReader, Read, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -18,6 +18,8 @@ use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+#[cfg(test)]
+use std::thread;
 
 const DOMAIN: &str = "gitlab";
 const PLUGIN_NAME: &str = "external-gitlab";
@@ -54,6 +56,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-gitlab\0";
 static DOMAIN_C: &[u8] = b"gitlab\0";
 static DESCRIPTION_C: &[u8] = b"GitLab Releases and Pipelines plugin (dynamic)\0";
 
+mod typed;
+
 ah_plugin_api::define_plugin_entrypoint_v1!(
     plugin_name_c: PLUGIN_NAME_C,
     domain_c: DOMAIN_C,
@@ -62,6 +66,9 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     parse_fn: parse_args,
     execute_fn: execute,
     manual_fn: plugin_manual,
+    typed_catalog_fn: typed::command_catalog,
+    typed_execute_fn: typed::invoke,
+    typed_cancel_fn: typed::cancel,
 );
 
 #[derive(Debug, Parser)]
@@ -91,6 +98,8 @@ struct GitlabConnectionArgs {
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
     timeout_secs: u64,
+    #[arg(skip)]
+    cwd: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1192,7 +1201,12 @@ fn wait_pipeline(
         if elapsed >= timeout {
             return pipeline_timeout_response(&args);
         }
-        thread::sleep(interval.min(timeout - elapsed));
+        if typed::wait_or_cancel(interval.min(timeout - elapsed)) {
+            return InvocationResponse::error(
+                "CANCELLED",
+                format!("pipeline wait {} was cancelled", args.pipeline_id),
+            );
+        }
         if start.elapsed() >= timeout {
             return pipeline_timeout_response(&args);
         }
@@ -1340,7 +1354,7 @@ fn resolve_project(
             .ok_or_else(|| invalid_project(project));
     }
 
-    let remote_url = read_git_remote_url(&args.remote)?;
+    let remote_url = read_git_remote_url(&args.remote, args.cwd.as_deref())?;
     parse_gitlab_remote_url(&remote_url, host)
         .map(|project| (project, Some(remote_url.clone())))
         .ok_or_else(|| {
@@ -1354,16 +1368,18 @@ fn resolve_project(
         })
 }
 
-fn read_git_remote_url(remote: &str) -> Result<String, InvocationResponse> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", remote])
-        .output()
-        .map_err(|error| {
-            InvocationResponse::error(
-                "COMMAND_EXECUTION_FAILED",
-                format!("failed to execute git remote get-url {remote}: {error}"),
-            )
-        })?;
+fn read_git_remote_url(remote: &str, cwd: Option<&Path>) -> Result<String, InvocationResponse> {
+    let mut command = Command::new("git");
+    command.args(["remote", "get-url", remote]);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let output = command.output().map_err(|error| {
+        InvocationResponse::error(
+            "COMMAND_EXECUTION_FAILED",
+            format!("failed to execute git remote get-url {remote}: {error}"),
+        )
+    })?;
     if !output.status.success() {
         return Err(InvocationResponse::error(
             "COMMAND_FAILED",

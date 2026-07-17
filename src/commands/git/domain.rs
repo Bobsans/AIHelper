@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde::Serialize;
-use std::sync::OnceLock;
+use std::{path::Path, sync::OnceLock};
 
 use crate::{
     error::AppError,
@@ -180,10 +180,31 @@ pub(crate) enum GitResult {
     TagCreate(GitTagCreateOutput),
 }
 
-pub(crate) fn execute_status(_args: StatusArgs) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+pub(crate) fn execute(
+    args: super::GitArgs,
+    limit: Option<usize>,
+    cwd: Option<&Path>,
+) -> Result<GitResult, AppError> {
+    let io = match cwd {
+        Some(cwd) => adapters::io::GitIo::at(cwd),
+        None => adapters::io::GitIo::current()?,
+    };
+    match args.command {
+        super::GitCommand::Status(args) => execute_status(args, &io),
+        super::GitCommand::Tags(args) => execute_tags(args, limit, &io),
+        super::GitCommand::Remotes(args) => execute_remotes(args, &io),
+        super::GitCommand::Changed(args) => execute_changed(args, limit, &io),
+        super::GitCommand::Diff(args) => execute_diff(args, limit, &io),
+        super::GitCommand::Blame(args) => execute_blame(args, limit, &io),
+        super::GitCommand::CommitInfo(args) => execute_commit_info(args, limit, &io),
+        super::GitCommand::Tag(args) => execute_tag(args, &io),
+    }
+}
+
+fn execute_status(_args: StatusArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
+    let in_repo = io.is_inside_repo()?;
     let status_entries = if in_repo {
-        parse_porcelain_v1_z(&adapters::io::read_git_output_bytes([
+        parse_porcelain_v1_z(&io.read_output_bytes([
             "status".to_owned(),
             "--porcelain=v1".to_owned(),
             "-z".to_owned(),
@@ -193,41 +214,37 @@ pub(crate) fn execute_status(_args: StatusArgs) -> Result<GitResult, AppError> {
     };
     let counts = count_statuses(&status_entries);
     let branch = if in_repo {
-        adapters::io::read_git_trimmed(["branch", "--show-current"])
+        io.read_trimmed(["branch", "--show-current"])
     } else {
         None
     };
     let upstream = if in_repo {
-        adapters::io::read_git_trimmed([
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{u}",
-        ])
+        io.read_trimmed(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
     } else {
         None
     };
     let (ahead, behind) = if in_repo && upstream.is_some() {
-        adapters::io::read_git_trimmed(["rev-list", "--left-right", "--count", "@{u}...HEAD"])
+        io.read_trimmed(["rev-list", "--left-right", "--count", "@{u}...HEAD"])
             .and_then(|raw| parse_ahead_behind(&raw))
             .unwrap_or((None, None))
     } else {
         (None, None)
     };
     let latest_commit = if in_repo {
-        adapters::io::read_git_trimmed(["log", "-1", "--format=%H%x00%s"]).and_then(|raw| {
-            let (hash, subject) = raw.split_once('\0')?;
-            Some(CommitSummary {
-                hash: hash.to_owned(),
-                short_hash: short_commit(hash),
-                subject: subject.to_owned(),
+        io.read_trimmed(["log", "-1", "--format=%H%x00%s"])
+            .and_then(|raw| {
+                let (hash, subject) = raw.split_once('\0')?;
+                Some(CommitSummary {
+                    hash: hash.to_owned(),
+                    short_hash: short_commit(hash),
+                    subject: subject.to_owned(),
+                })
             })
-        })
     } else {
         None
     };
     let latest_tag = if in_repo {
-        adapters::io::read_git_trimmed(["describe", "--tags", "--abbrev=0"])
+        io.read_trimmed(["describe", "--tags", "--abbrev=0"])
     } else {
         None
     };
@@ -249,10 +266,14 @@ pub(crate) fn execute_status(_args: StatusArgs) -> Result<GitResult, AppError> {
     }))
 }
 
-pub(crate) fn execute_tags(args: TagsArgs, limit: Option<usize>) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+fn execute_tags(
+    args: TagsArgs,
+    limit: Option<usize>,
+    io: &adapters::io::GitIo,
+) -> Result<GitResult, AppError> {
+    let in_repo = io.is_inside_repo()?;
     let mut tags = if in_repo {
-        adapters::io::read_git_output(["tag".to_owned(), "--sort=-creatordate".to_owned()])?
+        io.read_output(["tag".to_owned(), "--sort=-creatordate".to_owned()])?
             .lines()
             .map(|line| TagEntry {
                 name: line.to_owned(),
@@ -276,13 +297,10 @@ pub(crate) fn execute_tags(args: TagsArgs, limit: Option<usize>) -> Result<GitRe
     }))
 }
 
-pub(crate) fn execute_remotes(_args: RemotesArgs) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+fn execute_remotes(_args: RemotesArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
+    let in_repo = io.is_inside_repo()?;
     let remotes = if in_repo {
-        parse_remotes(&adapters::io::read_git_output([
-            "remote".to_owned(),
-            "-v".to_owned(),
-        ])?)
+        parse_remotes(&io.read_output(["remote".to_owned(), "-v".to_owned()])?)
     } else {
         Vec::new()
     };
@@ -295,13 +313,14 @@ pub(crate) fn execute_remotes(_args: RemotesArgs) -> Result<GitResult, AppError>
     }))
 }
 
-pub(crate) fn execute_changed(
+fn execute_changed(
     _args: ChangedArgs,
     limit: Option<usize>,
+    io: &adapters::io::GitIo,
 ) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+    let in_repo = io.is_inside_repo()?;
     let mut entries = if in_repo {
-        parse_porcelain_v1_z(&adapters::io::read_git_output_bytes([
+        parse_porcelain_v1_z(&io.read_output_bytes([
             "status".to_owned(),
             "--porcelain=v1".to_owned(),
             "-z".to_owned(),
@@ -324,8 +343,12 @@ pub(crate) fn execute_changed(
     }))
 }
 
-pub(crate) fn execute_diff(args: DiffArgs, limit: Option<usize>) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+fn execute_diff(
+    args: DiffArgs,
+    limit: Option<usize>,
+    io: &adapters::io::GitIo,
+) -> Result<GitResult, AppError> {
+    let in_repo = io.is_inside_repo()?;
     let path_filter = args
         .path
         .as_ref()
@@ -337,7 +360,7 @@ pub(crate) fn execute_diff(args: DiffArgs, limit: Option<usize>) -> Result<GitRe
             command.push("--".to_owned());
             command.push(path.to_string_lossy().into_owned());
         }
-        adapters::io::read_git_output(&command)?
+        io.read_output(&command)?
     } else {
         String::new()
     };
@@ -356,8 +379,12 @@ pub(crate) fn execute_diff(args: DiffArgs, limit: Option<usize>) -> Result<GitRe
     }))
 }
 
-pub(crate) fn execute_blame(args: BlameArgs, limit: Option<usize>) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+fn execute_blame(
+    args: BlameArgs,
+    limit: Option<usize>,
+    io: &adapters::io::GitIo,
+) -> Result<GitResult, AppError> {
+    let in_repo = io.is_inside_repo()?;
     if !in_repo {
         return Ok(GitResult::Blame {
             in_git_repo: false,
@@ -372,7 +399,7 @@ pub(crate) fn execute_blame(args: BlameArgs, limit: Option<usize>) -> Result<Git
         });
     }
 
-    if !args.path.exists() {
+    if !io.resolve_path(&args.path).exists() {
         return Err(AppError::invalid_argument(format!(
             "path does not exist: {}",
             args.path.to_string_lossy()
@@ -386,7 +413,7 @@ pub(crate) fn execute_blame(args: BlameArgs, limit: Option<usize>) -> Result<Git
 
     let path_string = args.path.to_string_lossy().into_owned();
     let porcelain_result = if let Some(line) = args.line {
-        adapters::io::read_git_output(vec![
+        io.read_output(vec![
             "blame".to_owned(),
             "--line-porcelain".to_owned(),
             "-L".to_owned(),
@@ -395,7 +422,7 @@ pub(crate) fn execute_blame(args: BlameArgs, limit: Option<usize>) -> Result<Git
             path_string.clone(),
         ])
     } else {
-        adapters::io::read_git_output(vec![
+        io.read_output(vec![
             "blame".to_owned(),
             "--line-porcelain".to_owned(),
             "--".to_owned(),
@@ -425,13 +452,14 @@ pub(crate) fn execute_blame(args: BlameArgs, limit: Option<usize>) -> Result<Git
     })
 }
 
-pub(crate) fn execute_commit_info(
+fn execute_commit_info(
     args: CommitInfoArgs,
     limit: Option<usize>,
+    io: &adapters::io::GitIo,
 ) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+    let in_repo = io.is_inside_repo()?;
     let commit = if in_repo {
-        Some(read_commit_info(&args.reference, limit)?)
+        Some(read_commit_info(io, &args.reference, limit)?)
     } else {
         None
     };
@@ -444,14 +472,17 @@ pub(crate) fn execute_commit_info(
     }))
 }
 
-pub(crate) fn execute_tag(args: TagArgs) -> Result<GitResult, AppError> {
+fn execute_tag(args: TagArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
     match args.command {
-        TagCommand::Create(create_args) => execute_tag_create(create_args),
+        TagCommand::Create(create_args) => execute_tag_create(create_args, io),
     }
 }
 
-fn execute_tag_create(args: TagCreateArgs) -> Result<GitResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+fn execute_tag_create(
+    args: TagCreateArgs,
+    io: &adapters::io::GitIo,
+) -> Result<GitResult, AppError> {
+    let in_repo = io.is_inside_repo()?;
     if !in_repo {
         return Ok(GitResult::TagCreate(GitTagCreateOutput {
             command: "git.tag.create",
@@ -475,16 +506,16 @@ fn execute_tag_create(args: TagCreateArgs) -> Result<GitResult, AppError> {
         command.push(args.tag.clone());
         command.push(args.reference.clone());
     }
-    adapters::io::read_git_output(&command)?;
+    io.read_output(&command)?;
     let target_ref = format!("{}^{{commit}}", args.tag);
-    let target_commit =
-        adapters::io::read_git_trimmed(["rev-parse", target_ref.as_str()]).map(|hash| {
-            CommitSummary {
-                short_hash: short_commit(&hash),
-                hash,
-                subject: adapters::io::read_git_trimmed(["log", "-1", "--format=%s", &args.tag])
-                    .unwrap_or_default(),
-            }
+    let target_commit = io
+        .read_trimmed(["rev-parse", target_ref.as_str()])
+        .map(|hash| CommitSummary {
+            short_hash: short_commit(&hash),
+            hash,
+            subject: io
+                .read_trimmed(["log", "-1", "--format=%s", &args.tag])
+                .unwrap_or_default(),
         });
 
     let payload = GitTagCreateOutput {
@@ -498,8 +529,12 @@ fn execute_tag_create(args: TagCreateArgs) -> Result<GitResult, AppError> {
     Ok(GitResult::TagCreate(payload))
 }
 
-fn read_commit_info(reference: &str, limit: Option<usize>) -> Result<CommitInfo, AppError> {
-    let metadata = adapters::io::read_git_output([
+fn read_commit_info(
+    io: &adapters::io::GitIo,
+    reference: &str,
+    limit: Option<usize>,
+) -> Result<CommitInfo, AppError> {
+    let metadata = io.read_output([
         "show".to_owned(),
         "-s".to_owned(),
         "--format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%b".to_owned(),
@@ -517,7 +552,7 @@ fn read_commit_info(reference: &str, limit: Option<usize>) -> Result<CommitInfo,
     let subject = parts.next().unwrap_or("").trim().to_owned();
     let body = parts.next().unwrap_or("").trim().to_owned();
 
-    let mut files = read_commit_files(reference)?;
+    let mut files = read_commit_files(io, reference)?;
     let file_count = files.len();
     let additions = sum_optional(files.iter().map(|file| file.additions));
     let deletions = sum_optional(files.iter().map(|file| file.deletions));
@@ -546,8 +581,11 @@ fn read_commit_info(reference: &str, limit: Option<usize>) -> Result<CommitInfo,
     })
 }
 
-fn read_commit_files(reference: &str) -> Result<Vec<CommitFile>, AppError> {
-    let status_raw = adapters::io::read_git_output([
+fn read_commit_files(
+    io: &adapters::io::GitIo,
+    reference: &str,
+) -> Result<Vec<CommitFile>, AppError> {
+    let status_raw = io.read_output([
         "diff-tree".to_owned(),
         "--no-commit-id".to_owned(),
         "--name-status".to_owned(),
@@ -555,7 +593,7 @@ fn read_commit_files(reference: &str) -> Result<Vec<CommitFile>, AppError> {
         "--root".to_owned(),
         reference.to_owned(),
     ])?;
-    let stats_raw = adapters::io::read_git_output([
+    let stats_raw = io.read_output([
         "show".to_owned(),
         "--numstat".to_owned(),
         "--format=".to_owned(),

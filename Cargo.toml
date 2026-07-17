@@ -7,6 +7,7 @@ default-run = "ah"
 
 [workspace]
 members = [
+    "crates/ah-mcp",
     "crates/ah-plugin-api",
     "crates/ah-runtime",
     "plugins/ah-plugin-github",
@@ -31,6 +32,8 @@ walkdir = "2.5.0"
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 ah-plugin-api = { path = "crates/ah-plugin-api" }
 ah-runtime = { path = "crates/ah-runtime" }
+ah-mcp = { path = "crates/ah-mcp" }
+tokio = { version = "1.52.1", features = ["io-std", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
 assert_cmd = "2.0.17"

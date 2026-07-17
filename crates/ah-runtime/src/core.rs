@@ -55,6 +55,23 @@ where
     command.output()
 }
 
+pub fn run_command_in_dir<I, S>(
+    program: &str,
+    args: I,
+    current_dir: &Path,
+) -> std::io::Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut command = Command::new(program);
+    command.current_dir(current_dir);
+    for value in args {
+        command.arg(value.as_ref());
+    }
+    command.output()
+}
+
 pub fn run_command_ok<I, S>(program: &str, args: I) -> bool
 where
     I: IntoIterator<Item = S>,
