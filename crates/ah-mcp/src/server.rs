@@ -929,7 +929,7 @@ mod tests {
     fn execution_ids_are_unique_and_cancellation_mappings_are_scoped() {
         let executor = RecordingExecutor::success();
         let server = server(Arc::clone(&executor));
-        let protocol_request_id = NumberOrString::String("same".to_owned());
+        let protocol_request_id = NumberOrString::String("same".to_owned().into());
 
         let first = server.begin_execution(&protocol_request_id);
         let second = server.begin_execution(&protocol_request_id);
