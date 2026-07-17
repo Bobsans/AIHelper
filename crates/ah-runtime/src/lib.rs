@@ -1019,14 +1019,6 @@ impl DynamicPlugin {
             .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
     }
 
-    fn command_descriptor(&self, command: &str) -> Option<&CommandDescriptor> {
-        self.command_catalog
-            .as_ref()?
-            .commands
-            .iter()
-            .find(|descriptor| descriptor.id == command)
-    }
-
     fn invoke_typed(
         &self,
         request: &TypedInvocationRequest,
@@ -1277,10 +1269,6 @@ fn preflight_typed_required_tools(
 
 fn infer_operation(domain: &str, argv: &[String]) -> Option<String> {
     argv.first().map(|command| format!("{domain}.{command}"))
-}
-
-fn typed_command_domain(command: &str) -> Option<&str> {
-    command.split_once('.').map(|(domain, _)| domain)
 }
 
 fn domain_key(domain: &str) -> String {

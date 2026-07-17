@@ -24,7 +24,7 @@ use rmcp::{
     service::{NotificationContext, RequestContext},
     transport::stdio,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 const TOOL_PREFIX: &str = "ah.";
@@ -732,7 +732,7 @@ mod tests {
         plugin_capabilities,
     };
     use ah_runtime::{BuiltinPlugin, PluginManager, RuntimeError, executor::ExecutionFuture};
-    use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject};
+    use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject, NumberOrString};
     use serde_json::{Value, json};
 
     use super::{Executor, McpServer, McpServerConfig};
