@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "ah-mcp"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-plugin-api",
  "ah-runtime",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-api"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-github"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-plugin-api",
  "clap",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-gitlab"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-plugin-api",
  "clap",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-ollama"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-plugin-api",
  "clap",
@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-postgres"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-plugin-api",
  "clap",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "ah-runtime"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-plugin-api",
  "jsonschema",
@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "aihelper"
-version = "0.6.3"
+version = "1.0.0"
 dependencies = [
  "ah-mcp",
  "ah-plugin-api",

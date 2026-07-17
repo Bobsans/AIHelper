@@ -1,6 +1,6 @@
 [package]
 name = "aihelper"
-version = "0.6.3"
+version = "1.0.0"
 edition = "2024"
 description = "AIHelper CLI toolbox for AI agents and developers"
 default-run = "ah"

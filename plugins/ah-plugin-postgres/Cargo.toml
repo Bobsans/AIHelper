@@ -1,6 +1,6 @@
 [package]
 name = "ah-plugin-postgres"
-version = "0.6.3"
+version = "1.0.0"
 edition = "2024"
 description = "Dynamic AIHelper plugin for PostgreSQL database workflows"
 

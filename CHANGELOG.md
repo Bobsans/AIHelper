@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-17
+
 ### Added
 - `ah mcp serve` exposes every enabled typed command as a separate MCP tool over
   stdio, with input/output schemas, structured results, cancellation, and live
