@@ -38,7 +38,9 @@ pub(crate) fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<
 }
 
 fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), AppError> {
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty());
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
     if let Some(parent) = parent {
         fs::create_dir_all(parent)
             .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
@@ -107,7 +109,10 @@ struct SidecarLock {
 impl SidecarLock {
     fn acquire(target: &Path, timeout: Duration) -> Result<Self, AppError> {
         let path = sidecar_path(target);
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)
                 .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
         }
@@ -202,7 +207,11 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), AppError> {
     unsafe extern "system" {
         fn MoveFileExW(existing: *const u16, replacement: *const u16, flags: u32) -> i32;
     }
-    let source_wide = source.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
     let destination_wide = destination
         .as_os_str()
         .encode_wide()

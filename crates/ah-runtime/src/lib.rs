@@ -269,8 +269,11 @@ impl PluginManager {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.reserved_dynamic_domains
-            .extend(domains.into_iter().map(|domain| domain_key(domain.as_ref())));
+        self.reserved_dynamic_domains.extend(
+            domains
+                .into_iter()
+                .map(|domain| domain_key(domain.as_ref())),
+        );
     }
 
     pub fn register_builtin(&mut self, plugin: Arc<dyn BuiltinPlugin>) {
@@ -329,9 +332,7 @@ impl PluginManager {
                     if self.reserved_dynamic_domains.contains(&domain_key) {
                         report.push_warning(
                             path,
-                            format!(
-                                "dynamic plugin domain '{domain_key}' is reserved by the host"
-                            ),
+                            format!("dynamic plugin domain '{domain_key}' is reserved by the host"),
                         );
                         continue;
                     }
@@ -493,7 +494,10 @@ impl PluginManager {
         let mut by_id = HashMap::with_capacity(commands.len());
         for command in &commands {
             let command_id = command.registered.descriptor.id.clone();
-            if by_id.insert(command_id.clone(), Arc::clone(command)).is_some() {
+            if by_id
+                .insert(command_id.clone(), Arc::clone(command))
+                .is_some()
+            {
                 return Err(RuntimeError::InvalidCommandCatalog {
                     domain: command.registered.plugin.domain.clone(),
                     reason: format!(
@@ -536,7 +540,11 @@ impl PluginManager {
             .iter()
             .filter(|command| {
                 command.route != TypedCommandRoute::Host
-                    && command.registered.plugin.domain.eq_ignore_ascii_case(&domain)
+                    && command
+                        .registered
+                        .plugin
+                        .domain
+                        .eq_ignore_ascii_case(&domain)
             })
             .map(|command| command.registered.descriptor.clone())
             .collect();
@@ -612,11 +620,7 @@ impl PluginManager {
                 plugin.invoke_typed(request)?
             }
         };
-        typed::validate_response_with(
-            &request.command,
-            &command.output_validator,
-            &response,
-        )?;
+        typed::validate_response_with(&request.command, &command.output_validator, &response)?;
         Ok(response)
     }
 

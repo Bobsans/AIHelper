@@ -309,24 +309,19 @@ async fn run_worker(
 ) {
     while let Some(mut job) = receiver.recv().await {
         let request_id = job.request.context.request_id.clone();
-        match activate_request(
-            &coordinator,
-            &request_id,
-            job.generation,
-            job.deadline,
-        ) {
+        match activate_request(&coordinator, &request_id, job.generation, job.deadline) {
             Activation::Start => {}
             Activation::Cancelled => {
-                let _ = job.completion.send(Err(RuntimeError::ExecutionCancelled {
-                    request_id,
-                }));
+                let _ = job
+                    .completion
+                    .send(Err(RuntimeError::ExecutionCancelled { request_id }));
                 continue;
             }
             Activation::TimedOut => {
                 job.signal.set(StopReason::TimedOut);
-                let _ = job.completion.send(Err(RuntimeError::ExecutionTimeout {
-                    request_id,
-                }));
+                let _ = job
+                    .completion
+                    .send(Err(RuntimeError::ExecutionTimeout { request_id }));
                 continue;
             }
             Activation::Discard => continue,
@@ -500,11 +495,7 @@ fn finish_request(
     })
 }
 
-fn remove_tracked(
-    coordinator: &Mutex<ExecutionCoordinator>,
-    request_id: &str,
-    generation: u64,
-) {
+fn remove_tracked(coordinator: &Mutex<ExecutionCoordinator>, request_id: &str, generation: u64) {
     let mut coordinator = lock_coordinator(coordinator);
     if coordinator
         .tracked
@@ -942,11 +933,13 @@ mod tests {
             .await
             .expect("executor should reopen after the handler exits");
 
-            assert!(executor
-                .execute(request("accepted", 1_000))
-                .await
-                .unwrap()
-                .success);
+            assert!(
+                executor
+                    .execute(request("accepted", 1_000))
+                    .await
+                    .unwrap()
+                    .success
+            );
             assert_eq!(plugin.max_active.load(Ordering::Acquire), 1);
         });
     }
@@ -972,8 +965,20 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let (executor, _plugin, _gate) = executor(false, 1);
-            assert!(executor.execute(request("same", 1_000)).await.unwrap().success);
-            assert!(executor.execute(request("same", 1_000)).await.unwrap().success);
+            assert!(
+                executor
+                    .execute(request("same", 1_000))
+                    .await
+                    .unwrap()
+                    .success
+            );
+            assert!(
+                executor
+                    .execute(request("same", 1_000))
+                    .await
+                    .unwrap()
+                    .success
+            );
         });
     }
 
@@ -989,11 +994,13 @@ mod tests {
                 error,
                 RuntimeError::ExecutionPanic { request_id } if request_id == "panic"
             ));
-            assert!(executor
-                .execute(request("after-panic", 1_000))
-                .await
-                .unwrap()
-                .success);
+            assert!(
+                executor
+                    .execute(request("after-panic", 1_000))
+                    .await
+                    .unwrap()
+                    .success
+            );
         });
     }
 

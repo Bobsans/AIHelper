@@ -211,11 +211,9 @@ impl McpServer {
             .get(&protocol_request_id)
             .cloned()
             .unwrap_or_default();
-        execution_ids
-            .iter()
-            .fold(false, |cancelled, execution_id| {
-                self.executor.cancel(execution_id) || cancelled
-            })
+        execution_ids.iter().fold(false, |cancelled, execution_id| {
+            self.executor.cancel(execution_id) || cancelled
+        })
     }
 
     fn begin_execution(&self, request_id: &NumberOrString) -> ActiveExecution<'_> {

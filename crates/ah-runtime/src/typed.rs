@@ -157,16 +157,15 @@ pub(crate) fn validate_response_with(
     }
 }
 
-pub fn mcp_input_schema(
-    descriptor: &CommandDescriptor,
-) -> Result<serde_json::Value, RuntimeError> {
+pub fn mcp_input_schema(descriptor: &CommandDescriptor) -> Result<serde_json::Value, RuntimeError> {
     let mut schema = descriptor.input_schema.clone();
-    let schema_object = schema
-        .as_object_mut()
-        .ok_or_else(|| RuntimeError::InvalidCommandCatalog {
-            domain: command_domain(&descriptor.id),
-            reason: format!("command '{}' input schema must be an object", descriptor.id),
-        })?;
+    let schema_object =
+        schema
+            .as_object_mut()
+            .ok_or_else(|| RuntimeError::InvalidCommandCatalog {
+                domain: command_domain(&descriptor.id),
+                reason: format!("command '{}' input schema must be an object", descriptor.id),
+            })?;
     let properties = schema_object
         .entry("properties")
         .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
@@ -379,7 +378,10 @@ fn validate_input_root_keywords(
     let Some(schema) = descriptor.input_schema.as_object() else {
         return invalid_catalog(
             domain,
-            format!("command '{}' input schema must be a JSON object", descriptor.id),
+            format!(
+                "command '{}' input schema must be a JSON object",
+                descriptor.id
+            ),
         );
     };
     for keyword in schema.keys() {
@@ -533,7 +535,11 @@ mod tests {
 
         let error = validate_catalog(&metadata(), &catalog)
             .expect_err("root composition should be rejected");
-        assert!(error.to_string().contains("incompatible with MCP context injection"));
+        assert!(
+            error
+                .to_string()
+                .contains("incompatible with MCP context injection")
+        );
     }
 
     #[test]
