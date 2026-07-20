@@ -1,6 +1,6 @@
 [package]
 name = "ah-plugin-api"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 description = "Stable plugin contract and C ABI types for AIHelper"
 

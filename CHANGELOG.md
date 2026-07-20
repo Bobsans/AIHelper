@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-20
+
 ### Added
 - Best-effort daily JSONL logging for completed CLI and MCP invocations, with
   structured error diagnostics, ten-day retention, bounded records, concurrent
