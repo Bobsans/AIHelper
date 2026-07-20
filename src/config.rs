@@ -6,6 +6,7 @@ use std::{
 use crate::error::AppError;
 
 const PLUGIN_SETTINGS_FILE: &str = "plugins.json";
+const LOG_DIR: &str = "logs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigSource {
@@ -84,6 +85,12 @@ fn resolve_config_dir() -> Result<(PathBuf, ConfigSource), AppError> {
     }
 
     default_config_dir().map(|path| (path, ConfigSource::User))
+}
+
+pub(crate) fn resolve_log_dir() -> Option<PathBuf> {
+    resolve_config_dir()
+        .ok()
+        .map(|(config_dir, _)| config_dir.join(LOG_DIR))
 }
 
 fn default_config_dir() -> Result<PathBuf, AppError> {

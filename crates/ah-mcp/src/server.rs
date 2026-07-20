@@ -7,6 +7,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 use ah_plugin_api::{
@@ -31,6 +32,27 @@ const TOOL_PREFIX: &str = "ah.";
 const RISK_META_KEY: &str = "dev.aihelper/risk";
 const DIAGNOSTIC_META_KEY: &str = "dev.aihelper/diagnostic";
 const EXECUTION_META_KEY: &str = "dev.aihelper/execution";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpCommandStatus {
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpCommandEvent {
+    pub command: String,
+    pub tool: String,
+    pub request_id: String,
+    pub parameters: Value,
+    pub status: McpCommandStatus,
+    pub duration_ms: u64,
+    pub diagnostic: Option<CommandError>,
+}
+
+pub trait EventSink: Send + Sync {
+    fn record_command(&self, event: McpCommandEvent);
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServerConfig {
@@ -89,6 +111,7 @@ pub struct McpServer {
     catalog_generation: AtomicU64,
     active_executions: Mutex<HashMap<String, Vec<String>>>,
     next_execution_id: AtomicU64,
+    event_sink: Option<Arc<dyn EventSink>>,
 }
 
 struct CatalogSnapshot {
@@ -113,7 +136,13 @@ impl McpServer {
             catalog_generation: AtomicU64::new(1),
             active_executions: Mutex::new(HashMap::new()),
             next_execution_id: AtomicU64::new(1),
+            event_sink: None,
         })
+    }
+
+    pub fn with_event_sink(mut self, event_sink: Arc<dyn EventSink>) -> Self {
+        self.event_sink = Some(event_sink);
+        self
     }
 
     pub fn catalog_generation(&self) -> u64 {
@@ -211,9 +240,13 @@ impl McpServer {
             .get(&protocol_request_id)
             .cloned()
             .unwrap_or_default();
-        execution_ids.iter().fold(false, |cancelled, execution_id| {
-            self.executor.cancel(execution_id) || cancelled
-        })
+        let mut cancelled = false;
+        for execution_id in execution_ids {
+            if self.executor.cancel(&execution_id) {
+                cancelled = true;
+            }
+        }
+        cancelled
     }
 
     fn begin_execution(&self, request_id: &NumberOrString) -> ActiveExecution<'_> {
@@ -231,6 +264,48 @@ impl McpServer {
             protocol_request_id,
             execution_id,
         }
+    }
+
+    async fn call_tool_completed(
+        &self,
+        request: CallToolRequestParams,
+        protocol_request_id: &NumberOrString,
+        peer: Option<&Peer<RoleServer>>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let event_context = self.event_sink.as_ref().map(|_| {
+            let tool = request.name.to_string();
+            let parameters = Value::Object(request.arguments.clone().unwrap_or_default());
+            let canonical_command = self
+                .find_command(&tool)
+                .ok()
+                .flatten()
+                .map(|command| command.descriptor.id);
+            (Instant::now(), tool, parameters, canonical_command)
+        });
+        let execution = self.begin_execution(protocol_request_id);
+        let request_id = execution.execution_id().to_owned();
+        let result = self.call_tool_inner(request, request_id.clone()).await;
+        drop(execution);
+        if let (Some(event_sink), Some((started, tool, parameters, canonical_command))) =
+            (&self.event_sink, event_context)
+        {
+            let (status, diagnostic) = command_event_outcome(&result, canonical_command.as_deref());
+            event_sink.record_command(McpCommandEvent {
+                command: canonical_command.unwrap_or_else(|| tool.clone()),
+                tool,
+                request_id,
+                parameters,
+                status,
+                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                diagnostic,
+            });
+        }
+        if self.refresh_catalog_generation().unwrap_or(false)
+            && let Some(peer) = peer
+        {
+            let _ = peer.notify_tool_list_changed().await;
+        }
+        result
     }
 }
 
@@ -300,15 +375,8 @@ impl ServerHandler for McpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let execution = self.begin_execution(&context.id);
-        let result = self
-            .call_tool_inner(request, execution.execution_id().to_owned())
-            .await;
-        drop(execution);
-        if self.refresh_catalog_generation().unwrap_or(false) {
-            let _ = context.peer.notify_tool_list_changed().await;
-        }
-        result
+        self.call_tool_completed(request, &context.id, Some(&context.peer))
+            .await
     }
 
     async fn on_cancelled(
@@ -544,6 +612,57 @@ fn command_error_result(error: CommandError) -> CallToolResult {
     result
 }
 
+fn command_event_outcome(
+    result: &Result<CallToolResult, rmcp::ErrorData>,
+    canonical_command: Option<&str>,
+) -> (McpCommandStatus, Option<CommandError>) {
+    match result {
+        Ok(result) if result.is_error == Some(true) => {
+            let diagnostic = result
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.0.get(DIAGNOSTIC_META_KEY))
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+                .unwrap_or_else(|| {
+                    adapter_command_error(
+                        canonical_command,
+                        "MCP_ERROR_DIAGNOSTIC_MISSING",
+                        "MCP tool returned an error without a diagnostic",
+                        "the CallToolResult diagnostic metadata was missing or invalid",
+                    )
+                });
+            (McpCommandStatus::Error, Some(diagnostic))
+        }
+        Ok(_) => (McpCommandStatus::Success, None),
+        Err(error) => (
+            McpCommandStatus::Error,
+            Some(adapter_command_error(
+                canonical_command,
+                "MCP_PROTOCOL_ERROR",
+                "MCP tool call failed",
+                error.to_string(),
+            )),
+        ),
+    }
+}
+
+fn adapter_command_error(
+    canonical_command: Option<&str>,
+    code: &'static str,
+    message: &'static str,
+    cause: impl Into<String>,
+) -> CommandError {
+    CommandError::new(
+        canonical_command.and_then(command_domain),
+        canonical_command.map(str::to_owned),
+        code,
+        message,
+        cause,
+        1,
+        false,
+    )
+}
+
 fn runtime_command_error(error: RuntimeError) -> CommandError {
     match error {
         RuntimeError::DomainNotFound(domain) => CommandError::new(
@@ -735,7 +854,9 @@ mod tests {
     use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject, NumberOrString};
     use serde_json::{Value, json};
 
-    use super::{Executor, McpServer, McpServerConfig};
+    use super::{
+        EventSink, Executor, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
+    };
 
     struct TypedPlugin;
 
@@ -849,6 +970,17 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingEventSink {
+        events: Mutex<Vec<McpCommandEvent>>,
+    }
+
+    impl EventSink for RecordingEventSink {
+        fn record_command(&self, event: McpCommandEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
     fn manager() -> Arc<PluginManager> {
         let mut manager = PluginManager::new();
         manager.register_builtin(Arc::new(TypedPlugin));
@@ -862,6 +994,12 @@ mod tests {
             McpServerConfig::new("default-cwd", Some(10), 300).unwrap(),
         )
         .unwrap()
+    }
+
+    fn server_with_sink(executor: Arc<RecordingExecutor>) -> (McpServer, Arc<RecordingEventSink>) {
+        let sink = Arc::new(RecordingEventSink::default());
+        let event_sink: Arc<dyn EventSink> = sink.clone();
+        (server(executor).with_event_sink(event_sink), sink)
     }
 
     fn arguments(value: Value) -> JsonObject {
@@ -961,6 +1099,94 @@ mod tests {
                 .map(Vec::len),
             Some(1)
         );
+    }
+
+    #[test]
+    fn records_one_successful_command_event() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (server, sink) = server_with_sink(RecordingExecutor::success());
+            let parameters = json!({
+                "value": "hello",
+                "context": {"cwd": "custom-cwd", "limit": 20, "timeout_ms": 500}
+            });
+            let request = CallToolRequestParams::new("ah.test.echo")
+                .with_arguments(arguments(parameters.clone()));
+            let protocol_request_id = NumberOrString::String("event-success".to_owned().into());
+
+            let result = server
+                .call_tool_completed(request, &protocol_request_id, None)
+                .await
+                .unwrap();
+
+            assert_eq!(result.is_error, Some(false));
+            let events = sink.events.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            let event = &events[0];
+            assert_eq!(event.command, "test.echo");
+            assert_eq!(event.tool, "ah.test.echo");
+            assert_eq!(event.request_id, "mcp:s:event-success:e:1");
+            assert_eq!(event.parameters, parameters);
+            assert_eq!(event.status, McpCommandStatus::Success);
+            assert_eq!(event.diagnostic, None);
+        });
+    }
+
+    #[test]
+    fn records_typed_error_diagnostic_once() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (server, sink) = server_with_sink(RecordingExecutor::timeout());
+            let request = CallToolRequestParams::new("ah.test.echo")
+                .with_arguments(arguments(json!({"value": "hello"})));
+            let protocol_request_id = NumberOrString::String("event-error".to_owned().into());
+
+            let result = server
+                .call_tool_completed(request, &protocol_request_id, None)
+                .await
+                .unwrap();
+
+            assert_eq!(result.is_error, Some(true));
+            let events = sink.events.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].command, "test.echo");
+            assert_eq!(events[0].status, McpCommandStatus::Error);
+            assert_eq!(events[0].diagnostic.as_ref().unwrap().code, "TIMEOUT");
+        });
+    }
+
+    #[test]
+    fn records_unknown_tool_protocol_error_once() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (server, sink) = server_with_sink(RecordingExecutor::success());
+            let protocol_request_id = NumberOrString::String("event-unknown".to_owned().into());
+
+            let error = server
+                .call_tool_completed(
+                    CallToolRequestParams::new("ah.test.missing"),
+                    &protocol_request_id,
+                    None,
+                )
+                .await
+                .unwrap_err();
+
+            assert_eq!(error.code, ErrorCode::METHOD_NOT_FOUND);
+            let events = sink.events.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            let event = &events[0];
+            assert_eq!(event.command, "ah.test.missing");
+            assert_eq!(event.tool, "ah.test.missing");
+            assert_eq!(event.parameters, json!({}));
+            assert_eq!(event.status, McpCommandStatus::Error);
+            let diagnostic = event.diagnostic.as_ref().unwrap();
+            assert_eq!(diagnostic.code, "MCP_PROTOCOL_ERROR");
+            assert!(
+                diagnostic
+                    .cause
+                    .contains("unknown MCP tool 'ah.test.missing'")
+            );
+        });
     }
 
     #[test]

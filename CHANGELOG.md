@@ -6,6 +6,13 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+- Best-effort daily JSONL logging for completed CLI and MCP invocations, with
+  structured error diagnostics, ten-day retention, bounded records, concurrent
+  process locking, and secret redaction by default.
+- `AH_LOG_UNREDACTED=1` for isolated diagnostics that require full parameter
+  values while retaining record-size limits.
+
 ## [1.0.0] - 2026-07-17
 
 ### Added

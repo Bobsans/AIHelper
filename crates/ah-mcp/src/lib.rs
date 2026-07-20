@@ -2,4 +2,7 @@
 
 mod server;
 
-pub use server::{McpAdapterError, McpServer, McpServerConfig, serve_stdio};
+pub use server::{
+    EventSink, McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
+    serve_stdio,
+};

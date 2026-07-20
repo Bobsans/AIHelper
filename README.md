@@ -51,4 +51,5 @@ cargo run --bin ah -- --cwd . mcp serve
 - [Developer guide](docs/developers/README.md)
 - [Command reference](docs/reference/README.md)
 - [MCP stdio reference](docs/reference/mcp.md)
+- [Invocation logging](docs/reference/logging.md)
 - [Changelog](CHANGELOG.md)

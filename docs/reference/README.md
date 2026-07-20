@@ -2,6 +2,9 @@
 
 Reference docs for all command domains and flags.
 
+Operational reference:
+- [invocation logging](logging.md)
+
 ## Domains
 - [ai](ai.md)
 - [mcp](mcp.md)

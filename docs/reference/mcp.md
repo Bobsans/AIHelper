@@ -23,6 +23,10 @@ Defaults:
 for MCP protocol messages. Logs and diagnostics must not be written to stdout.
 HTTP, SSE, and Streamable HTTP transports are not supported.
 
+Completed tool calls and MCP server/transport failures are written to the global
+AIHelper daily JSONL logs without using stdout or stderr. See
+[Invocation Logging](logging.md).
+
 ## Client configuration
 
 Configure the MCP client to start the `ah` executable directly:

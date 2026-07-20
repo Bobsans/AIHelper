@@ -218,5 +218,125 @@ fn stdio_server_lists_and_calls_typed_ctx_tool() {
             .starts_with('{')
     );
 
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.ctx.symbols",
+            "arguments": {
+                "path": "sample.rs",
+                "context": {
+                    "cwd": workspace.path().to_string_lossy(),
+                    "timeout_ms": 0
+                }
+            }
+        }
+    }));
+    let invalid_context = server.response();
+    assert_eq!(invalid_context["id"], 4);
+    assert_eq!(invalid_context["result"]["isError"], true);
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {"name": "ah.missing.tool", "arguments": {}}
+    }));
+    let unknown = server.response();
+    assert_eq!(unknown["id"], 5);
+    assert!(unknown["error"].is_object());
+
     server.stop();
+
+    let records = log_records(&config_dir);
+    let tool_event = records
+        .iter()
+        .find(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "mcp"
+                && record["command"] == "ctx.symbols"
+        })
+        .expect("MCP tool call should be logged");
+    assert_eq!(tool_event["tool"], "ah.ctx.symbols");
+    assert_eq!(tool_event["status"], "success");
+    assert_eq!(tool_event["parameters"]["path"], "sample.rs");
+    assert!(tool_event["request_id"].as_str().is_some());
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| {
+                record["event"] == "command.completed"
+                    && record["transport"] == "mcp"
+                    && record["command"] == "ctx.symbols"
+                    && record["status"] == "success"
+            })
+            .count(),
+        1
+    );
+    let invalid_context_event = records
+        .iter()
+        .find(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "mcp"
+                && record["command"] == "ctx.symbols"
+                && record["status"] == "error"
+        })
+        .expect("invalid MCP context should be logged once");
+    assert_eq!(
+        invalid_context_event["diagnostic"]["code"],
+        "INVALID_CONTEXT"
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| {
+                record["transport"] == "mcp"
+                    && record["command"] == "ctx.symbols"
+                    && record["status"] == "error"
+            })
+            .count(),
+        1
+    );
+    let unknown_event = records
+        .iter()
+        .find(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "mcp"
+                && record["tool"] == "ah.missing.tool"
+        })
+        .expect("unknown MCP tool should be logged");
+    assert_eq!(unknown_event["status"], "error");
+    let serve_event = records
+        .iter()
+        .find(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "cli"
+                && record["command"] == "mcp.serve"
+        })
+        .expect("mcp.serve completion should be logged");
+    assert_eq!(serve_event["status"], "success");
+}
+
+fn log_records(config_dir: &TempDir) -> Vec<Value> {
+    let mut paths = std::fs::read_dir(config_dir.path().join("logs"))
+        .expect("log directory should exist")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+        .into_iter()
+        .flat_map(|path| {
+            std::fs::read_to_string(path)
+                .expect("log should be readable")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("log line should be JSON"))
+                .collect::<Vec<Value>>()
+        })
+        .collect()
 }

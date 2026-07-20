@@ -18,6 +18,8 @@ use crate::error::AppError;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const STALE_LOCK_AGE: Duration = Duration::from_secs(300);
+#[cfg(windows)]
+const REPLACE_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(crate) fn transaction<T>(
     path: &Path,
@@ -51,12 +53,12 @@ fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), AppError> {
         .create_new(true)
         .open(&temporary_path)
         .map_err(|source| AppError::file_write(temporary_path.clone(), source))?;
-    if let Ok(metadata) = fs::metadata(path) {
-        if let Err(source) = fs::set_permissions(&temporary_path, metadata.permissions()) {
-            drop(temporary);
-            let _ = fs::remove_file(&temporary_path);
-            return Err(AppError::file_write(temporary_path, source));
-        }
+    if let Ok(metadata) = fs::metadata(path)
+        && let Err(source) = fs::set_permissions(&temporary_path, metadata.permissions())
+    {
+        drop(temporary);
+        let _ = fs::remove_file(&temporary_path);
+        return Err(AppError::file_write(temporary_path, source));
     }
     let write_result = (|| {
         temporary
@@ -201,6 +203,8 @@ fn temporary_path(path: &Path) -> PathBuf {
 fn replace_file(source: &Path, destination: &Path) -> Result<(), AppError> {
     use std::os::windows::ffi::OsStrExt;
 
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
     const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
     const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
     #[link(name = "kernel32")]
@@ -217,20 +221,30 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), AppError> {
         .encode_wide()
         .chain(Some(0))
         .collect::<Vec<_>>();
-    let replaced = unsafe {
-        MoveFileExW(
-            source_wide.as_ptr(),
-            destination_wide.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if replaced == 0 {
-        return Err(AppError::file_write(
-            destination.to_path_buf(),
-            std::io::Error::last_os_error(),
-        ));
+    let deadline = Instant::now() + REPLACE_RETRY_TIMEOUT;
+    loop {
+        // SAFETY: both buffers are NUL-terminated and remain alive for the call.
+        let replaced = unsafe {
+            MoveFileExW(
+                source_wide.as_ptr(),
+                destination_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if replaced != 0 {
+            return Ok(());
+        }
+
+        let error = std::io::Error::last_os_error();
+        let retryable = matches!(
+            error.raw_os_error(),
+            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
+        );
+        if !retryable || Instant::now() >= deadline {
+            return Err(AppError::file_write(destination.to_path_buf(), error));
+        }
+        thread::sleep(LOCK_RETRY_INTERVAL);
     }
-    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -342,5 +356,36 @@ mod tests {
                         .starts_with(&temporary_prefix)
                 })
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replace_retries_transient_windows_sharing_denial() {
+        use std::{os::windows::fs::OpenOptionsExt, sync::mpsc};
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        atomic_write_json(&path, &json!({"value": "before"})).unwrap();
+
+        let reader_path = path.clone();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let file = OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(reader_path)
+                .unwrap();
+            ready_tx.send(()).unwrap();
+            thread::sleep(Duration::from_millis(50));
+            drop(file);
+        });
+
+        ready_rx.recv().unwrap();
+        atomic_write_json(&path, &json!({"value": "after"})).unwrap();
+        reader.join().unwrap();
+
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(value, json!({"value": "after"}));
     }
 }

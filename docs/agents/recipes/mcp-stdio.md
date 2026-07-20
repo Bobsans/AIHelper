@@ -43,3 +43,11 @@ after receiving the tool-list-changed notification.
 When a tool returns retryable diagnostic `EXECUTOR_DRAINING`, wait briefly and
 retry. The previous timed-out handler is still exiting and no new handler will
 start until that cleanup completes.
+
+## Diagnosing failures
+
+Completed MCP calls and server/transport problems are written as daily JSONL
+records in the global AIHelper `logs` directory. See
+[`docs/reference/logging.md`](../../reference/logging.md) for paths, retention,
+redaction, and the optional `AH_LOG_UNREDACTED=1` diagnostic mode. Logging never
+writes non-protocol data to MCP stdout.
