@@ -6,6 +6,8 @@ commands with predictable text and JSON output.
 
 The binary command is `ah`.
 
+Supported Windows releases are Windows 10, Windows Server 2016, and newer.
+
 ## Status
 - Project is in bootstrap stage.
 - Plugin-oriented runtime architecture is in place.

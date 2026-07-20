@@ -19,6 +19,10 @@ use crate::{
 pub(crate) fn run() -> Result<(), AppError> {
     let started = Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
+    if is_version_fast_path(&raw_args) {
+        println!("ah {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let logged_argv = raw_args
         .iter()
         .skip(1)
@@ -73,6 +77,13 @@ pub(crate) fn run() -> Result<(), AppError> {
         );
     }
     result
+}
+
+fn is_version_fast_path(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 2
+        && raw_args[1]
+            .to_str()
+            .is_some_and(|argument| matches!(argument, "--version" | "-V"))
 }
 
 struct RuntimeStartup {
@@ -401,9 +412,33 @@ fn record_mcp_system_error(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use ah_runtime::PluginManager;
 
-    use super::resolve_invocation_command;
+    use super::{is_version_fast_path, resolve_invocation_command};
+
+    #[test]
+    fn version_fast_path_accepts_only_standalone_version_flags() {
+        assert!(is_version_fast_path(&[
+            OsString::from("ah"),
+            OsString::from("--version"),
+        ]));
+        assert!(is_version_fast_path(&[
+            OsString::from("ah"),
+            OsString::from("-V"),
+        ]));
+        assert!(!is_version_fast_path(&[
+            OsString::from("ah"),
+            OsString::from("--quiet"),
+            OsString::from("--version"),
+        ]));
+        assert!(!is_version_fast_path(&[
+            OsString::from("ah"),
+            OsString::from("file"),
+            OsString::from("--version"),
+        ]));
+    }
 
     #[test]
     fn command_logging_prefers_longest_catalog_descriptor() {

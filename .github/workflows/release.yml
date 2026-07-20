@@ -23,7 +23,7 @@ jobs:
             continue_on_error: false
           - os: macos-latest
             platform: macos
-            continue_on_error: true
+            continue_on_error: false
 
     steps:
       - name: Checkout
@@ -85,6 +85,9 @@ jobs:
             cd dist
             zip -9 -r "../${{ steps.meta.outputs.archive }}" "ah" "plugins"
           )
+
+      - name: Smoke test release archive
+        run: python scripts/release_smoke.py "${{ steps.meta.outputs.archive }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7

@@ -1,32 +1,49 @@
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, Command as ProcessCommand, Stdio},
+    path::{Path, PathBuf},
+    process::{ChildStdin, Command as ProcessCommand, Stdio},
     sync::mpsc::{self, Receiver},
     thread,
     time::{Duration, Instant},
 };
 
+use command_group::{CommandGroup, GroupChild};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
 struct McpProcess {
-    child: Child,
+    child: GroupChild,
     stdin: Option<ChildStdin>,
     responses: Receiver<String>,
+    pending: HashMap<String, Value>,
 }
 
 impl McpProcess {
     fn start(config_dir: &TempDir) -> Self {
-        let mut child = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+        Self::start_with_args(config_dir, &[])
+    }
+
+    fn start_with_args(config_dir: &TempDir, extra_args: &[&str]) -> Self {
+        let mut command = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"));
+        command
             .env("AH_CONFIG_DIR", config_dir.path())
             .args(["mcp", "serve", "--default-timeout-ms", "5000"])
+            .args(extra_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("MCP server should start");
-        let stdin = child.stdin.take().expect("MCP stdin should be piped");
-        let stdout = child.stdout.take().expect("MCP stdout should be piped");
+            .stderr(Stdio::piped());
+        let mut child = command.group_spawn().expect("MCP server should start");
+        let stdin = child
+            .inner()
+            .stdin
+            .take()
+            .expect("MCP stdin should be piped");
+        let stdout = child
+            .inner()
+            .stdout
+            .take()
+            .expect("MCP stdout should be piped");
         let (sender, responses) = mpsc::channel();
         thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -42,6 +59,7 @@ impl McpProcess {
             child,
             stdin: Some(stdin),
             responses,
+            pending: HashMap::new(),
         }
     }
 
@@ -51,7 +69,7 @@ impl McpProcess {
         stdin.flush().expect("MCP message should be flushed");
     }
 
-    fn response(&self) -> Value {
+    fn response(&mut self) -> Value {
         let line = self
             .responses
             .recv_timeout(Duration::from_secs(10))
@@ -59,25 +77,90 @@ impl McpProcess {
         serde_json::from_str(&line).expect("MCP stdout must contain JSON-RPC only")
     }
 
+    fn response_for(&mut self, id: u64) -> Value {
+        let key = id.to_string();
+        if let Some(response) = self.pending.remove(&key) {
+            return response;
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let line = self
+                .responses
+                .recv_timeout(remaining)
+                .expect("MCP server should respond before the deadline");
+            let response: Value =
+                serde_json::from_str(&line).expect("MCP stdout must contain JSON-RPC only");
+            let Some(response_id) = response.get("id") else {
+                continue;
+            };
+            let response_key = response_id.to_string();
+            if response_key == key {
+                return response;
+            }
+            self.pending.insert(response_key, response);
+        }
+    }
+
     fn stop(mut self) {
+        self.shutdown(true);
+    }
+
+    fn shutdown(&mut self, panic_on_timeout: bool) {
         drop(self.stdin.take());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if self
-                .child
-                .try_wait()
-                .expect("MCP process status should be readable")
-                .is_some()
-            {
-                return;
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {}
+                Err(error) if panic_on_timeout => {
+                    panic!("MCP process status should be readable: {error}")
+                }
+                Err(_) => return,
             }
             if Instant::now() >= deadline {
-                self.child.kill().expect("MCP process should stop");
+                if let Err(error) = self.child.kill()
+                    && error.kind() != std::io::ErrorKind::InvalidInput
+                {
+                    if panic_on_timeout {
+                        panic!("MCP process should stop: {error}");
+                    }
+                    return;
+                }
                 let _ = self.child.wait();
-                panic!("MCP server did not stop after stdin closed");
+                if panic_on_timeout {
+                    panic!("MCP server did not stop after stdin closed");
+                }
+                return;
             }
             thread::sleep(Duration::from_millis(10));
         }
+    }
+}
+
+impl Drop for McpProcess {
+    fn drop(&mut self) {
+        self.shutdown(false);
+    }
+}
+
+struct ReleaseMarker {
+    path: PathBuf,
+}
+
+impl ReleaseMarker {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn release(&self) {
+        std::fs::write(&self.path, b"release").expect("release marker should be written");
+    }
+}
+
+impl Drop for ReleaseMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.path, b"release");
     }
 }
 
@@ -316,6 +399,145 @@ fn stdio_server_lists_and_calls_typed_ctx_tool() {
         })
         .expect("mcp.serve completion should be logged");
     assert_eq!(serve_event["status"], "success");
+}
+
+#[test]
+fn stdio_server_logs_head_of_line_timeout_as_queued() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let workspace = TempDir::new().expect("temporary workspace should be created");
+    let ready = workspace.path().join("blocker.ready");
+    let release = workspace.path().join("blocker.release");
+    let sample = workspace.path().join("sample.txt");
+    std::fs::write(&sample, b"sample").expect("sample file should be written");
+    let mut server = McpProcess::start_with_args(&config_dir, &["--max-queued", "2"]);
+    let release_marker = ReleaseMarker::new(release.clone());
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "aihelper-timeout-test", "version": "1.0.0"}
+        }
+    }));
+    assert_eq!(server.response_for(1)["id"], 1);
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    }));
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.run.check",
+            "arguments": {
+                "command": blocker_command(&ready, &release),
+                "timeout_secs": 10,
+                "context": {
+                    "cwd": workspace.path().to_string_lossy(),
+                    "timeout_ms": 5000
+                }
+            }
+        }
+    }));
+    wait_for_path(&ready);
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.file.stat",
+            "arguments": {
+                "path": "sample.txt",
+                "context": {
+                    "cwd": workspace.path().to_string_lossy(),
+                    "timeout_ms": 200
+                }
+            }
+        }
+    }));
+    let timed_out = server.response();
+    assert_eq!(timed_out["id"], 3, "queued timeout should respond first");
+    assert_eq!(timed_out["result"]["isError"], true);
+    assert_eq!(
+        timed_out["result"]["_meta"]["dev.aihelper/diagnostic"]["code"],
+        "TIMEOUT"
+    );
+
+    release_marker.release();
+    let blocker = server.response_for(2);
+    assert_eq!(blocker["result"]["isError"], false);
+    assert_eq!(blocker["result"]["structuredContent"]["success"], true);
+    assert_eq!(blocker["result"]["structuredContent"]["timed_out"], false);
+    server.stop();
+
+    let records = log_records(&config_dir);
+    let events = records
+        .iter()
+        .filter(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "mcp"
+                && record["command"] == "file.stat"
+                && record["status"] == "error"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 1);
+    let event = events[0];
+    assert_eq!(event["diagnostic"]["code"], "TIMEOUT");
+    assert_eq!(event["timeout_phase"], "queue");
+    assert_eq!(event["execution_ms"], 0);
+    assert!(
+        event["queue_wait_ms"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    assert!(
+        event["duration_ms"].as_u64().unwrap_or_default()
+            >= event["queue_wait_ms"].as_u64().unwrap_or(u64::MAX)
+    );
+}
+
+fn wait_for_path(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "blocker did not become ready");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(windows)]
+fn blocker_command(ready: &Path, release: &Path) -> Vec<String> {
+    let ready = ready.to_string_lossy().replace('\'', "''");
+    let release = release.to_string_lossy().replace('\'', "''");
+    vec![
+        "powershell.exe".to_owned(),
+        "-NoProfile".to_owned(),
+        "-Command".to_owned(),
+        format!(
+            "$ready='{ready}'; $release='{release}'; [IO.File]::WriteAllText($ready, 'ready'); \
+             $deadline=[DateTime]::UtcNow.AddSeconds(5); while (!(Test-Path -LiteralPath $release)) {{ \
+             if ([DateTime]::UtcNow -ge $deadline) {{ exit 2 }}; Start-Sleep -Milliseconds 10 }}"
+        ),
+    ]
+}
+
+#[cfg(not(windows))]
+fn blocker_command(ready: &Path, release: &Path) -> Vec<String> {
+    vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "touch \"$1\"; attempts=0; while [ ! -f \"$2\" ]; do attempts=$((attempts + 1)); \
+         [ \"$attempts\" -ge 500 ] && exit 2; sleep 0.01; done"
+            .to_owned(),
+        "sh".to_owned(),
+        ready.to_string_lossy().into_owned(),
+        release.to_string_lossy().into_owned(),
+    ]
 }
 
 fn log_records(config_dir: &TempDir) -> Vec<Value> {

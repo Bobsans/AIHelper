@@ -25,13 +25,21 @@ failures never fail a command.
 
 ## Records
 
-Each completed command produces one `command.completed` JSON object containing:
+Each completed command produces one `command.completed` JSON object, except
+standalone `ah --version` and `ah -V` fast-path requests. Records contain:
 
 - timestamp, PID, transport, command, and duration;
 - sanitized CLI argv or typed MCP parameters;
 - `success` or `error` status;
 - a structured diagnostic only for errors;
 - MCP tool and request IDs when applicable.
+
+MCP records include `queue_wait_ms` and `execution_ms` when the executor can
+observe both phases. `duration_ms` remains the total MCP adapter time and can be
+slightly greater than the phase sum. Timed-out calls also include
+`timeout_phase` as `queue` or `execution`; a queue timeout has
+`execution_ms: 0`. Calls rejected before executor admission omit these optional
+fields.
 
 Startup, configuration, plugin discovery, MCP server, and transport problems use
 separate `system` records. Successful result data, stdout, and stderr are not

@@ -1,6 +1,8 @@
 use assert_cmd::Command;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 use std::fs;
+#[cfg(windows)]
+use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -44,6 +46,21 @@ fn run_check_reports_failing_command_without_failing_ah() {
         .stdout(contains("\"timed_out\": false"));
 }
 
+#[cfg(windows)]
+#[test]
+fn run_check_preserves_exit_code_259() {
+    let output = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "run", "check", "cmd.exe", "/C", "exit 259"])
+        .output()
+        .expect("ah should run");
+    assert!(output.status.success(), "{output:?}");
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    assert_eq!(payload["exit_code"], 259);
+    assert_eq!(payload["timed_out"], false);
+}
+
 #[test]
 fn run_check_timeout_terminates_process_tree() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
@@ -63,6 +80,172 @@ fn run_check_timeout_terminates_process_tree() {
         serde_json::from_slice(&output.stdout).expect("valid JSON output");
     assert_eq!(payload["timed_out"], true);
     assert_eq!(payload["success"], false);
+}
+
+#[cfg(windows)]
+#[test]
+fn run_check_timeout_leaves_no_surviving_descendant() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let marker = temp.path().join("descendant-survived.txt");
+    let script = temp.path().join("delayed-marker.cmd");
+    fs::write(
+        &script,
+        format!(
+            "@ping.exe -n 3 127.0.0.1 >nul\r\n@echo survived>\"{}\"\r\n",
+            marker.display()
+        ),
+    )
+    .expect("descendant script should be written");
+    let launch = format!(
+        "Start-Process -FilePath '{}' -NoNewWindow -Wait",
+        script.display()
+    );
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let output = cmd
+        .args([
+            "--json",
+            "run",
+            "check",
+            "--timeout-secs",
+            "1",
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            &launch,
+        ])
+        .output()
+        .expect("ah should run");
+    assert!(output.status.success(), "{output:?}");
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    assert_eq!(payload["timed_out"], true);
+
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        !marker.exists(),
+        "descendant process survived job termination"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn run_check_preserves_batch_script_execution() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let script = temp.path().join("echo-result.cmd");
+    fs::write(&script, "@echo batch-ok\r\n").expect("batch script should be written");
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["run", "check", script.to_string_lossy().as_ref()])
+        .assert()
+        .success()
+        .stdout(contains("batch-ok"));
+}
+
+#[cfg(windows)]
+#[test]
+fn run_check_batch_uses_system_command_prompt() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let fake_command_prompt = temp.path().join("cmd.exe");
+    fs::write(&fake_command_prompt, "not an executable").expect("fake cmd should be written");
+    let script = temp.path().join("system-cmd.cmd");
+    fs::write(&script, "@echo system-cmd-ok\r\n").expect("batch script should be written");
+    let path = std::env::join_paths(std::iter::once(temp.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("PATH should be joinable");
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.env("PATH", path)
+        .args(["run", "check", script.to_string_lossy().as_ref()])
+        .assert()
+        .success()
+        .stdout(contains("system-cmd-ok"));
+}
+
+#[cfg(windows)]
+#[test]
+fn run_check_batch_accepts_verbatim_script_path() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let script = temp.path().join("verbatim.cmd");
+    fs::write(&script, "@echo verbatim-ok\r\n").expect("batch script should be written");
+    let verbatim = format!(r"\\?\{}", script.display());
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["run", "check", &verbatim])
+        .assert()
+        .success()
+        .stdout(contains("verbatim-ok"));
+}
+
+#[cfg(windows)]
+#[test]
+fn run_check_batch_preserves_escaped_arguments() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let script = temp.path().join("echo-args.cmd");
+    fs::write(
+        &script,
+        "@echo [%~1]\r\n@echo [%~2]\r\n@echo [%~3]\r\n@echo [%~4]\r\n@echo [%~5]\r\n",
+    )
+    .expect("batch script should be written");
+
+    let arguments = ["", "two words", "trailing\\", "100%", "quote\"inside"];
+    let baseline = ProcessCommand::new(&script)
+        .args(arguments)
+        .output()
+        .expect("batch script should run through std::process");
+    assert!(baseline.status.success(), "{baseline:?}");
+
+    let output = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "run", "check", script.to_string_lossy().as_ref()])
+        .args(arguments)
+        .output()
+        .expect("ah should run");
+    assert!(output.status.success(), "{output:?}");
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    let stdout = payload["stdout"].as_str().expect("stdout should be text");
+    assert_eq!(stdout.as_bytes(), baseline.stdout);
+}
+
+#[cfg(windows)]
+#[test]
+fn run_check_timeout_tracks_descendants_after_batch_root_exits() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let marker = temp.path().join("batch-descendant-survived.txt");
+    let script = temp.path().join("spawn-background.cmd");
+    fs::write(
+        &script,
+        format!(
+            "@start \"\" /b powershell.exe -NoProfile -Command \"Start-Sleep -Seconds 2; Set-Content -LiteralPath '{}' -Value survived\"\r\n@exit /b 0\r\n",
+            marker.display()
+        ),
+    )
+    .expect("batch script should be written");
+
+    let output = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args([
+            "--json",
+            "run",
+            "check",
+            "--timeout-secs",
+            "1",
+            script.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .expect("ah should run");
+    assert!(output.status.success(), "{output:?}");
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    assert_eq!(payload["timed_out"], true);
+
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        !marker.exists(),
+        "batch descendant survived job termination"
+    );
 }
 
 #[test]

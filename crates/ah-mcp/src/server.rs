@@ -14,7 +14,10 @@ use ah_plugin_api::{
     CommandDescriptor, CommandError, ExecutionContextWire, TypedInvocationRequest,
     TypedInvocationResponse,
 };
-use ah_runtime::{PluginManager, RegisteredCommand, RuntimeError, executor::Executor};
+use ah_runtime::{
+    PluginManager, RegisteredCommand, RuntimeError,
+    executor::{ExecutionTelemetry, Executor},
+};
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceExt,
     model::{
@@ -52,6 +55,14 @@ pub struct McpCommandEvent {
 
 pub trait EventSink: Send + Sync {
     fn record_command(&self, event: McpCommandEvent);
+
+    fn record_command_with_telemetry(
+        &self,
+        event: McpCommandEvent,
+        _telemetry: Option<ExecutionTelemetry>,
+    ) {
+        self.record_command(event);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +130,20 @@ struct CatalogSnapshot {
     tools: Vec<Tool>,
     tools_by_name: HashMap<String, Tool>,
     commands_by_name: HashMap<String, RegisteredCommand>,
+}
+
+struct ToolCallOutcome {
+    result: Result<CallToolResult, rmcp::ErrorData>,
+    telemetry: Option<ExecutionTelemetry>,
+}
+
+impl ToolCallOutcome {
+    fn unobserved(result: Result<CallToolResult, rmcp::ErrorData>) -> Self {
+        Self {
+            result,
+            telemetry: None,
+        }
+    }
 }
 
 impl McpServer {
@@ -204,15 +229,31 @@ impl McpServer {
         )
     }
 
+    #[cfg(test)]
     async fn call_tool_inner(
         &self,
         request: CallToolRequestParams,
         request_id: String,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let command = self
-            .find_command(&request.name)
-            .map_err(internal_catalog_error)?
-            .ok_or_else(|| unknown_tool_error(&request.name))?;
+        self.call_tool_inner_observed(request, request_id)
+            .await
+            .result
+    }
+
+    async fn call_tool_inner_observed(
+        &self,
+        request: CallToolRequestParams,
+        request_id: String,
+    ) -> ToolCallOutcome {
+        let command = match self.find_command(&request.name) {
+            Ok(Some(command)) => command,
+            Ok(None) => {
+                return ToolCallOutcome::unobserved(Err(unknown_tool_error(&request.name)));
+            }
+            Err(error) => {
+                return ToolCallOutcome::unobserved(Err(internal_catalog_error(error)));
+            }
+        };
         let mut arguments = request.arguments.unwrap_or_default();
         let context = match extract_context(
             &mut arguments,
@@ -221,13 +262,20 @@ impl McpServer {
             &command.descriptor,
         ) {
             Ok(context) => context,
-            Err(error) => return Ok(command_error_result(error)),
+            Err(error) => {
+                return ToolCallOutcome::unobserved(Ok(command_error_result(error)));
+            }
         };
         let request =
             TypedInvocationRequest::new(command.descriptor.id, Value::Object(arguments), context);
-        match self.executor.execute(request).await {
+        let observed = self.executor.execute_observed(request).await;
+        let result = match observed.result {
             Ok(response) => Ok(typed_response_result(response, &request_id)),
             Err(error) => Ok(command_error_result(runtime_command_error(error))),
+        };
+        ToolCallOutcome {
+            result,
+            telemetry: observed.telemetry,
         }
     }
 
@@ -284,28 +332,34 @@ impl McpServer {
         });
         let execution = self.begin_execution(protocol_request_id);
         let request_id = execution.execution_id().to_owned();
-        let result = self.call_tool_inner(request, request_id.clone()).await;
+        let outcome = self
+            .call_tool_inner_observed(request, request_id.clone())
+            .await;
         drop(execution);
         if let (Some(event_sink), Some((started, tool, parameters, canonical_command))) =
             (&self.event_sink, event_context)
         {
-            let (status, diagnostic) = command_event_outcome(&result, canonical_command.as_deref());
-            event_sink.record_command(McpCommandEvent {
-                command: canonical_command.unwrap_or_else(|| tool.clone()),
-                tool,
-                request_id,
-                parameters,
-                status,
-                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                diagnostic,
-            });
+            let (status, diagnostic) =
+                command_event_outcome(&outcome.result, canonical_command.as_deref());
+            event_sink.record_command_with_telemetry(
+                McpCommandEvent {
+                    command: canonical_command.unwrap_or_else(|| tool.clone()),
+                    tool,
+                    request_id,
+                    parameters,
+                    status,
+                    duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    diagnostic,
+                },
+                outcome.telemetry,
+            );
         }
         if self.refresh_catalog_generation().unwrap_or(false)
             && let Some(peer) = peer
         {
             let _ = peer.notify_tool_list_changed().await;
         }
-        result
+        outcome.result
     }
 }
 
@@ -846,11 +900,17 @@ mod tests {
 
     use ah_plugin_api::{
         AH_PLUGIN_ABI_VERSION, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
-        InvocationRequest, InvocationResponse, PluginCompatibility, PluginManual, PluginMetadata,
-        Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-        plugin_capabilities,
+        ExecutionContextWire, InvocationRequest, InvocationResponse, PluginCompatibility,
+        PluginManual, PluginMetadata, Reversibility, RiskLevel, TypedInvocationRequest,
+        TypedInvocationResponse, plugin_capabilities,
     };
-    use ah_runtime::{BuiltinPlugin, PluginManager, RuntimeError, executor::ExecutionFuture};
+    use ah_runtime::{
+        BuiltinPlugin, PluginManager, RuntimeError,
+        executor::{
+            ExecutionFuture, ExecutionTelemetry, ExecutionTimeoutPhase, ObservedExecution,
+            ObservedExecutionFuture,
+        },
+    };
     use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject, NumberOrString};
     use serde_json::{Value, json};
 
@@ -926,6 +986,24 @@ mod tests {
         request: Mutex<Option<TypedInvocationRequest>>,
         cancelled: Mutex<Vec<String>>,
         fail_timeout: bool,
+        telemetry: Option<ExecutionTelemetry>,
+    }
+
+    struct DefaultObservedExecutor;
+
+    impl Executor for DefaultObservedExecutor {
+        fn execute(&self, request: TypedInvocationRequest) -> ExecutionFuture<'_> {
+            Box::pin(async move {
+                Ok(TypedInvocationResponse::success(
+                    json!({"value": request.arguments["value"]}),
+                    None,
+                ))
+            })
+        }
+
+        fn cancel(&self, _request_id: &str) -> bool {
+            false
+        }
     }
 
     impl RecordingExecutor {
@@ -934,6 +1012,7 @@ mod tests {
                 request: Mutex::new(None),
                 cancelled: Mutex::new(Vec::new()),
                 fail_timeout: false,
+                telemetry: None,
             })
         }
 
@@ -942,6 +1021,11 @@ mod tests {
                 request: Mutex::new(None),
                 cancelled: Mutex::new(Vec::new()),
                 fail_timeout: true,
+                telemetry: Some(ExecutionTelemetry {
+                    queue_wait_ms: 250,
+                    execution_ms: 0,
+                    timeout_phase: Some(ExecutionTimeoutPhase::Queue),
+                }),
             })
         }
     }
@@ -964,6 +1048,16 @@ mod tests {
             })
         }
 
+        fn execute_observed(&self, request: TypedInvocationRequest) -> ObservedExecutionFuture<'_> {
+            let telemetry = self.telemetry;
+            Box::pin(async move {
+                ObservedExecution {
+                    result: self.execute(request).await,
+                    telemetry,
+                }
+            })
+        }
+
         fn cancel(&self, request_id: &str) -> bool {
             self.cancelled.lock().unwrap().push(request_id.to_owned());
             true
@@ -973,11 +1067,32 @@ mod tests {
     #[derive(Default)]
     struct RecordingEventSink {
         events: Mutex<Vec<McpCommandEvent>>,
+        telemetry: Mutex<Vec<Option<ExecutionTelemetry>>>,
+    }
+
+    #[derive(Default)]
+    struct DefaultTelemetryEventSink {
+        events: Mutex<Vec<McpCommandEvent>>,
+    }
+
+    impl EventSink for DefaultTelemetryEventSink {
+        fn record_command(&self, event: McpCommandEvent) {
+            self.events.lock().unwrap().push(event);
+        }
     }
 
     impl EventSink for RecordingEventSink {
         fn record_command(&self, event: McpCommandEvent) {
             self.events.lock().unwrap().push(event);
+        }
+
+        fn record_command_with_telemetry(
+            &self,
+            event: McpCommandEvent,
+            telemetry: Option<ExecutionTelemetry>,
+        ) {
+            self.events.lock().unwrap().push(event);
+            self.telemetry.lock().unwrap().push(telemetry);
         }
     }
 
@@ -1004,6 +1119,47 @@ mod tests {
 
     fn arguments(value: Value) -> JsonObject {
         value.as_object().unwrap().clone()
+    }
+
+    fn test_event() -> McpCommandEvent {
+        McpCommandEvent {
+            command: "test.echo".to_owned(),
+            tool: "ah.test.echo".to_owned(),
+            request_id: "test-request".to_owned(),
+            parameters: json!({"value": "hello"}),
+            status: McpCommandStatus::Success,
+            duration_ms: 1,
+            diagnostic: None,
+        }
+    }
+
+    #[test]
+    fn default_observation_and_sink_methods_remain_compatible() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let executor = DefaultObservedExecutor;
+            let observed = executor
+                .execute_observed(TypedInvocationRequest::new(
+                    "test.echo",
+                    json!({"value": "hello"}),
+                    ExecutionContextWire::new("default-observed", ".", None, 100),
+                ))
+                .await;
+            assert!(observed.result.unwrap().success);
+            assert_eq!(observed.telemetry, None);
+
+            let sink = DefaultTelemetryEventSink::default();
+            EventSink::record_command_with_telemetry(
+                &sink,
+                test_event(),
+                Some(ExecutionTelemetry {
+                    queue_wait_ms: 1,
+                    execution_ms: 1,
+                    timeout_phase: None,
+                }),
+            );
+            assert_eq!(sink.events.lock().unwrap().len(), 1);
+        });
     }
 
     #[test]
@@ -1129,6 +1285,8 @@ mod tests {
             assert_eq!(event.parameters, parameters);
             assert_eq!(event.status, McpCommandStatus::Success);
             assert_eq!(event.diagnostic, None);
+            drop(events);
+            assert_eq!(sink.telemetry.lock().unwrap().as_slice(), &[None]);
         });
     }
 
@@ -1152,6 +1310,15 @@ mod tests {
             assert_eq!(events[0].command, "test.echo");
             assert_eq!(events[0].status, McpCommandStatus::Error);
             assert_eq!(events[0].diagnostic.as_ref().unwrap().code, "TIMEOUT");
+            drop(events);
+            assert_eq!(
+                sink.telemetry.lock().unwrap().as_slice(),
+                &[Some(ExecutionTelemetry {
+                    queue_wait_ms: 250,
+                    execution_ms: 0,
+                    timeout_phase: Some(ExecutionTimeoutPhase::Queue),
+                })]
+            );
         });
     }
 

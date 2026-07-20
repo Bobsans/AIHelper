@@ -10,6 +10,7 @@ use std::{
 };
 
 use ah_mcp::{EventSink, McpCommandEvent, McpCommandStatus};
+use ah_runtime::executor::{ExecutionTelemetry, ExecutionTimeoutPhase};
 use chrono::{DateTime, Days, NaiveDate, SecondsFormat, Utc};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
@@ -310,20 +311,7 @@ impl EventLogger {
         let _ = cleanup_old_logs(&self.log_dir, date);
     }
 
-    #[cfg(test)]
-    fn for_test(log_dir: PathBuf, unredacted: bool, clock: Arc<dyn Clock>) -> Self {
-        fs::create_dir_all(&log_dir).expect("test log directory should be created");
-        Self {
-            log_dir,
-            unredacted,
-            clock,
-            last_cleanup_date: Mutex::new(None),
-        }
-    }
-}
-
-impl EventSink for EventLogger {
-    fn record_command(&self, event: McpCommandEvent) {
+    fn record_mcp_command(&self, event: McpCommandEvent, telemetry: Option<ExecutionTelemetry>) {
         let status = match event.status {
             McpCommandStatus::Success => "success",
             McpCommandStatus::Error => "error",
@@ -347,7 +335,45 @@ impl EventSink for EventLogger {
         );
         record["request_id"] = Value::String(sanitize_string(&event.request_id, self.unredacted));
         record["tool"] = Value::String(sanitize_string(&event.tool, self.unredacted));
+        if let Some(telemetry) = telemetry {
+            record["queue_wait_ms"] = json!(telemetry.queue_wait_ms);
+            record["execution_ms"] = json!(telemetry.execution_ms);
+            if let Some(timeout_phase) = telemetry.timeout_phase {
+                record["timeout_phase"] = Value::String(
+                    match timeout_phase {
+                        ExecutionTimeoutPhase::Queue => "queue",
+                        ExecutionTimeoutPhase::Execution => "execution",
+                    }
+                    .to_owned(),
+                );
+            }
+        }
         self.write_best_effort(&mut record, RecordKind::Command);
+    }
+
+    #[cfg(test)]
+    fn for_test(log_dir: PathBuf, unredacted: bool, clock: Arc<dyn Clock>) -> Self {
+        fs::create_dir_all(&log_dir).expect("test log directory should be created");
+        Self {
+            log_dir,
+            unredacted,
+            clock,
+            last_cleanup_date: Mutex::new(None),
+        }
+    }
+}
+
+impl EventSink for EventLogger {
+    fn record_command(&self, event: McpCommandEvent) {
+        self.record_mcp_command(event, None);
+    }
+
+    fn record_command_with_telemetry(
+        &self,
+        event: McpCommandEvent,
+        telemetry: Option<ExecutionTelemetry>,
+    ) {
+        self.record_mcp_command(event, telemetry);
     }
 }
 
@@ -1073,6 +1099,17 @@ fn minimal_record(record: &Value, kind: RecordKind, original_bounded_bytes: u64)
             if minimal["status"] == "error" {
                 minimal["diagnostic"] = minimal_diagnostic(record.get("diagnostic"));
             }
+            for field in [
+                "request_id",
+                "tool",
+                "queue_wait_ms",
+                "execution_ms",
+                "timeout_phase",
+            ] {
+                if let Some(value) = record.get(field) {
+                    minimal[field] = value.clone();
+                }
+            }
             minimal
         }
         RecordKind::System => json!({
@@ -1195,13 +1232,15 @@ mod tests {
 
     use ah_mcp::{EventSink, McpCommandEvent, McpCommandStatus};
     use ah_plugin_api::CommandError;
+    use ah_runtime::executor::{ExecutionTelemetry, ExecutionTimeoutPhase};
     use chrono::{DateTime, NaiveDate, TimeZone, Utc};
     use serde_json::{Value, json};
     use tempfile::TempDir;
 
     use super::{
         Clock, EventDiagnostic, EventLogger, MAX_LINE_BYTES, MAX_STRING_BYTES, REDACTED,
-        SystemEventSeverity, is_sensitive_name, log_filename, sanitize_cli_argv, sanitize_value,
+        RecordKind, SystemEventSeverity, is_sensitive_name, log_filename, minimal_record,
+        sanitize_cli_argv, sanitize_value,
     };
 
     struct FixedClock(DateTime<Utc>);
@@ -1524,7 +1563,7 @@ mod tests {
                 .map(|index| (format!("field_{index}"), Value::String("x".repeat(4096))))
                 .collect(),
         );
-        EventSink::record_command(
+        EventSink::record_command_with_telemetry(
             &logger,
             McpCommandEvent {
                 command: "test.large".to_owned(),
@@ -1535,12 +1574,51 @@ mod tests {
                 duration_ms: 1,
                 diagnostic: None,
             },
+            Some(ExecutionTelemetry {
+                queue_wait_ms: 9,
+                execution_ms: 0,
+                timeout_phase: Some(ExecutionTimeoutPhase::Queue),
+            }),
         );
         let record = &records(&temp)[0];
         assert_eq!(record["record_truncated"], true);
         assert_eq!(record["parameters"]["_truncated"], true);
+        assert_eq!(record["queue_wait_ms"], 9);
+        assert_eq!(record["execution_ms"], 0);
+        assert_eq!(record["timeout_phase"], "queue");
         let line = serde_json::to_vec(record).unwrap();
         assert!(line.len() < MAX_LINE_BYTES);
+    }
+
+    #[test]
+    fn minimal_record_preserves_mcp_identity_and_telemetry() {
+        let record = json!({
+            "schema_version": 1,
+            "timestamp": "2026-07-20T00:00:00.000Z",
+            "event": "command.completed",
+            "transport": "mcp",
+            "pid": 1,
+            "command": "file.stat",
+            "parameters": {},
+            "status": "error",
+            "duration_ms": 201,
+            "request_id": "mcp:n:1:e:1",
+            "tool": "ah.file.stat",
+            "queue_wait_ms": 200,
+            "execution_ms": 0,
+            "timeout_phase": "queue",
+            "diagnostic": {
+                "code": "TIMEOUT",
+                "message": "timed out",
+                "exit_code_hint": 1
+            }
+        });
+        let minimal = minimal_record(&record, RecordKind::Command, 70_000);
+        assert_eq!(minimal["request_id"], "mcp:n:1:e:1");
+        assert_eq!(minimal["tool"], "ah.file.stat");
+        assert_eq!(minimal["queue_wait_ms"], 200);
+        assert_eq!(minimal["execution_ms"], 0);
+        assert_eq!(minimal["timeout_phase"], "queue");
     }
 
     #[test]
@@ -1613,7 +1691,7 @@ mod tests {
     fn maps_mcp_success_and_error_events() {
         let temp = TempDir::new().unwrap();
         let logger = logger(&temp, false);
-        EventSink::record_command(
+        EventSink::record_command_with_telemetry(
             &logger,
             McpCommandEvent {
                 command: "search.text".to_owned(),
@@ -1624,6 +1702,11 @@ mod tests {
                 duration_ms: 12,
                 diagnostic: None,
             },
+            Some(ExecutionTelemetry {
+                queue_wait_ms: 2,
+                execution_ms: 8,
+                timeout_phase: None,
+            }),
         );
         EventSink::record_command(
             &logger,
@@ -1651,10 +1734,14 @@ mod tests {
         assert_eq!(records[0]["tool"], "ah.search.text");
         assert_eq!(records[0]["request_id"], "mcp:n:7:e:1");
         assert_eq!(records[0]["parameters"]["token"], "[REDACTED]");
+        assert_eq!(records[0]["queue_wait_ms"], 2);
+        assert_eq!(records[0]["execution_ms"], 8);
+        assert!(records[0].get("timeout_phase").is_none());
         assert!(records[0].get("diagnostic").is_none());
         assert_eq!(records[1]["status"], "error");
         assert_eq!(records[1]["diagnostic"]["code"], "REGEX_INVALID");
         assert_eq!(records[1]["diagnostic"]["retryable"], false);
         assert_eq!(records[1]["diagnostic"]["cause"], "password= [REDACTED]");
+        assert!(records[1].get("queue_wait_ms").is_none());
     }
 }

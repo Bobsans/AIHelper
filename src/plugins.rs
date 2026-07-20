@@ -710,6 +710,10 @@ impl BuiltinPlugin for GitBuiltinPlugin {
         git_manual()
     }
 
+    fn required_tools(&self, _request: &InvocationRequest) -> Vec<RequiredTool> {
+        Vec::new()
+    }
+
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
         let (parsed, options) =
             match parse_args::<GitPluginCli>("git", &request.argv, request.globals.clone()) {
@@ -721,6 +725,10 @@ impl BuiltinPlugin for GitBuiltinPlugin {
 
     fn command_catalog(&self) -> Option<CommandCatalog> {
         Some(commands::git::command_catalog())
+    }
+
+    fn required_tools_typed(&self, _request: &TypedInvocationRequest) -> Vec<RequiredTool> {
+        Vec::new()
     }
 
     fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {

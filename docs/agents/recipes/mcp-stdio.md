@@ -51,3 +51,6 @@ records in the global AIHelper `logs` directory. See
 [`docs/reference/logging.md`](../../reference/logging.md) for paths, retention,
 redaction, and the optional `AH_LOG_UNREDACTED=1` diagnostic mode. Logging never
 writes non-protocol data to MCP stdout.
+
+For retryable `TIMEOUT` diagnostics, inspect `timeout_phase`, `queue_wait_ms`,
+and `execution_ms` to distinguish head-of-line queue delay from a slow handler.

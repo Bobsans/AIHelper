@@ -22,13 +22,6 @@ fn logs_success_error_help_and_parse_outcomes() {
     Command::cargo_bin("ah")
         .expect("binary should compile")
         .env("AH_CONFIG_DIR", config_dir.path())
-        .arg("--version")
-        .assert()
-        .success();
-
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .env("AH_CONFIG_DIR", config_dir.path())
         .args(["file", "stat", "missing-file"])
         .assert()
         .failure();
@@ -57,12 +50,11 @@ fn logs_success_error_help_and_parse_outcomes() {
 
     let records = log_records(&config_dir);
     let commands = command_records(&records);
-    assert_eq!(commands.len(), 4, "{records:#?}");
+    assert_eq!(commands.len(), 3, "{records:#?}");
     assert_command(commands[0], "plugins.list", "success");
-    assert_command(commands[1], "version", "success");
-    assert_command(commands[2], "file.stat", "error");
-    assert_eq!(commands[2]["diagnostic"]["code"], "FILE_NOT_FOUND");
-    assert_command(commands[3], "help", "success");
+    assert_command(commands[1], "file.stat", "error");
+    assert_eq!(commands[1]["diagnostic"]["code"], "FILE_NOT_FOUND");
+    assert_command(commands[2], "help", "success");
     assert_eq!(
         commands[0]["parameters"]["argv"],
         serde_json::json!(["plugins", "list", "--json"])
@@ -81,6 +73,23 @@ fn logs_success_error_help_and_parse_outcomes() {
             .iter()
             .any(|record| record["command"] == "file.head")
     );
+}
+
+#[test]
+fn standalone_version_flags_skip_event_logging() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+
+    for flag in ["--version", "-V"] {
+        Command::cargo_bin("ah")
+            .expect("binary should compile")
+            .env("AH_CONFIG_DIR", config_dir.path())
+            .arg(flag)
+            .assert()
+            .success()
+            .stdout(format!("ah {}\n", env!("CARGO_PKG_VERSION")));
+    }
+
+    assert!(!config_dir.path().join("logs").exists());
 }
 
 #[test]

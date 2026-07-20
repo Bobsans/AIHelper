@@ -1,10 +1,10 @@
 use regex::Regex;
 use serde::Serialize;
-use std::{path::Path, sync::OnceLock};
+use std::{path::Path, sync::OnceLock, thread};
 
 use crate::{
     error::AppError,
-    git_status::{StatusEntry, count_statuses, parse_porcelain_v1_z},
+    git_status::{StatusEntry, count_statuses, parse_porcelain_v1_z, parse_porcelain_v2_branch_z},
 };
 use ah_runtime::core::apply_limit;
 
@@ -202,60 +202,38 @@ pub(crate) fn execute(
 }
 
 fn execute_status(_args: StatusArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
-    let in_repo = io.is_inside_repo()?;
-    let status_entries = if in_repo {
-        parse_porcelain_v1_z(&io.read_output_bytes([
-            "status".to_owned(),
-            "--porcelain=v1".to_owned(),
-            "-z".to_owned(),
-        ])?)?
-    } else {
-        Vec::new()
+    let Some(raw_status) = io.read_status_snapshot()? else {
+        return Ok(empty_status_result());
     };
+    let snapshot = parse_porcelain_v2_branch_z(&raw_status)?;
+    let status_entries = snapshot.entries;
     let counts = count_statuses(&status_entries);
-    let branch = if in_repo {
-        io.read_trimmed(["branch", "--show-current"])
-    } else {
-        None
-    };
-    let upstream = if in_repo {
-        io.read_trimmed(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-    } else {
-        None
-    };
-    let (ahead, behind) = if in_repo && upstream.is_some() {
-        io.read_trimmed(["rev-list", "--left-right", "--count", "@{u}...HEAD"])
-            .and_then(|raw| parse_ahead_behind(&raw))
-            .unwrap_or((None, None))
-    } else {
-        (None, None)
-    };
-    let latest_commit = if in_repo {
-        io.read_trimmed(["log", "-1", "--format=%H%x00%s"])
-            .and_then(|raw| {
-                let (hash, subject) = raw.split_once('\0')?;
-                Some(CommitSummary {
-                    hash: hash.to_owned(),
-                    short_hash: short_commit(hash),
-                    subject: subject.to_owned(),
+    let (latest_commit, latest_tag) = thread::scope(|scope| {
+        let commit = scope.spawn(|| {
+            io.read_trimmed(["log", "-1", "--format=%H%x00%s"])
+                .and_then(|raw| {
+                    let (hash, subject) = raw.split_once('\0')?;
+                    Some(CommitSummary {
+                        hash: hash.to_owned(),
+                        short_hash: short_commit(hash),
+                        subject: subject.to_owned(),
+                    })
                 })
-            })
-    } else {
-        None
-    };
-    let latest_tag = if in_repo {
-        io.read_trimmed(["describe", "--tags", "--abbrev=0"])
-    } else {
-        None
-    };
+        });
+        let tag = scope.spawn(|| io.read_trimmed(["describe", "--tags", "--abbrev=0"]));
+        (
+            commit.join().expect("git log worker should not panic"),
+            tag.join().expect("git describe worker should not panic"),
+        )
+    });
 
     Ok(GitResult::Status(GitStatusOutput {
         command: "git.status",
-        in_git_repo: in_repo,
-        branch,
-        upstream,
-        ahead,
-        behind,
+        in_git_repo: true,
+        branch: snapshot.branch,
+        upstream: snapshot.upstream,
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
         clean: status_entries.is_empty(),
         staged_count: counts.staged,
         unstaged_count: counts.unstaged,
@@ -264,6 +242,24 @@ fn execute_status(_args: StatusArgs, io: &adapters::io::GitIo) -> Result<GitResu
         latest_commit,
         latest_tag,
     }))
+}
+
+fn empty_status_result() -> GitResult {
+    GitResult::Status(GitStatusOutput {
+        command: "git.status",
+        in_git_repo: false,
+        branch: None,
+        upstream: None,
+        ahead: None,
+        behind: None,
+        clean: true,
+        staged_count: 0,
+        unstaged_count: 0,
+        untracked_count: 0,
+        changed_count: 0,
+        latest_commit: None,
+        latest_tag: None,
+    })
 }
 
 fn execute_tags(
@@ -773,13 +769,6 @@ fn parse_remotes(raw: &str) -> Vec<RemoteEntry> {
         entry.provider = detect_provider(entry.fetch_url.as_deref().or(entry.push_url.as_deref()));
     }
     remotes
-}
-
-fn parse_ahead_behind(raw: &str) -> Option<(Option<usize>, Option<usize>)> {
-    let mut parts = raw.split_whitespace();
-    let behind = parts.next()?.parse::<usize>().ok()?;
-    let ahead = parts.next()?.parse::<usize>().ok()?;
-    Some((Some(ahead), Some(behind)))
 }
 
 fn parse_optional_usize(raw: &str) -> Option<usize> {

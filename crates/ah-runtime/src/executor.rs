@@ -19,9 +19,40 @@ use crate::{PluginManager, RuntimeError};
 
 pub type ExecutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<TypedInvocationResponse, RuntimeError>> + Send + 'a>>;
+pub type ObservedExecutionFuture<'a> = Pin<Box<dyn Future<Output = ObservedExecution> + Send + 'a>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionTimeoutPhase {
+    Queue,
+    Execution,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionTelemetry {
+    pub queue_wait_ms: u64,
+    pub execution_ms: u64,
+    pub timeout_phase: Option<ExecutionTimeoutPhase>,
+}
+
+pub struct ObservedExecution {
+    pub result: Result<TypedInvocationResponse, RuntimeError>,
+    pub telemetry: Option<ExecutionTelemetry>,
+}
+
+impl ObservedExecution {
+    fn unobserved(result: Result<TypedInvocationResponse, RuntimeError>) -> Self {
+        Self {
+            result,
+            telemetry: None,
+        }
+    }
+}
 
 pub trait Executor: Send + Sync {
     fn execute(&self, request: TypedInvocationRequest) -> ExecutionFuture<'_>;
+    fn execute_observed(&self, request: TypedInvocationRequest) -> ObservedExecutionFuture<'_> {
+        Box::pin(async move { ObservedExecution::unobserved(self.execute(request).await) })
+    }
     fn cancel(&self, request_id: &str) -> bool;
 }
 
@@ -80,33 +111,33 @@ impl SequentialExecutor {
         !lock_coordinator(&self.coordinator).draining.is_empty()
     }
 
-    async fn execute_inner(
-        &self,
-        request: TypedInvocationRequest,
-    ) -> Result<TypedInvocationResponse, RuntimeError> {
-        validate_request(&request)?;
+    async fn execute_inner(&self, request: TypedInvocationRequest) -> ObservedExecution {
+        if let Err(error) = validate_request(&request) {
+            return ObservedExecution::unobserved(Err(error));
+        }
         let request_id = request.context.request_id.clone();
         let command = request.command.clone();
         let accepted_at = Instant::now();
-        let deadline = accepted_at
-            .checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
-            .ok_or_else(|| {
-                RuntimeError::InvalidExecutionRequest(format!(
-                    "timeout is too large for request '{request_id}'"
-                ))
-            })?;
+        let Some(deadline) =
+            accepted_at.checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
+        else {
+            return ObservedExecution::unobserved(Err(RuntimeError::InvalidExecutionRequest(
+                format!("timeout is too large for request '{request_id}'"),
+            )));
+        };
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         let signal = Arc::new(ExecutionSignal::default());
+        let observation = Arc::new(ExecutionObservation::new(accepted_at));
         {
             let mut coordinator = lock_coordinator(&self.coordinator);
             if let Some(blocking_request_id) = coordinator.draining.values().next() {
-                return Err(RuntimeError::ExecutionDraining {
+                return ObservedExecution::unobserved(Err(RuntimeError::ExecutionDraining {
                     request_id: blocking_request_id.clone(),
-                });
+                }));
             }
             if coordinator.tracked.contains_key(&request_id) {
-                return Err(RuntimeError::InvalidExecutionRequest(format!(
-                    "duplicate active request id '{request_id}'"
+                return ObservedExecution::unobserved(Err(RuntimeError::InvalidExecutionRequest(
+                    format!("duplicate active request id '{request_id}'"),
                 )));
             }
             coordinator.tracked.insert(
@@ -116,6 +147,7 @@ impl SequentialExecutor {
                     command,
                     signal: Arc::clone(&signal),
                     phase: RequestPhase::Queued,
+                    observation: Arc::clone(&observation),
                 },
             );
         }
@@ -132,20 +164,26 @@ impl SequentialExecutor {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
                 remove_tracked(&self.coordinator, &request_id, generation);
-                return Err(RuntimeError::ExecutionQueueFull {
+                return ObservedExecution::unobserved(Err(RuntimeError::ExecutionQueueFull {
                     capacity: self.queue_capacity,
-                });
+                }));
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 remove_tracked(&self.coordinator, &request_id, generation);
-                return Err(RuntimeError::ExecutionWorker(
+                return ObservedExecution::unobserved(Err(RuntimeError::ExecutionWorker(
                     "execution queue is closed".to_owned(),
-                ));
+                )));
             }
         }
 
-        self.await_completion(request_id, generation, deadline, signal, response)
-            .await
+        let result = self
+            .await_completion(request_id, generation, deadline, signal, response)
+            .await;
+        let telemetry = observation.telemetry(Instant::now(), &result);
+        ObservedExecution {
+            result,
+            telemetry: Some(telemetry),
+        }
     }
 
     async fn await_completion(
@@ -185,6 +223,10 @@ impl SequentialExecutor {
 
 impl Executor for SequentialExecutor {
     fn execute(&self, request: TypedInvocationRequest) -> ExecutionFuture<'_> {
+        Box::pin(async move { self.execute_inner(request).await.result })
+    }
+
+    fn execute_observed(&self, request: TypedInvocationRequest) -> ObservedExecutionFuture<'_> {
         Box::pin(self.execute_inner(request))
     }
 
@@ -195,6 +237,7 @@ impl Executor for SequentialExecutor {
                 return false;
             };
             tracked.signal.set(StopReason::Cancelled);
+            tracked.observation.finish(Instant::now());
             match tracked.phase {
                 RequestPhase::Queued => {
                     coordinator.tracked.remove(request_id);
@@ -224,6 +267,71 @@ struct TrackedRequest {
     command: String,
     signal: Arc<ExecutionSignal>,
     phase: RequestPhase,
+    observation: Arc<ExecutionObservation>,
+}
+
+struct ExecutionObservation {
+    accepted_at: Instant,
+    times: Mutex<ExecutionObservationTimes>,
+}
+
+#[derive(Default)]
+struct ExecutionObservationTimes {
+    activated_at: Option<Instant>,
+    terminal_at: Option<Instant>,
+}
+
+impl ExecutionObservation {
+    fn new(accepted_at: Instant) -> Self {
+        Self {
+            accepted_at,
+            times: Mutex::new(ExecutionObservationTimes::default()),
+        }
+    }
+
+    fn activate(&self, activated_at: Instant) {
+        self.times
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .activated_at
+            .get_or_insert(activated_at);
+    }
+
+    fn finish(&self, terminal_at: Instant) {
+        self.times
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .terminal_at
+            .get_or_insert(terminal_at);
+    }
+
+    fn telemetry(
+        &self,
+        finished_at: Instant,
+        result: &Result<TypedInvocationResponse, RuntimeError>,
+    ) -> ExecutionTelemetry {
+        let times = self
+            .times
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let activated_at = times.activated_at;
+        let terminal_at = times.terminal_at.unwrap_or(finished_at);
+        let timeout_phase =
+            matches!(result, Err(RuntimeError::ExecutionTimeout { .. })).then(|| {
+                if activated_at.is_some() {
+                    ExecutionTimeoutPhase::Execution
+                } else {
+                    ExecutionTimeoutPhase::Queue
+                }
+            });
+        ExecutionTelemetry {
+            queue_wait_ms: elapsed_ms(self.accepted_at, activated_at.unwrap_or(terminal_at)),
+            execution_ms: activated_at
+                .map(|started_at| elapsed_ms(started_at, terminal_at))
+                .unwrap_or(0),
+            timeout_phase,
+        }
+    }
 }
 
 struct ExecutionJob {
@@ -411,18 +519,22 @@ fn activate_request(
         return Activation::Discard;
     }
     if request.signal.reason() == Some(StopReason::Cancelled) {
+        request.observation.finish(Instant::now());
         coordinator.tracked.remove(request_id);
         return Activation::Cancelled;
     }
-    if Instant::now() >= deadline {
+    let now = Instant::now();
+    if now >= deadline {
+        request.observation.finish(now);
         coordinator.tracked.remove(request_id);
         return Activation::TimedOut;
     }
-    coordinator
+    let request = coordinator
         .tracked
         .get_mut(request_id)
-        .expect("tracked request should still exist")
-        .phase = RequestPhase::Active;
+        .expect("tracked request should still exist");
+    request.phase = RequestPhase::Active;
+    request.observation.activate(now);
     Activation::Start
 }
 
@@ -441,6 +553,7 @@ fn timeout_request(
             return false;
         }
         request.signal.set(StopReason::TimedOut);
+        request.observation.finish(Instant::now());
         match request.phase {
             RequestPhase::Queued => {
                 coordinator.tracked.remove(request_id);
@@ -479,6 +592,7 @@ fn finish_request(
         if request.generation != generation {
             return None;
         }
+        request.observation.finish(Instant::now());
         let phase = request.phase;
         coordinator.tracked.remove(request_id);
         coordinator.draining.remove(&generation);
@@ -529,6 +643,15 @@ fn lock_coordinator(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn elapsed_ms(started_at: Instant, finished_at: Instant) -> u64 {
+    u64::try_from(
+        finished_at
+            .saturating_duration_since(started_at)
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -548,7 +671,7 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{Executor, SequentialExecutor};
+    use super::{ExecutionTimeoutPhase, Executor, SequentialExecutor};
     use crate::{BuiltinPlugin, PluginManager, RuntimeError};
 
     struct ProbePlugin {
@@ -720,11 +843,15 @@ mod tests {
         tokio::task::spawn_blocking(move || {
             let (state, changed) = &*gate;
             let state = state.lock().unwrap();
-            let _ = changed
+            let (state, _) = changed
                 .wait_timeout_while(state, Duration::from_secs(1), |state| {
                     state.started < expected
                 })
                 .unwrap();
+            assert!(
+                state.started >= expected,
+                "expected {expected} handler(s) to start"
+            );
         })
         .await
         .unwrap();
@@ -781,6 +908,21 @@ mod tests {
     }
 
     #[test]
+    fn observed_success_reports_timings_without_timeout_phase() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (executor, _plugin, _) = executor(false, 1);
+            let observed = executor
+                .execute_observed(request("observed-success", 1_000))
+                .await;
+            assert!(observed.result.unwrap().success);
+            let telemetry = observed.telemetry.unwrap();
+            assert_eq!(telemetry.timeout_phase, None);
+            assert!(telemetry.execution_ms <= 1_000);
+        });
+    }
+
+    #[test]
     fn reports_queue_full_deterministically() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
@@ -829,12 +971,26 @@ mod tests {
     fn times_out_and_cancels_handler() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let (executor, _plugin, _gate) = executor(true, 1);
-            let error = executor.execute(request("timeout", 10)).await.unwrap_err();
+            let (executor, _plugin, gate) = executor(true, 1);
+            let task_executor = executor.clone();
+            let task = tokio::spawn(async move {
+                task_executor
+                    .execute_observed(request("timeout", 1_000))
+                    .await
+            });
+            wait_for_started(gate, 1).await;
+            let observed = task.await.unwrap();
+            let error = observed.result.unwrap_err();
             assert!(matches!(
                 error,
                 RuntimeError::ExecutionTimeout { request_id } if request_id == "timeout"
             ));
+            let telemetry = observed.telemetry.unwrap();
+            assert_eq!(
+                telemetry.timeout_phase,
+                Some(ExecutionTimeoutPhase::Execution)
+            );
+            assert!(telemetry.execution_ms > 0);
         });
     }
 
@@ -881,19 +1037,25 @@ mod tests {
 
             let second_executor = executor.clone();
             let second = tokio::spawn(async move {
-                second_executor.execute(request("queued-timeout", 10)).await
+                second_executor
+                    .execute_observed(request("queued-timeout", 10))
+                    .await
             });
             wait_for_queued(&executor, "queued-timeout").await;
 
-            let error = tokio::time::timeout(Duration::from_millis(100), second)
+            let observed = tokio::time::timeout(Duration::from_millis(100), second)
                 .await
                 .expect("queued timeout should complete promptly")
-                .unwrap()
-                .unwrap_err();
+                .unwrap();
+            let error = observed.result.unwrap_err();
             assert!(matches!(
                 error,
                 RuntimeError::ExecutionTimeout { request_id } if request_id == "queued-timeout"
             ));
+            let telemetry = observed.telemetry.unwrap();
+            assert_eq!(telemetry.timeout_phase, Some(ExecutionTimeoutPhase::Queue));
+            assert!(telemetry.queue_wait_ms > 0);
+            assert_eq!(telemetry.execution_ms, 0);
 
             release(&gate);
             assert!(first.await.unwrap().unwrap().success);
@@ -905,10 +1067,12 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let (executor, plugin, gate) = executor_with_cancel_policy(true, false, 2);
-            let error = executor
-                .execute(request("uncooperative", 10))
-                .await
-                .unwrap_err();
+            let task_executor = executor.clone();
+            let task = tokio::spawn(async move {
+                task_executor.execute(request("uncooperative", 1_000)).await
+            });
+            wait_for_started(Arc::clone(&gate), 1).await;
+            let error = task.await.unwrap().unwrap_err();
             assert!(matches!(
                 error,
                 RuntimeError::ExecutionTimeout { request_id } if request_id == "uncooperative"

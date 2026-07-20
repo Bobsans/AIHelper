@@ -101,6 +101,10 @@ Every tool input includes an optional reserved `context` object:
 Omitted fields use the server defaults. `context` is removed before validating
 and invoking the domain command.
 
+When executor timing is available, invocation logs separate queue wait from
+execution time and identify whether a `TIMEOUT` occurred in `queue` or
+`execution`. See [Invocation Logging](logging.md).
+
 ## Safety metadata
 
 All tools include standard MCP annotations:

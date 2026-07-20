@@ -2,12 +2,15 @@ use std::{
     collections::VecDeque,
     io::{self, ErrorKind, Read},
     path::PathBuf,
-    process::{Command, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use command_group::CommandGroup;
+#[cfg(not(windows))]
+use std::process::{Command, Stdio};
+
+#[cfg(not(windows))]
+use command_group::{CommandGroup, GroupChild};
 
 #[cfg(windows)]
 use std::env;
@@ -15,6 +18,11 @@ use std::env;
 use std::path::Path;
 
 use crate::error::AppError;
+
+#[cfg(windows)]
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(5);
+#[cfg(not(windows))]
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug)]
 pub(crate) struct CapturedOutput {
@@ -55,23 +63,13 @@ pub(crate) fn run_command(
     } = options;
     let started = Instant::now();
     let spawn_program = resolve_program_for_spawn(program, cwd);
-    let mut command = Command::new(&spawn_program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let mut child = command
-        .group_spawn()
+    let mut child = spawn_child(&spawn_program, args, cwd)
         .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?;
 
-    let stdout_handle = child.inner().stdout.take().map(|stdout| {
+    let stdout_handle = child.take_stdout().map(|stdout| {
         thread::spawn(move || capture_reader(stdout, max_output_bytes, tail_lines.is_some()))
     });
-    let stderr_handle = child.inner().stderr.take().map(|stderr| {
+    let stderr_handle = child.take_stderr().map(|stderr| {
         thread::spawn(move || capture_reader(stderr, max_output_bytes, tail_lines.is_some()))
     });
 
@@ -99,7 +97,7 @@ pub(crate) fn run_command(
                 .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?;
         }
 
-        thread::sleep(Duration::from_millis(25));
+        thread::sleep(PROCESS_POLL_INTERVAL);
     };
 
     let stdout = join_output_reader(stdout_handle, command_label)?;
@@ -111,6 +109,110 @@ pub(crate) fn run_command(
         duration_ms: started.elapsed().as_millis(),
         stdout,
         stderr,
+    })
+}
+
+enum ManagedChild {
+    #[cfg(not(windows))]
+    Group(GroupChild),
+    #[cfg(windows)]
+    Windows(super::windows_job::Child),
+}
+
+impl ManagedChild {
+    fn take_stdout(&mut self) -> Option<Box<dyn Read + Send>> {
+        match self {
+            #[cfg(not(windows))]
+            Self::Group(child) => child
+                .inner()
+                .stdout
+                .take()
+                .map(|stdout| Box::new(stdout) as Box<dyn Read + Send>),
+            #[cfg(windows)]
+            Self::Windows(child) => child
+                .take_stdout()
+                .map(|stdout| Box::new(stdout) as Box<dyn Read + Send>),
+        }
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn Read + Send>> {
+        match self {
+            #[cfg(not(windows))]
+            Self::Group(child) => child
+                .inner()
+                .stderr
+                .take()
+                .map(|stderr| Box::new(stderr) as Box<dyn Read + Send>),
+            #[cfg(windows)]
+            Self::Windows(child) => child
+                .take_stderr()
+                .map(|stderr| Box::new(stderr) as Box<dyn Read + Send>),
+        }
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        match self {
+            #[cfg(not(windows))]
+            Self::Group(child) => child.try_wait(),
+            #[cfg(windows)]
+            Self::Windows(child) => child.try_wait(),
+        }
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        match self {
+            #[cfg(not(windows))]
+            Self::Group(child) => child.kill(),
+            #[cfg(windows)]
+            Self::Windows(child) => child.kill(),
+        }
+    }
+
+    fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
+        match self {
+            #[cfg(not(windows))]
+            Self::Group(child) => child.wait(),
+            #[cfg(windows)]
+            Self::Windows(child) => child.wait(),
+        }
+    }
+}
+
+fn spawn_child(
+    program: &std::path::Path,
+    args: &[String],
+    cwd: Option<&std::path::Path>,
+) -> io::Result<ManagedChild> {
+    #[cfg(windows)]
+    {
+        if is_windows_batch(program) {
+            let command_prompt = super::windows_job::system_command_prompt()?;
+            super::windows_job::spawn_batch(&command_prompt, program, args, cwd)
+                .map(ManagedChild::Windows)
+        } else {
+            super::windows_job::spawn(program, args, cwd).map(ManagedChild::Windows)
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        command.group_spawn().map(ManagedChild::Group)
+    }
+}
+
+#[cfg(windows)]
+fn is_windows_batch(program: &std::path::Path) -> bool {
+    program.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("bat") || extension.eq_ignore_ascii_case("cmd")
     })
 }
 
