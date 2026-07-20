@@ -12,6 +12,14 @@ These instructions apply to the entire repository.
 - Treat changes that appear in files while you are working as authoritative user changes. Preserve them and adapt your work; do not revert or overwrite them.
 - Inspect the working tree before editing and keep unrelated changes untouched.
 
+## Skills
+
+- Project skills are canonical under `.agents/skills/`. Client-specific skill
+  files under `.claude/skills/` and `.opencode/skills/` are discovery adapters;
+  do not duplicate or maintain the full instructions there.
+- For release inspection, preparation, publication, or verification, load and
+  follow `.agents/skills/release/SKILL.md`.
+
 ## Project Overview
 
 AIHelper is a Rust workspace that provides the `ah <domain> <command>` CLI. It uses a plugin-oriented architecture with in-process dispatch.
