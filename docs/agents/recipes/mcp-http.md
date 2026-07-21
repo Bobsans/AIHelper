@@ -18,6 +18,27 @@ The JSON response contains `status`, the binary `version`, the process `pid`,
 and a process-lifetime UUID v4 `instance_id`. A restart always creates a new
 identity.
 
+To stop that exact process, first read readiness and then send its current
+identity to the control endpoint:
+
+```text
+POST http://127.0.0.1:8787/control/shutdown
+Content-Type: application/json
+```
+
+```json
+{
+  "instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+The server accepts a match with HTTP `202` and
+`{"status":"shutting_down","instance_id":"..."}`. A stale identity returns
+HTTP `409` with `INSTANCE_ID_MISMATCH` and leaves the current process running.
+Do not reuse an identity across restarts. The endpoint has the same loopback,
+Host, Origin, and no-CORS policy as MCP and readiness; it has no separate
+authentication.
+
 Claude Code:
 
 ```text

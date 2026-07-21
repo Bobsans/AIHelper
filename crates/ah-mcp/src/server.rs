@@ -9,7 +9,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex, OnceLock, Weak,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -25,12 +25,13 @@ use ah_runtime::{
 };
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{State, rejection::JsonRejection},
     http::{
         HeaderMap, StatusCode,
         header::{HOST, ORIGIN},
     },
-    routing::get,
+    response::{IntoResponse, Response},
+    routing::{get, post},
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -45,13 +46,14 @@ use rmcp::{
     service::{NotificationContext, RequestContext},
     transport::stdio,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 use tokio::{
     io::{AsyncRead, ReadBuf},
     sync::Notify,
 };
+use tokio_util::sync::CancellationToken;
 use tower_http::limit::RequestBodyLimitLayer;
 use uuid::Uuid;
 
@@ -824,19 +826,26 @@ struct HttpLifecycleState {
     readiness: ReadinessResponse,
     authority: String,
     origin: String,
+    lifecycle: Arc<HttpLifecycleController>,
 }
 
 impl HttpLifecycleState {
-    fn new(version: String, authority: String, origin: String) -> Self {
+    fn new(
+        version: String,
+        authority: String,
+        origin: String,
+        lifecycle: Arc<HttpLifecycleController>,
+    ) -> Self {
         Self {
             readiness: ReadinessResponse {
                 status: "ready",
                 version,
                 pid: std::process::id(),
-                instance_id: Uuid::new_v4().to_string(),
+                instance_id: Uuid::new_v4(),
             },
             authority,
             origin,
+            lifecycle,
         }
     }
 }
@@ -846,7 +855,70 @@ struct ReadinessResponse {
     status: &'static str,
     version: String,
     pid: u32,
-    instance_id: String,
+    instance_id: Uuid,
+}
+
+struct HttpLifecycleController {
+    shutdown_started: AtomicBool,
+    tracker: Arc<ShutdownTracker>,
+    executor: Arc<dyn Executor>,
+    cancellation: CancellationToken,
+}
+
+impl HttpLifecycleController {
+    fn new(
+        tracker: Arc<ShutdownTracker>,
+        executor: Arc<dyn Executor>,
+        cancellation: CancellationToken,
+    ) -> Self {
+        Self {
+            shutdown_started: AtomicBool::new(false),
+            tracker,
+            executor,
+            cancellation,
+        }
+    }
+
+    fn begin_shutdown(&self) -> bool {
+        if self
+            .shutdown_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        self.tracker.begin();
+        self.executor.close();
+        self.cancellation.cancel();
+        true
+    }
+
+    async fn cancelled(&self) {
+        self.cancellation.cancelled().await;
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShutdownRequest {
+    instance_id: Uuid,
+}
+
+#[derive(Serialize)]
+struct ShutdownAccepted {
+    status: &'static str,
+    instance_id: Uuid,
+}
+
+#[derive(Serialize)]
+struct ControlErrorResponse {
+    error: ControlError,
+}
+
+#[derive(Serialize)]
+struct ControlError {
+    code: &'static str,
+    message: &'static str,
 }
 
 impl ShutdownTracker {
@@ -995,12 +1067,23 @@ pub async fn serve_http_bounded_with_version(
     let event_dispatcher = server.shared.event_dispatcher.clone();
     let authority = format!("127.0.0.1:{port}");
     let origin = format!("http://{authority}");
-    let lifecycle = HttpLifecycleState::new(version.into(), authority.clone(), origin.clone());
+    let cancellation = CancellationToken::new();
+    let lifecycle_controller = Arc::new(HttpLifecycleController::new(
+        Arc::clone(&tracker),
+        Arc::clone(&executor),
+        cancellation.clone(),
+    ));
+    let lifecycle = HttpLifecycleState::new(
+        version.into(),
+        authority.clone(),
+        origin.clone(),
+        Arc::clone(&lifecycle_controller),
+    );
     let config = StreamableHttpServerConfig::default()
         .with_stateful_mode(true)
         .with_allowed_hosts([authority])
-        .with_allowed_origins([origin]);
-    let cancellation = config.cancellation_token.clone();
+        .with_allowed_origins([origin])
+        .with_cancellation_token(cancellation);
     let session_template = Arc::new(server);
     let factory_template = Arc::clone(&session_template);
     let service: StreamableHttpService<McpServer, LocalSessionManager> = StreamableHttpService::new(
@@ -1010,30 +1093,29 @@ pub async fn serve_http_bounded_with_version(
     );
     let router = Router::new()
         .route("/health/ready", get(readiness))
+        .route("/control/shutdown", post(control_shutdown))
         .nest_service("/mcp", service)
         .with_state(lifecycle)
         .layer(RequestBodyLimitLayer::new(1024 * 1024));
     let listener = match tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
         Ok(listener) => listener,
         Err(error) => {
-            tracker.begin();
-            executor.close();
-            cancellation.cancel();
+            lifecycle_controller.begin_shutdown();
             return McpServeOutcome {
                 result: Err(McpAdapterError::Service(error.to_string())),
                 remaining_shutdown_grace: tracker.remaining(),
             };
         }
     };
-    let shutdown_executor = Arc::clone(&executor);
-    let shutdown_cancellation = cancellation.clone();
-    let shutdown_tracker = Arc::clone(&tracker);
+    let shutdown_controller = Arc::clone(&lifecycle_controller);
     let serving = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            shutdown_tracker.begin();
-            shutdown_executor.close();
-            shutdown_cancellation.cancel();
+            tokio::select! {
+                _ = shutdown_signal() => {
+                    shutdown_controller.begin_shutdown();
+                }
+                _ = shutdown_controller.cancelled() => {}
+            }
         })
         .into_future();
     tokio::pin!(serving);
@@ -1041,9 +1123,7 @@ pub async fn serve_http_bounded_with_version(
         result = &mut serving => result.map_err(|error| McpAdapterError::Service(error.to_string())),
         _ = tracker.expired() => Ok(()),
     };
-    tracker.begin();
-    executor.close();
-    cancellation.cancel();
+    lifecycle_controller.begin_shutdown();
     if let Some(dispatcher) = event_dispatcher {
         dispatcher.flush(tracker.remaining()).await;
     }
@@ -1059,6 +1139,66 @@ async fn readiness(
 ) -> Result<Json<ReadinessResponse>, StatusCode> {
     validate_local_headers(&headers, &state)?;
     Ok(Json(state.readiness))
+}
+
+async fn control_shutdown(
+    State(state): State<HttpLifecycleState>,
+    headers: HeaderMap,
+    request: Result<Json<ShutdownRequest>, JsonRejection>,
+) -> Response {
+    if validate_local_headers(&headers, &state).is_err() {
+        return control_error(
+            StatusCode::FORBIDDEN,
+            "LOCAL_REQUEST_REJECTED",
+            "request does not match the local HTTP policy",
+        );
+    }
+
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(rejection) if rejection.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE => {
+            return control_error(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "UNSUPPORTED_MEDIA_TYPE",
+                "request content type must be application/json",
+            );
+        }
+        Err(_) => {
+            return control_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_SHUTDOWN_REQUEST",
+                "request body must contain exactly one valid instance_id",
+            );
+        }
+    };
+
+    if request.instance_id != state.readiness.instance_id {
+        return control_error(
+            StatusCode::CONFLICT,
+            "INSTANCE_ID_MISMATCH",
+            "instance_id does not match the running AIHelper instance",
+        );
+    }
+
+    state.lifecycle.begin_shutdown();
+    (
+        StatusCode::ACCEPTED,
+        Json(ShutdownAccepted {
+            status: "shutting_down",
+            instance_id: request.instance_id,
+        }),
+    )
+        .into_response()
+}
+
+fn control_error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
+    (
+        status,
+        Json(ControlErrorResponse {
+            error: ControlError { code, message },
+        }),
+    )
+        .into_response()
 }
 
 fn validate_local_headers(
@@ -1763,8 +1903,8 @@ fn reserved_job_namespace_error(command: &str) -> Option<McpAdapterError> {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Arc, Barrier, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     };
 
     use ah_plugin_api::{
@@ -1783,11 +1923,13 @@ mod tests {
     use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject, NumberOrString};
     use serde_json::{Value, json};
     use tokio::io::AsyncReadExt;
+    use tokio_util::sync::CancellationToken;
 
     use super::{
-        EventSink, Executor, JOB_START_TOOL, McpCommandEvent, McpCommandStatus, McpServer,
-        McpServerConfig, RISK_META_KEY, ShutdownReader, ShutdownTracker, peer_generation_matches,
-        refresh_catalog_after_job, spawn_best_effort_notification,
+        EventSink, Executor, HttpLifecycleController, JOB_START_TOOL, McpCommandEvent,
+        McpCommandStatus, McpServer, McpServerConfig, RISK_META_KEY, ShutdownReader,
+        ShutdownTracker, peer_generation_matches, refresh_catalog_after_job,
+        spawn_best_effort_notification,
     };
 
     struct TypedPlugin;
@@ -1871,6 +2013,7 @@ mod tests {
     #[derive(Default)]
     struct ClosingExecutor {
         closed: AtomicBool,
+        close_count: AtomicU64,
     }
 
     impl Executor for DefaultObservedExecutor {
@@ -1911,6 +2054,7 @@ mod tests {
 
         fn close(&self) {
             self.closed.store(true, Ordering::Release);
+            self.close_count.fetch_add(1, Ordering::AcqRel);
         }
     }
 
@@ -2114,6 +2258,45 @@ mod tests {
         assert!(peer_generation_matches(Some(2), 2));
         assert!(!peer_generation_matches(Some(2), 1));
         assert!(!peer_generation_matches(None, 1));
+    }
+
+    #[test]
+    fn lifecycle_controller_runs_shutdown_once_under_concurrency() {
+        let tracker = Arc::new(ShutdownTracker::new(std::time::Duration::from_secs(1)));
+        let executor = Arc::new(ClosingExecutor::default());
+        let executor_dyn: Arc<dyn Executor> = executor.clone();
+        let cancellation = CancellationToken::new();
+        let controller = Arc::new(HttpLifecycleController::new(
+            Arc::clone(&tracker),
+            executor_dyn,
+            cancellation.clone(),
+        ));
+        let barrier = Arc::new(Barrier::new(9));
+        let handles = (0..8)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let controller = Arc::clone(&controller);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    controller.begin_shutdown()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let winners = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|won| *won)
+            .count();
+
+        assert_eq!(winners, 1);
+        assert!(executor.closed.load(Ordering::Acquire));
+        assert_eq!(executor.close_count.load(Ordering::Acquire), 1);
+        assert!(cancellation.is_cancelled());
+        let started_at = *tracker.started_at.get().expect("shutdown should start");
+        assert!(!controller.begin_shutdown());
+        assert_eq!(tracker.started_at.get(), Some(&started_at));
     }
 
     #[test]

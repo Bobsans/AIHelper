@@ -73,6 +73,40 @@ A restarted process receives a new `instance_id`, including when the operating
 system reuses its PID. Readiness uses the same Host and Origin restrictions as
 the MCP endpoint and does not enable CORS.
 
+The matching process can be stopped through the local control endpoint:
+
+```text
+POST http://127.0.0.1:8787/control/shutdown
+Content-Type: application/json
+```
+
+The body must contain exactly the `instance_id` returned by the latest readiness
+request:
+
+```json
+{
+  "instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+A matching request returns HTTP `202` before shutdown completes:
+
+```json
+{
+  "status": "shutting_down",
+  "instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+An identity mismatch returns HTTP `409` with error code
+`INSTANCE_ID_MISMATCH` and does not reveal the current identity. Invalid JSON,
+an invalid UUID, missing or additional fields return `400`
+`INVALID_SHUTDOWN_REQUEST`; a non-JSON content type returns `415`
+`UNSUPPORTED_MEDIA_TYPE`. The control endpoint uses the same Host and Origin
+restrictions as readiness and MCP, does not enable CORS, and has no additional
+authentication. Read readiness immediately before shutdown so a restarted
+process is not stopped by a stale controller.
+
 One process can serve multiple stateful MCP sessions and repositories. The
 plugin catalog, execution capacity, job registry, and retained results are
 process-wide. Protocol request IDs and cancellation mappings remain
@@ -211,7 +245,9 @@ under `_meta["dev.aihelper/diagnostic"]`. Important control codes include:
 
 Only protocol problems such as an unknown tool name use MCP protocol errors.
 
-On stdio EOF, HTTP Ctrl-C, or `SIGTERM` on Unix, admission closes immediately,
-sessions stop, and active work is cancelled. Protocol draining and physical
-handler shutdown share one five-second budget; they do not receive consecutive
-grace periods. In-memory jobs and results do not survive restart.
+On stdio EOF, HTTP Ctrl-C, `SIGTERM` on Unix, or an accepted control shutdown,
+admission closes immediately, sessions stop, and active work is cancelled. All
+HTTP shutdown triggers enter the same idempotent lifecycle path. Protocol
+draining and physical handler shutdown share one five-second budget; they do not
+receive consecutive grace periods. In-memory jobs and results do not survive
+restart.

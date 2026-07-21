@@ -6,9 +6,9 @@
 сессии, параллельное выполнение, фоновые jobs и ограниченный shutdown уже
 реализованы.
 
-Для завершения этапа 1 ещё нужны локальный control API, детерминированный
-программный shutdown и финальные lifecycle-проверки. Управляемая фоновая
-установка и self-update остаются запланированными.
+Для завершения этапа 1 ещё нужны ненулевые exit codes для фатальных ошибок и
+финальные lifecycle-проверки, включая активные jobs и целевые MCP-клиенты.
+Управляемая фоновая установка и self-update остаются запланированными.
 
 ## Цель
 
@@ -582,13 +582,11 @@ managed MCP уже был остановлен, восстанавливаетс
 - [x] Параллельное выполнение без общей очереди.
 - [x] Background jobs через `ah.job.*`.
 - [x] Проверка `Host`, ограничение `Origin` и отключённый CORS.
-- [x] Общий ограниченный shutdown по Ctrl-C и SIGTERM.
+- [x] Общий ограниченный shutdown по Ctrl-C, SIGTERM и локальному control API.
 - [x] Быстрая ошибка при конфликте порта.
 
 Осталось:
 
-- [ ] Добавить `POST /control/shutdown` с проверкой instance identity.
-- [ ] Объединить signal shutdown и control shutdown в один lifecycle path.
 - [ ] Гарантировать ненулевые exit codes для фатальных startup/runtime errors.
 - [ ] Добавить integration tests lifecycle endpoints и завершения активных
       jobs.

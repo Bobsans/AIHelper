@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{ChildStdin, Command as ProcessCommand, Stdio},
+    process::{ChildStdin, Command as ProcessCommand, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver},
     thread,
     time::{Duration, Instant},
@@ -149,6 +149,7 @@ struct HttpMcpProcess {
     child: GroupChild,
     url: String,
     readiness_url: String,
+    shutdown_url: String,
     origin: String,
 }
 
@@ -183,7 +184,24 @@ impl HttpMcpProcess {
             child,
             url: format!("{origin}/mcp"),
             readiness_url: format!("{origin}/health/ready"),
+            shutdown_url: format!("{origin}/control/shutdown"),
             origin,
+        }
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> ExitStatus {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => return status,
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                Ok(None) => {
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    panic!("HTTP MCP server did not stop before the deadline");
+                }
+                Err(error) => panic!("HTTP MCP process status should be readable: {error}"),
+            }
         }
     }
 
@@ -837,6 +855,133 @@ fn http_readiness_identifies_the_running_process_without_a_session() {
 
     second.stop();
     first.stop();
+}
+
+#[test]
+fn http_control_shutdown_validates_identity_and_exits_cleanly() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let mut process = HttpMcpProcess::start(&config_dir);
+    let (_, readiness) = read_readiness(&process);
+    let instance_id = readiness["instance_id"]
+        .as_str()
+        .expect("instance identity should be text");
+    let stale_instance_id = if instance_id == "00000000-0000-4000-8000-000000000000" {
+        "10000000-0000-4000-8000-000000000000"
+    } else {
+        "00000000-0000-4000-8000-000000000000"
+    };
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("HTTP client should build");
+
+    let unsupported_media_type = client
+        .post(&process.shutdown_url)
+        .body(format!(r#"{{"instance_id":"{instance_id}"}}"#))
+        .send()
+        .expect("shutdown request without JSON content type should receive a response");
+    assert_eq!(
+        unsupported_media_type.status(),
+        reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    let unsupported_body: Value = unsupported_media_type
+        .json()
+        .expect("unsupported media type response should be JSON");
+    assert_eq!(unsupported_body["error"]["code"], "UNSUPPORTED_MEDIA_TYPE");
+
+    let malformed = client
+        .post(&process.shutdown_url)
+        .json(&json!({"instance_id": "not-a-uuid"}))
+        .send()
+        .expect("malformed shutdown request should receive a response");
+    assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
+    let malformed_body: Value = malformed
+        .json()
+        .expect("malformed shutdown response should be JSON");
+    assert_eq!(malformed_body["error"]["code"], "INVALID_SHUTDOWN_REQUEST");
+
+    let unknown_field = client
+        .post(&process.shutdown_url)
+        .json(&json!({"instance_id": instance_id, "force": true}))
+        .send()
+        .expect("shutdown request with an unknown field should receive a response");
+    assert_eq!(unknown_field.status(), reqwest::StatusCode::BAD_REQUEST);
+    let unknown_field_body: Value = unknown_field
+        .json()
+        .expect("unknown field response should be JSON");
+    assert_eq!(
+        unknown_field_body["error"]["code"],
+        "INVALID_SHUTDOWN_REQUEST"
+    );
+
+    let mismatch = client
+        .post(&process.shutdown_url)
+        .json(&json!({"instance_id": stale_instance_id}))
+        .send()
+        .expect("stale shutdown request should receive a response");
+    assert_eq!(mismatch.status(), reqwest::StatusCode::CONFLICT);
+    let mismatch_body: Value = mismatch
+        .json()
+        .expect("identity mismatch response should be JSON");
+    assert_eq!(mismatch_body["error"]["code"], "INSTANCE_ID_MISMATCH");
+    assert!(
+        !mismatch_body.to_string().contains(instance_id),
+        "identity mismatch response must not reveal the current instance identity"
+    );
+
+    let hostile_host = client
+        .post(&process.shutdown_url)
+        .header("Host", "evil.example")
+        .json(&json!({"instance_id": instance_id}))
+        .send()
+        .expect("hostile shutdown Host request should receive a response");
+    assert_eq!(hostile_host.status(), reqwest::StatusCode::FORBIDDEN);
+    let hostile_host_body: Value = hostile_host
+        .json()
+        .expect("hostile Host response should be JSON");
+    assert_eq!(hostile_host_body["error"]["code"], "LOCAL_REQUEST_REJECTED");
+
+    let hostile_origin = client
+        .post(&process.shutdown_url)
+        .header("Origin", "http://evil.example")
+        .json(&json!({"instance_id": instance_id}))
+        .send()
+        .expect("hostile shutdown Origin request should receive a response");
+    assert_eq!(hostile_origin.status(), reqwest::StatusCode::FORBIDDEN);
+    let hostile_origin_body: Value = hostile_origin
+        .json()
+        .expect("hostile Origin response should be JSON");
+    assert_eq!(
+        hostile_origin_body["error"]["code"],
+        "LOCAL_REQUEST_REJECTED"
+    );
+
+    let (_, still_ready) = read_readiness(&process);
+    assert_eq!(still_ready, readiness);
+
+    let accepted = client
+        .post(&process.shutdown_url)
+        .header("Origin", &process.origin)
+        .json(&json!({"instance_id": instance_id}))
+        .send()
+        .expect("matching shutdown request should receive a response");
+    assert_eq!(accepted.status(), reqwest::StatusCode::ACCEPTED);
+    assert!(
+        accepted
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none()
+    );
+    let accepted_body: Value = accepted
+        .json()
+        .expect("accepted shutdown response should be JSON");
+    assert_eq!(
+        accepted_body,
+        json!({"status": "shutting_down", "instance_id": instance_id})
+    );
+
+    let exit = process.wait_for_exit(Duration::from_secs(7));
+    assert!(exit.success(), "HTTP MCP server should exit cleanly");
 }
 
 #[test]
