@@ -83,6 +83,11 @@ plugin API does not depend on `rmcp`; MCP types remain confined to
   - JSON when `--json`
   - optional suppression with `--quiet`
 
+The CLI applies `--cwd` once, before plugin discovery and configuration lookup.
+Startup argument scanning stops at `--`; for `run check`, the child command and
+its remaining arguments are opaque to host-global normalization. This preserves
+child flags such as `--json`, `--limit`, and `--cwd` without changing host state.
+
 Typed commands add:
 
 - JSON Schema input and output contracts
@@ -100,6 +105,40 @@ draining.
 Plugin settings and task stores use a bounded sidecar lock for cross-process
 read-modify-write operations and atomically replace complete JSON documents.
 In-memory plugin state is published only after persistence succeeds.
+
+## Deterministic I/O Boundaries
+
+Commands bound data while reading it, rather than after an unbounded read. The
+`run` domain drains stdout and stderr concurrently with independent byte budgets;
+prefix mode retains the beginning of each stream, while tail mode retains a
+bounded suffix. Public strings are converted to lossy UTF-8 only after capture.
+
+Command deadlines cover the complete descendant process tree and inherited
+pipes. Unix process groups and Windows Job Objects provide the platform-specific
+termination boundary, so descendants cannot outlive a timeout or keep readers
+blocked beyond it.
+
+HTTP response bodies are also capped during the read. A truncated response keeps
+status and header metadata, but body- and JSON-derived assertions require a
+complete body and therefore fail explicitly. Callers can distinguish truncation
+from an ordinary response through structured metadata.
+
+Archive-backed provider logs have separate budgets for the compressed response
+and cumulative expanded content. Entries are filtered while they are read, and
+budget overflow fails explicitly instead of returning a misleading partial
+archive result.
+
+Text safety checks that inspect a bounded byte prefix distinguish an incomplete
+UTF-8 sequence at the end of that prefix from definite malformed input. A
+boundary-only incomplete sequence remains eligible as text; NUL bytes and known
+invalid sequences remain binary. Full readers still validate content beyond the
+sniff boundary. The `file`, `ctx`, and `search` domains share this policy.
+
+Repository discovery and status parsing do not depend on optional host tools.
+Search uses one ignore-aware traversal path with a stable backend identifier.
+`git status`, `git changed`, and `ctx changed` share a byte-oriented parser for
+NUL-delimited porcelain output; path bytes are converted to public strings only
+at the response boundary.
 
 ## Error Model
 

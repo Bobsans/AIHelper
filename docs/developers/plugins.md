@@ -107,6 +107,11 @@ Plugin returns JSON response:
   - optional `error_code`
   - optional `error_message`
 
+Generated legacy invocation entrypoints contain unwinding panics from plugin
+argument parsing and execution. A caught panic returns `PLUGIN_PANIC` without
+exposing its payload, while preserving the ABI version, layout, and exported
+symbols. Plugins compiled with abort-on-panic cannot be recovered this way.
+
 Typed invocation uses:
 
 - `TypedInvocationRequest`
@@ -229,6 +234,8 @@ atomically under a lock to avoid corrupted caches.
   where practical.
 - Protect shared caches and configuration for concurrent invocation; handlers
   are not globally serialized.
+- Model upstream response fields explicitly. Unknown fields may be accepted on
+  input, but must not be flattened into stable public JSON responses.
 
 ## Example Dynamic Plugins
 
