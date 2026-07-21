@@ -1,375 +1,879 @@
-# Managed HTTP MCP and Self-Update Roadmap
+# Дорожная карта: управляемый HTTP MCP и безопасное обновление
 
-## Status
+## Статус
 
-Planned. Implementation starts after the HTTP MCP transport is complete and
-its foreground lifecycle is stable.
+В работе. Локальный Streamable HTTP transport, одновременные клиентские
+сессии, параллельное выполнение, фоновые jobs и ограниченный shutdown уже
+реализованы.
 
-## Objective
+Для завершения этапа 1 ещё нужны readiness, versioned instance identity,
+локальный control API и детерминированный программный shutdown. Управляемая
+фоновая установка и self-update остаются запланированными.
 
-Make the HTTP MCP server usable as a reliable background process and allow
-AIHelper to update itself without leaving a partially updated executable and
-plugin set.
+## Цель
 
-The first implementation targets the currently supported Windows releases:
-Windows 10, Windows Server 2016, and newer. It installs for the current user,
-does not require administrator privileges, and starts after that user logs in.
+Превратить локальный HTTP MCP-сервер в надёжный управляемый фоновый процесс
+и обеспечить безопасное обновление AIHelper как единого комплекта из `ah.exe`
+и совместимых динамических плагинов.
 
-## Scope
+Первая версия ориентирована на Windows 10, Windows Server 2016 и более новые
+версии Windows. Установка выполняется для текущего пользователя, не требует
+прав администратора и запускает MCP после входа пользователя в систему.
 
-The roadmap has two related deliverables:
+Обновление не должно оставлять частично установленную версию. При ошибке
+замены, запуска или проверки готовности система должна автоматически
+восстановить предыдущую рабочую версию.
 
-1. Managed HTTP MCP lifecycle through `ah mcp install`, `start`, `stop`,
-   `restart`, `status`, and `uninstall`.
-2. Safe self-update through `ah upgrade`, including package verification,
-   service coordination, health validation, and automatic rollback.
+## Объём работ
 
-The stdio MCP transport remains client-managed. The lifecycle commands in this
-document apply to the long-running HTTP transport.
+Дорожная карта включает два связанных направления:
 
-## Goals
+1. Управляемый жизненный цикл локального HTTP MCP через
+   `ah mcp service install`, `start`, `stop`, `restart`, `status` и `uninstall`.
+2. Безопасное обновление AIHelper через `ah upgrade`: загрузка и проверка
+   полного release-комплекта, остановка блокирующих процессов, транзакционная
+   замена файлов, проверка новой версии и автоматический rollback.
 
-- Install HTTP MCP autostart for the current Windows user without elevation.
-- Restart the MCP process after unexpected failures without creating a rapid
-  crash loop.
-- Make all lifecycle commands deterministic, idempotent, and safe under
-  concurrent invocation.
-- Update `ah.exe` and its dynamic plugins as one compatible release bundle.
-- Never activate an unverified or incomplete download.
-- Preserve the MCP state across an upgrade: restart it only when it was running
-  before the upgrade.
-- Automatically restore the previous working version when the new version does
-  not become ready.
-- Recover safely when installation or upgrade is interrupted.
+Команды управления MCP применяются только к установленному фоновому HTTP MCP.
+Процессы, запущенные вручную через `ah mcp serve`, остаются пользовательскими
+foreground-процессами.
 
-## Non-Goals for the First Version
+Обновление применяется к одной конкретной установке AIHelper. Перед заменой
+`ah.exe` и plugin DLL updater определяет процессы, блокирующие managed-файлы
+этой установки, и завершает только принадлежащие AIHelper блокирующие процессы.
 
-- A machine-wide Windows Service that runs before user login.
-- Linux systemd user services or macOS LaunchAgents.
-- Multiple independently configured MCP instances for one user.
-- Automatic unattended updates.
-- Updating stdio MCP processes launched and owned by external clients.
-- A custom always-running supervisor unless Task Scheduler proves insufficient.
+Если файлы удерживает сторонний процесс, updater ожидает освобождения файлов
+ограниченное время, после чего отменяет обновление до начала замены и
+возвращает понятную диагностику. Сторонние процессы автоматически не
+завершаются.
 
-## Command Surface
+Управляемый HTTP MCP после обновления восстанавливает предыдущее состояние.
+Завершённые stdio MCP и другие foreground-процессы автоматически не
+перезапускаются: их жизненным циклом управляют внешние клиенты.
 
-### `ah mcp install`
+## Цели
 
-Register the managed HTTP MCP for the current user.
+- Устанавливать автозапуск HTTP MCP для текущего пользователя без повышения
+  привилегий и хранения пароля.
+- Перезапускать MCP после неожиданных сбоев, не допуская бесконечного crash
+  loop.
+- Сделать lifecycle-команды детерминированными, идемпотентными и безопасными
+  при конкурентном запуске.
+- Обновлять `ah.exe` и динамические плагины только как единый совместимый
+  release-комплект.
+- Никогда не активировать неполную, повреждённую или непроверенную версию.
+- Перед заменой файлов завершать только процессы AIHelper, реально блокирующие
+  обновляемую установку.
+- Не завершать сторонние процессы; при сохраняющейся внешней блокировке
+  отменять обновление до изменения активных файлов.
+- Не допускать состояния, в котором `ah.exe` и плагины относятся к разным
+  версиям без доступного recovery.
+- После обновления восстанавливать управляемый HTTP MCP только в том случае,
+  если он работал до начала операции.
+- При ошибке активации или проверки автоматически восстанавливать предыдущую
+  рабочую версию.
+- После прерванной установки или обновления детерминированно завершать
+  транзакцию либо выполнять rollback.
 
-Expected behavior:
+## Не входит в первую версию
 
-- Create or reconcile a per-user Task Scheduler task.
-- Configure startup when the current user logs in.
-- Run with least privilege and without storing the user's password.
-- Configure bounded restart-on-failure behavior.
-- Use a stable working directory and explicit configuration paths.
-- Default to a loopback listener.
-- Refuse to create a second managed instance.
-- Be idempotent: a matching installation is a no-op, while a changed supported
-  configuration updates the existing task.
+- Системная Windows Service, работающая до входа пользователя.
+- Поддержка systemd user services в Linux и LaunchAgents в macOS.
+- Несколько независимо настроенных управляемых HTTP MCP для одного
+  пользователя.
+- Автоматические фоновые обновления без явного запуска пользователем.
+- Автоматический перезапуск stdio MCP и других foreground-процессов, которыми
+  владеют внешние клиенты.
+- Завершение сторонних процессов, блокирующих файлы установки.
+- Одновременное обновление нескольких независимых установок AIHelper.
+- Собственный постоянно работающий supervisor, пока возможностей Task
+  Scheduler достаточно.
+- Обновление `ah.exe` и plugin DLL непосредственно из работающего основного
+  процесса без отдельного update-helper.
+- Произвольный пользовательский downgrade до выбранной версии.
+- Update channels и prerelease-обновления.
 
-Per-user installation intentionally means that MCP is unavailable before the
-user logs in. A future `--system` mode may use a Windows Service when pre-login
-availability is required.
+## Команды
 
-### `ah mcp start`
+### `ah mcp service install`
 
-Start the installed MCP instance when it is not already running. Success means
-that the server reaches readiness, not merely that a process was created.
+Регистрирует управляемый HTTP MCP для текущего пользователя.
 
-### `ah mcp stop`
+Команда должна:
 
-Stop the current MCP instance without removing its autostart registration.
-The command should request graceful shutdown, wait for active work to drain up
-to a bounded timeout, and use a forced Task Scheduler stop only as a fallback.
+- получить общую lifecycle-блокировку;
+- создать или привести к ожидаемому состоянию задачу Task Scheduler;
+- запускать задачу после входа текущего пользователя;
+- использовать минимальные привилегии и не хранить пароль;
+- использовать явные пути к исполняемому файлу, рабочему каталогу,
+  конфигурации и runtime-state;
+- слушать только loopback-интерфейс;
+- запрещать параллельный запуск второго управляемого экземпляра;
+- настроить ограниченный перезапуск после неожиданного сбоя;
+- не устанавливать максимальное время выполнения задачи;
+- быть идемпотентной: совпадающая конфигурация не изменяется, а поддерживаемые
+  изменения приводят существующую задачу к новому состоянию.
 
-### `ah mcp restart`
+По умолчанию после регистрации команда запускает MCP и ожидает readiness.
+Успех означает, что сервер готов принимать запросы, а не только то, что Task
+Scheduler создал процесс.
 
-Perform a coordinated stop and start, then wait for the new instance to become
-ready.
+Флаг `--no-start` регистрирует или обновляет задачу без запуска остановленного
+экземпляра. Уже работающий экземпляр этот флаг не останавливает.
 
-### `ah mcp status`
+### `ah mcp service start`
 
-Report separate installation and runtime states. At minimum, status should
-distinguish:
+Запускает установленный управляемый HTTP MCP.
 
-- not installed;
-- installed but stopped;
-- starting;
-- running but not ready;
-- ready;
-- failed or in a restart loop.
+Команда должна:
 
-Text and JSON output should include the active version, process ID when known,
-listener address, readiness result, and the last useful scheduler error.
+- получить lifecycle-блокировку;
+- вернуть ошибку, если service не установлен;
+- проверить, не работает ли уже ожидаемый managed instance;
+- считать уже готовый экземпляр успешным идемпотентным результатом;
+- если процесс уже запускается, ожидать его readiness вместо создания второго;
+- запустить задачу через Task Scheduler, если экземпляр остановлен;
+- дождаться readiness с ожидаемыми version и instance identity;
+- при ошибке запуска вернуть диагностику процесса, scheduler и readiness.
 
-### `ah mcp uninstall`
+Успех означает, что ожидаемый экземпляр MCP готов принимать запросы. Сам факт
+запуска процесса не считается успехом.
 
-Stop the managed instance and remove its Task Scheduler registration. Removing
-downloaded versions and user configuration should require separate explicit
-cleanup behavior rather than happen implicitly.
+### `ah mcp service stop`
+
+Останавливает управляемый HTTP MCP, не удаляя регистрацию автозапуска.
+
+Команда должна:
+
+- получить lifecycle-блокировку;
+- считать уже остановленный экземпляр успешным идемпотентным результатом;
+- проверить version и instance identity перед отправкой управляющей команды;
+- через локальный control API закрыть admission и отменить активные команды и
+  jobs;
+- ожидать корректного завершения процесса в пределах общего shutdown timeout;
+- при недоступном control API или превышении timeout остановить именно
+  зарегистрированную задачу через Task Scheduler;
+- дождаться исчезновения ожидаемого managed instance;
+- вернуть диагностику, если процесс невозможно завершить.
+
+Успех означает, что управляемый процесс остановлен. Результаты незавершённых
+in-memory jobs после остановки не сохраняются. Принудительная остановка
+является автоматическим fallback; отдельный `--force` в первой версии не нужен.
+
+### `ah mcp service restart`
+
+Выполняет согласованную остановку и повторный запуск управляемого HTTP MCP.
+
+Команда должна:
+
+- удерживать одну lifecycle-блокировку на протяжении всей операции;
+- вернуть ошибку, если service не установлен;
+- остановить работающий экземпляр по правилам `service stop`;
+- запустить новый экземпляр по правилам `service start`;
+- дождаться readiness;
+- проверить ожидаемую version и новый instance identity;
+- не позволять другим lifecycle- или upgrade-командам вклиниться между
+  остановкой и запуском.
+
+Если экземпляр уже остановлен, `restart` просто запускает его. Успех означает,
+что новый экземпляр готов принимать запросы.
+
+### `ah mcp service status`
+
+Возвращает согласованный снимок регистрации, Task Scheduler и runtime-состояния
+управляемого HTTP MCP. Команда не запускает, не останавливает и не
+восстанавливает service.
+
+Статус регистрации должен различать:
+
+- `not_installed` — задача отсутствует;
+- `installed` — задача соответствует ожидаемой конфигурации;
+- `configuration_drift` — задача существует, но отличается от ожидаемой;
+- `scheduler_error` — состояние задачи невозможно надёжно прочитать.
+
+Runtime-статус должен различать:
+
+- `stopped`;
+- `starting`;
+- `running_not_ready`;
+- `ready`;
+- `stopping`;
+- `restart_backoff`;
+- `failed`;
+- `identity_mismatch` — на адресе отвечает другой процесс или экземпляр.
+
+Text и JSON должны включать:
+
+- активную version;
+- instance identity;
+- PID, если он надёжно определён;
+- адрес MCP endpoint;
+- результат readiness;
+- состояние и последний полезный код Task Scheduler;
+- выполняющуюся lifecycle- или upgrade-операцию, если она известна;
+- обнаруженный configuration drift.
+
+`status` не ожидает освобождения lifecycle-блокировки и не выводит секреты.
+
+### `ah mcp service uninstall`
+
+Удаляет регистрацию управляемого HTTP MCP для текущего пользователя.
+
+Команда должна:
+
+- получить lifecycle-блокировку;
+- остановить работающий экземпляр по правилам `service stop`;
+- удалить задачу Task Scheduler;
+- удалить временное runtime-state;
+- считать уже удалённую service успешным идемпотентным результатом;
+- не удалять `ah.exe`, плагины, пользовательскую конфигурацию и журналы.
+
+Полное удаление AIHelper и пользовательских данных не входит в обязанности
+`service uninstall` и должно быть отдельной явно разрушительной операцией.
 
 ### `ah upgrade`
 
-Upgrade to the newest eligible stable release. Planned options include:
+Обновляет текущую установку AIHelper до последней подходящей стабильной версии.
 
-- `ah upgrade --check` to report availability without changing files;
-- `ah upgrade --version <VERSION>` to select a specific trusted version;
-- a future channel option if prerelease or long-term support channels are
-  introduced.
+Поддерживаемые варианты:
 
-An explicit downgrade must not happen accidentally. If downgrade support is
-added, it should require a dedicated flag.
+- `ah upgrade` — проверить наличие новой версии и установить её;
+- `ah upgrade --check` — только сообщить о доступной версии, не изменяя файлы и
+  не останавливая процессы;
+- `ah upgrade --version <VERSION>` — установить конкретную доверенную версию,
+  если она не ниже текущей;
+- `ah upgrade --rollback` — восстановить единственный сохранённый backup этой
+  установки.
 
-## Recommended Architecture
+Обычное обновление должно:
 
-### Per-User Task Scheduler Integration
+- получить общую lifecycle- и upgrade-блокировку;
+- считать отсутствие новой версии успешным идемпотентным результатом;
+- полностью скачать и проверить release-комплект до остановки процессов;
+- сохранить состояние управляемого HTTP MCP;
+- запустить отдельный update-helper;
+- завершить только процессы AIHelper, блокирующие managed-файлы обновляемой
+  установки;
+- не завершать сторонние процессы;
+- заменить `ah.exe` и плагины как единый комплект;
+- проверить работоспособность новой версии;
+- восстановить управляемый HTTP MCP, если он работал до обновления;
+- автоматически выполнить rollback при ошибке замены, запуска или readiness.
 
-Use the Windows Task Scheduler 2.0 API rather than parsing localized
-`schtasks.exe` output. The task should run for the current user with least
-privilege and an interactive logon token.
+Успех означает, что новая версия проверена, активна и управляемый MCP вернулся
+в ожидаемое состояние. Успешный rollback после неудачного обновления всё равно
+возвращает ошибку обновления с указанием, что предыдущая версия восстановлена.
 
-The task definition should:
+Пользовательский downgrade до произвольной версии и update channels не входят
+в первую версию.
 
-- trigger at user logon;
-- prevent parallel instances;
-- have no execution time limit;
-- start when available after a missed trigger;
-- remain allowed during normal battery operation unless a later product policy
-  decides otherwise;
-- restart after unexpected failure with bounded attempts and delay between
-  attempts.
+### `ah upgrade --rollback`
 
-Lifecycle and upgrade operations must share a per-user lock so that `start`,
-`stop`, `install`, `uninstall`, and `upgrade` cannot race each other.
+Восстанавливает единственный сохранённый backup текущей установки.
 
-### Stable Launcher and Versioned Installation
+Команда должна:
 
-Do not replace the active `ah.exe` or plugin DLLs in place. Windows may lock
-loaded executables and libraries, and replacing only part of a release can
-produce an ABI-incompatible installation.
+- получить lifecycle- и upgrade-блокировку;
+- проверить, что backup принадлежит текущей installation identity и содержит
+  полный подписанный manifest;
+- проверить hashes всех backup-файлов до остановки процессов;
+- сохранить состояние managed MCP;
+- запустить update-helper;
+- остановить только процессы AIHelper, блокирующие managed-файлы;
+- восстановить managed-файлы по их исходным путям;
+- удалить managed-файлы, которых не было в backup manifest;
+- не изменять пользовательские файлы;
+- проверить восстановленную версию;
+- восстановить managed MCP, если он работал;
+- удалить использованный постоянный backup только после успешной проверки.
 
-Use immutable, side-by-side version directories under a managed local data
-location, for example:
+Перед rollback helper создаёт временный transaction backup текущей версии.
+Если восстановление старой версии не удалось, helper возвращает текущую версию
+обратно. После успешного rollback временная копия новой версии удаляется и не
+становится постоянным backup.
+
+`--rollback` можно выполнить один раз. Следующий постоянный backup появится
+после следующего успешного обновления.
+
+## Рекомендуемая архитектура
+
+### Интеграция с Task Scheduler для текущего пользователя
+
+Использовать Task Scheduler 2.0 API напрямую, не анализируя локализованный
+вывод `schtasks.exe` и PowerShell.
+
+Задача должна:
+
+- принадлежать текущему пользователю;
+- использовать interactive logon token без сохранения пароля;
+- запускаться с минимальными привилегиями;
+- срабатывать после входа пользователя;
+- запускать `ah.exe mcp serve --transport http` из постоянного пути установки;
+- использовать явные пути к конфигурации, рабочему каталогу и runtime-state;
+- запрещать параллельные экземпляры;
+- не иметь ограничения по общей длительности выполнения;
+- запускаться после пропущенного trigger, когда это снова возможно;
+- работать при обычном питании от батареи;
+- перезапускаться после неожиданного ненулевого завершения с ограниченным
+  числом попыток и задержкой между ними.
+
+Все lifecycle- и upgrade-команды используют одну per-user блокировку. Пока
+выполняется `install`, `start`, `stop`, `restart`, `uninstall`, `upgrade` или
+`rollback`, другая изменяющая состояние операция не начинается.
+
+`status` остаётся read-only и может сообщать о выполняющейся операции, не
+ожидая освобождения блокировки.
+
+### Update-helper и транзакционная замена файлов
+
+AIHelper может находиться в любом каталоге, выбранном пользователем. Обновление
+не переносит установку и не изменяет путь к `ah.exe`.
+
+Корень обновляемой установки определяется по пути запущенного `ah.exe`.
+Update-helper запускается из временного каталога вне этой установки, поэтому
+после завершения блокирующих процессов он может заменить активный executable
+и plugin DLL.
+
+Каждый release manifest содержит полный список файлов, принадлежащих AIHelper.
+Updater изменяет только пути из текущего и нового manifest:
+
+- добавляет новые managed-файлы;
+- заменяет изменившиеся managed-файлы;
+- удаляет managed-файлы, отсутствующие в новой версии;
+- не изменяет посторонние файлы и каталоги пользователя.
+
+Обновление выполняется как durable-транзакция:
+
+1. Скачать и распаковать candidate bundle во временный каталог.
+2. Проверить подпись, digest, архитектуру, состав и размеры.
+3. Сравнить текущий и новый список managed-файлов.
+4. Создать полную копию всех managed-файлов текущей версии, установленного
+   manifest и metadata установки.
+5. Записать durable transaction state до изменения установки.
+6. Запустить update-helper и завершить основной процесс updater.
+7. Освободить managed-файлы от блокирующих процессов AIHelper.
+8. Заменить только managed-файлы по их исходным относительным путям.
+9. Проверить новую версию.
+10. При ошибке восстановить все затронутые файлы из transaction backup.
+11. После успешной проверки выполнить ротацию постоянного backup и очистку.
+
+Если для безопасной замены требуется staging на том же диске, updater создаёт
+его автоматически рядом с установкой или в доступном временном каталоге этого
+тома. Постоянная структура пользовательского каталога от этого не меняется.
+
+Многофайловая замена считается транзакционной, но не физически атомарной.
+После прерывания следующий запуск helper или `ah` читает durable state и
+завершает обновление либо полностью восстанавливает предыдущий комплект.
+
+### Постоянный backup
+
+Предыдущая рабочая версия хранится в:
 
 ```text
-%LOCALAPPDATA%\AIHelper\
-  launcher\
-  versions\
-    1.2.0\
-      ah.exe
-      plugins\
-    1.3.0\
-      ah.exe
-      plugins\
-  current.json
-  update-state.json
+%APPDATA%\AIHelper\backup\<INSTALLATION_ID>\
 ```
 
-User configuration remains separate from binaries, under the existing
-configuration location. The scheduled task invokes a stable launcher, and the
-launcher resolves the active release from an atomically replaced pointer such
-as `current.json`.
+Backup содержит только managed-файлы, подписанный manifest, исходный путь
+установки и installation identity. Пользовательские файлы в него не копируются.
 
-Each version directory is prepared completely before activation. Keep at least
-one previously working version to support rollback. Old versions are eligible
-for cleanup only after the new release has passed readiness validation.
+При следующем обновлении старый постоянный backup не удаляется заранее:
 
-The launcher should remain small and stable. Updating the launcher itself is a
-separate concern and may require a short-lived helper process in a later phase.
+1. Текущая версия копируется в transaction backup и проверяется.
+2. Выполняется обновление и проверка новой версии.
+3. При ошибке transaction backup используется для автоматического rollback,
+   а старый постоянный backup сохраняется.
+4. После успешного обновления старый backup удаляется, а transaction backup
+   становится новым постоянным backup.
 
-### HTTP Lifecycle Contract
+После успешного `ah upgrade --rollback` использованный постоянный backup
+удаляется. Временная копия заменённой новой версии также удаляется после
+проверки восстановленной установки.
 
-The HTTP MCP must expose enough local lifecycle information for reliable
-management:
+### Контракт жизненного цикла HTTP
 
-- a readiness endpoint that returns success only after the listener, plugin
-  catalog, and executor are ready;
-- a graceful shutdown path that stops accepting work and drains active requests;
-- active version and unique instance identity in readiness output;
-- a non-zero process exit code for fatal startup and runtime failures;
-- explicit listener and working-directory configuration;
-- loopback binding by default.
+Управляемый HTTP MCP предоставляет отдельные локальные endpoints:
 
-The instance identity prevents lifecycle commands from mistaking an unrelated
-process on the same port for the managed MCP instance.
+- `/mcp` — Streamable HTTP MCP;
+- `GET /health/ready` — проверка готовности без создания MCP session;
+- `POST /control/shutdown` — корректное завершение managed instance.
 
-Local HTTP access still needs an authentication and browser-origin policy.
-Loopback binding alone does not protect against other local processes, browser
-requests, or DNS rebinding.
+Все endpoints:
 
-## Release Metadata and Package Verification
+- доступны только через `127.0.0.1`;
+- проверяют ожидаемый `Host`;
+- отклоняют внешний `Origin`;
+- не включают CORS;
+- не используют аутентификацию или TLS.
 
-Self-update requires machine-readable release metadata. The release pipeline
-should publish a manifest containing at least:
+Readiness возвращает успех только после готовности listener, plugin catalog
+и executor. Ответ включает:
 
-- release version and channel;
-- supported target triple or architecture;
-- archive URL and expected size;
-- SHA-256 digest;
-- minimum compatible updater version when needed.
+- version;
+- instance identity;
+- PID;
+- MCP endpoint;
+- состояние admission;
+- время запуска.
 
-The manifest should be signed by a release key whose public key is embedded in
-AIHelper. HTTPS and a checksum downloaded from the same compromised source do
-not independently authenticate a release. Platform signature verification,
-such as Authenticode on Windows, may be added as an additional check.
+Shutdown-запрос содержит ожидаемый instance identity. При несовпадении сервер
+ничего не останавливает и возвращает ошибку. Instance identity защищает от
+случайной остановки нового или постороннего процесса, но не является
+аутентификацией.
 
-Archive extraction must reject:
+При корректном shutdown сервер:
 
-- path traversal and absolute paths;
-- symbolic links or other unsupported entry types;
-- duplicate or case-colliding paths;
-- unexpected executable layout;
-- incorrect architecture;
-- unreasonable compressed or extracted sizes;
-- missing required files.
+1. Закрывает admission.
+2. Отменяет активные команды и jobs.
+3. Завершает MCP sessions.
+4. Ожидает физического завершения handlers в пределах общего timeout.
+5. Завершает процесс.
 
-The downloaded release must be validated and smoke-tested from staging before
-the active MCP is stopped.
+Ctrl-C, SIGTERM и control shutdown используют один и тот же shutdown path.
 
-## Upgrade Transaction
+Фатальная ошибка конфигурации, bind или runtime приводит к ненулевому exit
+code. Адрес listener, рабочий каталог и пути runtime-state задаются явно.
 
-`ah upgrade` should execute the following transaction:
+Локальный HTTP MCP сознательно не имеет аутентификации. Любой локальный
+процесс может вызывать MCP tools и control endpoints.
 
-1. Acquire the per-user lifecycle and upgrade lock.
-2. Read the installed version and current MCP installation, running, and
-   readiness states.
-3. Resolve the requested release and download it into staging.
-4. Verify the signed manifest, digest, size, architecture, and archive layout.
-5. Extract into a new immutable version directory on the same volume as the
-   active installation.
-6. Run an offline smoke check against the candidate binary and plugin bundle.
-7. Record a durable update transaction before changing runtime state.
-8. Gracefully stop MCP only if it is currently running.
-9. Atomically switch the active-version pointer.
-10. Start MCP only if it was running before the upgrade.
-11. Wait for readiness from the expected version and a new instance identity.
-12. Mark the transaction successful and retain the prior version for rollback.
+## Метаданные релиза и проверка пакета
 
-If activation, startup, or readiness validation fails, restore the previous
-pointer and restart the previous version when it had been running. A failed
-upgrade must return an error even when rollback succeeds, while clearly
-reporting that service was restored.
+Release pipeline публикует архив, подписанный manifest и подпись manifest.
 
-If the process or machine stops during the transaction, the next lifecycle or
-upgrade command should inspect the durable transaction state and complete a
-safe rollback or activation. Recovery must choose one complete release bundle;
-it must never combine files from different versions.
+Manifest содержит:
 
-## Delivery Phases
+- версию формата manifest;
+- версию AIHelper;
+- поддерживаемый target triple и архитектуру;
+- URL, размер и SHA-256 архива;
+- минимальную совместимую версию updater;
+- полный список managed-файлов;
+- для каждого файла: нормализованный относительный путь, размер, SHA-256 и
+  назначение;
+- перечень обязательных executable и plugin-файлов;
+- идентификатор ключа и алгоритм подписи.
 
-### Phase 1: Stabilize HTTP MCP Foreground Operation
+Update channels в первой версии отсутствуют.
 
-- Complete the HTTP transport.
-- Add loopback-safe defaults and explicit configuration.
-- Add readiness, instance identity, and graceful shutdown.
-- Return meaningful exit codes for fatal failures.
-- Define authentication and browser-origin behavior.
+Manifest подписывается release-ключом. Соответствующий публичный ключ встроен
+в AIHelper. Подпись проверяется до доверия URL, digest и содержимому manifest.
+HTTPS остаётся обязательным транспортом, но не заменяет проверку подписи.
 
-Completion criteria:
+Candidate archive должен точно соответствовать manifest. Распаковка отклоняет:
 
-- The server can be started, probed, drained, and stopped deterministically.
-- A port conflict or invalid configuration fails quickly and visibly.
-- Readiness identifies the exact running version and instance.
+- абсолютные пути и path traversal;
+- symbolic links, hard links, reparse points и неподдерживаемые типы entries;
+- duplicate и case-colliding paths;
+- Windows reserved names, alternate data streams и неоднозначные пути;
+- файлы, отсутствующие в manifest;
+- отсутствие обязательных файлов;
+- неверную архитектуру;
+- превышение ограничений на размер архива, отдельного файла и полного
+  распакованного содержимого;
+- несовпадение размера или SHA-256 любого файла.
 
-### Phase 2: Managed MCP Lifecycle
+До остановки блокирующих процессов candidate проходит offline smoke check из
+временного каталога:
 
-- Add the Task Scheduler adapter.
-- Implement `install`, `start`, `stop`, `restart`, `status`, and `uninstall`.
-- Add per-user locking and single-instance enforcement.
-- Add restart-on-failure policy and useful diagnostics.
+- executable запускается;
+- version соответствует manifest;
+- встроенные и динамические плагины загружаются;
+- ABI и command catalog валидны;
+- команда проверки не изменяет пользовательскую конфигурацию.
 
-Completion criteria:
+Authenticode может использоваться как дополнительная проверка Windows
+executable, но не является обязательной частью первой версии.
 
-- A normal user installs MCP without elevation or a stored password.
-- MCP starts once after login and is restarted after a bounded unexpected
-  failure.
-- Repeated lifecycle commands are safe and idempotent.
-- `status` distinguishes process execution from HTTP readiness.
+Проверенный внешний manifest сохраняется как installed manifest после успешной
+активации. Его не требуется вкладывать в архив, digest которого содержится в
+этом же manifest.
 
-### Phase 3: Managed Version Layout and Release Metadata
+## Транзакция обновления
 
-- Introduce the stable launcher and immutable version directories.
-- Publish release manifests, checksums, and signatures.
-- Implement secure download, extraction, and candidate smoke checks.
-- Define migration from an unmanaged archive or Cargo installation.
+`ah upgrade` и update-helper выполняют одну durable-транзакцию.
 
-Completion criteria:
+Состояния транзакции:
 
-- A complete candidate bundle can be installed alongside the active version.
-- The active version can be switched without replacing loaded files.
-- Invalid, corrupted, or malicious packages cannot reach activation.
+- `prepared`;
+- `stopping_processes`;
+- `replacing_files`;
+- `validating`;
+- `restoring_service`;
+- `rotating_backup`;
+- `committed`;
+- `rolling_back`;
+- `rolled_back`;
+- `recovery_required`.
 
-### Phase 4: Self-Update and Rollback
+Последовательность обновления:
 
-- Implement `ah upgrade` and `ah upgrade --check`.
-- Preserve pre-upgrade MCP state.
-- Add atomic activation, readiness validation, rollback, and durable recovery.
-- Retain and clean old versions according to a bounded policy.
+1. Получить общую lifecycle- и upgrade-блокировку.
+2. Обнаружить незавершённую предыдущую транзакцию и сначала выполнить её
+   recovery.
+3. Определить корень установки по текущему `ah.exe`, текущую version и
+   установленный manifest.
+4. Сохранить состояние управляемого HTTP MCP: установлен, запущен, ready,
+   version и instance identity.
+5. Разрешить запрошенный release и скачать архив во временный каталог.
+6. Проверить подпись manifest, digest архива, target, размеры и полный состав.
+7. Распаковать candidate и выполнить offline smoke check.
+8. Сравнить текущий и новый manifest и построить точный список managed-файлов,
+   которые требуется добавить, заменить или удалить.
+9. Подготовить transaction backup полного текущего managed release, включая
+   installed manifest и installation metadata, а также staging для безопасной
+   замены.
+10. Через Windows Restart Manager определить процессы, удерживающие эти файлы.
+11. При сторонней блокировке ожидать освобождения файлов ограниченное время.
+    Если блокировка сохраняется, отменить обновление до изменения установки.
+12. Записать durable transaction state `prepared`.
+13. Запустить update-helper вне каталога установки и без разрыва передать ему
+    lifecycle- и upgrade-блокировку.
+14. Завершить основной процесс `ah upgrade`.
+15. Корректно остановить управляемый HTTP MCP, если он работал.
+16. Дать остальным блокирующим процессам AIHelper короткий grace period.
+17. Принудительно завершить только оставшиеся процессы AIHelper, которые всё
+    ещё блокируют managed-файлы.
+18. Повторно проверить отсутствие блокировок.
+19. Перевести транзакцию в `replacing_files`.
+20. Заменить каждый managed-файл по его исходному пути. Для отдельного файла
+    использовать замену через временный файл и атомарное переименование на том
+    же томе.
+21. Managed-файлы, отсутствующие в новом manifest, переместить в transaction
+    backup. Посторонние файлы не изменять.
+22. Проверить installed-файлы по новому manifest.
+23. Запустить новую версию из постоянного пользовательского пути и выполнить
+    installed smoke check.
+24. Если managed MCP работал до обновления, запустить его и дождаться readiness
+    с новой version и новым instance identity.
+25. Перевести транзакцию в `rotating_backup`.
+26. Не удаляя старый backup заранее, сделать проверенный transaction backup
+    новым `%APPDATA%\AIHelper\backup\<INSTALLATION_ID>`.
+27. Перевести транзакцию в `committed`.
+28. Очистить staging и остальные временные данные.
 
-Completion criteria:
+До первого изменения managed-файлов ошибка просто отменяет транзакцию. Если
+managed MCP уже был остановлен, восстанавливается его предыдущее состояние.
 
-- Successful upgrade activates the complete new release and restores prior MCP
-  running state.
-- Network, verification, extraction, startup, and readiness failures leave the
-  previous version usable.
-- Interrupted updates recover deterministically.
+После начала замены любая ошибка запускает rollback:
 
-### Phase 5: Platform Expansion
+1. Остановить процессы новой версии, блокирующие managed-файлы.
+2. Восстановить все заменённые и удалённые файлы из transaction backup.
+3. Удалить managed-файлы, которых не было в предыдущем manifest.
+4. Проверить восстановленную установку по предыдущему manifest.
+5. Восстановить managed MCP, если он работал до обновления.
+6. Вернуть ошибку обновления с отдельным результатом rollback.
 
-After the Windows per-user path is proven:
+Если rollback не завершился, backup и transaction state не удаляются.
+Диагностика должна содержать точный recovery action.
 
-- evaluate `ah mcp install --system` using a Windows Service;
-- add a systemd user service for Linux;
-- add a LaunchAgent for macOS;
-- consider a custom supervisor only if native managers cannot meet operational
-  requirements.
+Каждый запуск `ah` проверяет незавершённую update transaction до загрузки
+динамических плагинов и выполнения обычной команды. При обнаружении
+незавершённой замены запускается update-helper, который завершает rollback или
+безопасно продолжает транзакцию.
 
-## Validation Matrix
+## Этапы поставки
 
-Automated and VM-level validation should cover:
+### Этап 1: завершить локальный контракт жизненного цикла HTTP
 
-- Windows 10 and Windows Server 2016;
-- install, reinstall, start, repeated start, stop, restart, status, and
-  uninstall;
-- user logoff and login;
-- process crash, bounded restart, and crash-loop behavior;
-- concurrent lifecycle and upgrade commands;
-- port conflicts and slow or failed readiness;
-- active requests during graceful shutdown;
-- network interruption and partial downloads;
-- invalid signature, checksum, architecture, and archive layout;
-- locked binaries and plugin DLLs;
-- antivirus-induced delays during download, extraction, and startup;
-- failure before and after every durable upgrade phase;
-- failed new-version startup followed by successful rollback;
-- failed rollback with actionable diagnostics;
-- preservation of an intentionally stopped MCP state across upgrade.
+Уже реализовано:
 
-## Important Design Constraints
+- [x] Streamable HTTP transport на `127.0.0.1`.
+- [x] Несколько одновременных MCP sessions.
+- [x] Параллельное выполнение без общей очереди.
+- [x] Background jobs через `ah.job.*`.
+- [x] Проверка `Host`, ограничение `Origin` и отключённый CORS.
+- [x] Общий ограниченный shutdown по Ctrl-C и SIGTERM.
+- [x] Быстрая ошибка при конфликте порта.
 
-- `ah.exe` and dynamic plugins form one release bundle and must be activated
-  together.
-- Lifecycle and self-update commands should use an early runtime path that does
-  not require loading plugin DLLs from a version that is being changed.
-- Lifecycle and upgrade commands should not be exposed as MCP tools by default:
-  a synchronous MCP call must not terminate or replace the server handling it.
-- Task Scheduler process state is not equivalent to application readiness.
-- Process discovery must use managed identity and state, not broad process-name
-  matching or termination.
-- Text and JSON output remain deterministic and follow existing AIHelper error
-  conventions.
+Осталось:
 
-## Future Decisions
+- [ ] Добавить `GET /health/ready`.
+- [ ] Добавить version, PID и уникальный instance identity.
+- [ ] Добавить `POST /control/shutdown` с проверкой instance identity.
+- [ ] Объединить signal shutdown и control shutdown в один lifecycle path.
+- [ ] Гарантировать ненулевые exit codes для фатальных startup/runtime errors.
+- [ ] Добавить integration tests lifecycle endpoints и завершения активных
+      jobs.
+- [ ] Проверить подключение Claude Code, Codex и OpenCode к локальному HTTP MCP
+      без дополнительных headers.
 
-The following choices should be finalized during implementation design:
+Критерии завершения:
 
-- exact HTTP MCP authentication and local control channel;
-- exact managed installation and configuration paths;
-- launcher packaging and rare launcher-update procedure;
-- release manifest format and signing-key rotation;
-- stable release source and optional update channels;
-- graceful shutdown timeout and restart backoff policy;
-- retention count and disk cleanup policy;
-- migration behavior for existing manually installed copies.
+- Сервер можно детерминированно запустить, проверить и остановить без MCP
+  session.
+- Readiness идентифицирует точную version и instance.
+- Shutdown перестаёт принимать новую работу и укладывается в общий timeout.
+- Конфликт порта и неверная конфигурация завершаются быстро и с понятной
+  диагностикой.
+- Все три целевых клиента успешно подключаются к одному локальному instance.
+
+### Этап 2: управляемый жизненный цикл HTTP MCP
+
+- [ ] Реализовать Windows Task Scheduler 2.0 adapter без разбора вывода
+      `schtasks.exe` или PowerShell.
+- [ ] Добавить общую per-user lifecycle- и upgrade-блокировку.
+- [ ] Определить durable runtime-state managed instance.
+- [ ] Реализовать `ah mcp service install` и `--no-start`.
+- [ ] Реализовать `ah mcp service start`.
+- [ ] Реализовать `ah mcp service stop`.
+- [ ] Реализовать `ah mcp service restart`.
+- [ ] Реализовать `ah mcp service status`.
+- [ ] Реализовать `ah mcp service uninstall`.
+- [ ] Добавить single-instance enforcement.
+- [ ] Настроить ограниченный restart-on-failure и restart backoff.
+- [ ] Обнаруживать Task Scheduler configuration drift.
+- [ ] Сохранять полезную scheduler и lifecycle-диагностику.
+- [ ] Добавить unit, integration и Windows VM tests для lifecycle-команд.
+
+Критерии завершения:
+
+- Обычный пользователь устанавливает service без elevation и сохранённого
+  пароля.
+- По умолчанию `service install` сразу запускает MCP и ожидает readiness.
+- После входа пользователя запускается ровно один managed instance.
+- Неожиданный сбой приводит к ограниченному перезапуску без бесконечного crash
+  loop.
+- Повторные и конкурентные lifecycle-команды безопасны и идемпотентны.
+- `status` отдельно показывает регистрацию, scheduler и HTTP readiness.
+- `stop` сначала использует control shutdown, затем Task Scheduler fallback.
+- `uninstall` не удаляет binary, плагины, конфигурацию и журналы.
+
+### Этап 3: контракт релиза и основа updater
+
+- [ ] Определить versioned schema подписанного release manifest.
+- [ ] Добавить полный список managed-файлов с относительными путями, размерами,
+      SHA-256 и назначением.
+- [ ] Добавить key ID и формат подписи с каноническим представлением manifest.
+- [ ] Встроить доверенный публичный release key в AIHelper.
+- [ ] Обновить release pipeline: публиковать архив, manifest и подпись.
+- [ ] После активации сохранять проверенный signed manifest как installed
+      manifest текущей версии.
+- [ ] Реализовать ограниченную загрузку archive и manifest только через HTTPS.
+- [ ] Реализовать безопасную распаковку с защитой от traversal, links, case
+      collisions, reserved names, ADS и size bombs.
+- [ ] Реализовать проверку полного candidate bundle по manifest.
+- [ ] Реализовать offline smoke check executable и plugin catalog.
+- [ ] Определять installation root по запущенному `ah.exe`, не изменяя
+      выбранный пользователем путь.
+- [ ] Обнаруживать установки из `cargo install` и запрещать для них self-update
+      с понятной инструкцией.
+- [ ] Для legacy portable-установки загружать подписанный manifest текущей
+      версии и признавать managed только файлы с совпадающими hashes.
+- [ ] Добавить отдельный update-helper, запускаемый вне installation root.
+- [ ] Реализовать Windows Restart Manager adapter для обнаружения процессов,
+      блокирующих managed-файлы.
+- [ ] Реализовать staging, transaction backup и durable transaction state.
+- [ ] Проверять незавершённую update transaction до загрузки динамических
+      плагинов.
+- [ ] Добавить тесты manifest, подписи, extraction, legacy bootstrap,
+      блокировок и transaction recovery.
+
+Критерии завершения:
+
+- Release pipeline создаёт проверяемый signed manifest и полный candidate
+  bundle.
+- Повреждённый, неподписанный или изменённый пакет не достигает staging.
+- Updater точно различает managed и пользовательские файлы.
+- Путь portable-установки остаётся неизменным.
+- Legacy portable release можно безопасно принять под управление.
+- Изменённые legacy-файлы не перезаписываются без явного решения пользователя.
+- `cargo install` получает отказ self-update без изменения файлов.
+- Update-helper может восстановить тестовую установку после сбоя на каждом
+  шаге замены.
+
+### Этап 4: самообновление, постоянный backup и rollback
+
+- [ ] Реализовать `ah upgrade`.
+- [ ] Реализовать `ah upgrade --check`.
+- [ ] Реализовать `ah upgrade --version <VERSION>` без downgrade.
+- [ ] Реализовать одноразовый `ah upgrade --rollback`.
+- [ ] Реализовать поиск последнего подходящего stable release.
+- [ ] Реализовать безопасную передачу lifecycle- и upgrade-блокировки
+      update-helper.
+- [ ] Реализовать graceful shutdown managed MCP.
+- [ ] Реализовать grace period и принудительное завершение блокирующих
+      процессов AIHelper.
+- [ ] Отменять обновление до замены файлов при сохраняющейся сторонней
+      блокировке.
+- [ ] Реализовать транзакционную замену только managed-файлов.
+- [ ] Сохранять пользовательские файлы и постоянный installation path.
+- [ ] Реализовать автоматический rollback при ошибке замены или проверки.
+- [ ] Сохранять предыдущую рабочую версию в
+      `%APPDATA%\AIHelper\backup\<INSTALLATION_ID>`.
+- [ ] Хранить один постоянный backup до следующего успешного обновления.
+- [ ] Ротировать backup только после успешной активации новой версии.
+- [ ] Сохранять старый постоянный backup, если новое обновление завершилось
+      ошибкой и было откачено.
+- [ ] После успешного `--rollback` удалять использованный постоянный backup.
+- [ ] Восстанавливать предыдущее состояние managed MCP.
+- [ ] Реализовать recovery после завершения процесса или перезагрузки на
+      каждом durable transaction state.
+- [ ] Добавить deterministic text и JSON diagnostics для update и rollback.
+- [ ] Добавить failure-injection и Windows VM tests.
+
+Критерии завершения:
+
+- Успешное обновление заменяет полный managed release-комплект, не изменяя
+  путь установки.
+- Managed-файлы никогда не остаются в смешанном состоянии без доступного
+  recovery.
+- Пользовательские файлы в каталоге установки не изменяются.
+- Ошибки сети, подписи, распаковки и внешние блокировки не изменяют активную
+  установку.
+- Ошибка после начала замены автоматически восстанавливает предыдущую версию.
+- Прерванная транзакция детерминированно продолжается или откатывается.
+- Managed MCP возвращается только в том случае, если он работал до операции.
+- После успешного обновления предыдущая версия доступна через
+  `ah upgrade --rollback`.
+- Следующее успешное обновление безопасно заменяет предыдущий постоянный backup
+  новым.
+
+## Матрица проверки
+
+### Жизненный цикл HTTP
+
+- Подключение Claude Code, Codex и OpenCode к одному HTTP MCP instance.
+- Несколько одновременных sessions и repositories.
+- Readiness до, во время и после полной готовности.
+- Уникальные instance identity после каждого запуска.
+- Control shutdown с корректной и устаревшей identity.
+- Ctrl-C, SIGTERM и control shutdown через общий lifecycle path.
+- Активные команды и jobs во время shutdown.
+- Конфликт порта и неверная конфигурация.
+- Отклонение неверного `Host` и внешнего `Origin`.
+- Отсутствие CORS и аутентификации.
+
+### Управляемая служба
+
+- Windows 10, Windows Server 2016 и более новые поддерживаемые версии.
+- Установка без elevation и сохранённого пароля.
+- Install, reinstall, `--no-start`, start, repeated start, stop, restart,
+  status и uninstall.
+- Logoff, login и пропущенный logon trigger.
+- Single-instance enforcement.
+- Process crash, bounded restart и restart backoff.
+- Task Scheduler configuration drift.
+- Конкурентные lifecycle-команды.
+- Зависшая readiness и недоступный control endpoint.
+- Сохранение binary, конфигурации и logs после uninstall.
+
+### Пакет релиза
+
+- Корректная и неверная подпись manifest.
+- Неизвестный key ID.
+- Неверные archive и file digests.
+- Неверная version, target и architecture.
+- Path traversal, absolute paths, links, reparse points и ADS.
+- Duplicate и case-colliding paths.
+- Windows reserved names.
+- Отсутствующие, лишние и слишком большие файлы.
+- Archive и extraction size limits.
+- Offline smoke check с несовместимым plugin ABI.
+- Legacy portable bootstrap.
+- Изменённые legacy managed-файлы.
+- Отказ self-update для `cargo install`.
+
+### Транзакция обновления
+
+- Установка в произвольном каталоге.
+- Пути с пробелами, Unicode и длинными компонентами.
+- Каталог установки с посторонними пользовательскими файлами.
+- Добавление, замена и удаление managed-файлов.
+- Несколько одновременно работающих MCP stdio и обычных `ah` процессов.
+- Graceful и принудительное завершение блокирующих процессов AIHelper.
+- Сторонняя блокировка антивирусом, индексатором или редактором.
+- Network interruption и partial download.
+- Failure injection до и после каждого durable state.
+- Завершение updater и перезагрузка во время каждого шага замены.
+- Ошибка installed smoke check.
+- Ошибка запуска новой версии.
+- Успешный и неуспешный автоматический rollback.
+- Сохранение остановленного managed MCP после обновления.
+- Восстановление ранее работавшего managed MCP.
+- Неизменность installation path.
+- Неизменность посторонних пользовательских файлов.
+
+### Постоянный backup
+
+- Создание backup после первого успешного обновления.
+- Привязка backup к installation identity.
+- Сохранение старого backup после неудачного следующего обновления.
+- Ротация backup после успешного следующего обновления.
+- Успешный `ah upgrade --rollback`.
+- Ошибка проверки backup до изменения файлов.
+- Ошибка во время rollback с восстановлением текущей версии.
+- Удаление использованного backup только после успешного rollback.
+- Повторный `--rollback` без доступного backup.
+- Недоступный или переполненный `%APPDATA%`.
+
+## Важные архитектурные ограничения
+
+- `ah.exe` и динамические плагины образуют единый release-комплект.
+- Обновление изменяет только файлы, принадлежащие AIHelper согласно подписанным
+  manifest. Посторонние файлы пользователя не изменяются.
+- Путь установки выбирает пользователь. Upgrade не переносит установку и не
+  меняет постоянный путь к `ah.exe`.
+- Update-helper выполняется вне installation root.
+- Lifecycle и recovery запускаются до загрузки динамических plugin DLL.
+- Незавершённая update transaction имеет приоритет над обычной командой.
+- Ни один managed-файл не заменяется до полной загрузки, проверки и offline
+  smoke check candidate bundle.
+- Сторонние процессы updater не завершает.
+- Процессы AIHelper завершаются только тогда, когда они реально блокируют
+  managed-файлы обновляемой установки.
+- Обнаружение блокировок выполняется через Windows Restart Manager, а не через
+  поиск процессов только по имени.
+- Lifecycle- и upgrade-блокировка не должна иметь разрыва при передаче операции
+  от `ah upgrade` к update-helper.
+- Task Scheduler process state не считается HTTP readiness.
+- Управляемый процесс определяется через регистрацию, ожидаемый executable path
+  и instance identity, а не через глобальный поиск `ah.exe`.
+- HTTP MCP работает без аутентификации, только на loopback, с обязательной
+  проверкой `Host` и `Origin`.
+- Первая версия updater не выполняет необратимые миграции пользовательской
+  конфигурации. Release с несовместимой миграцией не считается подходящим для
+  self-update, пока не определён отдельный rollback-safe migration contract.
+- Lifecycle- и upgrade-команды не публикуются как MCP tools в первой версии.
+- Постоянный backup хранится отдельно от установки в
+  `%APPDATA%\AIHelper\backup\<INSTALLATION_ID>`.
+- Старый постоянный backup удаляется только после успешной активации новой
+  версии и подготовки нового backup.
+- Text и JSON output остаются детерминированными и следуют существующим error
+  conventions AIHelper.
+
+## Решения для проектирования реализации
+
+Перед реализацией соответствующих phases нужно уточнить:
+
+- точные JSON schemas readiness, status и control shutdown;
+- формат и расположение service configuration и durable runtime-state;
+- имя, folder и полный набор настроек Task Scheduler task;
+- способ безопасной передачи lifecycle lock update-helper без race window;
+- формат installation identity и его поведение при ручном переносе каталога;
+- точный формат manifest и его канонического представления;
+- алгоритм подписи, key rotation и отзыв скомпрометированного release key;
+- источник stable releases;
+- packaging update-helper и правила совместимости updater versions;
+- конкретные Windows APIs для атомарной замены отдельных файлов;
+- длительность shutdown grace period;
+- grace period перед принудительным завершением блокирующих процессов;
+- restart delay, число попыток и окно restart backoff;
+- расположение временного staging на том же диске при необходимости;
+- recovery при недоступном `%APPDATA%`;
+- очистка orphan staging, transaction state и повреждённых backup;
+- точный bootstrap legacy portable release manifest;
+- правила совместимости пользовательской конфигурации и будущих миграций при
+  update и rollback.
+
+## Возможные направления после первой версии
+
+После стабилизации Windows per-user service отдельно оценить:
+
+- Windows Service для запуска до входа пользователя;
+- systemd user service для Linux;
+- LaunchAgent для macOS;
+- собственный supervisor, только если возможностей системных менеджеров
+  процессов окажется недостаточно.
+
+Эти направления не входят в текущую дорожную карту и требуют отдельных
+документов проектирования.
