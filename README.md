@@ -49,9 +49,14 @@ cargo run --bin ah -- --cwd . mcp serve
 - `docs/reference/` command reference
 
 ## Documentation
-- [Agents guide](docs/agents/README.md)
+- [Agent’s guide](docs/agents/README.md)
 - [Developer guide](docs/developers/README.md)
 - [Command reference](docs/reference/README.md)
 - [MCP stdio reference](docs/reference/mcp.md)
 - [Invocation logging](docs/reference/logging.md)
 - [Changelog](CHANGELOG.md)
+
+## Roadmap
+- [Managed HTTP MCP and self-update](roadmap/managed-mcp-and-self-update.md):
+  install and supervise the HTTP MCP for the current user, then add safe
+  side-by-side upgrades with health checks and automatic rollback.

@@ -25,20 +25,20 @@ failures never fail a command.
 
 ## Records
 
-Each completed command produces one `command.completed` JSON object, except
+Each completed command normally produces one `command.completed` JSON object, except
 standalone `ah --version` and `ah -V` fast-path requests. Records contain:
 
 - timestamp, PID, transport, command, and duration;
 - sanitized CLI argv or typed MCP parameters;
 - `success` or `error` status;
 - a structured diagnostic only for errors;
-- MCP tool and request IDs when applicable.
+- MCP tool and request IDs when applicable, plus `job_id` for detached targets.
 
-MCP records include `queue_wait_ms` and `execution_ms` when the executor can
-observe both phases. `duration_ms` remains the total MCP adapter time and can be
-slightly greater than the phase sum. Timed-out calls also include
-`timeout_phase` as `queue` or `execution`; a queue timeout has
-`execution_ms: 0`. Calls rejected before executor admission omit these optional
+MCP execution records retain `queue_wait_ms` for schema compatibility, but the
+parallel executor never queues work and reports it as zero. `execution_ms`
+measures admission to logical completion. `duration_ms` remains total MCP adapter
+time and can be slightly greater. Timed-out calls use
+`timeout_phase: "execution"`. Calls rejected before admission omit these optional
 fields.
 
 Startup, configuration, plugin discovery, MCP server, and transport problems use
@@ -69,3 +69,11 @@ Concurrent processes use a short cross-process lock before appending a complete
 JSONL record. Lock contention is bounded to 50 ms. Filesystem operations can
 still experience normal filesystem latency. Disk, permission, serialization,
 or lock failures may drop an event under the best-effort contract.
+
+MCP submits completed-call events to a process-local queue of 256 entries. One
+dedicated logging thread drains that queue, so event-sink latency never occupies
+Tokio command workers or delays an MCP response. A full or disconnected queue
+drops the new event instead of blocking execution. Sink panics are contained and
+do not terminate the MCP request or dispatcher. During normal MCP shutdown, a
+flush barrier writes preceding healthy events within the remaining shared
+shutdown budget; a stuck sink cannot extend that budget.

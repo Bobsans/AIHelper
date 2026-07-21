@@ -20,8 +20,9 @@ cargo run --bin ah -- --help
   whenever a command is added or its behavior changes.
 - Resolve paths and child process working directories from the invocation
   context; do not mutate the process-global cwd.
-- Treat handlers as future parallel work: protect shared state and implement
-  cancellation for polling loops and child processes where practical.
+- Treat every handler as concurrent: multiple calls to the same command may
+  overlap, and cancellation may run concurrently with invocation. Protect
+  shared state and make polling loops and child processes cancellation-aware.
 
 ## Suggested Workflow
 1. Implement command behavior in its domain module.

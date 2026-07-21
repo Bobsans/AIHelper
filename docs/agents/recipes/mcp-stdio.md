@@ -1,56 +1,34 @@
 # Use AIHelper as an MCP stdio server
 
-Start one long-lived server process from the MCP client:
+Configure the MCP client to own one subprocess:
 
 ```text
-ah --cwd <workspace> --limit 200 mcp serve
+ah --cwd <workspace> --limit 200 mcp serve --max-active 32
 ```
 
-Do not pass `--json`; stdout is the MCP transport.
+Do not pass `--json`; stdout is reserved for MCP protocol messages.
 
 ## Calling tools
 
-1. List tools and select the narrowest `ah.*` command.
-2. Read the impact warning and `dev.aihelper/risk` metadata before calling it.
-3. Supply per-call `context.cwd` when the task may target a different
+1. Select the narrowest `ah.*` command and inspect its risk metadata.
+2. Supply `context.cwd` when a call targets a directory other than the startup
    workspace.
-4. Use `context.limit` and `context.timeout_ms` to bound large or slow work.
-5. Treat `ah.run.check`, `ah.task.run`, `ah.postgres.exec`, and other
-   high/critical-risk tools as arbitrary mutation boundaries.
+3. Use `context.limit` and `context.timeout_ms` to bound large or slow work.
+4. Use `ah.job.start` when the client should not keep one `tools/call` open.
+5. Poll `ah.job.result`; it always returns immediately.
 
-Example arguments:
+Direct calls and jobs share 32 execution slots by default. Commands execute in
+parallel without an AIHelper queue. Retry `EXECUTION_CAPACITY_FULL` only when a
+slot is likely to have become available; rejected work never starts later.
 
-```json
-{
-  "path": "src/lib.rs",
-  "from": 1,
-  "to": 120,
-  "context": {
-    "cwd": "D:\\work\\project",
-    "limit": 120,
-    "timeout_ms": 10000
-  }
-}
-```
+Cancellation and timeout complete logically at once. `draining: true` means the
+plugin has not physically returned and still owns one slot, but unrelated calls
+continue in other slots.
 
-Relative paths and child processes use `context.cwd`, not the MCP client's own
-working directory.
+Plugin state tools change the shared live catalog. Refresh the tool list after a
+tool-list-changed notification. This notification is also broadcast when a
+detached `ah.job.start` target changes plugin state at completion.
 
-Plugin state tools (`ah.plugins.enable`, `ah.plugins.disable`, and
-`ah.plugins.reset`) change the live catalog. Refresh the client's tool list
-after receiving the tool-list-changed notification.
-
-When a tool returns retryable diagnostic `EXECUTOR_DRAINING`, wait briefly and
-retry. The previous timed-out handler is still exiting and no new handler will
-start until that cleanup completes.
-
-## Diagnosing failures
-
-Completed MCP calls and server/transport problems are written as daily JSONL
-records in the global AIHelper `logs` directory. See
-[`docs/reference/logging.md`](../../reference/logging.md) for paths, retention,
-redaction, and the optional `AH_LOG_UNREDACTED=1` diagnostic mode. Logging never
-writes non-protocol data to MCP stdout.
-
-For retryable `TIMEOUT` diagnostics, inspect `timeout_phase`, `queue_wait_ms`,
-and `execution_ms` to distinguish head-of-line queue delay from a slow handler.
+Completed MCP calls and transport problems are written to the normal daily JSONL
+logs. `queue_wait_ms` is always zero; timed-out execution reports
+`timeout_phase: "execution"`.

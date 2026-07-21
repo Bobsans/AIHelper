@@ -121,6 +121,25 @@ Relative paths and child process working directories must derive from the
 request context. Do not read or change the process-global current directory.
 Bound network and child-process work by the remaining request deadline.
 
+### Concurrency contract
+
+The MCP runtime invokes accepted typed commands concurrently. This includes
+multiple calls to the same command with the same `cwd`. Cancellation can run on
+another thread while invocation is still active.
+
+- Synchronize mutable caches, configuration, connection pools, and cancellation
+  registries.
+- Never rely on process-global current-directory changes; use the request context
+  and child-process `current_dir`.
+- Make cancellation idempotent and safe before, during, or just after handler
+  completion.
+- Do not retain borrowed request data after the invocation function returns.
+- If a plugin serializes access to its own external resource, that is plugin
+  policy; the host does not create a queue or per-plugin lane.
+
+The C ABI layout is unchanged. Its invoke and cancel entrypoints must nevertheless
+be safe when called concurrently.
+
 ## Semantic Text Formatting
 
 Dynamic plugins can use the shared formatter from `ah-plugin-api`:
@@ -208,8 +227,8 @@ atomically under a lock to avoid corrupted caches.
 - Describe worst-case effects when behavior depends on input flags.
 - Make active cancellation wake polling loops or terminate child process groups
   where practical.
-- Protect shared caches/configuration for a future parallel executor; never
-  assume handlers will remain globally serialized.
+- Protect shared caches and configuration for concurrent invocation; handlers
+  are not globally serialized.
 
 ## Example Dynamic Plugins
 

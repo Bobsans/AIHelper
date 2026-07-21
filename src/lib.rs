@@ -440,9 +440,9 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
         RuntimeError::InvalidExecutionRequest(message) => {
             AppError::external("EXECUTION_REQUEST_INVALID", message)
         }
-        RuntimeError::ExecutionQueueFull { capacity } => AppError::external(
-            "EXECUTION_QUEUE_FULL",
-            format!("typed execution queue is full (capacity {capacity})"),
+        RuntimeError::ExecutionCapacityFull { capacity } => AppError::external(
+            "EXECUTION_CAPACITY_FULL",
+            format!("typed execution capacity is full (maximum active {capacity})"),
         ),
         RuntimeError::ExecutionCancelled { request_id } => AppError::external(
             "EXECUTION_CANCELLED",
@@ -452,10 +452,9 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
             "EXECUTION_TIMEOUT",
             format!("typed execution request '{request_id}' timed out"),
         ),
-        RuntimeError::ExecutionDraining { request_id } => AppError::external(
-            "EXECUTOR_DRAINING",
-            format!("timed-out execution request '{request_id}' is still draining"),
-        ),
+        RuntimeError::ExecutorShuttingDown => {
+            AppError::external("EXECUTOR_SHUTTING_DOWN", "typed executor is shutting down")
+        }
         RuntimeError::ExecutionWorker(message) => {
             AppError::external("EXECUTION_WORKER_FAILED", message)
         }

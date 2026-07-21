@@ -335,6 +335,9 @@ impl EventLogger {
         );
         record["request_id"] = Value::String(sanitize_string(&event.request_id, self.unredacted));
         record["tool"] = Value::String(sanitize_string(&event.tool, self.unredacted));
+        if let Some(job_id) = event.job_id {
+            record["job_id"] = Value::String(sanitize_string(&job_id, self.unredacted));
+        }
         if let Some(telemetry) = telemetry {
             record["queue_wait_ms"] = json!(telemetry.queue_wait_ms);
             record["execution_ms"] = json!(telemetry.execution_ms);
@@ -1569,6 +1572,7 @@ mod tests {
                 command: "test.large".to_owned(),
                 tool: "ah.test.large".to_owned(),
                 request_id: "mcp:test".to_owned(),
+                job_id: None,
                 parameters,
                 status: McpCommandStatus::Success,
                 duration_ms: 1,
@@ -1697,6 +1701,7 @@ mod tests {
                 command: "search.text".to_owned(),
                 tool: "ah.search.text".to_owned(),
                 request_id: "mcp:n:7:e:1".to_owned(),
+                job_id: Some("job-test".to_owned()),
                 parameters: json!({"token": "hidden", "query": "needle"}),
                 status: McpCommandStatus::Success,
                 duration_ms: 12,
@@ -1714,6 +1719,7 @@ mod tests {
                 command: "search.text".to_owned(),
                 tool: "ah.search.text".to_owned(),
                 request_id: "mcp:n:8:e:2".to_owned(),
+                job_id: None,
                 parameters: json!({}),
                 status: McpCommandStatus::Error,
                 duration_ms: 3,

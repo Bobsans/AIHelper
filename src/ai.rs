@@ -201,12 +201,18 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
         },
         HostCommandDoc {
             name: "mcp.serve".to_owned(),
-            summary: "Serve typed AIHelper tools over MCP stdio.".to_owned(),
-            usage: "mcp serve [--max-queued N] [--default-timeout-ms MILLISECONDS]".to_owned(),
-            examples: vec![HostCommandExample {
-                description: "Start the stdio MCP server".to_owned(),
-                command: "ah mcp serve".to_owned(),
-            }],
+            summary: "Serve typed AIHelper tools over MCP stdio or local HTTP.".to_owned(),
+            usage: "mcp serve [--transport <stdio|http>] [--port PORT] [--max-active N] [--default-timeout-ms MILLISECONDS]".to_owned(),
+            examples: vec![
+                HostCommandExample {
+                    description: "Start the stdio MCP server".to_owned(),
+                    command: "ah mcp serve".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Start the local Streamable HTTP MCP server".to_owned(),
+                    command: "ah mcp serve --transport http --port 8787".to_owned(),
+                },
+            ],
         },
         HostCommandDoc {
             name: "plugins.list".to_owned(),

@@ -72,9 +72,10 @@ queue is full or disconnected, the event is dropped and the counter increases.
 This fail-open overload policy is intentional: command execution and protocol
 responses must remain non-blocking.
 
-The worker thread is not joined during shutdown because a broken sink may block
-forever. Dropping the final dispatcher sender lets a healthy worker drain and
-exit naturally; process termination remains the final bound for a stuck sink.
+Shutdown submits a flush barrier and awaits it only within the remaining shared
+grace period, preserving preceding healthy events without delaying normal
+responses. The worker thread is not joined because a broken sink may block
+forever; process termination remains the final bound for a stuck sink.
 
 ### Job catalog completion hook
 

@@ -1,8 +1,12 @@
-use std::{ffi::OsString, sync::Arc, time::Instant};
+use std::{
+    ffi::OsString,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use ah_runtime::{
     PluginLoadReport, PluginManager, PluginSource,
-    executor::{Executor, SequentialExecutor},
+    executor::{Executor, ParallelExecutor},
 };
 
 use crate::{
@@ -15,6 +19,8 @@ use crate::{
     plugin_settings::PluginSettings,
     plugins,
 };
+
+const MCP_RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 pub(crate) fn run() -> Result<(), AppError> {
     let started = Instant::now();
@@ -310,13 +316,17 @@ fn execution(
 ) -> Result<(), AppError> {
     match command {
         RuntimeCommand::McpServe {
-            max_queued,
+            transport,
+            port,
+            max_active,
             default_timeout_ms,
             options,
         } => execute_mcp_serve(
             manager,
             settings,
-            max_queued,
+            transport,
+            port,
+            max_active,
             default_timeout_ms,
             options,
             logger,
@@ -355,7 +365,9 @@ fn execution(
 fn execute_mcp_serve(
     manager: PluginManager,
     settings: PluginSettings,
-    max_queued: usize,
+    transport: cli::McpTransport,
+    port: u16,
+    max_active: usize,
     default_timeout_ms: u64,
     options: cli::GlobalOptions,
     logger: Option<Arc<EventLogger>>,
@@ -366,39 +378,67 @@ fn execute_mcp_serve(
         .to_string_lossy()
         .into_owned();
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_time()
+        .enable_all()
+        .max_blocking_threads(max_active.saturating_add(16))
         .build()
         .map_err(|error| AppError::external("MCP_RUNTIME_FAILED", error.to_string()))
         .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
-    runtime.block_on(async move {
-        let settings = Arc::new(std::sync::Mutex::new(settings));
-        let manager = Arc::new_cyclic(|weak| {
-            let mut manager = manager;
-            for plugin in crate::host_commands::builtins(weak.clone(), Arc::clone(&settings)) {
-                manager.register_host_builtin(plugin);
+    let (result, shutdown_grace) = runtime.block_on(async move {
+        let setup = async {
+            let settings = Arc::new(std::sync::Mutex::new(settings));
+            let manager = Arc::new_cyclic(|weak| {
+                let mut manager = manager;
+                for plugin in crate::host_commands::builtins(weak.clone(), Arc::clone(&settings)) {
+                    manager.register_host_builtin(plugin);
+                }
+                manager
+            });
+            let executor: Arc<dyn Executor> = Arc::new(
+                ParallelExecutor::new(Arc::clone(&manager), max_active)
+                    .map_err(crate::map_runtime_error)
+                    .map_err(|error| {
+                        record_mcp_system_error(logger.as_deref(), "mcp_server", error)
+                    })?,
+            );
+            let config = ah_mcp::McpServerConfig::new(cwd, options.limit, default_timeout_ms)
+                .map_err(|error| AppError::external("MCP_CONFIG_INVALID", error.to_string()))
+                .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
+            let mut server = ah_mcp::McpServer::new(manager, executor, config)
+                .map_err(|error| AppError::external("MCP_SERVER_FAILED", error.to_string()))
+                .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
+            if let Some(logger) = logger.clone() {
+                let event_sink: Arc<dyn ah_mcp::EventSink> = logger;
+                server = server.with_event_sink(event_sink);
             }
-            manager
-        });
-        let executor: Arc<dyn Executor> = Arc::new(
-            SequentialExecutor::new(Arc::clone(&manager), max_queued)
-                .map_err(crate::map_runtime_error)
-                .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?,
-        );
-        let config = ah_mcp::McpServerConfig::new(cwd, options.limit, default_timeout_ms)
-            .map_err(|error| AppError::external("MCP_CONFIG_INVALID", error.to_string()))
-            .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
-        let mut server = ah_mcp::McpServer::new(manager, executor, config)
-            .map_err(|error| AppError::external("MCP_SERVER_FAILED", error.to_string()))
-            .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
-        if let Some(logger) = logger.clone() {
-            let event_sink: Arc<dyn ah_mcp::EventSink> = logger;
-            server = server.with_event_sink(event_sink);
+            Ok::<_, AppError>(match transport {
+                cli::McpTransport::Stdio => {
+                    ah_mcp::serve_stdio_bounded(server, MCP_RUNTIME_SHUTDOWN_GRACE).await
+                }
+                cli::McpTransport::Http => {
+                    ah_mcp::serve_http_bounded(server, port, MCP_RUNTIME_SHUTDOWN_GRACE).await
+                }
+            })
         }
-        ah_mcp::serve_stdio(server)
-            .await
-            .map_err(|error| AppError::external("MCP_SERVER_FAILED", error.to_string()))
-            .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_transport", error))
-    })
+        .await;
+        match setup {
+            Ok(outcome) => {
+                let (transport_result, remaining_grace) = outcome.into_parts();
+                let result = transport_result
+                    .map_err(|error| AppError::external("MCP_SERVER_FAILED", error.to_string()))
+                    .map_err(|error| {
+                        record_mcp_system_error(logger.as_deref(), "mcp_transport", error)
+                    });
+                (result, remaining_grace)
+            }
+            Err(error) => (Err(error), MCP_RUNTIME_SHUTDOWN_GRACE),
+        }
+    });
+    shutdown_runtime(runtime, shutdown_grace);
+    result
+}
+
+fn shutdown_runtime(runtime: tokio::runtime::Runtime, grace: Duration) {
+    runtime.shutdown_timeout(grace);
 }
 
 fn record_mcp_system_error(
@@ -412,11 +452,33 @@ fn record_mcp_system_error(
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsString;
+    use std::{
+        ffi::OsString,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
 
     use ah_runtime::PluginManager;
 
-    use super::{is_version_fast_path, resolve_invocation_command};
+    use super::{is_version_fast_path, resolve_invocation_command, shutdown_runtime};
+
+    #[test]
+    fn runtime_shutdown_respects_grace_for_blocking_handlers() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        runtime.spawn_blocking(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let started = Instant::now();
+        shutdown_runtime(runtime, Duration::from_millis(10));
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        release_tx.send(()).unwrap();
+    }
 
     #[test]
     fn version_fast_path_accepts_only_standalone_version_flags() {

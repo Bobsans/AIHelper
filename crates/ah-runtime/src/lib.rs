@@ -73,16 +73,14 @@ pub enum RuntimeError {
     TypedResponseValidation { command: String, reason: String },
     #[error("typed execution request is invalid: {0}")]
     InvalidExecutionRequest(String),
-    #[error("typed execution queue is full (capacity {capacity})")]
-    ExecutionQueueFull { capacity: usize },
+    #[error("typed execution capacity is full (maximum active {capacity})")]
+    ExecutionCapacityFull { capacity: usize },
     #[error("typed execution request '{request_id}' was cancelled")]
     ExecutionCancelled { request_id: String },
     #[error("typed execution request '{request_id}' timed out")]
     ExecutionTimeout { request_id: String },
-    #[error(
-        "typed execution is draining timed-out request '{request_id}' and cannot accept new work"
-    )]
-    ExecutionDraining { request_id: String },
+    #[error("typed executor is shutting down")]
+    ExecutorShuttingDown,
     #[error("typed execution worker failed: {0}")]
     ExecutionWorker(String),
     #[error("typed execution handler panicked for request '{request_id}'")]

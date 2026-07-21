@@ -1,17 +1,18 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     future::Future,
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Duration,
 };
 
 use ah_plugin_api::{TypedInvocationRequest, TypedInvocationResponse};
 use tokio::{
-    sync::{Notify, mpsc, oneshot},
+    runtime::Handle,
+    sync::{Notify, OwnedSemaphorePermit, Semaphore, oneshot},
     time::Instant,
 };
 
@@ -50,302 +51,412 @@ impl ObservedExecution {
 
 pub trait Executor: Send + Sync {
     fn execute(&self, request: TypedInvocationRequest) -> ExecutionFuture<'_>;
+
     fn execute_observed(&self, request: TypedInvocationRequest) -> ObservedExecutionFuture<'_> {
         Box::pin(async move { ObservedExecution::unobserved(self.execute(request).await) })
     }
+
+    fn try_submit(
+        &self,
+        _request: TypedInvocationRequest,
+    ) -> Result<ExecutionHandle, RuntimeError> {
+        Err(RuntimeError::InvalidExecutionRequest(
+            "executor does not support detached submission".to_owned(),
+        ))
+    }
+
     fn cancel(&self, request_id: &str) -> bool;
+
+    fn close(&self) {}
+
+    fn active_count(&self) -> usize {
+        0
+    }
+}
+
+pub struct ExecutionHandle {
+    request_id: String,
+    completion: oneshot::Receiver<ObservedExecution>,
+    lifecycle: ExecutionLifecycle,
+}
+
+impl ExecutionHandle {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub fn lifecycle(&self) -> ExecutionLifecycle {
+        self.lifecycle.clone()
+    }
+
+    pub async fn observe(self) -> ObservedExecution {
+        self.completion.await.unwrap_or_else(|_| {
+            ObservedExecution::unobserved(Err(RuntimeError::ExecutionWorker(format!(
+                "execution completion channel closed for request '{}'",
+                self.request_id
+            ))))
+        })
+    }
 }
 
 #[derive(Clone)]
-pub struct SequentialExecutor {
-    sender: mpsc::Sender<ExecutionJob>,
-    coordinator: Arc<Mutex<ExecutionCoordinator>>,
-    manager: Arc<PluginManager>,
-    queue_capacity: usize,
-    next_generation: Arc<AtomicU64>,
+pub struct ExecutionLifecycle {
+    request_id: Arc<str>,
+    state: Arc<ExecutionState>,
 }
 
-impl SequentialExecutor {
-    pub fn new(manager: Arc<PluginManager>, queue_capacity: usize) -> Result<Self, RuntimeError> {
-        if queue_capacity == 0 {
+impl ExecutionLifecycle {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub fn is_logically_complete(&self) -> bool {
+        self.state.logical_done.load(Ordering::Acquire)
+    }
+
+    pub fn is_physically_complete(&self) -> bool {
+        self.state.physical_done.load(Ordering::Acquire)
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.is_logically_complete() && !self.is_physically_complete()
+    }
+
+    pub async fn wait_physical(&self) {
+        loop {
+            if self.is_physically_complete() {
+                return;
+            }
+            let changed = self.state.physical_changed.notified();
+            if self.is_physically_complete() {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
+/// Maximum time a cancelled or timed-out handler is allowed to keep occupying
+/// its execution slot while it drains. Once this elapses the slot is abandoned:
+/// the permit and tracking are released so new work can be admitted, even though
+/// the underlying blocking handler may still be running (blocking tasks cannot be
+/// forcibly aborted). This bounds resource consumption from handlers that ignore
+/// cooperative cancellation and never return.
+pub const DEFAULT_DRAIN_GRACE: Duration = Duration::from_secs(30);
+
+#[derive(Clone)]
+pub struct ParallelExecutor {
+    manager: Arc<PluginManager>,
+    runtime: Handle,
+    permits: Arc<Semaphore>,
+    max_active: usize,
+    drain_grace: Duration,
+    coordinator: Arc<Mutex<ExecutionCoordinator>>,
+    closed: Arc<AtomicBool>,
+}
+
+impl ParallelExecutor {
+    pub fn new(manager: Arc<PluginManager>, max_active: usize) -> Result<Self, RuntimeError> {
+        if max_active == 0 {
             return Err(RuntimeError::InvalidExecutionRequest(
-                "queue capacity must be greater than zero".to_owned(),
+                "maximum active execution count must be greater than zero".to_owned(),
             ));
         }
-        let runtime = tokio::runtime::Handle::try_current().map_err(|error| {
+        if max_active > Semaphore::MAX_PERMITS {
+            return Err(RuntimeError::InvalidExecutionRequest(format!(
+                "maximum active execution count must not exceed {}",
+                Semaphore::MAX_PERMITS
+            )));
+        }
+        let runtime = Handle::try_current().map_err(|error| {
             RuntimeError::ExecutionWorker(format!(
                 "executor must be created inside a Tokio runtime: {error}"
             ))
         })?;
-        let (sender, receiver) = mpsc::channel(queue_capacity);
-        let coordinator = Arc::new(Mutex::new(ExecutionCoordinator::default()));
-        runtime.spawn(run_worker(
-            Arc::clone(&manager),
-            receiver,
-            Arc::clone(&coordinator),
-        ));
         Ok(Self {
-            sender,
-            coordinator,
             manager,
-            queue_capacity,
-            next_generation: Arc::new(AtomicU64::new(1)),
+            runtime,
+            permits: Arc::new(Semaphore::new(max_active)),
+            max_active,
+            drain_grace: DEFAULT_DRAIN_GRACE,
+            coordinator: Arc::new(Mutex::new(ExecutionCoordinator::default())),
+            closed: Arc::new(AtomicBool::new(false)),
         })
     }
 
-    pub fn queue_capacity(&self) -> usize {
-        self.queue_capacity
+    /// Override the drain grace period. See [`DEFAULT_DRAIN_GRACE`].
+    #[must_use]
+    pub fn with_drain_grace(mut self, drain_grace: Duration) -> Self {
+        self.drain_grace = drain_grace;
+        self
     }
 
-    #[cfg(test)]
-    fn is_queued(&self, request_id: &str) -> bool {
-        let coordinator = lock_coordinator(&self.coordinator);
-        coordinator
+    pub fn max_active(&self) -> usize {
+        self.max_active
+    }
+
+    pub fn available_capacity(&self) -> usize {
+        self.permits.available_permits()
+    }
+
+    pub fn is_draining(&self, request_id: &str) -> bool {
+        lock_coordinator(&self.coordinator)
             .tracked
             .get(request_id)
-            .is_some_and(|request| request.phase == RequestPhase::Queued)
+            .is_some_and(|request| {
+                request.state.logical_done.load(Ordering::Acquire)
+                    && !request.state.physical_done.load(Ordering::Acquire)
+            })
     }
 
-    #[cfg(test)]
-    fn is_draining(&self) -> bool {
-        !lock_coordinator(&self.coordinator).draining.is_empty()
-    }
-
-    async fn execute_inner(&self, request: TypedInvocationRequest) -> ObservedExecution {
-        if let Err(error) = validate_request(&request) {
-            return ObservedExecution::unobserved(Err(error));
+    fn submit(&self, request: TypedInvocationRequest) -> Result<ExecutionHandle, RuntimeError> {
+        validate_request(&request)?;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(RuntimeError::ExecutorShuttingDown);
         }
-        let request_id = request.context.request_id.clone();
-        let command = request.command.clone();
+
         let accepted_at = Instant::now();
         let Some(deadline) =
             accepted_at.checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
         else {
-            return ObservedExecution::unobserved(Err(RuntimeError::InvalidExecutionRequest(
-                format!("timeout is too large for request '{request_id}'"),
+            return Err(RuntimeError::InvalidExecutionRequest(format!(
+                "timeout is too large for request '{}'",
+                request.context.request_id
             )));
         };
-        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
-        let signal = Arc::new(ExecutionSignal::default());
-        let observation = Arc::new(ExecutionObservation::new(accepted_at));
+        let permit = Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
+            RuntimeError::ExecutionCapacityFull {
+                capacity: self.max_active,
+            }
+        })?;
+
+        let request_id = request.context.request_id.clone();
+        let command = request.command.clone();
+        let (completion, response) = oneshot::channel();
+        let state = Arc::new(ExecutionState::new(accepted_at, completion));
         {
             let mut coordinator = lock_coordinator(&self.coordinator);
-            if let Some(blocking_request_id) = coordinator.draining.values().next() {
-                return ObservedExecution::unobserved(Err(RuntimeError::ExecutionDraining {
-                    request_id: blocking_request_id.clone(),
-                }));
+            if self.closed.load(Ordering::Acquire) {
+                drop(permit);
+                return Err(RuntimeError::ExecutorShuttingDown);
             }
             if coordinator.tracked.contains_key(&request_id) {
-                return ObservedExecution::unobserved(Err(RuntimeError::InvalidExecutionRequest(
-                    format!("duplicate active request id '{request_id}'"),
+                drop(permit);
+                return Err(RuntimeError::InvalidExecutionRequest(format!(
+                    "duplicate active request id '{request_id}'"
                 )));
             }
             coordinator.tracked.insert(
                 request_id.clone(),
-                TrackedRequest {
-                    generation,
+                TrackedExecution {
                     command,
-                    signal: Arc::clone(&signal),
-                    phase: RequestPhase::Queued,
-                    observation: Arc::clone(&observation),
+                    state: Arc::clone(&state),
                 },
             );
         }
 
-        let (completion, response) = oneshot::channel();
-        let job = ExecutionJob {
+        self.runtime.spawn(run_execution(
+            Arc::clone(&self.manager),
+            Arc::clone(&self.coordinator),
             request,
-            generation,
             deadline,
-            signal: Arc::clone(&signal),
-            completion,
-        };
-        match self.sender.try_send(job) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                remove_tracked(&self.coordinator, &request_id, generation);
-                return ObservedExecution::unobserved(Err(RuntimeError::ExecutionQueueFull {
-                    capacity: self.queue_capacity,
-                }));
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                remove_tracked(&self.coordinator, &request_id, generation);
-                return ObservedExecution::unobserved(Err(RuntimeError::ExecutionWorker(
-                    "execution queue is closed".to_owned(),
-                )));
-            }
-        }
+            Arc::clone(&state),
+            permit,
+            self.drain_grace,
+        ));
 
-        let result = self
-            .await_completion(request_id, generation, deadline, signal, response)
-            .await;
-        let telemetry = observation.telemetry(Instant::now(), &result);
-        ObservedExecution {
-            result,
-            telemetry: Some(telemetry),
+        Ok(ExecutionHandle {
+            request_id: request_id.clone(),
+            completion: response,
+            lifecycle: ExecutionLifecycle {
+                request_id: Arc::from(request_id),
+                state,
+            },
+        })
+    }
+
+    fn cancel_all(&self) {
+        let tracked = {
+            let coordinator = lock_coordinator(&self.coordinator);
+            coordinator
+                .tracked
+                .iter()
+                .map(|(request_id, execution)| {
+                    (
+                        request_id.clone(),
+                        execution.command.clone(),
+                        Arc::clone(&execution.state),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for (request_id, command, state) in tracked {
+            if state.stop(StopReason::Cancelled, &request_id) {
+                self.dispatch_cancellation(command, request_id);
+            }
         }
     }
 
-    async fn await_completion(
-        &self,
-        request_id: String,
-        generation: u64,
-        deadline: Instant,
-        signal: Arc<ExecutionSignal>,
-        mut response: oneshot::Receiver<Result<TypedInvocationResponse, RuntimeError>>,
-    ) -> Result<TypedInvocationResponse, RuntimeError> {
-        tokio::select! {
-            biased;
-            reason = signal.wait() => Err(reason.into_error(request_id.clone())),
-            result = &mut response => map_completion(result, &self.coordinator, &request_id, generation),
-            _ = tokio::time::sleep_until(deadline) => {
-                if timeout_request(
-                    &self.coordinator,
-                    &self.manager,
-                    &request_id,
-                    generation,
-                ) {
-                    Err(RuntimeError::ExecutionTimeout {
-                        request_id: request_id.clone(),
-                    })
-                } else {
-                    map_completion(
-                        response.await,
-                        &self.coordinator,
-                        &request_id,
-                        generation,
-                    )
-                }
-            }
-        }
+    fn dispatch_cancellation(&self, command: String, request_id: String) {
+        let manager = Arc::clone(&self.manager);
+        self.runtime.spawn_blocking(move || {
+            manager.cancel_typed(&command, &request_id);
+        });
     }
 }
 
-impl Executor for SequentialExecutor {
+impl Executor for ParallelExecutor {
     fn execute(&self, request: TypedInvocationRequest) -> ExecutionFuture<'_> {
-        Box::pin(async move { self.execute_inner(request).await.result })
+        Box::pin(async move { self.execute_observed(request).await.result })
     }
 
     fn execute_observed(&self, request: TypedInvocationRequest) -> ObservedExecutionFuture<'_> {
-        Box::pin(self.execute_inner(request))
+        Box::pin(async move {
+            match self.submit(request) {
+                Ok(handle) => handle.observe().await,
+                Err(error) => ObservedExecution::unobserved(Err(error)),
+            }
+        })
+    }
+
+    fn try_submit(&self, request: TypedInvocationRequest) -> Result<ExecutionHandle, RuntimeError> {
+        self.submit(request)
     }
 
     fn cancel(&self, request_id: &str) -> bool {
-        let cancel_command = {
-            let mut coordinator = lock_coordinator(&self.coordinator);
-            let Some(tracked) = coordinator.tracked.get(request_id).cloned() else {
-                return false;
-            };
-            tracked.signal.set(StopReason::Cancelled);
-            tracked.observation.finish(Instant::now());
-            match tracked.phase {
-                RequestPhase::Queued => {
-                    coordinator.tracked.remove(request_id);
-                    None
-                }
-                RequestPhase::Active => Some(tracked.command),
-                RequestPhase::TimedOutDraining => None,
-            }
+        let tracked = lock_coordinator(&self.coordinator)
+            .tracked
+            .get(request_id)
+            .cloned();
+        let Some(tracked) = tracked else {
+            return false;
         };
-        if let Some(command) = cancel_command {
-            self.manager.cancel_typed(&command, request_id);
+        if !tracked.state.stop(StopReason::Cancelled, request_id) {
+            return false;
         }
+        self.dispatch_cancellation(tracked.command, request_id.to_owned());
         true
     }
-}
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RequestPhase {
-    Queued,
-    Active,
-    TimedOutDraining,
-}
-
-#[derive(Clone)]
-struct TrackedRequest {
-    generation: u64,
-    command: String,
-    signal: Arc<ExecutionSignal>,
-    phase: RequestPhase,
-    observation: Arc<ExecutionObservation>,
-}
-
-struct ExecutionObservation {
-    accepted_at: Instant,
-    times: Mutex<ExecutionObservationTimes>,
-}
-
-#[derive(Default)]
-struct ExecutionObservationTimes {
-    activated_at: Option<Instant>,
-    terminal_at: Option<Instant>,
-}
-
-impl ExecutionObservation {
-    fn new(accepted_at: Instant) -> Self {
-        Self {
-            accepted_at,
-            times: Mutex::new(ExecutionObservationTimes::default()),
+    fn close(&self) {
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            self.cancel_all();
         }
     }
 
-    fn activate(&self, activated_at: Instant) {
-        self.times
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .activated_at
-            .get_or_insert(activated_at);
+    fn active_count(&self) -> usize {
+        self.max_active - self.permits.available_permits()
     }
-
-    fn finish(&self, terminal_at: Instant) {
-        self.times
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .terminal_at
-            .get_or_insert(terminal_at);
-    }
-
-    fn telemetry(
-        &self,
-        finished_at: Instant,
-        result: &Result<TypedInvocationResponse, RuntimeError>,
-    ) -> ExecutionTelemetry {
-        let times = self
-            .times
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let activated_at = times.activated_at;
-        let terminal_at = times.terminal_at.unwrap_or(finished_at);
-        let timeout_phase =
-            matches!(result, Err(RuntimeError::ExecutionTimeout { .. })).then(|| {
-                if activated_at.is_some() {
-                    ExecutionTimeoutPhase::Execution
-                } else {
-                    ExecutionTimeoutPhase::Queue
-                }
-            });
-        ExecutionTelemetry {
-            queue_wait_ms: elapsed_ms(self.accepted_at, activated_at.unwrap_or(terminal_at)),
-            execution_ms: activated_at
-                .map(|started_at| elapsed_ms(started_at, terminal_at))
-                .unwrap_or(0),
-            timeout_phase,
-        }
-    }
-}
-
-struct ExecutionJob {
-    request: TypedInvocationRequest,
-    generation: u64,
-    deadline: Instant,
-    signal: Arc<ExecutionSignal>,
-    completion: oneshot::Sender<Result<TypedInvocationResponse, RuntimeError>>,
 }
 
 #[derive(Default)]
 struct ExecutionCoordinator {
-    tracked: HashMap<String, TrackedRequest>,
-    draining: BTreeMap<u64, String>,
+    tracked: HashMap<String, TrackedExecution>,
+}
+
+#[derive(Clone)]
+struct TrackedExecution {
+    command: String,
+    state: Arc<ExecutionState>,
+}
+
+struct ExecutionState {
+    accepted_at: Instant,
+    logical: Mutex<LogicalCompletion>,
+    logical_done: AtomicBool,
+    stop_reason: AtomicU8,
+    stop_changed: Notify,
+    physical_done: AtomicBool,
+    physical_changed: Notify,
+}
+
+struct LogicalCompletion {
+    sender: Option<oneshot::Sender<ObservedExecution>>,
+}
+
+impl ExecutionState {
+    fn new(accepted_at: Instant, sender: oneshot::Sender<ObservedExecution>) -> Self {
+        Self {
+            accepted_at,
+            logical: Mutex::new(LogicalCompletion {
+                sender: Some(sender),
+            }),
+            logical_done: AtomicBool::new(false),
+            stop_reason: AtomicU8::new(0),
+            stop_changed: Notify::new(),
+            physical_done: AtomicBool::new(false),
+            physical_changed: Notify::new(),
+        }
+    }
+
+    fn finish(&self, result: Result<TypedInvocationResponse, RuntimeError>) -> bool {
+        self.complete(result, None)
+    }
+
+    fn stop(&self, reason: StopReason, request_id: &str) -> bool {
+        let result = Err(reason.into_error(request_id.to_owned()));
+        if !self.complete(result, Some(reason)) {
+            return false;
+        }
+        self.stop_changed.notify_waiters();
+        true
+    }
+
+    fn complete(
+        &self,
+        result: Result<TypedInvocationResponse, RuntimeError>,
+        stop_reason: Option<StopReason>,
+    ) -> bool {
+        let sender = {
+            let mut logical = self
+                .logical
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(sender) = logical.sender.take() else {
+                return false;
+            };
+            if let Some(reason) = stop_reason {
+                self.stop_reason.store(reason as u8, Ordering::Release);
+            }
+            sender
+        };
+        let terminal_at = Instant::now();
+        self.logical_done.store(true, Ordering::Release);
+        let timeout_phase = matches!(result, Err(RuntimeError::ExecutionTimeout { .. }))
+            .then_some(ExecutionTimeoutPhase::Execution);
+        let observed = ObservedExecution {
+            result,
+            telemetry: Some(ExecutionTelemetry {
+                queue_wait_ms: 0,
+                execution_ms: elapsed_ms(self.accepted_at, terminal_at),
+                timeout_phase,
+            }),
+        };
+        let _ = sender.send(observed);
+        true
+    }
+
+    fn stop_reason(&self) -> Option<StopReason> {
+        StopReason::from_raw(self.stop_reason.load(Ordering::Acquire))
+    }
+
+    async fn wait_for_stop(&self) -> StopReason {
+        loop {
+            if let Some(reason) = self.stop_reason() {
+                return reason;
+            }
+            let changed = self.stop_changed.notified();
+            if let Some(reason) = self.stop_reason() {
+                return reason;
+            }
+            changed.await;
+        }
+    }
+
+    fn mark_physical_complete(&self) {
+        self.physical_done.store(true, Ordering::Release);
+        self.physical_changed.notify_waiters();
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -372,115 +483,72 @@ impl StopReason {
     }
 }
 
-#[derive(Default)]
-struct ExecutionSignal {
-    reason: AtomicU8,
-    changed: Notify,
-}
-
-impl ExecutionSignal {
-    fn reason(&self) -> Option<StopReason> {
-        StopReason::from_raw(self.reason.load(Ordering::Acquire))
-    }
-
-    fn set(&self, reason: StopReason) -> bool {
-        if self
-            .reason
-            .compare_exchange(0, reason as u8, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            self.changed.notify_one();
-            true
-        } else {
-            false
-        }
-    }
-
-    async fn wait(&self) -> StopReason {
-        loop {
-            if let Some(reason) = self.reason() {
-                return reason;
-            }
-            let changed = self.changed.notified();
-            if let Some(reason) = self.reason() {
-                return reason;
-            }
-            changed.await;
-        }
-    }
-}
-
-async fn run_worker(
+async fn run_execution(
     manager: Arc<PluginManager>,
-    mut receiver: mpsc::Receiver<ExecutionJob>,
     coordinator: Arc<Mutex<ExecutionCoordinator>>,
+    mut request: TypedInvocationRequest,
+    deadline: Instant,
+    state: Arc<ExecutionState>,
+    permit: OwnedSemaphorePermit,
+    drain_grace: Duration,
 ) {
-    while let Some(mut job) = receiver.recv().await {
-        let request_id = job.request.context.request_id.clone();
-        match activate_request(&coordinator, &request_id, job.generation, job.deadline) {
-            Activation::Start => {}
-            Activation::Cancelled => {
-                let _ = job
-                    .completion
-                    .send(Err(RuntimeError::ExecutionCancelled { request_id }));
-                continue;
-            }
-            Activation::TimedOut => {
-                job.signal.set(StopReason::TimedOut);
-                let _ = job
-                    .completion
-                    .send(Err(RuntimeError::ExecutionTimeout { request_id }));
-                continue;
-            }
-            Activation::Discard => continue,
-        }
+    let request_id = request.context.request_id.clone();
+    let command = request.command.clone();
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    request.context.remaining_timeout_ms = u64::try_from(remaining.as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1);
 
-        let now = Instant::now();
-        let remaining = job.deadline.saturating_duration_since(now);
-        job.request.context.remaining_timeout_ms = u64::try_from(remaining.as_millis())
-            .unwrap_or(u64::MAX)
-            .max(1);
-
-        let manager_for_call = Arc::clone(&manager);
-        let mut handler =
-            tokio::task::spawn_blocking(move || manager_for_call.invoke_typed(&job.request));
-        match tokio::time::timeout_at(job.deadline, &mut handler).await {
-            Ok(joined) => {
-                let handler_result = match joined {
-                    Ok(result) => result,
-                    Err(error) if error.is_panic() => Err(RuntimeError::ExecutionPanic {
-                        request_id: request_id.clone(),
-                    }),
-                    Err(error) => Err(RuntimeError::ExecutionWorker(format!(
-                        "handler join failed for request '{request_id}': {error}"
-                    ))),
-                };
-                if let Some(result) = finish_request(
-                    &coordinator,
-                    &request_id,
-                    job.generation,
-                    &job.signal,
-                    handler_result,
-                ) {
-                    let _ = job.completion.send(result);
-                }
-            }
-            Err(_) => {
-                timeout_request(&coordinator, &manager, &request_id, job.generation);
-                let _ = handler.await;
-                if let Some(result) = finish_request(
-                    &coordinator,
-                    &request_id,
-                    job.generation,
-                    &job.signal,
-                    Err(RuntimeError::ExecutionTimeout {
-                        request_id: request_id.clone(),
-                    }),
-                ) {
-                    let _ = job.completion.send(result);
-                }
-            }
+    let manager_for_call = Arc::clone(&manager);
+    let mut handler = tokio::task::spawn_blocking(move || manager_for_call.invoke_typed(&request));
+    tokio::select! {
+        biased;
+        _ = state.wait_for_stop() => {
+            drain_or_abandon(handler, drain_grace).await;
         }
+        _ = tokio::time::sleep_until(deadline) => {
+            if state.stop(StopReason::TimedOut, &request_id) {
+                let manager_for_cancel = Arc::clone(&manager);
+                let command_for_cancel = command.clone();
+                let request_id_for_cancel = request_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    manager_for_cancel.cancel_typed(&command_for_cancel, &request_id_for_cancel);
+                });
+            }
+            drain_or_abandon(handler, drain_grace).await;
+        }
+        joined = &mut handler => {
+            let result = match joined {
+                Ok(result) => result,
+                Err(error) if error.is_panic() => Err(RuntimeError::ExecutionPanic {
+                    request_id: request_id.clone(),
+                }),
+                Err(error) => Err(RuntimeError::ExecutionWorker(format!(
+                    "handler join failed for request '{request_id}': {error}"
+                ))),
+            };
+            state.finish(result);
+        }
+    }
+
+    remove_tracked(&coordinator, &request_id, &state);
+    state.mark_physical_complete();
+    drop(permit);
+}
+
+/// Wait for a stopped handler to drain, but give up after `grace`.
+///
+/// On timeout the [`JoinHandle`] is dropped without awaiting. Dropping a
+/// `spawn_blocking` handle does not abort the underlying thread — it keeps
+/// running until the blocking call returns — but the caller is released so the
+/// execution slot (permit) and coordinator entry can be reclaimed immediately.
+async fn drain_or_abandon(
+    handler: tokio::task::JoinHandle<Result<TypedInvocationResponse, RuntimeError>>,
+    grace: Duration,
+) {
+    tokio::select! {
+        _ = handler => {}
+        _ = tokio::time::sleep(grace) => {}
     }
 }
 
@@ -495,144 +563,27 @@ fn validate_request(request: &TypedInvocationRequest) -> Result<(), RuntimeError
             "command must not be empty".to_owned(),
         ));
     }
+    if request.context.remaining_timeout_ms == 0 {
+        return Err(RuntimeError::InvalidExecutionRequest(
+            "remaining timeout must be greater than zero".to_owned(),
+        ));
+    }
     Ok(())
 }
 
-enum Activation {
-    Start,
-    Cancelled,
-    TimedOut,
-    Discard,
-}
-
-fn activate_request(
+fn remove_tracked(
     coordinator: &Mutex<ExecutionCoordinator>,
     request_id: &str,
-    generation: u64,
-    deadline: Instant,
-) -> Activation {
-    let mut coordinator = lock_coordinator(coordinator);
-    let Some(request) = coordinator.tracked.get(request_id) else {
-        return Activation::Discard;
-    };
-    if request.generation != generation {
-        return Activation::Discard;
-    }
-    if request.signal.reason() == Some(StopReason::Cancelled) {
-        request.observation.finish(Instant::now());
-        coordinator.tracked.remove(request_id);
-        return Activation::Cancelled;
-    }
-    let now = Instant::now();
-    if now >= deadline {
-        request.observation.finish(now);
-        coordinator.tracked.remove(request_id);
-        return Activation::TimedOut;
-    }
-    let request = coordinator
-        .tracked
-        .get_mut(request_id)
-        .expect("tracked request should still exist");
-    request.phase = RequestPhase::Active;
-    request.observation.activate(now);
-    Activation::Start
-}
-
-fn timeout_request(
-    coordinator: &Mutex<ExecutionCoordinator>,
-    manager: &PluginManager,
-    request_id: &str,
-    generation: u64,
-) -> bool {
-    let cancel_command = {
-        let mut coordinator = lock_coordinator(coordinator);
-        let Some(request) = coordinator.tracked.get(request_id).cloned() else {
-            return false;
-        };
-        if request.generation != generation {
-            return false;
-        }
-        request.signal.set(StopReason::TimedOut);
-        request.observation.finish(Instant::now());
-        match request.phase {
-            RequestPhase::Queued => {
-                coordinator.tracked.remove(request_id);
-                None
-            }
-            RequestPhase::Active => {
-                coordinator
-                    .draining
-                    .insert(generation, request_id.to_owned());
-                coordinator
-                    .tracked
-                    .get_mut(request_id)
-                    .expect("tracked request should still exist")
-                    .phase = RequestPhase::TimedOutDraining;
-                Some(request.command)
-            }
-            RequestPhase::TimedOutDraining => None,
-        }
-    };
-    if let Some(command) = cancel_command {
-        manager.cancel_typed(&command, request_id);
-    }
-    true
-}
-
-fn finish_request(
-    coordinator: &Mutex<ExecutionCoordinator>,
-    request_id: &str,
-    generation: u64,
-    signal: &ExecutionSignal,
-    handler_result: Result<TypedInvocationResponse, RuntimeError>,
-) -> Option<Result<TypedInvocationResponse, RuntimeError>> {
-    let phase = {
-        let mut coordinator = lock_coordinator(coordinator);
-        let request = coordinator.tracked.get(request_id)?;
-        if request.generation != generation {
-            return None;
-        }
-        request.observation.finish(Instant::now());
-        let phase = request.phase;
-        coordinator.tracked.remove(request_id);
-        coordinator.draining.remove(&generation);
-        phase
-    };
-    Some(match phase {
-        RequestPhase::TimedOutDraining => Err(RuntimeError::ExecutionTimeout {
-            request_id: request_id.to_owned(),
-        }),
-        RequestPhase::Queued | RequestPhase::Active => match signal.reason() {
-            Some(reason) => Err(reason.into_error(request_id.to_owned())),
-            None => handler_result,
-        },
-    })
-}
-
-fn remove_tracked(coordinator: &Mutex<ExecutionCoordinator>, request_id: &str, generation: u64) {
+    state: &Arc<ExecutionState>,
+) {
     let mut coordinator = lock_coordinator(coordinator);
     if coordinator
         .tracked
         .get(request_id)
-        .is_some_and(|request| request.generation == generation)
+        .is_some_and(|tracked| Arc::ptr_eq(&tracked.state, state))
     {
         coordinator.tracked.remove(request_id);
-        coordinator.draining.remove(&generation);
     }
-}
-
-fn map_completion(
-    result: Result<Result<TypedInvocationResponse, RuntimeError>, oneshot::error::RecvError>,
-    coordinator: &Mutex<ExecutionCoordinator>,
-    request_id: &str,
-    generation: u64,
-) -> Result<TypedInvocationResponse, RuntimeError> {
-    result.unwrap_or_else(|_| {
-        remove_tracked(coordinator, request_id, generation);
-        Err(RuntimeError::ExecutionWorker(format!(
-            "worker dropped response channel for request '{request_id}'"
-        )))
-    })
 }
 
 fn lock_coordinator(
@@ -657,7 +608,7 @@ mod tests {
     use std::{
         sync::{
             Arc, Condvar, Mutex,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         thread,
         time::Duration,
@@ -670,8 +621,9 @@ mod tests {
         TypedInvocationResponse, plugin_capabilities,
     };
     use serde_json::json;
+    use tokio::sync::Semaphore;
 
-    use super::{ExecutionTimeoutPhase, Executor, SequentialExecutor};
+    use super::{ExecutionTimeoutPhase, Executor, ParallelExecutor};
     use crate::{BuiltinPlugin, PluginManager, RuntimeError};
 
     struct ProbePlugin {
@@ -679,7 +631,6 @@ mod tests {
         max_active: AtomicUsize,
         gate: Gate,
         honor_cancel: bool,
-        panic_next: AtomicBool,
     }
 
     #[derive(Default)]
@@ -690,7 +641,7 @@ mod tests {
     }
 
     type Gate = Arc<(Mutex<GateState>, Condvar)>;
-    type ExecutorFixture = (SequentialExecutor, Arc<ProbePlugin>, Gate);
+    type ExecutorFixture = (ParallelExecutor, Arc<ProbePlugin>, Gate);
 
     impl ProbePlugin {
         fn new(block: bool, honor_cancel: bool) -> (Arc<Self>, Gate) {
@@ -707,7 +658,6 @@ mod tests {
                     max_active: AtomicUsize::new(0),
                     gate: Arc::clone(&gate),
                     honor_cancel,
-                    panic_next: AtomicBool::new(false),
                 }),
                 gate,
             )
@@ -749,16 +699,10 @@ mod tests {
                     "probe.run",
                     "Run probe",
                     "Run an executor test probe.",
+                    json!({"type": "object", "properties": {}, "additionalProperties": false}),
                     json!({
                         "type": "object",
-                        "properties": {},
-                        "additionalProperties": false
-                    }),
-                    json!({
-                        "type": "object",
-                        "properties": {
-                            "completed": {"type": "boolean"}
-                        },
+                        "properties": {"completed": {"type": "boolean"}},
                         "required": ["completed"],
                         "additionalProperties": false
                     }),
@@ -787,10 +731,6 @@ mod tests {
                 while state.block && !state.cancelled {
                     state = changed.wait(state).unwrap();
                 }
-            }
-            if self.panic_next.swap(false, Ordering::AcqRel) {
-                self.active.fetch_sub(1, Ordering::AcqRel);
-                panic!("probe handler panic");
             }
             thread::sleep(Duration::from_millis(5));
             self.active.fetch_sub(1, Ordering::AcqRel);
@@ -833,7 +773,7 @@ mod tests {
         let mut manager = PluginManager::new();
         manager.register_builtin(plugin.clone());
         (
-            SequentialExecutor::new(Arc::new(manager), capacity).unwrap(),
+            ParallelExecutor::new(Arc::new(manager), capacity).unwrap(),
             plugin,
             gate,
         )
@@ -850,330 +790,177 @@ mod tests {
                 .unwrap();
             assert!(
                 state.started >= expected,
-                "expected {expected} handler(s) to start"
+                "expected {expected} handlers to start"
             );
         })
         .await
         .unwrap();
     }
 
-    async fn wait_for_queued(executor: &SequentialExecutor, request_id: &str) {
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while !executor.is_queued(request_id) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("request should enter the queue");
-    }
-
-    fn release(gate: &Arc<(Mutex<GateState>, Condvar)>) {
+    fn release(gate: &Gate) {
         let (state, changed) = &**gate;
         let mut state = state.lock().unwrap();
         state.block = false;
         changed.notify_all();
     }
 
-    #[test]
-    fn rejects_zero_capacity() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (plugin, _) = ProbePlugin::new(false, true);
-            let mut manager = PluginManager::new();
-            manager.register_builtin(plugin);
-            let error = SequentialExecutor::new(Arc::new(manager), 0)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn rejects_zero_capacity() {
+        let (plugin, _) = ProbePlugin::new(false, true);
+        let mut manager = PluginManager::new();
+        manager.register_builtin(plugin);
+        let error = ParallelExecutor::new(Arc::new(manager), 0)
+            .err()
+            .expect("zero capacity should fail");
+        assert!(matches!(error, RuntimeError::InvalidExecutionRequest(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn validates_capacity_against_tokio_semaphore_limit() {
+        let executor =
+            ParallelExecutor::new(Arc::new(PluginManager::new()), Semaphore::MAX_PERMITS)
+                .expect("Tokio semaphore limit should be accepted");
+        assert_eq!(executor.max_active(), Semaphore::MAX_PERMITS);
+
+        let error =
+            ParallelExecutor::new(Arc::new(PluginManager::new()), Semaphore::MAX_PERMITS + 1)
                 .err()
-                .expect("zero capacity should fail");
-            assert!(matches!(error, RuntimeError::InvalidExecutionRequest(_)));
-        });
+                .expect("capacity above Tokio semaphore limit should fail");
+        assert!(matches!(error, RuntimeError::InvalidExecutionRequest(_)));
     }
 
-    #[test]
-    fn handlers_never_overlap() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, plugin, _) = executor(false, 4);
-            let first_executor = executor.clone();
-            let first =
-                tokio::spawn(async move { first_executor.execute(request("first", 1_000)).await });
-            let second_executor = executor.clone();
-            let second =
-                tokio::spawn(
-                    async move { second_executor.execute(request("second", 1_000)).await },
-                );
-            assert!(first.await.unwrap().unwrap().success);
-            assert!(second.await.unwrap().unwrap().success);
-            assert_eq!(plugin.max_active.load(Ordering::Acquire), 1);
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn accepted_handlers_overlap() {
+        let (executor, plugin, gate) = executor(true, 2);
+        let first = executor.try_submit(request("first", 1_000)).unwrap();
+        let second = executor.try_submit(request("second", 1_000)).unwrap();
+        wait_for_started(Arc::clone(&gate), 2).await;
+        assert_eq!(plugin.max_active.load(Ordering::Acquire), 2);
+        release(&gate);
+        assert!(first.observe().await.result.unwrap().success);
+        assert!(second.observe().await.result.unwrap().success);
     }
 
-    #[test]
-    fn observed_success_reports_timings_without_timeout_phase() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, _) = executor(false, 1);
-            let observed = executor
-                .execute_observed(request("observed-success", 1_000))
-                .await;
-            assert!(observed.result.unwrap().success);
-            let telemetry = observed.telemetry.unwrap();
-            assert_eq!(telemetry.timeout_phase, None);
-            assert!(telemetry.execution_ms <= 1_000);
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn capacity_rejection_is_immediate_and_never_queued() {
+        let (executor, _plugin, gate) = executor(true, 2);
+        let first = executor.try_submit(request("first", 1_000)).unwrap();
+        let second = executor.try_submit(request("second", 1_000)).unwrap();
+        wait_for_started(Arc::clone(&gate), 2).await;
+        let error = executor
+            .try_submit(request("third", 1_000))
+            .err()
+            .expect("third execution must be rejected");
+        assert!(matches!(
+            error,
+            RuntimeError::ExecutionCapacityFull { capacity: 2 }
+        ));
+        release(&gate);
+        first.observe().await.result.unwrap();
+        second.observe().await.result.unwrap();
+        assert_eq!(gate.0.lock().unwrap().started, 2);
     }
 
-    #[test]
-    fn reports_queue_full_deterministically() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, gate) = executor(true, 1);
-            let first_executor = executor.clone();
-            let first =
-                tokio::spawn(async move { first_executor.execute(request("first", 1_000)).await });
-            wait_for_started(Arc::clone(&gate), 1).await;
-            let second_executor = executor.clone();
-            let second =
-                tokio::spawn(
-                    async move { second_executor.execute(request("second", 1_000)).await },
-                );
-            wait_for_queued(&executor, "second").await;
-            let result = executor.execute(request("third", 1_000)).await;
-            release(&gate);
-            let error = result.unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionQueueFull { capacity: 1 }
-            ));
-            assert!(first.await.unwrap().unwrap().success);
-            assert!(second.await.unwrap().unwrap().success);
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cancellation_completes_logically_before_physical_exit() {
+        let (executor, _plugin, gate) = executor_with_cancel_policy(true, false, 1);
+        let handle = executor.try_submit(request("cancel", 1_000)).unwrap();
+        let lifecycle = handle.lifecycle();
+        wait_for_started(Arc::clone(&gate), 1).await;
+        assert!(executor.cancel("cancel"));
+        let error = handle.observe().await.result.unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::ExecutionCancelled { request_id } if request_id == "cancel"
+        ));
+        assert!(lifecycle.is_draining());
+        assert_eq!(executor.active_count(), 1);
+        release(&gate);
+        lifecycle.wait_physical().await;
+        assert_eq!(executor.active_count(), 0);
     }
 
-    #[test]
-    fn cancels_active_request() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, gate) = executor(true, 1);
-            let task_executor = executor.clone();
-            let task =
-                tokio::spawn(async move { task_executor.execute(request("cancel", 1_000)).await });
-            wait_for_started(gate, 1).await;
-            assert!(executor.cancel("cancel"));
-            let error = task.await.unwrap().unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionCancelled { request_id } if request_id == "cancel"
-            ));
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn abandoned_drain_releases_capacity_after_grace() {
+        let (executor, _plugin, gate) = executor_with_cancel_policy(true, false, 1);
+        let executor = executor.with_drain_grace(Duration::from_millis(50));
+        let handle = executor.try_submit(request("stuck", 10_000)).unwrap();
+        let lifecycle = handle.lifecycle();
+        wait_for_started(Arc::clone(&gate), 1).await;
+
+        assert!(executor.cancel("stuck"));
+        assert!(matches!(
+            handle.observe().await.result.unwrap_err(),
+            RuntimeError::ExecutionCancelled { .. }
+        ));
+        assert!(lifecycle.is_draining());
+        assert_eq!(executor.active_count(), 1);
+
+        // Handler ignores cancellation and never returns on its own, but the
+        // drain watchdog abandons it after the grace period and frees the slot.
+        lifecycle.wait_physical().await;
+        assert_eq!(executor.active_count(), 0);
+        assert!(!lifecycle.is_draining());
+
+        release(&gate);
     }
 
-    #[test]
-    fn times_out_and_cancels_handler() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, gate) = executor(true, 1);
-            let task_executor = executor.clone();
-            let task = tokio::spawn(async move {
-                task_executor
-                    .execute_observed(request("timeout", 1_000))
-                    .await
-            });
-            wait_for_started(gate, 1).await;
-            let observed = task.await.unwrap();
-            let error = observed.result.unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionTimeout { request_id } if request_id == "timeout"
-            ));
-            let telemetry = observed.telemetry.unwrap();
-            assert_eq!(
-                telemetry.timeout_phase,
-                Some(ExecutionTimeoutPhase::Execution)
-            );
-            assert!(telemetry.execution_ms > 0);
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn one_draining_execution_does_not_block_other_capacity() {
+        let (executor, plugin, gate) = executor_with_cancel_policy(true, false, 2);
+        let first = executor.try_submit(request("first", 1_000)).unwrap();
+        wait_for_started(Arc::clone(&gate), 1).await;
+        assert!(executor.cancel("first"));
+        first.observe().await.result.unwrap_err();
+
+        let second = executor.try_submit(request("second", 1_000)).unwrap();
+        wait_for_started(Arc::clone(&gate), 2).await;
+        assert_eq!(plugin.max_active.load(Ordering::Acquire), 2);
+        assert!(matches!(
+            executor
+                .try_submit(request("third", 1_000))
+                .err()
+                .expect("third execution must be rejected"),
+            RuntimeError::ExecutionCapacityFull { capacity: 2 }
+        ));
+        release(&gate);
+        second.observe().await.result.unwrap();
     }
 
-    #[test]
-    fn queued_request_can_be_cancelled() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, gate) = executor(true, 2);
-            let first_executor = executor.clone();
-            let first =
-                tokio::spawn(async move { first_executor.execute(request("first", 1_000)).await });
-            wait_for_started(Arc::clone(&gate), 1).await;
-            let second_executor = executor.clone();
-            let second =
-                tokio::spawn(
-                    async move { second_executor.execute(request("queued", 1_000)).await },
-                );
-            wait_for_queued(&executor, "queued").await;
-            let cancelled = executor.cancel("queued");
-            assert!(cancelled);
-            let error = tokio::time::timeout(Duration::from_millis(100), second)
-                .await
-                .expect("queued cancellation should complete promptly")
-                .unwrap()
-                .unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionCancelled { request_id } if request_id == "queued"
-            ));
-            release(&gate);
-            assert!(first.await.unwrap().unwrap().success);
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn timeout_is_execution_phase_with_zero_queue_wait() {
+        let (executor, _plugin, gate) = executor_with_cancel_policy(true, false, 1);
+        let observed = executor.execute_observed(request("timeout", 20)).await;
+        let error = observed.result.unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::ExecutionTimeout { request_id } if request_id == "timeout"
+        ));
+        let telemetry = observed.telemetry.unwrap();
+        assert_eq!(telemetry.queue_wait_ms, 0);
+        assert_eq!(
+            telemetry.timeout_phase,
+            Some(ExecutionTimeoutPhase::Execution)
+        );
+        release(&gate);
     }
 
-    #[test]
-    fn queued_request_times_out_while_active_handler_runs() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, gate) = executor(true, 2);
-            let first_executor = executor.clone();
-            let first =
-                tokio::spawn(async move { first_executor.execute(request("first", 1_000)).await });
-            wait_for_started(Arc::clone(&gate), 1).await;
-
-            let second_executor = executor.clone();
-            let second = tokio::spawn(async move {
-                second_executor
-                    .execute_observed(request("queued-timeout", 10))
-                    .await
-            });
-            wait_for_queued(&executor, "queued-timeout").await;
-
-            let observed = tokio::time::timeout(Duration::from_millis(100), second)
-                .await
-                .expect("queued timeout should complete promptly")
-                .unwrap();
-            let error = observed.result.unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionTimeout { request_id } if request_id == "queued-timeout"
-            ));
-            let telemetry = observed.telemetry.unwrap();
-            assert_eq!(telemetry.timeout_phase, Some(ExecutionTimeoutPhase::Queue));
-            assert!(telemetry.queue_wait_ms > 0);
-            assert_eq!(telemetry.execution_ms, 0);
-
-            release(&gate);
-            assert!(first.await.unwrap().unwrap().success);
-        });
-    }
-
-    #[test]
-    fn uncooperative_timeout_closes_admission_until_handler_finishes() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, plugin, gate) = executor_with_cancel_policy(true, false, 2);
-            let task_executor = executor.clone();
-            let task = tokio::spawn(async move {
-                task_executor.execute(request("uncooperative", 1_000)).await
-            });
-            wait_for_started(Arc::clone(&gate), 1).await;
-            let error = task.await.unwrap().unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionTimeout { request_id } if request_id == "uncooperative"
-            ));
-            assert!(executor.is_draining());
-
-            let error = executor
-                .execute(request("rejected", 1_000))
-                .await
-                .unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionDraining { request_id } if request_id == "uncooperative"
-            ));
-
-            release(&gate);
-            tokio::time::timeout(Duration::from_secs(1), async {
-                while executor.is_draining() {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .expect("executor should reopen after the handler exits");
-
-            assert!(
-                executor
-                    .execute(request("accepted", 1_000))
-                    .await
-                    .unwrap()
-                    .success
-            );
-            assert_eq!(plugin.max_active.load(Ordering::Acquire), 1);
-        });
-    }
-
-    #[test]
-    fn rejects_duplicate_request_ids() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, gate) = executor(true, 2);
-            let first_executor = executor.clone();
-            let first =
-                tokio::spawn(async move { first_executor.execute(request("same", 1_000)).await });
-            wait_for_started(Arc::clone(&gate), 1).await;
-            let error = executor.execute(request("same", 1_000)).await.unwrap_err();
-            assert!(matches!(error, RuntimeError::InvalidExecutionRequest(_)));
-            release(&gate);
-            assert!(first.await.unwrap().unwrap().success);
-        });
-    }
-
-    #[test]
-    fn completed_request_id_can_be_reused() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, _gate) = executor(false, 1);
-            assert!(
-                executor
-                    .execute(request("same", 1_000))
-                    .await
-                    .unwrap()
-                    .success
-            );
-            assert!(
-                executor
-                    .execute(request("same", 1_000))
-                    .await
-                    .unwrap()
-                    .success
-            );
-        });
-    }
-
-    #[test]
-    fn handler_panic_cleans_up_execution_state() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, plugin, _gate) = executor(false, 1);
-            plugin.panic_next.store(true, Ordering::Release);
-
-            let error = executor.execute(request("panic", 1_000)).await.unwrap_err();
-            assert!(matches!(
-                error,
-                RuntimeError::ExecutionPanic { request_id } if request_id == "panic"
-            ));
-            assert!(
-                executor
-                    .execute(request("after-panic", 1_000))
-                    .await
-                    .unwrap()
-                    .success
-            );
-        });
-    }
-
-    #[test]
-    fn cancel_unknown_request_returns_false() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let (executor, _plugin, _gate) = executor(false, 1);
-            assert!(!executor.cancel("missing"));
-        });
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_cancels_active_and_rejects_new_work() {
+        let (executor, _plugin, gate) = executor(true, 1);
+        let active = executor.try_submit(request("active", 1_000)).unwrap();
+        wait_for_started(gate, 1).await;
+        executor.close();
+        assert!(matches!(
+            active.observe().await.result.unwrap_err(),
+            RuntimeError::ExecutionCancelled { .. }
+        ));
+        assert!(matches!(
+            executor
+                .try_submit(request("late", 1_000))
+                .err()
+                .expect("late execution must be rejected"),
+            RuntimeError::ExecutorShuttingDown
+        ));
     }
 }

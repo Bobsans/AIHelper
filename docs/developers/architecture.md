@@ -22,8 +22,8 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
   - typed schema validation and bounded execution abstraction
 - `crates/ah-mcp`:
   - dynamic `rmcp` server adapter
-  - stdio transport only
-  - MCP annotations, risk metadata, cancellation, and tool-list updates
+  - stdio and local stateful Streamable HTTP transports
+  - shared job registry, MCP annotations, cancellation, and tool-list updates
 
 ## Runtime Flow
 
@@ -43,9 +43,15 @@ For `ah mcp serve`, the same bootstrap is followed by:
 
 1. Registering host-only typed commands (`ai.info` and `plugins.*`).
 2. Validating every enabled typed command and output schema.
-3. Starting the bounded executor and `rmcp` stdio service.
+3. Starting the fail-fast parallel executor and selected `rmcp` transport.
 4. Mapping each descriptor to `ah.<command-id>`.
 5. Returning validated structured content or a structured diagnostic.
+
+MCP completion events use a bounded process-local dispatcher backed by one
+dedicated thread. Command handlers never wait for logging capacity and never
+share Tokio's blocking pool with event sinks. Shutdown closes admission at EOF
+or signal time and spends one common five-second budget across transport drain
+and runtime termination.
 
 The runtime compiles typed input/output validators into an immutable registry
 once per plugin-definition revision. Enabled-state changes have a separate
@@ -84,9 +90,12 @@ Typed commands add:
 - request-scoped `cwd`, `limit`, deadline, and request id
 - structured success, notices, and errors
 
-The current executor is a bounded sequential FIFO. It intentionally prevents
-handler overlap while preserving an `Executor` boundary for a future
-resource-aware parallel scheduler.
+The executor admits up to `--max-active` physical handlers with non-blocking
+permit acquisition. Accepted handlers overlap; capacity exhaustion fails
+immediately and never queues work. Direct MCP calls and `ah.job.start` targets
+share the same permits. Logical cancellation or timeout may precede physical
+handler exit, so an uncooperative handler retains only its own permit while
+draining.
 
 Plugin settings and task stores use a bounded sidecar lock for cross-process
 read-modify-write operations and atomically replace complete JSON documents.

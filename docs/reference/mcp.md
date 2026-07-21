@@ -1,87 +1,156 @@
 # `ah mcp`
 
-AIHelper can serve its typed command catalog as a Model Context Protocol server.
-The only supported transport is stdio.
+AIHelper serves its typed command catalog through MCP over stdio or local
+Streamable HTTP. Both transports use the same fail-fast parallel executor and
+ordinary `ah.job.*` tools.
 
 ## `ah mcp serve`
 
 ```text
 ah [--cwd PATH] [--limit N] mcp serve \
-  [--max-queued N] \
+  [--transport <stdio|http>] \
+  [--port PORT] \
+  [--max-active N] \
   [--default-timeout-ms MILLISECONDS]
 ```
 
 Defaults:
 
-- `--max-queued 32`
+- `--transport stdio`
+- `--port 8787` for HTTP
+- `--max-active 32`
 - `--default-timeout-ms 300000`
-- default working directory: the directory in which `ah` starts, or global
-  `--cwd`
-- default result limit: global `--limit`, when supplied
 
-`--json` is rejected for this command because stdout is reserved exclusively
-for MCP protocol messages. Logs and diagnostics must not be written to stdout.
-HTTP, SSE, and Streamable HTTP transports are not supported.
+`--port` is valid only for HTTP. The removed `--max-queued` option fails with a
+migration message pointing to `--max-active`; it is not reinterpreted.
 
-Completed tool calls and MCP server/transport failures are written to the global
-AIHelper daily JSONL logs without using stdout or stderr. See
-[Invocation Logging](logging.md).
+`--json` is rejected because stdio reserves stdout for MCP messages and the HTTP
+server is a long-running foreground command. Completed calls and transport
+failures use the normal daily JSONL logs; see [Invocation Logging](logging.md).
 
-## Client configuration
+## Transports
 
-Configure the MCP client to start the `ah` executable directly:
+### Stdio
 
-```json
-{
-  "mcpServers": {
-    "aihelper": {
-      "command": "C:\\tools\\aihelper\\ah.exe",
-      "args": [
-        "--cwd",
-        "D:\\work\\project",
-        "--limit",
-        "200",
-        "mcp",
-        "serve"
-      ]
-    }
-  }
-}
+```text
+ah --cwd D:\work\project --limit 200 mcp serve
 ```
 
-On Unix-like systems, use the corresponding absolute executable and workspace
-paths.
+The client owns this subprocess. A missing per-call `context.cwd` therefore
+falls back to the server startup directory or global `--cwd`.
+
+### Local Streamable HTTP
+
+```text
+ah mcp serve --transport http --port 8787
+```
+
+The endpoint is:
+
+```text
+http://127.0.0.1:8787/mcp
+```
+
+One process can serve multiple stateful MCP sessions and repositories. The
+plugin catalog, execution capacity, job registry, and retained results are
+process-wide. Protocol request IDs and cancellation mappings remain
+session-local.
+
+HTTP execution has stricter context rules: every direct command and every
+`ah.job.start` target must provide a non-empty absolute `context.cwd`. The daemon
+startup directory is never an HTTP fallback.
+
+The server binds only to `127.0.0.1`, validates `Host`, rejects nonlocal
+`Origin`, and does not enable CORS. It has no authentication or TLS. Loopback is
+not an authorization boundary: any local process running as the user can invoke
+all published tools, including destructive tools.
 
 ## Tool names
 
-Each typed command is exposed as a separate tool:
+Typed commands use:
 
 ```text
 ah.<domain>.<command>
 ```
 
-Examples:
+Examples include `ah.file.read`, `ah.search.text`, `ah.run.check`, and
+`ah.plugins.disable`. `ah.mcp.serve` is intentionally not published because it
+would recursively start another server.
 
-- `ah.file.read`
-- `ah.search.text`
-- `ah.git.tag.create`
-- `ah.github.issue.create`
-- `ah.postgres.exec`
-- `ah.run.check`
-- `ah.plugins.disable`
+The adapter also publishes four transport-independent job tools:
 
-`ah.mcp.serve` is intentionally not exposed because invoking it from the server
-would recursively start another stdio server. Dynamic plugin tools appear only
-when the corresponding shared library is loaded and its domain is enabled.
+- `ah.job.start`
+- `ah.job.status`
+- `ah.job.result`
+- `ah.job.cancel`
 
-Use `ah.plugins.list` to inspect `mcp_exposed` and
-`mcp_omission_reason`. Enabling, disabling, or resetting a plugin domain from an
-MCP tool updates the live tool catalog and emits a tool-list-changed
-notification.
+The complete `ah.job.*` namespace is reserved for these built-in tools. Plugin
+catalogs that publish a `job.*` command are rejected when the MCP server starts.
 
-## Per-call execution context
+MCP protocol Tasks remain explicitly unsupported (`taskSupport: forbidden`) for
+compatibility with Claude Code, Codex, and OpenCode. AIHelper jobs are ordinary
+MCP tools and do not require Tasks capability.
 
-Every tool input includes an optional reserved `context` object:
+## Starting and reading a job
+
+`ah.job.start` accepts an exact published tool name and its normal arguments:
+
+```json
+{
+  "tool": "ah.run.check",
+  "arguments": {
+    "command": ["cargo", "test"],
+    "context": {
+      "cwd": "D:\\work\\project",
+      "timeout_ms": 600000
+    }
+  }
+}
+```
+
+It validates and admits the target before returning:
+
+```json
+{
+  "job_id": "job-a82f3c9100000000-0000000000000001",
+  "tool": "ah.run.check",
+  "status": "running",
+  "draining": false
+}
+```
+
+Pass `job_id` to the other job tools. `ah.job.result` never waits: it returns
+`ready: false` while running and `ready: true` plus the retained typed response
+after terminal completion. Results are repeatable and are not consumed when
+read. Public states are `running`, `succeeded`, `failed`, `cancelled`, and
+`timed_out`.
+
+Cancellation and timeout become caller-visible immediately. If a plugin ignores
+cooperative cancellation, the job reports its terminal state with
+`draining: true` until the physical handler exits.
+
+Jobs exist only in server memory. Physically completed records expire after one
+hour. At most 128 records are retained; the oldest physically completed record
+is evicted first, while running and draining records are never evicted.
+
+## Parallel admission
+
+Direct calls and job targets share `--max-active` physical execution slots. An
+accepted command starts independently of every other command, including the same
+tool in the same working directory. AIHelper has no execution queue and provides
+no ordering, fairness, per-workspace lock, or per-plugin concurrency lane.
+
+When all slots are held, a new target fails immediately with retryable
+`EXECUTION_CAPACITY_FULL`; it is never scheduled for later. A cancelled or
+timed-out uncooperative handler retains only its own slot while draining. Other
+commands continue whenever another slot is available.
+
+`queue_wait_ms` remains present for telemetry compatibility and is always zero.
+A timeout phase is always `execution`.
+
+## Per-call context
+
+Every execution tool includes the reserved `context` object:
 
 ```json
 {
@@ -93,72 +162,34 @@ Every tool input includes an optional reserved `context` object:
 }
 ```
 
-- `cwd` resolves relative paths and is the working directory for child
-  processes.
+- `cwd` resolves relative paths and sets child-process working directories.
 - `limit` caps supported line or item collections.
-- `timeout_ms` covers both time in the queue and command execution.
+- `timeout_ms` bounds command execution.
 
-Omitted fields use the server defaults. `context` is removed before validating
-and invoking the domain command.
+Commands must not change the process-global working directory. Calls using the
+same `cwd` may overlap.
 
-When executor timing is available, invocation logs separate queue wait from
-execution time and identify whether a `TIMEOUT` occurred in `queue` or
-`execution`. See [Invocation Logging](logging.md).
+## Safety metadata and errors
 
-## Safety metadata
+Tools publish standard MCP annotations and `_meta["dev.aihelper/risk"]` with
+`level`, `impact`, `effects`, and `reversibility`. Because `ah.job.start` can
+dispatch any command, it is conservatively marked critical, destructive,
+open-world, non-idempotent, and not read-only. Inspect the target tool before
+starting it.
 
-All tools include standard MCP annotations:
+Successful direct calls return validated `structuredContent`, compact text, and
+execution metadata. Operational failures return `isError=true` with a diagnostic
+under `_meta["dev.aihelper/diagnostic"]`. Important control codes include:
 
-- `readOnlyHint`
-- `destructiveHint`
-- `idempotentHint`
-- `openWorldHint`
+- `EXECUTION_CAPACITY_FULL`
+- `JOB_CAPACITY_FULL`
+- `EXECUTOR_SHUTTING_DOWN`
+- `JOB_NOT_FOUND`
+- `INVALID_ARGUMENT`
 
-The description includes a human-readable impact warning and risk level.
-Machine-readable details are available under:
+Only protocol problems such as an unknown tool name use MCP protocol errors.
 
-```text
-_meta["dev.aihelper/risk"]
-```
-
-The object contains `level`, `impact`, `effects`, and `reversibility`. Metadata
-is conservative: a command is marked for the most consequential behavior its
-input can request. For example, PostgreSQL read tools warn that
-`ensure_tool=true` can download a shared toolchain, and `postgres.explain` is
-destructive because `analyze=true` executes the supplied SQL.
-
-AIHelper's `task.*` tools are ordinary tools for saved shell recipes. MCP's
-protocol-level Tasks capability is explicitly marked unsupported for every
-tool.
-
-## Results and errors
-
-Successful calls return:
-
-- `structuredContent`: the validated command output object
-- a compact text summary
-- execution metadata under `_meta["dev.aihelper/execution"]`
-
-Operational failures are tool results with `isError=true` and a structured
-diagnostic under `_meta["dev.aihelper/diagnostic"]`. Only protocol problems,
-such as an unknown tool name, use MCP protocol errors.
-
-`EXECUTOR_DRAINING` is a retryable admission error. It means a timed-out
-handler has not exited yet, so the sequential executor is refusing new work to
-preserve its no-overlap guarantee.
-
-## Scheduling and cancellation
-
-The current executor is a bounded, sequential FIFO queue. Command handlers do
-not overlap, which protects process-wide state and existing plugins while the
-parallel scheduling policy is developed.
-
-The executor boundary is independent from MCP and can later be replaced by a
-resource-aware parallel implementation without changing tool names or schemas.
-Queued calls can be cancelled immediately. Active cancellation is propagated
-to domains that support interruption; process tools terminate their process
-groups, while blocking third-party operations remain bounded by their request
-timeouts. If a handler ignores cancellation after its timeout, the server keeps
-draining that handler and rejects new calls with `EXECUTOR_DRAINING` until it
-exits. Protocol request IDs may be reused after completion; each call receives
-a distinct internal execution ID so late cleanup cannot affect a newer call.
+On stdio EOF, HTTP Ctrl-C, or `SIGTERM` on Unix, admission closes immediately,
+sessions stop, and active work is cancelled. Protocol draining and physical
+handler shutdown share one five-second budget; they do not receive consecutive
+grace periods. In-memory jobs and results do not survive restart.

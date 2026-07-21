@@ -13,7 +13,9 @@ const HOST_COMMAND_PLUGINS: &str = "plugins";
 
 pub enum RuntimeCommand {
     McpServe {
-        max_queued: usize,
+        transport: McpTransport,
+        port: u16,
+        max_active: usize,
         default_timeout_ms: u64,
         options: GlobalOptions,
     },
@@ -43,6 +45,12 @@ pub enum RuntimeCommand {
         argv: Vec<String>,
         options: GlobalOptions,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpTransport {
+    Stdio,
+    Http,
 }
 
 pub enum CliParseResult {
@@ -132,16 +140,44 @@ pub fn parse_runtime_command(
             };
             match subcommand {
                 "serve" => {
+                    if mcp_submatches.get_one::<usize>("max-queued").is_some() {
+                        return Err(AppError::invalid_argument(
+                            "--max-queued was removed because MCP execution is no longer queued; use --max-active",
+                        ));
+                    }
                     if options.output == OutputMode::Json {
                         return Err(AppError::invalid_argument(
                             "--json cannot be used with mcp serve because stdout is the MCP transport",
                         ));
                     }
-                    let max_queued = *mcp_submatches
-                        .get_one::<usize>("max-queued")
-                        .expect("mcp max queue has a default");
-                    if max_queued == 0 {
-                        return Err(AppError::invalid_argument("--max-queued must be >= 1"));
+                    let transport = match mcp_submatches
+                        .get_one::<String>("transport")
+                        .map(String::as_str)
+                        .expect("mcp transport has a default")
+                    {
+                        "stdio" => McpTransport::Stdio,
+                        "http" => McpTransport::Http,
+                        value => {
+                            return Err(AppError::invalid_argument(format!(
+                                "unsupported MCP transport: {value}"
+                            )));
+                        }
+                    };
+                    let explicit_port = mcp_submatches.get_one::<u16>("port").copied();
+                    if transport == McpTransport::Stdio && explicit_port.is_some() {
+                        return Err(AppError::invalid_argument(
+                            "--port can be used only with --transport http",
+                        ));
+                    }
+                    let port = explicit_port.unwrap_or(8787);
+                    if port == 0 {
+                        return Err(AppError::invalid_argument("--port must be >= 1"));
+                    }
+                    let max_active = *mcp_submatches
+                        .get_one::<usize>("max-active")
+                        .expect("mcp max active count has a default");
+                    if max_active == 0 {
+                        return Err(AppError::invalid_argument("--max-active must be >= 1"));
                     }
                     let default_timeout_ms = *mcp_submatches
                         .get_one::<u64>("default-timeout-ms")
@@ -152,7 +188,9 @@ pub fn parse_runtime_command(
                         ));
                     }
                     RuntimeCommand::McpServe {
-                        max_queued,
+                        transport,
+                        port,
+                        max_active,
                         default_timeout_ms,
                         options,
                     }
@@ -297,14 +335,36 @@ fn build_mcp_command() -> Command {
         .about("Model Context Protocol server")
         .subcommand(
             Command::new("serve")
-                .about("Serve typed AIHelper tools over MCP stdio")
+                .about("Serve typed AIHelper tools over MCP stdio or local HTTP")
+                .arg(
+                    Arg::new("transport")
+                        .long("transport")
+                        .value_name("TRANSPORT")
+                        .value_parser(["stdio", "http"])
+                        .default_value("stdio")
+                        .help("MCP transport: stdio or local Streamable HTTP"),
+                )
+                .arg(
+                    Arg::new("port")
+                        .long("port")
+                        .value_name("PORT")
+                        .value_parser(value_parser!(u16))
+                        .help("Local HTTP port (default: 8787; HTTP transport only)"),
+                )
+                .arg(
+                    Arg::new("max-active")
+                        .long("max-active")
+                        .value_name("N")
+                        .value_parser(value_parser!(usize))
+                        .default_value("32")
+                        .help("Maximum number of concurrently active command handlers"),
+                )
                 .arg(
                     Arg::new("max-queued")
                         .long("max-queued")
                         .value_name("N")
                         .value_parser(value_parser!(usize))
-                        .default_value("32")
-                        .help("Maximum number of queued tool calls"),
+                        .hide(true),
                 )
                 .arg(
                     Arg::new("default-timeout-ms")
@@ -312,7 +372,7 @@ fn build_mcp_command() -> Command {
                         .value_name("MILLISECONDS")
                         .value_parser(value_parser!(u64))
                         .default_value("300000")
-                        .help("Default total queue and execution timeout"),
+                        .help("Default command execution timeout"),
                 ),
         )
 }
@@ -690,17 +750,124 @@ mod tests {
         ];
         let parsed = parse_runtime_command(raw_args, &[]).expect("mcp serve should parse");
         let CliParseResult::Command(RuntimeCommand::McpServe {
-            max_queued,
+            transport,
+            port,
+            max_active,
             default_timeout_ms,
             options,
         }) = parsed
         else {
             panic!("unexpected parse result");
         };
-        assert_eq!(max_queued, 32);
+        assert_eq!(transport, McpTransport::Stdio);
+        assert_eq!(port, 8787);
+        assert_eq!(max_active, 32);
         assert_eq!(default_timeout_ms, 300_000);
         assert_eq!(options.limit, None);
         assert!(!options.quiet);
+    }
+
+    #[test]
+    fn parser_routes_mcp_http_server() {
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("mcp"),
+            OsString::from("serve"),
+            OsString::from("--transport"),
+            OsString::from("http"),
+            OsString::from("--port"),
+            OsString::from("9123"),
+            OsString::from("--max-active"),
+            OsString::from("7"),
+        ];
+        let parsed = parse_runtime_command(raw_args, &[]).expect("HTTP MCP serve should parse");
+        let CliParseResult::Command(RuntimeCommand::McpServe {
+            transport,
+            port,
+            max_active,
+            ..
+        }) = parsed
+        else {
+            panic!("unexpected parse result");
+        };
+        assert_eq!(transport, McpTransport::Http);
+        assert_eq!(port, 9123);
+        assert_eq!(max_active, 7);
+    }
+
+    #[test]
+    fn parser_rejects_removed_max_queued_with_migration_hint() {
+        for raw_args in [
+            vec![
+                OsString::from("ah"),
+                OsString::from("mcp"),
+                OsString::from("serve"),
+                OsString::from("--max-queued"),
+                OsString::from("2"),
+            ],
+            vec![
+                OsString::from("ah"),
+                OsString::from("mcp"),
+                OsString::from("serve"),
+                OsString::from("--max-queued=2"),
+            ],
+        ] {
+            let error = parse_runtime_command(raw_args, &[])
+                .err()
+                .expect("removed option must fail");
+            assert!(error.detail_message().contains("--max-active"));
+        }
+    }
+
+    #[test]
+    fn parser_forwards_max_queued_to_plugin() {
+        let plugins = vec![PluginMetadata {
+            plugin_name: "external-ollama".to_owned(),
+            domain: "ollama".to_owned(),
+            description: "Ollama Local API plugin (dynamic)".to_owned(),
+            abi_version: 1,
+            required_tools: Vec::new(),
+            compatibility: Default::default(),
+        }];
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("ollama"),
+            OsString::from("ask"),
+            OsString::from("--max-queued"),
+            OsString::from("2"),
+        ];
+
+        let parsed = parse_runtime_command(raw_args, &plugins).expect("plugin args should parse");
+        let CliParseResult::Command(RuntimeCommand::Invoke { argv, .. }) = parsed else {
+            panic!("unexpected parse result");
+        };
+        assert_eq!(argv, vec!["ask", "--max-queued", "2"]);
+    }
+
+    #[test]
+    fn parser_forwards_max_queued_to_run_check_child() {
+        let plugins = vec![PluginMetadata {
+            plugin_name: "builtin-run".to_owned(),
+            domain: "run".to_owned(),
+            description: "Command execution check utilities".to_owned(),
+            abi_version: 1,
+            required_tools: Vec::new(),
+            compatibility: Default::default(),
+        }];
+        let raw_args = vec![
+            OsString::from("ah"),
+            OsString::from("run"),
+            OsString::from("check"),
+            OsString::from("child"),
+            OsString::from("--max-queued"),
+            OsString::from("2"),
+        ];
+
+        let parsed = parse_runtime_command(raw_args, &plugins).expect("child args should parse");
+        let CliParseResult::Command(RuntimeCommand::Invoke { argv, .. }) = parsed else {
+            panic!("unexpected parse result");
+        };
+        assert_eq!(argv, vec!["check", "--", "child", "--max-queued", "2"]);
     }
 
     #[test]
