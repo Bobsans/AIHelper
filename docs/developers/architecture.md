@@ -95,6 +95,17 @@ Typed commands add:
 - request-scoped `cwd`, `limit`, deadline, and request id
 - structured success, notices, and errors
 
+The typed command kernel is transport-neutral. CLI and MCP adapters share the
+same command descriptors and typed handlers; protocol-specific `rmcp` types stay
+inside `crates/ah-mcp`. Human-readable CLI rendering remains an adapter concern
+rather than part of the structured command result.
+
+Typed execution carries `cwd` explicitly with each request. Handlers resolve
+relative paths from that context and set child-process working directories with
+`Command::current_dir`; they never mutate the process-wide current directory per
+request. The MCP adapter does not impose a path sandbox. Operating-system process
+permissions are the filesystem and process access boundary.
+
 The executor admits up to `--max-active` physical handlers with non-blocking
 permit acquisition. Accepted handlers overlap; capacity exhaustion fails
 immediately and never queues work. Direct MCP calls and `ah.job.start` targets
@@ -102,9 +113,19 @@ share the same permits. Logical cancellation or timeout may precede physical
 handler exit, so an uncooperative handler retains only its own permit while
 draining.
 
+Every admitted call receives a unique internal execution ID. MCP protocol request
+IDs map to those execution IDs only for the lifetime of the call, so reused protocol
+IDs and late cleanup cannot target a later execution. Cooperative handlers install
+request-local cancellation scopes that preserve pre-delivered cancellation, check
+it before command work, and remove local and registry state on normal return or
+panic.
+
 Plugin settings and task stores use a bounded sidecar lock for cross-process
 read-modify-write operations and atomically replace complete JSON documents.
-In-memory plugin state is published only after persistence succeeds.
+The transaction reloads current state under the lock, writes and syncs a temporary
+sibling, then publishes in-memory state only after persistence succeeds. Readers
+therefore observe either the old complete document or the new complete document,
+and concurrent writers do not lose unrelated updates.
 
 ## Deterministic I/O Boundaries
 
@@ -139,6 +160,12 @@ Search uses one ignore-aware traversal path with a stable backend identifier.
 `git status`, `git changed`, and `ctx changed` share a byte-oriented parser for
 NUL-delimited porcelain output; path bytes are converted to public strings only
 at the response boundary.
+
+Text search applies the remaining global result budget during each file scan. It
+keeps file text once, allocates context only for returned matches, checks
+cancellation while scanning lines, and uses one sentinel match beyond the budget
+to report truncation exactly. Context-before and context-after arrays are derived
+from the requested line window without off-by-one expansion.
 
 ## Error Model
 

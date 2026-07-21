@@ -66,6 +66,11 @@ conditionals, property dependencies, object-count constraints, `enum`, `const`,
 Document cross-field rules in the command and property descriptions and enforce
 them again in the typed handler, because those rules cannot use root composition.
 
+The runtime compiles compatible input and output validators once per plugin
+definition revision. An incompatible catalog fails before MCP starts serving tools;
+ordinary invocation uses the cached registry instead of rebuilding schemas or the
+full command catalog.
+
 The application reserves dynamic domains `ai`, `plugins`, and `mcp` for host
 control-plane commands. A shared library declaring one of these domains is
 skipped during discovery with a deterministic diagnostic.
@@ -161,6 +166,12 @@ when the corresponding stream is an interactive terminal and `NO_COLOR` is not
 set. Piped, redirected, and captured output therefore stays plain without
 changing the plugin invocation contract.
 
+The formatter is an additive Rust helper compiled into each plugin. It does not
+change `GlobalOptionsWire`, `InvocationRequest`, `InvocationResponse`, exported C
+symbols, or `AH_PLUGIN_ABI_VERSION`; existing plugin binaries that return plain text
+remain compatible. Plugins render their own successful text responses, so no
+semantic-span protocol is added to the invocation wire contract.
+
 Use semantic styles for structured metadata and statuses. Do not format raw
 file content, HTTP bodies, model responses, SQL result payloads, CI logs, or
 other content intended for downstream processing. JSON output must never
@@ -169,6 +180,9 @@ contain ANSI sequences.
 Renderer tests can use `TextFormatter::with_color(true)` and
 `TextFormatter::with_color(false)` to verify styled and plain contracts
 deterministically.
+
+See [Text Output Formatting](output-formatting.md) for the shared stream policy and
+the semantic mappings used by bundled plugins.
 
 ## Managed External Tool Commands
 
