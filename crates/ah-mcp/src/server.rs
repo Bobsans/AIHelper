@@ -23,7 +23,15 @@ use ah_runtime::{
     PluginManager, RegisteredCommand, RuntimeError,
     executor::{ExecutionTelemetry, Executor},
 };
-use axum::Router;
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{
+        HeaderMap, StatusCode,
+        header::{HOST, ORIGIN},
+    },
+    routing::get,
+};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -37,6 +45,7 @@ use rmcp::{
     service::{NotificationContext, RequestContext},
     transport::stdio,
 };
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 use tokio::{
@@ -44,6 +53,7 @@ use tokio::{
     sync::Notify,
 };
 use tower_http::limit::RequestBodyLimitLayer;
+use uuid::Uuid;
 
 use crate::{
     events::EventDispatcher,
@@ -809,6 +819,36 @@ struct ShutdownTracker {
     grace: Duration,
 }
 
+#[derive(Clone)]
+struct HttpLifecycleState {
+    readiness: ReadinessResponse,
+    authority: String,
+    origin: String,
+}
+
+impl HttpLifecycleState {
+    fn new(version: String, authority: String, origin: String) -> Self {
+        Self {
+            readiness: ReadinessResponse {
+                status: "ready",
+                version,
+                pid: std::process::id(),
+                instance_id: Uuid::new_v4().to_string(),
+            },
+            authority,
+            origin,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct ReadinessResponse {
+    status: &'static str,
+    version: String,
+    pid: u32,
+    instance_id: String,
+}
+
 impl ShutdownTracker {
     fn new(grace: Duration) -> Self {
         Self {
@@ -941,11 +981,21 @@ pub async fn serve_http(server: McpServer, port: u16) -> Result<(), McpAdapterEr
 }
 
 pub async fn serve_http_bounded(server: McpServer, port: u16, grace: Duration) -> McpServeOutcome {
+    serve_http_bounded_with_version(server, port, env!("CARGO_PKG_VERSION"), grace).await
+}
+
+pub async fn serve_http_bounded_with_version(
+    server: McpServer,
+    port: u16,
+    version: impl Into<String>,
+    grace: Duration,
+) -> McpServeOutcome {
     let tracker = Arc::new(ShutdownTracker::new(grace));
     let executor = Arc::clone(&server.shared.executor);
     let event_dispatcher = server.shared.event_dispatcher.clone();
     let authority = format!("127.0.0.1:{port}");
     let origin = format!("http://{authority}");
+    let lifecycle = HttpLifecycleState::new(version.into(), authority.clone(), origin.clone());
     let config = StreamableHttpServerConfig::default()
         .with_stateful_mode(true)
         .with_allowed_hosts([authority])
@@ -959,7 +1009,9 @@ pub async fn serve_http_bounded(server: McpServer, port: u16, grace: Duration) -
         config,
     );
     let router = Router::new()
+        .route("/health/ready", get(readiness))
         .nest_service("/mcp", service)
+        .with_state(lifecycle)
         .layer(RequestBodyLimitLayer::new(1024 * 1024));
     let listener = match tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
         Ok(listener) => listener,
@@ -999,6 +1051,39 @@ pub async fn serve_http_bounded(server: McpServer, port: u16, grace: Duration) -
         result,
         remaining_shutdown_grace: tracker.remaining(),
     }
+}
+
+async fn readiness(
+    State(state): State<HttpLifecycleState>,
+    headers: HeaderMap,
+) -> Result<Json<ReadinessResponse>, StatusCode> {
+    validate_local_headers(&headers, &state)?;
+    Ok(Json(state.readiness))
+}
+
+fn validate_local_headers(
+    headers: &HeaderMap,
+    state: &HttpLifecycleState,
+) -> Result<(), StatusCode> {
+    let host_matches = headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|host| host == state.authority);
+    if !host_matches {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let origin_matches = headers.get(ORIGIN).is_none_or(|value| {
+        value
+            .to_str()
+            .ok()
+            .is_some_and(|origin| origin == state.origin)
+    });
+    if !origin_matches {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    Ok(())
 }
 
 #[cfg(unix)]

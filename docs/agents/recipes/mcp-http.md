@@ -8,6 +8,16 @@ ah mcp serve --transport http --port 8787 --max-active 32
 
 Connect clients to `http://127.0.0.1:8787/mcp`.
 
+Check the exact running process without creating an MCP session:
+
+```text
+GET http://127.0.0.1:8787/health/ready
+```
+
+The JSON response contains `status`, the binary `version`, the process `pid`,
+and a process-lifetime UUID v4 `instance_id`. A restart always creates a new
+identity.
+
 Claude Code:
 
 ```text

@@ -51,6 +51,28 @@ The endpoint is:
 http://127.0.0.1:8787/mcp
 ```
 
+Readiness is available without creating an MCP session:
+
+```text
+GET http://127.0.0.1:8787/health/ready
+```
+
+It returns HTTP `200` with the exact running binary version, process ID, and a
+UUID v4 identity that remains stable for the process lifetime:
+
+```json
+{
+  "status": "ready",
+  "version": "1.1.0",
+  "pid": 1234,
+  "instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+A restarted process receives a new `instance_id`, including when the operating
+system reuses its PID. Readiness uses the same Host and Origin restrictions as
+the MCP endpoint and does not enable CORS.
+
 One process can serve multiple stateful MCP sessions and repositories. The
 plugin catalog, execution capacity, job registry, and retained results are
 process-wide. Protocol request IDs and cancellation mappings remain

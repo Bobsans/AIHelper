@@ -6,9 +6,9 @@
 сессии, параллельное выполнение, фоновые jobs и ограниченный shutdown уже
 реализованы.
 
-Для завершения этапа 1 ещё нужны readiness, versioned instance identity,
-локальный control API и детерминированный программный shutdown. Управляемая
-фоновая установка и self-update остаются запланированными.
+Для завершения этапа 1 ещё нужны локальный control API, детерминированный
+программный shutdown и финальные lifecycle-проверки. Управляемая фоновая
+установка и self-update остаются запланированными.
 
 ## Цель
 
@@ -587,8 +587,6 @@ managed MCP уже был остановлен, восстанавливаетс
 
 Осталось:
 
-- [ ] Добавить `GET /health/ready`.
-- [ ] Добавить version, PID и уникальный instance identity.
 - [ ] Добавить `POST /control/shutdown` с проверкой instance identity.
 - [ ] Объединить signal shutdown и control shutdown в один lifecycle path.
 - [ ] Гарантировать ненулевые exit codes для фатальных startup/runtime errors.

@@ -148,6 +148,8 @@ impl Drop for McpProcess {
 struct HttpMcpProcess {
     child: GroupChild,
     url: String,
+    readiness_url: String,
+    origin: String,
 }
 
 impl HttpMcpProcess {
@@ -176,9 +178,12 @@ impl HttpMcpProcess {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
         let child = command.group_spawn().expect("HTTP MCP server should start");
+        let origin = format!("http://127.0.0.1:{port}");
         Self {
             child,
-            url: format!("http://127.0.0.1:{port}/mcp"),
+            url: format!("{origin}/mcp"),
+            readiness_url: format!("{origin}/health/ready"),
+            origin,
         }
     }
 
@@ -192,6 +197,26 @@ impl Drop for HttpMcpProcess {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+fn read_readiness(process: &HttpMcpProcess) -> (reqwest::header::HeaderMap, Value) {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("HTTP client should build");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match client.get(&process.readiness_url).send() {
+            Ok(response) if response.status().is_success() => {
+                let headers = response.headers().clone();
+                let body = response.json().expect("readiness body should be JSON");
+                return (headers, body);
+            }
+            _ if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            Ok(response) => panic!("HTTP readiness failed: {}", response.status()),
+            Err(error) => panic!("HTTP MCP server did not become ready: {error}"),
+        }
     }
 }
 
@@ -772,6 +797,49 @@ fn http_sessions_share_jobs_but_keep_working_directories_explicit() {
 }
 
 #[test]
+fn http_readiness_identifies_the_running_process_without_a_session() {
+    let first_config = TempDir::new().expect("temporary config dir should be created");
+    let first = HttpMcpProcess::start(&first_config);
+    let (headers, body) = read_readiness(&first);
+
+    assert_eq!(
+        headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .expect("readiness content type should exist"),
+        "application/json"
+    );
+    assert!(headers.get("access-control-allow-origin").is_none());
+    let mut fields = body
+        .as_object()
+        .expect("readiness body should be an object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    fields.sort_unstable();
+    assert_eq!(fields, ["instance_id", "pid", "status", "version"]);
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(body["pid"], u64::from(first.child.id()));
+    let first_instance = body["instance_id"]
+        .as_str()
+        .expect("instance identity should be text")
+        .to_owned();
+    assert_eq!(first_instance.len(), 36);
+    assert_eq!(first_instance.as_bytes()[14], b'4');
+
+    let (_, repeated) = read_readiness(&first);
+    assert_eq!(repeated, body);
+
+    let second_config = TempDir::new().expect("temporary config dir should be created");
+    let second = HttpMcpProcess::start(&second_config);
+    let (_, second_body) = read_readiness(&second);
+    assert_ne!(second_body["instance_id"], first_instance);
+
+    second.stop();
+    first.stop();
+}
+
+#[test]
 fn http_transport_rejects_hostile_host_origin_and_oversized_body() {
     let config_dir = TempDir::new().expect("temporary config dir should be created");
     let process = HttpMcpProcess::start(&config_dir);
@@ -813,6 +881,39 @@ fn http_transport_rejects_hostile_host_origin_and_oversized_body() {
         .send()
         .expect("hostile Origin request should receive a response");
     assert_eq!(hostile_origin.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let hostile_readiness_host = client
+        .get(&process.readiness_url)
+        .header("Host", "evil.example")
+        .send()
+        .expect("hostile readiness Host request should receive a response");
+    assert_eq!(
+        hostile_readiness_host.status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+
+    let hostile_readiness_origin = client
+        .get(&process.readiness_url)
+        .header("Origin", "http://evil.example")
+        .send()
+        .expect("hostile readiness Origin request should receive a response");
+    assert_eq!(
+        hostile_readiness_origin.status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+
+    let local_readiness_origin = client
+        .get(&process.readiness_url)
+        .header("Origin", &process.origin)
+        .send()
+        .expect("local readiness Origin request should receive a response");
+    assert_eq!(local_readiness_origin.status(), reqwest::StatusCode::OK);
+    assert!(
+        local_readiness_origin
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none()
+    );
 
     let oversized = client
         .post(&process.url)

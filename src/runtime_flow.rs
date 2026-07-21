@@ -415,7 +415,13 @@ fn execute_mcp_serve(
                     ah_mcp::serve_stdio_bounded(server, MCP_RUNTIME_SHUTDOWN_GRACE).await
                 }
                 cli::McpTransport::Http => {
-                    ah_mcp::serve_http_bounded(server, port, MCP_RUNTIME_SHUTDOWN_GRACE).await
+                    ah_mcp::serve_http_bounded_with_version(
+                        server,
+                        port,
+                        env!("CARGO_PKG_VERSION"),
+                        MCP_RUNTIME_SHUTDOWN_GRACE,
+                    )
+                    .await
                 }
             })
         }
