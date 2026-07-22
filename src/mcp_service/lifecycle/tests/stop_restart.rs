@@ -34,7 +34,7 @@ fn exact_live_stop_uses_control_identity_and_retains_quiescence_guard() {
         .set_sections([ready_section(instance_id, 41), not_ready_section()]);
     service
         .readiness
-        .release_instance_on_shutdown(FileLease::try_acquire(&paths.instance_lock).unwrap());
+        .release_instance_on_shutdown(Some(LeaseHolder::acquire(&paths.instance_lock)));
 
     let output = service.stop().unwrap();
 
@@ -520,7 +520,7 @@ fn restart_uses_one_stop_start_sequence_and_requires_a_new_instance() {
     ]);
     service
         .readiness
-        .release_instance_on_shutdown(FileLease::try_acquire(&paths.instance_lock).unwrap());
+        .release_instance_on_shutdown(Some(LeaseHolder::acquire(&paths.instance_lock)));
 
     let output = service.restart().unwrap();
 
@@ -548,7 +548,7 @@ fn restart_rejects_readiness_that_reuses_the_old_instance_identity() {
     ]);
     service
         .readiness
-        .release_instance_on_shutdown(FileLease::try_acquire(&paths.instance_lock).unwrap());
+        .release_instance_on_shutdown(Some(LeaseHolder::acquire(&paths.instance_lock)));
 
     let error = service.restart().unwrap_err();
 

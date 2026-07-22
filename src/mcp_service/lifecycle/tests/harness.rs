@@ -3,7 +3,8 @@
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{Arc, Condvar, Mutex, MutexGuard, mpsc},
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -29,6 +30,70 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+pub(super) struct LeaseHolder {
+    release: Option<mpsc::Sender<()>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl LeaseHolder {
+    pub(super) fn acquire(path: &Path) -> Self {
+        let path = path.to_path_buf();
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let lease = match FileLease::try_acquire(&path) {
+                Ok(Some(lease)) => {
+                    let _ = ready_sender.send(Ok(()));
+                    lease
+                }
+                Ok(None) => {
+                    let _ = ready_sender.send(Err(format!(
+                        "instance lease '{}' is already occupied",
+                        path.display()
+                    )));
+                    return;
+                }
+                Err(error) => {
+                    let _ = ready_sender.send(Err(format!(
+                        "failed to acquire instance lease '{}': {}",
+                        path.display(),
+                        error.detail_message()
+                    )));
+                    return;
+                }
+            };
+            let _ = release_receiver.recv();
+            drop(lease);
+        });
+        match ready_receiver.recv_timeout(TEST_GATE_TIMEOUT) {
+            Ok(Ok(())) => Self {
+                release: Some(release_sender),
+                worker: Some(worker),
+            },
+            Ok(Err(detail)) => {
+                let _ = worker.join();
+                panic!("{detail}")
+            }
+            Err(error) => {
+                drop(release_sender);
+                let _ = worker.join();
+                panic!("timed out acquiring test instance lease: {error}")
+            }
+        }
+    }
+}
+
+impl Drop for LeaseHolder {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,7 +221,7 @@ struct ScriptedSchedulerState {
     register_readbacks: VecDeque<ObservedTask>,
     observations_after_stop: VecDeque<TaskObservation>,
     run_gates: VecDeque<RunGate>,
-    release_on_stop: Option<FileLease>,
+    release_on_stop: Option<LeaseHolder>,
 }
 
 #[derive(Clone)]
@@ -265,7 +330,7 @@ impl ScriptedScheduler {
         lock_unpoisoned(&self.state).run_gates.push_back(gate);
     }
 
-    pub(super) fn release_instance_on_stop(&self, lease: FileLease) {
+    pub(super) fn release_instance_on_stop(&self, lease: LeaseHolder) {
         lock_unpoisoned(&self.state).release_on_stop = Some(lease);
     }
 
@@ -537,7 +602,7 @@ impl RunGate {
 struct ScriptedRuntimeState {
     sections: VecDeque<ReadinessSection>,
     shutdown_receipts: VecDeque<ShutdownReceipt>,
-    release_on_shutdown: Option<FileLease>,
+    release_on_shutdown: Option<LeaseHolder>,
 }
 
 #[derive(Clone)]
@@ -585,7 +650,7 @@ impl ScriptedRuntimeControl {
         });
     }
 
-    pub(super) fn release_instance_on_shutdown(&self, lease: Option<FileLease>) {
+    pub(super) fn release_instance_on_shutdown(&self, lease: Option<LeaseHolder>) {
         lock_unpoisoned(&self.state).release_on_shutdown = lease;
     }
 
@@ -775,18 +840,16 @@ impl LifecycleHarness {
         self.runtime.queue_readiness(section);
     }
 
-    pub(super) fn hold_instance_lease(&self) -> FileLease {
+    pub(super) fn hold_instance_lease(&self) -> LeaseHolder {
         self.store().ensure_directories().unwrap();
-        FileLease::try_acquire(&self.paths.instance_lock)
-            .unwrap()
-            .expect("instance lease should be available")
+        LeaseHolder::acquire(&self.paths.instance_lock)
     }
 
-    pub(super) fn release_instance_on_shutdown(&self, lease: FileLease) {
+    pub(super) fn release_instance_on_shutdown(&self, lease: LeaseHolder) {
         self.runtime.release_instance_on_shutdown(Some(lease));
     }
 
-    pub(super) fn release_instance_on_forced_stop(&self, lease: FileLease) {
+    pub(super) fn release_instance_on_forced_stop(&self, lease: LeaseHolder) {
         self.scheduler.release_instance_on_stop(lease);
     }
 
