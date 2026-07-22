@@ -6,31 +6,44 @@ on:
       - published
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.continue_on_error }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            platform: linux
-            continue_on_error: false
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+            archive: ah-linux-x64.zip
           - os: windows-latest
-            platform: windows
-            continue_on_error: false
+            platform: windows-x64
+            target: x86_64-pc-windows-msvc
+            archive: ah-windows-x64.zip
           - os: macos-latest
-            platform: macos
-            continue_on_error: false
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            archive: ah-macos-arm64.zip
 
     steps:
-      - name: Checkout
+      - name: Checkout release source
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify runner target
+        shell: bash
+        run: |
+          actual="$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
+          test "$actual" = "${{ matrix.target }}"
 
       - name: Build release binary
         run: |
@@ -40,19 +53,11 @@ jobs:
           cargo build --release --locked -p ah-plugin-ollama
           cargo build --release --locked -p ah-plugin-postgres
 
-      - name: Compute archive name
-        id: meta
-        shell: bash
-        run: |
-          arch="$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')"
-          archive="ah-${{ matrix.platform }}-${arch}.zip"
-          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
-
       - name: Package archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $archive = "${{ steps.meta.outputs.archive }}"
+          $archive = "${{ matrix.archive }}"
           New-Item -ItemType Directory -Path "dist/plugins" -Force | Out-Null
           Copy-Item -LiteralPath "target/release/ah.exe" -Destination "dist/ah.exe" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_github.dll" -Destination "dist/plugins/ah-plugin-github.dll" -Force
@@ -83,38 +88,158 @@ jobs:
           fi
           (
             cd dist
-            zip -9 -r "../${{ steps.meta.outputs.archive }}" "ah" "plugins"
+            zip -9 -r "../${{ matrix.archive }}" "ah" "plugins"
           )
 
       - name: Smoke test release archive
-        run: python scripts/release_smoke.py "${{ steps.meta.outputs.archive }}"
+        run: python scripts/release_smoke.py "${{ matrix.archive }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.meta.outputs.archive }}
-          path: ${{ steps.meta.outputs.archive }}
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+
+  validate:
+    name: Validate Release Archives
+    runs-on: ubuntu-latest
+    needs:
+      - build
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download platform archives
+        uses: actions/download-artifact@v7
+        with:
+          pattern: ah-*.zip
+          path: release-archives
+          merge-multiple: true
+
+      - name: Validate exact archive set
+        run: cargo run --locked -p ah-release-tool -- validate-archives --assets-dir release-archives
+
+      - name: Upload validated archive set
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-archives
+          path: |
+            release-archives/ah-linux-x64.zip
+            release-archives/ah-macos-arm64.zip
+            release-archives/ah-windows-x64.zip
+          if-no-files-found: error
+
+  sign:
+    name: Sign Release Assets
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+    if: github.event_name == 'release'
+    environment:
+      name: release-signing
+
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download validated archives
+        uses: actions/download-artifact@v7
+        with:
+          name: release-archives
+          path: release-archives
+
+      - name: Build internal release tool
+        run: cargo build --release --locked -p ah-release-tool
+
+      - name: Generate and sign release assets
+        env:
+          AIHELPER_RELEASE_ED25519_SEED_B64URL: ${{ secrets.AIHELPER_RELEASE_ED25519_SEED_B64URL }}
+          AIHELPER_RELEASE_ED25519_PUBLIC_KEY_B64URL: ${{ vars.AIHELPER_RELEASE_ED25519_PUBLIC_KEY_B64URL }}
+        run: |
+          ./target/release/ah-release-tool sign-release \
+            --assets-dir release-archives \
+            --output-dir signed-release-assets \
+            --repository "${{ github.repository }}" \
+            --tag "${{ github.event.release.tag_name }}"
+
+      - name: Upload verified signed asset set
+        uses: actions/upload-artifact@v7
+        with:
+          name: signed-release-assets
+          path: |
+            signed-release-assets/ah-linux-x64.zip
+            signed-release-assets/ah-linux-x64.manifest.json
+            signed-release-assets/ah-linux-x64.manifest.sig
+            signed-release-assets/ah-macos-arm64.zip
+            signed-release-assets/ah-macos-arm64.manifest.json
+            signed-release-assets/ah-macos-arm64.manifest.sig
+            signed-release-assets/ah-windows-x64.zip
+            signed-release-assets/ah-windows-x64.manifest.json
+            signed-release-assets/ah-windows-x64.manifest.sig
           if-no-files-found: error
 
   publish:
     name: Publish Release Assets
     runs-on: ubuntu-latest
     needs:
-      - build
+      - sign
     if: github.event_name == 'release'
     permissions:
       contents: write
 
     steps:
-      - name: Download artifacts
+      - name: Download verified signed asset set
         uses: actions/download-artifact@v7
         with:
-          pattern: ah-*.zip
+          name: signed-release-assets
           path: release-assets
-          merge-multiple: true
+
+      - name: Require exact publishable set
+        shell: bash
+        run: |
+          expected=(
+            ah-linux-x64.zip
+            ah-linux-x64.manifest.json
+            ah-linux-x64.manifest.sig
+            ah-macos-arm64.zip
+            ah-macos-arm64.manifest.json
+            ah-macos-arm64.manifest.sig
+            ah-windows-x64.zip
+            ah-windows-x64.manifest.json
+            ah-windows-x64.manifest.sig
+          )
+          for asset in "${expected[@]}"; do
+            test -f "release-assets/$asset"
+          done
+          actual="$(find release-assets -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          test "$actual" -eq "${#expected[@]}"
 
       - name: Upload assets to release
         uses: softprops/action-gh-release@v3
         with:
-          files: release-assets/*.zip
-          overwrite_files: true
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            release-assets/ah-linux-x64.zip
+            release-assets/ah-linux-x64.manifest.json
+            release-assets/ah-linux-x64.manifest.sig
+            release-assets/ah-macos-arm64.zip
+            release-assets/ah-macos-arm64.manifest.json
+            release-assets/ah-macos-arm64.manifest.sig
+            release-assets/ah-windows-x64.zip
+            release-assets/ah-windows-x64.manifest.json
+            release-assets/ah-windows-x64.manifest.sig
+          fail_on_unmatched_files: true
+          overwrite_files: false
+          preserve_order: true
