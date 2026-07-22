@@ -2,13 +2,18 @@
 
 ## Статус
 
-В работе. Локальный Streamable HTTP transport, одновременные клиентские
-сессии, параллельное выполнение, фоновые jobs и ограниченный shutdown уже
-реализованы.
+В работе. Автоматизированная реализация локального HTTP MCP и управляемого
+Windows per-user lifecycle завершена. Открыты две ручные acceptance-проверки:
+подключение целевых MCP-клиентов и persistent Windows VM lifecycle matrix.
 
-Для завершения этапа 1 ещё нужна проверка подключения целевых MCP-клиентов.
-Основа управляемой фоновой установки реализована; оставшиеся lifecycle-команды,
-проверки перезапуска и self-update остаются запланированными.
+Контракт signed release manifest и код release pipeline реализованы. Pipeline
+ещё не активирован production-ключом и не проверен реальным подписанным релизом.
+Runtime self-updater пока не реализован; оставшаяся работа сгруппирована ниже в
+dependency-ordered vertical slices.
+
+В чек-листах `[x]` означает реализовано и автоматически проверено. Пункты с
+пометкой `manual acceptance` или `external activation` остаются `[ ]` до
+фактического выполнения. Завершённые пункты больше не удаляются.
 
 ## Цель
 
@@ -573,6 +578,13 @@ managed MCP уже был остановлен, восстанавливаетс
 
 ## Этапы поставки
 
+### Этап 0: аудируемый учёт прогресса
+
+- [x] Восстановить ранее удалённые выполненные пункты по Git history.
+- [x] Разделить автоматизированную реализацию, manual acceptance и external
+      activation.
+- [x] Перегруппировать self-update в dependency-ordered vertical slices.
+
 ### Этап 1: завершить локальный контракт жизненного цикла HTTP
 
 Уже реализовано:
@@ -584,11 +596,18 @@ managed MCP уже был остановлен, восстанавливаетс
 - [x] Проверка `Host`, ограничение `Origin` и отключённый CORS.
 - [x] Общий ограниченный shutdown по Ctrl-C, SIGTERM и локальному control API.
 - [x] Быстрая ошибка при конфликте порта.
+- [x] Добавить `GET /health/ready`.
+- [x] Добавить version, PID и уникальный instance identity.
+- [x] Добавить `POST /control/shutdown` с проверкой instance identity.
+- [x] Объединить signal shutdown и control shutdown в один lifecycle path.
+- [x] Гарантировать ненулевые exit codes для фатальных startup/runtime errors.
+- [x] Добавить integration tests lifecycle endpoints и завершения активных
+      jobs.
 
-Осталось:
+Manual acceptance:
 
-- [ ] Проверить подключение Claude Code, Codex и OpenCode к локальному HTTP MCP
-      без дополнительных headers.
+- [ ] (manual acceptance) Проверить подключение Claude Code, Codex и OpenCode к
+      локальному HTTP MCP без дополнительных headers.
 
 Критерии завершения:
 
@@ -602,8 +621,24 @@ managed MCP уже был остановлен, восстанавливаетс
 
 ### Этап 2: управляемый жизненный цикл HTTP MCP
 
-- [ ] Выполнить Windows VM/manual end-to-end lifecycle matrix через реальный
-      `ah.exe` и persistent per-user Task Scheduler task.
+- [x] Реализовать Windows Task Scheduler 2.0 adapter без разбора вывода
+      `schtasks.exe` или PowerShell.
+- [x] Добавить общую per-user lifecycle- и upgrade-блокировку.
+- [x] Определить durable runtime-state managed instance.
+- [x] Реализовать `ah mcp service install` и `--no-start`.
+- [x] Реализовать `ah mcp service start`.
+- [x] Реализовать `ah mcp service stop`.
+- [x] Реализовать `ah mcp service restart`.
+- [x] Реализовать `ah mcp service status`.
+- [x] Реализовать `ah mcp service uninstall`.
+- [x] Добавить single-instance enforcement.
+- [x] Настроить ограниченный restart-on-failure и restart backoff.
+- [x] Обнаруживать Task Scheduler configuration drift.
+- [x] Сохранять полезную scheduler и lifecycle-диагностику.
+- [x] Добавить unit, integration и non-persistent Windows component tests для
+      lifecycle-команд.
+- [ ] (manual acceptance) Выполнить Windows VM end-to-end lifecycle matrix через
+      реальный `ah.exe` и persistent per-user Task Scheduler task.
 
 Критерии завершения:
 
@@ -618,30 +653,53 @@ managed MCP уже был остановлен, восстанавливаетс
 - `stop` сначала использует control shutdown, затем Task Scheduler fallback.
 - `uninstall` не удаляет binary, плагины, конфигурацию и журналы.
 
-### Этап 3: контракт релиза и основа updater
+### Этап 3: production trust и mutation-free update check
 
-- [ ] Встроить доверенный публичный release key в AIHelper.
-- [ ] После активации сохранять проверенный signed manifest как installed
-      manifest текущей версии.
+- [x] Определить versioned schema подписанного release manifest.
+- [x] Добавить полный список managed-файлов с относительными путями, размерами,
+      SHA-256 и назначением.
+- [x] Добавить key ID и формат подписи с каноническим представлением manifest.
+- [x] Реализовать release pipeline, публикующий archive, manifest и подпись.
+- [x] Добавить автоматические тесты manifest и подписи.
+- [ ] Сделать `minimum_updater_version` явным compatibility floor вместо
+      автоматического приравнивания к release version.
+- [ ] (external activation) Создать production Ed25519 release key, сохранить
+      seed только в protected GitHub environment и встроить public key в
+      AIHelper.
+- [ ] Реализовать поиск последнего подходящего stable GitHub Release по SemVer.
+- [ ] Реализовать mutation-free `ah upgrade --check` с проверкой signed manifest.
+- [ ] (external activation) Проверить pipeline и updater на реальном подписанном
+      GitHub Release.
+
+### Этап 4: verified candidate без изменения установки
+
 - [ ] Реализовать ограниченную загрузку archive и manifest только через HTTPS.
 - [ ] Реализовать безопасную распаковку с защитой от traversal, links, case
       collisions, reserved names, ADS и size bombs.
 - [ ] Реализовать проверку полного candidate bundle по manifest.
-- [ ] Реализовать offline smoke check executable и plugin catalog.
+- [ ] Реализовать offline smoke check executable, update-helper и plugin catalog.
+
+### Этап 5: installation identity и legacy bootstrap
+
 - [ ] Определять installation root по запущенному `ah.exe`, не изменяя
       выбранный пользователем путь.
 - [ ] Обнаруживать установки из `cargo install` и запрещать для них self-update
       с понятной инструкцией.
 - [ ] Для legacy portable-установки загружать подписанный manifest текущей
       версии и признавать managed только файлы с совпадающими hashes.
-- [ ] Добавить отдельный update-helper, запускаемый вне installation root.
+
+### Этап 6: update-helper и durable transaction
+
+- [ ] Добавить отдельный `ah-update-helper.exe`, запускаемый вне installation
+      root и не использующий сеть или dynamic plugins.
+- [ ] Добавить `ah-update-helper.exe` в signed Windows release inventory.
 - [ ] Реализовать Windows Restart Manager adapter для обнаружения процессов,
       блокирующих managed-файлы.
 - [ ] Реализовать staging, transaction backup и durable transaction state.
 - [ ] Проверять незавершённую update transaction до загрузки динамических
       плагинов.
-- [ ] Добавить тесты manifest, подписи, extraction, legacy bootstrap,
-      блокировок и transaction recovery.
+- [ ] Добавить оставшиеся automated tests extraction, legacy bootstrap,
+      блокировок, failure injection и transaction recovery.
 
 Критерии завершения:
 
@@ -656,16 +714,13 @@ managed MCP уже был остановлен, восстанавливаетс
 - Update-helper может восстановить тестовую установку после сбоя на каждом
   шаге замены.
 
-### Этап 4: самообновление, постоянный backup и rollback
+### Этап 7: activation и managed MCP integration
 
 - [ ] Реализовать `ah upgrade`.
-- [ ] Реализовать `ah upgrade --check`.
 - [ ] Реализовать `ah upgrade --version <VERSION>` без downgrade.
-- [ ] Реализовать одноразовый `ah upgrade --rollback`.
-- [ ] Реализовать поиск последнего подходящего stable release.
 - [ ] Реализовать безопасную передачу lifecycle- и upgrade-блокировки
       update-helper.
-- [ ] Реализовать graceful shutdown managed MCP.
+- [ ] Интегрировать graceful shutdown managed MCP в update transaction.
 - [ ] Реализовать grace period и принудительное завершение блокирующих
       процессов AIHelper.
 - [ ] Отменять обновление до замены файлов при сохраняющейся сторонней
@@ -673,6 +728,15 @@ managed MCP уже был остановлен, восстанавливаетс
 - [ ] Реализовать транзакционную замену только managed-файлов.
 - [ ] Сохранять пользовательские файлы и постоянный installation path.
 - [ ] Реализовать автоматический rollback при ошибке замены или проверки.
+- [ ] После активации сохранять проверенные canonical manifest и signature как
+      installed release record текущей версии.
+- [ ] Восстанавливать предыдущее состояние managed MCP.
+- [ ] Добавить deterministic text и versioned JSON diagnostics для update,
+      rollback и recovery.
+
+### Этап 8: постоянный backup, rollback и recovery
+
+- [ ] Реализовать одноразовый `ah upgrade --rollback`.
 - [ ] Сохранять предыдущую рабочую версию в
       `%APPDATA%\AIHelper\backup\<INSTALLATION_ID>`.
 - [ ] Хранить один постоянный backup до следующего успешного обновления.
@@ -680,11 +744,12 @@ managed MCP уже был остановлен, восстанавливаетс
 - [ ] Сохранять старый постоянный backup, если новое обновление завершилось
       ошибкой и было откачено.
 - [ ] После успешного `--rollback` удалять использованный постоянный backup.
-- [ ] Восстанавливать предыдущее состояние managed MCP.
 - [ ] Реализовать recovery после завершения процесса или перезагрузки на
       каждом durable transaction state.
-- [ ] Добавить deterministic text и JSON diagnostics для update и rollback.
-- [ ] Добавить failure-injection и Windows VM tests.
+- [ ] Добавить automated failure-injection tests для каждого durable state и
+      filesystem operation.
+- [ ] (manual acceptance) Выполнить Windows VM update, rollback, interruption и
+      reboot matrix.
 
 Критерии завершения:
 
