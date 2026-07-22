@@ -2,8 +2,8 @@
 
 ## Status
 
-The design direction was approved on 2026-07-22. This written specification is
-awaiting final user review before implementation planning.
+The design direction and this written specification were approved on
+2026-07-22. Implementation planning may proceed.
 
 ## Goal
 
