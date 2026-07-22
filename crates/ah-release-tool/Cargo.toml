@@ -6,10 +6,15 @@ publish = false
 
 [dependencies]
 ah-release-manifest = { path = "../ah-release-manifest" }
+base64 = "0.22"
 clap = { version = "4.5.39", features = ["derive"] }
+ed25519-dalek = "3"
+semver = "1"
 sha2 = "0.11"
+tempfile = "3.20.0"
 thiserror = "2"
+zeroize = "1"
 zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-tempfile = "3.20.0"
+assert_cmd = "2.0.17"

@@ -25,6 +25,15 @@ pub enum ReleaseToolError {
         entry: String,
         detail: String,
     },
+
+    #[error("release signing configuration is invalid: {detail}")]
+    InvalidSigningConfiguration { detail: String },
+
+    #[error("release metadata is invalid: {detail}")]
+    InvalidReleaseMetadata { detail: String },
+
+    #[error("release manifest operation failed: {detail}")]
+    Manifest { detail: String },
 }
 
 impl ReleaseToolError {
@@ -51,6 +60,24 @@ impl ReleaseToolError {
         Self::InvalidEntry {
             archive: archive.to_owned(),
             entry: entry.into(),
+            detail: detail.into(),
+        }
+    }
+
+    pub(crate) fn signing(detail: impl Into<String>) -> Self {
+        Self::InvalidSigningConfiguration {
+            detail: detail.into(),
+        }
+    }
+
+    pub(crate) fn metadata(detail: impl Into<String>) -> Self {
+        Self::InvalidReleaseMetadata {
+            detail: detail.into(),
+        }
+    }
+
+    pub(crate) fn manifest(detail: impl Into<String>) -> Self {
+        Self::Manifest {
             detail: detail.into(),
         }
     }
