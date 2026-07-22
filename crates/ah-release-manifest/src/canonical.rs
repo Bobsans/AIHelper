@@ -7,7 +7,6 @@ impl ReleaseManifest {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn decode_canonical_untrusted(input: &[u8]) -> Result<ReleaseManifest, ManifestError> {
     if input.len() > MAX_MANIFEST_BYTES {
         return Err(ManifestError::InputTooLarge {
