@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::time::Duration;
 
 use ah_updater_core::{
@@ -76,6 +76,16 @@ impl GitHubReleaseClient {
     }
 
     pub(crate) fn download_asset(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError> {
+        let mut bytes = Vec::with_capacity(usize::try_from(asset.size).unwrap_or(0));
+        self.download_asset_to(asset, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    pub(crate) fn download_asset_to(
+        &self,
+        asset: &ReleaseAssetV1,
+        output: &mut dyn Write,
+    ) -> Result<(), UpdaterError> {
         let mut url = Url::parse(&asset.api_url)
             .map_err(|_| network("GitHub release asset URL is invalid"))?;
         for redirect_count in 0..=MAX_ASSET_REDIRECTS {
@@ -106,13 +116,8 @@ impl GitHubReleaseClient {
                 url = next;
                 continue;
             }
-            let bytes = read_bounded_response(response, asset.size)?;
-            if bytes.len() as u64 != asset.size {
-                return Err(network(
-                    "GitHub release asset size differs from its declaration",
-                ));
-            }
-            return Ok(bytes);
+            write_exact_response(response, asset.size, output)?;
+            return Ok(());
         }
         Err(network("GitHub release asset exceeded redirect bounds"))
     }
@@ -159,6 +164,57 @@ impl GitHubReleaseClient {
             "GitHub release listing exceeded pagination bounds before completeness was proven",
         ))
     }
+}
+
+fn write_exact_response(
+    mut response: Response,
+    expected_bytes: u64,
+    output: &mut dyn Write,
+) -> Result<(), UpdaterError> {
+    if response.status() != StatusCode::OK {
+        return Err(network_with_status(response.status().as_u16()));
+    }
+    if response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|length| length != expected_bytes)
+    {
+        return Err(network(
+            "GitHub release asset size differs from its declaration",
+        ));
+    }
+
+    let mut remaining = expected_bytes;
+    let mut buffer = [0_u8; 64 * 1024];
+    while remaining > 0 {
+        let requested = usize::try_from(remaining.min(buffer.len() as u64))
+            .expect("bounded download chunk fits usize");
+        let read = response
+            .read(&mut buffer[..requested])
+            .map_err(|_| network("GitHub release asset body was incomplete"))?;
+        if read == 0 {
+            return Err(network(
+                "GitHub release asset size differs from its declaration",
+            ));
+        }
+        output
+            .write_all(&buffer[..read])
+            .map_err(|_| candidate("failed to write downloaded release asset"))?;
+        remaining -= read as u64;
+    }
+    let mut extra = [0_u8; 1];
+    if response
+        .read(&mut extra)
+        .map_err(|_| network("GitHub release asset body was incomplete"))?
+        != 0
+    {
+        return Err(network(
+            "GitHub release asset size differs from its declaration",
+        ));
+    }
+    Ok(())
 }
 
 impl ReleaseCheckSource for GitHubReleaseClient {
@@ -248,6 +304,10 @@ fn network_with_status(status: u16) -> UpdaterError {
         UpdaterErrorCode::Network,
         format!("GitHub Releases request returned HTTP status {status}"),
     )
+}
+
+fn candidate(detail: &'static str) -> UpdaterError {
+    UpdaterError::new(UpdaterErrorCode::Candidate, detail)
 }
 
 fn release_contract(detail: &'static str) -> UpdaterError {
@@ -358,6 +418,17 @@ mod tests {
         let asset = test_asset(&server, 86);
         assert_eq!(client.download_asset(&asset).unwrap(), vec![b'x'; 86]);
         server.finish();
+
+        for actual_size in [85, 87] {
+            let bounded = MockServer::spawn(vec![MockResponse::bytes(vec![b'x'; actual_size])]);
+            let client = test_client(&bounded, limits(1, 1, 1, 64 * 1024, 1_000));
+            let error = client
+                .download_asset(&test_asset(&bounded, 86))
+                .unwrap_err();
+            bounded.finish();
+            assert_eq!(error.code(), UpdaterErrorCode::Network);
+            assert!(error.detail().contains("size differs"));
+        }
 
         let redirect_server =
             MockServer::spawn(vec![MockResponse::redirect("http://example.invalid/asset")]);

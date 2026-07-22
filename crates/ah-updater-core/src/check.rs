@@ -26,13 +26,48 @@ pub struct UpgradeCheckResultV1 {
     pub source: Option<UpdateSource>,
 }
 
-pub fn verify_discovered_release_for_check(
-    discovered: &DiscoveredReleaseV1,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedReleaseV1 {
+    discovered: DiscoveredReleaseV1,
+    manifest: ReleaseManifest,
+    manifest_bytes: Vec<u8>,
+    signature_bytes: Vec<u8>,
+    check_result: UpgradeCheckResultV1,
+}
+
+impl VerifiedReleaseV1 {
+    pub fn discovered(&self) -> &DiscoveredReleaseV1 {
+        &self.discovered
+    }
+
+    pub fn manifest(&self) -> &ReleaseManifest {
+        &self.manifest
+    }
+
+    pub fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest_bytes
+    }
+
+    pub fn signature_bytes(&self) -> &[u8] {
+        &self.signature_bytes
+    }
+
+    pub fn check_result(&self) -> &UpgradeCheckResultV1 {
+        &self.check_result
+    }
+
+    pub fn into_check_result(self) -> UpgradeCheckResultV1 {
+        self.check_result
+    }
+}
+
+pub fn verify_discovered_release(
+    discovered: DiscoveredReleaseV1,
     manifest_bytes: &[u8],
     signature_bytes: &[u8],
     trust: &ReleaseTrust,
     current_version: &Version,
-) -> Result<UpgradeCheckResultV1, UpdaterError> {
+) -> Result<VerifiedReleaseV1, UpdaterError> {
     require_download_size(
         manifest_bytes.len(),
         discovered.assets.manifest.size,
@@ -45,8 +80,8 @@ pub fn verify_discovered_release_for_check(
     )?;
 
     let verified = trust.verify(manifest_bytes, signature_bytes)?;
-    let manifest = verified.manifest();
-    validate_manifest_identity(discovered, manifest, current_version)?;
+    let manifest = verified.into_manifest();
+    validate_manifest_identity(&discovered, &manifest, current_version)?;
 
     let selected_version = discovered.version.version();
     let status = match current_version.cmp(selected_version) {
@@ -54,7 +89,7 @@ pub fn verify_discovered_release_for_check(
         std::cmp::Ordering::Equal => CheckStatus::UpToDate,
         std::cmp::Ordering::Greater => CheckStatus::CurrentNewer,
     };
-    Ok(UpgradeCheckResultV1 {
+    let check_result = UpgradeCheckResultV1 {
         schema_version: UPDATE_RESULT_SCHEMA_VERSION,
         operation: UpdateOperation::Check,
         status,
@@ -62,7 +97,31 @@ pub fn verify_discovered_release_for_check(
         selected_version: Some(selected_version.to_string()),
         target: Some(discovered.target.rust_target.to_owned()),
         source: Some(UpdateSource::GitHubRelease),
+    };
+    Ok(VerifiedReleaseV1 {
+        discovered,
+        manifest,
+        manifest_bytes: manifest_bytes.to_vec(),
+        signature_bytes: signature_bytes.to_vec(),
+        check_result,
     })
+}
+
+pub fn verify_discovered_release_for_check(
+    discovered: &DiscoveredReleaseV1,
+    manifest_bytes: &[u8],
+    signature_bytes: &[u8],
+    trust: &ReleaseTrust,
+    current_version: &Version,
+) -> Result<UpgradeCheckResultV1, UpdaterError> {
+    verify_discovered_release(
+        discovered.clone(),
+        manifest_bytes,
+        signature_bytes,
+        trust,
+        current_version,
+    )
+    .map(VerifiedReleaseV1::into_check_result)
 }
 
 fn validate_manifest_identity(

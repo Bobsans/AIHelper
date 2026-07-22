@@ -676,10 +676,6 @@ Manual acceptance:
 
 ### Этап 4: verified candidate без изменения установки
 
-- [ ] Реализовать ограниченную загрузку archive и manifest только через HTTPS.
-- [ ] Реализовать безопасную распаковку с защитой от traversal, links, case
-      collisions, reserved names, ADS и size bombs.
-- [ ] Реализовать проверку полного candidate bundle по manifest.
 - [ ] Реализовать offline smoke check executable, update-helper и plugin catalog.
 
 ### Этап 5: installation identity и legacy bootstrap
