@@ -152,23 +152,31 @@ Implementation order:
 
 ### Verification
 
-- [ ] `cargo test -p ah-release-manifest --locked` passes.
-- [ ] Golden manifests for Windows x64, Linux x64, and macOS arm64 serialize to
+- [x] `cargo test -p ah-release-manifest --locked` passes.
+- [x] Golden manifests for Windows x64, Linux x64, and macOS arm64 serialize to
       byte-identical fixtures and verify with a deterministic test key.
-- [ ] Non-canonical JSON, unknown or duplicate fields, unsupported schemas,
+- [x] Non-canonical JSON, unknown or duplicate fields, unsupported schemas,
       algorithms, and key IDs are rejected.
-- [ ] Tampered signed fields and malformed, padded, whitespace-bearing, or
+- [x] Tampered signed fields and malformed, padded, whitespace-bearing, or
       wrong-length signatures are rejected.
-- [ ] Invalid SemVer, HTTPS URL, target, digest, size, path, ordering,
+- [x] Invalid SemVer, HTTPS URL, target, digest, size, path, ordering,
       uniqueness, case-collision, purpose, and required-file relationships are
       rejected.
-- [ ] Production code contains no private signing key or signing API.
-- [ ] `cargo fmt --all -- --check`,
+- [x] Production code contains no private signing key or signing API.
+- [x] `cargo fmt --all -- --check`,
       `cargo test --workspace --all-targets --locked`, and
       `cargo build --locked` pass.
-- [ ] The production public-key, pipeline, installed-manifest, downloading,
+- [x] The production public-key, pipeline, installed-manifest, downloading,
       extraction, candidate verification, and broader update-test roadmap items
       remain open.
+
+Implementation note (2026-07-22): schema and semantic validation landed in
+`3363690`, canonical encoding and platform fixtures in `104ce40`, and the trust
+registry plus strict Ed25519 verification in `08c5c3f`. The focused crate test
+passed 29 tests, the complete workspace all-target test matrix passed, and the
+locked workspace build completed successfully. Signing material is
+deterministic and test-only; no production release key exists, and release
+pipeline signing and updater behavior remain outside this implementation.
 
 ## Pros and Cons of the Options
 
