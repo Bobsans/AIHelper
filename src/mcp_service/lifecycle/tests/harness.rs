@@ -154,6 +154,7 @@ struct ScriptedSchedulerState {
     instances: Vec<SchedulerInstance>,
     faults: SchedulerFaults,
     register_readbacks: VecDeque<ObservedTask>,
+    observations_after_stop: VecDeque<TaskObservation>,
     run_gates: VecDeque<RunGate>,
     release_on_stop: Option<FileLease>,
 }
@@ -186,6 +187,7 @@ impl ScriptedScheduler {
                 instances: Vec::new(),
                 faults: SchedulerFaults::default(),
                 register_readbacks: VecDeque::new(),
+                observations_after_stop: VecDeque::new(),
                 run_gates: VecDeque::new(),
                 release_on_stop: None,
             })),
@@ -230,6 +232,12 @@ impl ScriptedScheduler {
         lock_unpoisoned(&self.state)
             .register_readbacks
             .push_back(observed);
+    }
+
+    pub(super) fn queue_observation_after_stop(&self, observation: TaskObservation) {
+        lock_unpoisoned(&self.state)
+            .observations_after_stop
+            .push_back(observation);
     }
 
     pub(super) fn fail_next(&self, point: SchedulerFaultPoint) {
@@ -421,6 +429,9 @@ impl SchedulerAdapter for ScriptedScheduler {
                 && !has_active_instances
             {
                 observed.scheduler_state = SchedulerState::Ready;
+            }
+            if let Some(observation) = state.observations_after_stop.pop_front() {
+                state.observation = observation;
             }
             state.release_on_stop.take()
         };
