@@ -3,6 +3,7 @@
 //! ADR: Canonical Ed25519 release manifest v1.
 //! See: `../../docs/decisions/2026-07-22-adopt-canonical-ed25519-release-manifest-v1.md`.
 
+mod canonical;
 mod error;
 mod model;
 mod validation;
