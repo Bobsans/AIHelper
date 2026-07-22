@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
-    net::TcpListener,
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{ChildStdin, Command as ProcessCommand, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver},
@@ -112,7 +112,12 @@ impl McpProcess {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => return,
+                Ok(Some(status)) => {
+                    if panic_on_timeout && !status.success() {
+                        panic!("MCP server should exit cleanly, got {status}");
+                    }
+                    return;
+                }
                 Ok(None) => {}
                 Err(error) if panic_on_timeout => {
                     panic!("MCP process status should be readable: {error}")
@@ -203,6 +208,18 @@ impl HttpMcpProcess {
                 Err(error) => panic!("HTTP MCP process status should be readable: {error}"),
             }
         }
+    }
+
+    fn read_stderr(&mut self) -> String {
+        let mut output = String::new();
+        self.child
+            .inner()
+            .stderr
+            .take()
+            .expect("HTTP MCP stderr should be piped")
+            .read_to_string(&mut output)
+            .expect("HTTP MCP stderr should be readable");
+        output
     }
 
     fn stop(mut self) {
@@ -982,6 +999,105 @@ fn http_control_shutdown_validates_identity_and_exits_cleanly() {
 
     let exit = process.wait_for_exit(Duration::from_secs(7));
     assert!(exit.success(), "HTTP MCP server should exit cleanly");
+}
+
+#[test]
+fn mcp_invalid_startup_configuration_exits_nonzero() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+        .env("AH_CONFIG_DIR", config_dir.path())
+        .args(["mcp", "serve", "--max-active", "0"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("invalid MCP configuration should exit");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("INVALID_RANGE"),
+        "stderr should contain the deterministic configuration diagnostic"
+    );
+}
+
+#[test]
+fn http_port_conflict_exits_nonzero() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("ephemeral port should bind");
+    let port = listener
+        .local_addr()
+        .expect("ephemeral address should be available")
+        .port()
+        .to_string();
+    let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+        .env("AH_CONFIG_DIR", config_dir.path())
+        .args(["mcp", "serve", "--transport", "http", "--port", &port])
+        .stdin(Stdio::null())
+        .output()
+        .expect("conflicting HTTP MCP server should exit");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("MCP_SERVER_FAILED"),
+        "stderr should contain the deterministic bind diagnostic"
+    );
+    let event = log_records(&config_dir)
+        .into_iter()
+        .find(|record| record["event"] == "system" && record["component"] == "mcp_transport")
+        .expect("bind failure should be logged as an MCP transport event");
+    assert_eq!(event["diagnostic"]["code"], "MCP_SERVER_FAILED");
+    assert_eq!(event["diagnostic"]["exit_code_hint"], 1);
+}
+
+#[test]
+fn http_shutdown_timeout_exits_nonzero() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let mut process = HttpMcpProcess::start(&config_dir);
+    let (_, readiness) = read_readiness(&process);
+    let instance_id = readiness["instance_id"]
+        .as_str()
+        .expect("instance identity should be text");
+    let authority = process
+        .origin
+        .strip_prefix("http://")
+        .expect("test origin should use HTTP");
+    let mut stalled_request =
+        TcpStream::connect(authority).expect("stalled control request should connect");
+    write!(
+        stalled_request,
+        "POST /control/shutdown HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: 128\r\nConnection: keep-alive\r\n\r\n{{"
+    )
+    .expect("partial control request should be written");
+    stalled_request
+        .flush()
+        .expect("partial control request should be flushed");
+    thread::sleep(Duration::from_millis(100));
+
+    let accepted = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("HTTP client should build")
+        .post(&process.shutdown_url)
+        .json(&json!({"instance_id": instance_id}))
+        .send()
+        .expect("matching shutdown request should receive a response");
+    assert_eq!(accepted.status(), reqwest::StatusCode::ACCEPTED);
+
+    let exit = process.wait_for_exit(Duration::from_secs(7));
+    assert_eq!(exit.code(), Some(1));
+    let stderr = process.read_stderr();
+    assert!(
+        stderr.contains("MCP_SHUTDOWN_TIMEOUT"),
+        "stderr should contain the shutdown timeout diagnostic: {stderr}"
+    );
+    assert!(
+        stderr.contains("5000 ms grace period"),
+        "stderr should contain the deterministic grace period: {stderr}"
+    );
+    let event = log_records(&config_dir)
+        .into_iter()
+        .find(|record| record["event"] == "system" && record["component"] == "mcp_transport")
+        .expect("shutdown timeout should be logged as an MCP transport event");
+    assert_eq!(event["diagnostic"]["code"], "MCP_SHUTDOWN_TIMEOUT");
+    assert_eq!(event["diagnostic"]["exit_code_hint"], 1);
 }
 
 #[test]

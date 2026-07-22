@@ -251,3 +251,17 @@ HTTP shutdown triggers enter the same idempotent lifecycle path. Protocol
 draining and physical handler shutdown share one five-second budget; they do not
 receive consecutive grace periods. In-memory jobs and results do not survive
 restart.
+
+Process exit codes distinguish clean lifecycle completion from fatal server
+failure:
+
+| Condition | Diagnostic | Exit code |
+| --- | --- | --- |
+| Lifecycle completes within the shared budget | none | `0` |
+| Invalid startup configuration | configuration-specific code | `1` |
+| Bind or unexpected transport failure | `MCP_SERVER_FAILED` | `1` |
+| Shared shutdown budget expires | `MCP_SHUTDOWN_TIMEOUT` | `1` |
+
+HTTP `202` means that a matching control request started shutdown; it does not
+guarantee that draining will finish successfully. A supervisor should also
+inspect the final process exit code and diagnostic logs.

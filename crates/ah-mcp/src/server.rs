@@ -151,6 +151,8 @@ pub enum McpAdapterError {
     Runtime(#[from] RuntimeError),
     #[error("MCP service failed: {0}")]
     Service(String),
+    #[error("MCP shutdown exceeded the configured {grace_ms} ms grace period")]
+    ShutdownTimeout { grace_ms: u128 },
 }
 
 #[must_use]
@@ -1016,18 +1018,18 @@ pub async fn serve_stdio_bounded(server: McpServer, grace: Duration) -> McpServe
     let reader = ShutdownReader::new(stdin, Arc::clone(&tracker), Arc::clone(&executor));
     let result = match server.serve((reader, stdout)).await {
         Ok(service) => {
-            let waiting = service.waiting();
-            tokio::pin!(waiting);
-            tokio::select! {
-                result = &mut waiting => {
+            wait_for_transport(
+                async {
+                    let result = service.waiting().await;
                     tracker.begin();
                     executor.close();
                     result
                         .map(|_| ())
                         .map_err(|error| McpAdapterError::Service(error.to_string()))
-                }
-                _ = tracker.expired() => Ok(()),
-            }
+                },
+                tracker.as_ref(),
+            )
+            .await
         }
         Err(error) => {
             tracker.begin();
@@ -1118,11 +1120,15 @@ pub async fn serve_http_bounded_with_version(
             }
         })
         .into_future();
-    tokio::pin!(serving);
-    let result = tokio::select! {
-        result = &mut serving => result.map_err(|error| McpAdapterError::Service(error.to_string())),
-        _ = tracker.expired() => Ok(()),
-    };
+    let result = wait_for_transport(
+        async move {
+            serving
+                .await
+                .map_err(|error| McpAdapterError::Service(error.to_string()))
+        },
+        tracker.as_ref(),
+    )
+    .await;
     lifecycle_controller.begin_shutdown();
     if let Some(dispatcher) = event_dispatcher {
         dispatcher.flush(tracker.remaining()).await;
@@ -1130,6 +1136,23 @@ pub async fn serve_http_bounded_with_version(
     McpServeOutcome {
         result,
         remaining_shutdown_grace: tracker.remaining(),
+    }
+}
+
+async fn wait_for_transport<F>(
+    transport: F,
+    tracker: &ShutdownTracker,
+) -> Result<(), McpAdapterError>
+where
+    F: Future<Output = Result<(), McpAdapterError>>,
+{
+    tokio::pin!(transport);
+    tokio::select! {
+        biased;
+        result = &mut transport => result,
+        _ = tracker.expired() => Err(McpAdapterError::ShutdownTimeout {
+            grace_ms: tracker.grace.as_millis(),
+        }),
     }
 }
 
@@ -1902,9 +1925,12 @@ fn reserved_job_namespace_error(command: &str) -> Option<McpAdapterError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc, Barrier, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+    use std::{
+        future::{pending, ready},
+        sync::{
+            Arc, Barrier, Mutex,
+            atomic::{AtomicBool, AtomicU64, Ordering},
+        },
     };
 
     use ah_plugin_api::{
@@ -1926,10 +1952,10 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        EventSink, Executor, HttpLifecycleController, JOB_START_TOOL, McpCommandEvent,
-        McpCommandStatus, McpServer, McpServerConfig, RISK_META_KEY, ShutdownReader,
-        ShutdownTracker, peer_generation_matches, refresh_catalog_after_job,
-        spawn_best_effort_notification,
+        EventSink, Executor, HttpLifecycleController, JOB_START_TOOL, McpAdapterError,
+        McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig, RISK_META_KEY,
+        ShutdownReader, ShutdownTracker, peer_generation_matches, refresh_catalog_after_job,
+        spawn_best_effort_notification, wait_for_transport,
     };
 
     struct TypedPlugin;
@@ -2297,6 +2323,50 @@ mod tests {
         let started_at = *tracker.started_at.get().expect("shutdown should start");
         assert!(!controller.begin_shutdown());
         assert_eq!(tracker.started_at.get(), Some(&started_at));
+    }
+
+    #[test]
+    fn transport_wait_returns_typed_shutdown_timeout() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let tracker = ShutdownTracker::new(std::time::Duration::from_millis(1));
+            tracker.begin();
+
+            let error = wait_for_transport(pending::<Result<(), McpAdapterError>>(), &tracker)
+                .await
+                .expect_err("pending transport should exceed shutdown grace");
+
+            assert!(matches!(
+                error,
+                McpAdapterError::ShutdownTimeout { grace_ms: 1 }
+            ));
+            assert_eq!(
+                error.to_string(),
+                "MCP shutdown exceeded the configured 1 ms grace period"
+            );
+        });
+    }
+
+    #[test]
+    fn transport_wait_preserves_ready_results_at_deadline() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let tracker = ShutdownTracker::new(std::time::Duration::ZERO);
+            tracker.begin();
+
+            assert!(wait_for_transport(ready(Ok(())), &tracker).await.is_ok());
+
+            let error = wait_for_transport(
+                ready(Err(McpAdapterError::Service("transport failed".to_owned()))),
+                &tracker,
+            )
+            .await
+            .expect_err("ready transport error should be preserved");
+            assert!(matches!(
+                error,
+                McpAdapterError::Service(message) if message == "transport failed"
+            ));
+        });
     }
 
     #[test]

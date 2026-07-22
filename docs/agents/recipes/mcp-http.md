@@ -39,6 +39,12 @@ Do not reuse an identity across restarts. The endpoint has the same loopback,
 Host, Origin, and no-CORS policy as MCP and readiness; it has no separate
 authentication.
 
+After an accepted shutdown, wait for the process. Exit code `0` means lifecycle
+completion stayed within the shared five-second budget. Exit code `1` with
+`MCP_SHUTDOWN_TIMEOUT` means draining exceeded that budget; startup, bind, or
+unexpected transport failures also exit with code `1`. The HTTP `202` response
+alone is not a final success signal.
+
 Claude Code:
 
 ```text

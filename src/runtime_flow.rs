@@ -430,7 +430,7 @@ fn execute_mcp_serve(
             Ok(outcome) => {
                 let (transport_result, remaining_grace) = outcome.into_parts();
                 let result = transport_result
-                    .map_err(|error| AppError::external("MCP_SERVER_FAILED", error.to_string()))
+                    .map_err(map_mcp_transport_error)
                     .map_err(|error| {
                         record_mcp_system_error(logger.as_deref(), "mcp_transport", error)
                     });
@@ -441,6 +441,15 @@ fn execute_mcp_serve(
     });
     shutdown_runtime(runtime, shutdown_grace);
     result
+}
+
+fn map_mcp_transport_error(error: ah_mcp::McpAdapterError) -> AppError {
+    let code = if matches!(&error, ah_mcp::McpAdapterError::ShutdownTimeout { .. }) {
+        "MCP_SHUTDOWN_TIMEOUT"
+    } else {
+        "MCP_SERVER_FAILED"
+    };
+    AppError::external(code, error.to_string())
 }
 
 fn shutdown_runtime(runtime: tokio::runtime::Runtime, grace: Duration) {
@@ -466,7 +475,25 @@ mod tests {
 
     use ah_runtime::PluginManager;
 
-    use super::{is_version_fast_path, resolve_invocation_command, shutdown_runtime};
+    use super::{
+        is_version_fast_path, map_mcp_transport_error, resolve_invocation_command, shutdown_runtime,
+    };
+
+    #[test]
+    fn mcp_transport_errors_use_stable_diagnostic_codes() {
+        let timeout =
+            map_mcp_transport_error(ah_mcp::McpAdapterError::ShutdownTimeout { grace_ms: 5_000 });
+        assert_eq!(timeout.code(), "MCP_SHUTDOWN_TIMEOUT");
+        assert_eq!(
+            timeout.detail_message(),
+            "MCP shutdown exceeded the configured 5000 ms grace period"
+        );
+
+        let service = map_mcp_transport_error(ah_mcp::McpAdapterError::Service(
+            "transport failed".to_owned(),
+        ));
+        assert_eq!(service.code(), "MCP_SERVER_FAILED");
+    }
 
     #[test]
     fn runtime_shutdown_respects_grace_for_blocking_handlers() {
