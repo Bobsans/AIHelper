@@ -11,6 +11,8 @@ use super::{
 };
 
 pub const TASK_SOURCE: &str = "AIHelper.ManagedMcp";
+pub(crate) const MANAGED_RESTART_COUNT: i32 = 3;
+pub(crate) const MANAGED_RESTART_INTERVAL: &str = "PT1M";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesiredTaskSpec {
@@ -84,11 +86,15 @@ impl DesiredTaskSpec {
             stop_if_going_on_batteries: false,
             run_only_if_idle: false,
             run_only_if_network_available: false,
-            restart_count: 3,
-            restart_interval: "PT1M".to_owned(),
+            restart_count: MANAGED_RESTART_COUNT,
+            restart_interval: MANAGED_RESTART_INTERVAL.to_owned(),
             enabled: true,
         }
     }
+}
+
+pub(crate) fn has_canonical_restart_policy(spec: &DesiredTaskSpec) -> bool {
+    spec.restart_count == MANAGED_RESTART_COUNT && spec.restart_interval == MANAGED_RESTART_INTERVAL
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -479,10 +485,35 @@ mod tests {
     fn canonical_spec_contains_restart_and_single_instance_policy() {
         let spec = desired();
         assert_eq!(spec.multiple_instances, MultipleInstancesPolicy::IgnoreNew);
-        assert_eq!(spec.restart_count, 3);
-        assert_eq!(spec.restart_interval, "PT1M");
+        assert_eq!(spec.restart_count, MANAGED_RESTART_COUNT);
+        assert_eq!(spec.restart_interval, MANAGED_RESTART_INTERVAL);
+        assert!(has_canonical_restart_policy(&spec));
         assert_eq!(spec.execution_time_limit, "PT0S");
         assert!(!spec.disallow_start_on_batteries);
+    }
+
+    #[test]
+    fn restart_policy_drift_is_detected_per_property() {
+        let expected = desired();
+        let mut count_drift = expected.clone();
+        count_drift.restart_count = 0;
+        assert_eq!(
+            semantic_drift(&expected, &count_drift)
+                .into_iter()
+                .map(|entry| entry.field)
+                .collect::<Vec<_>>(),
+            ["settings.restart_count"]
+        );
+
+        let mut interval_drift = expected.clone();
+        interval_drift.restart_interval = "PT2M".to_owned();
+        assert_eq!(
+            semantic_drift(&expected, &interval_drift)
+                .into_iter()
+                .map(|entry| entry.field)
+                .collect::<Vec<_>>(),
+            ["settings.restart_interval"]
+        );
     }
 
     #[test]
@@ -490,10 +521,12 @@ mod tests {
         let expected = desired();
         let mut actual = expected.clone();
         actual.restart_count = 0;
+        actual.restart_interval = "PT2M".to_owned();
         actual.arguments.push_str(" --extra");
         let drift = semantic_drift(&expected, &actual);
-        assert_eq!(drift.len(), 2);
+        assert_eq!(drift.len(), 3);
         assert_eq!(drift[0].field, "action.arguments");
         assert_eq!(drift[1].field, "settings.restart_count");
+        assert_eq!(drift[2].field, "settings.restart_interval");
     }
 }

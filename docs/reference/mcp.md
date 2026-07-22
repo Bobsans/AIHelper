@@ -235,6 +235,16 @@ one-minute interval, no execution time limit, and battery operation enabled.
 Status compares properties semantically and reports property-level drift; it
 does not compare exported task XML.
 
+The three attempts are retries after the initial launch. Task Scheduler owns
+their timing and limit; AIHelper does not run another retry loop. Fatal managed
+startup or runtime failures persist a nonzero exit, while clean control shutdown
+persists exit `0`. A `restart_backoff` runtime status is a conservative AIHelper
+inference that requires a queued task, a nonzero last Scheduler result, a
+durable nonzero managed failure, canonical restart settings, and no live
+readiness or instance lease. Task Scheduler does not expose the queue reason,
+remaining attempt count, or next retry timestamp, so status provides no retry
+countdown.
+
 Durable machine-local state is independent of `AH_CONFIG_DIR`:
 
 ```text

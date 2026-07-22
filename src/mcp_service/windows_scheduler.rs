@@ -711,7 +711,10 @@ fn scheduler_error(operation: &str, error: windows::core::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_service::paths::{current_user_sid, task_path};
+    use crate::mcp_service::{
+        paths::{current_user_sid, task_path},
+        scheduler::{MANAGED_RESTART_COUNT, MANAGED_RESTART_INTERVAL},
+    };
     use tempfile::TempDir;
     use uuid::Uuid;
 
@@ -762,6 +765,7 @@ mod tests {
             let mut restart_count = 0;
             unsafe { settings.RestartCount(&mut restart_count) }
                 .map_err(|error| scheduler_error("read smoke restart count", error))?;
+            let restart_interval = read_bstr(|value| unsafe { settings.RestartInterval(value) })?;
             let triggers = unsafe { definition.Triggers() }
                 .map_err(|error| scheduler_error("read smoke triggers", error))?;
             let mut trigger_count = 0;
@@ -772,7 +776,8 @@ mod tests {
             let mut action_count = 0;
             unsafe { actions.Count(&mut action_count) }
                 .map_err(|error| scheduler_error("read smoke action count", error))?;
-            assert_eq!(restart_count, 3);
+            assert_eq!(restart_count, MANAGED_RESTART_COUNT);
+            assert_eq!(restart_interval, MANAGED_RESTART_INTERVAL);
             assert_eq!(trigger_count, 1);
             assert_eq!(action_count, 1);
             Ok(())

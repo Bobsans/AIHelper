@@ -602,7 +602,6 @@ managed MCP уже был остановлен, восстанавливаетс
 
 ### Этап 2: управляемый жизненный цикл HTTP MCP
 
-- [ ] Настроить ограниченный restart-on-failure и restart backoff.
 - [ ] Добавить unit, integration и Windows VM tests для lifecycle-команд.
 
 Критерии завершения:
@@ -731,7 +730,13 @@ managed MCP уже был остановлен, восстанавливаетс
   status и uninstall.
 - Logoff, login и пропущенный logon trigger.
 - Single-instance enforcement.
-- Process crash, bounded restart и restart backoff.
+- Process crash, bounded restart и restart backoff:
+  - один исходный аварийный запуск и не более трёх повторных запусков;
+  - интервалы между попытками приблизительно соответствуют `PT1M`;
+  - после третьего retry новые процессы не появляются;
+  - clean exit с кодом `0` не запускает retry;
+  - фактические состояния Task Scheduler во время ожидания фиксируются без
+    требования `TASK_STATE_QUEUED` как обязательного acceptance criterion.
 - Task Scheduler configuration drift.
 - Конкурентные lifecycle-команды.
 - Зависшая readiness и недоступный control endpoint.

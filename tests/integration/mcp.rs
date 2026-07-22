@@ -16,8 +16,8 @@ use tempfile::TempDir;
 #[cfg(windows)]
 use aihelper::mcp_service::{
     model::{
-        RuntimePhase, SCHEMA_VERSION, ServerDefinition, ServiceDefinition, ServiceEndpoint,
-        TASK_SPEC_VERSION,
+        ExitKind, RuntimePhase, SCHEMA_VERSION, ServerDefinition, ServiceDefinition,
+        ServiceEndpoint, TASK_SPEC_VERSION,
     },
     paths::{ServicePaths, current_user_sid},
     store::{Document, ServiceStore},
@@ -90,38 +90,12 @@ fn managed_serve_preflight_fails_before_ambient_configuration_load() {
 #[test]
 fn managed_serve_persists_exact_identity_and_enforces_single_instance() {
     let temp = TempDir::new().expect("temporary service directory should exist");
-    let paths = ServicePaths::from_base(temp.path().join("managed-mcp"))
-        .expect("service paths should resolve");
-    let store = ServiceStore::new(paths.clone());
     let port = TcpListener::bind(("127.0.0.1", 0))
         .expect("ephemeral port should bind")
         .local_addr()
         .expect("ephemeral address should resolve")
         .port();
-    let configuration_id = uuid::Uuid::new_v4();
-    let definition = ServiceDefinition {
-        schema_version: SCHEMA_VERSION,
-        task_spec_version: TASK_SPEC_VERSION,
-        service_id: uuid::Uuid::new_v4(),
-        configuration_id,
-        user_sid: current_user_sid().expect("current SID should resolve"),
-        executable_path: assert_cmd::cargo::cargo_bin("ah"),
-        working_directory: temp.path().to_path_buf(),
-        config_directory: temp.path().join("config"),
-        runtime_state_path: paths.runtime.clone(),
-        instance_lock_path: paths.instance_lock.clone(),
-        expected_version: env!("CARGO_PKG_VERSION").to_owned(),
-        endpoint: ServiceEndpoint::loopback(port).expect("endpoint should be valid"),
-        server: ServerDefinition {
-            limit: None,
-            max_active: 4,
-            default_timeout_ms: 5_000,
-        },
-    };
-    let definition_path = paths.definition(configuration_id);
-    store
-        .write_immutable_definition(&definition_path, &definition)
-        .expect("managed definition should be written");
+    let (store, definition_path, definition) = install_managed_definition(&temp, port);
 
     let mut first = spawn_managed_process(&definition_path);
     let client = reqwest::blocking::Client::builder()
@@ -136,7 +110,7 @@ fn managed_serve_persists_exact_identity_and_enforces_single_instance() {
     assert_eq!(runtime.phase, RuntimePhase::Ready);
     assert_eq!(readiness["instance_id"], runtime.instance_id.to_string());
     assert_eq!(readiness["pid"], runtime.pid);
-    assert_eq!(runtime.configuration_id, configuration_id);
+    assert_eq!(runtime.configuration_id, definition.configuration_id);
 
     let mut second = spawn_managed_process(&definition_path);
     let second_status = wait_for_child(&mut second, Duration::from_secs(3));
@@ -187,6 +161,70 @@ fn managed_serve_persists_exact_identity_and_enforces_single_instance() {
         .expect("restarted managed shutdown should respond");
     assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
     assert!(wait_for_child(&mut restarted, Duration::from_secs(8)).success());
+}
+
+#[cfg(windows)]
+#[test]
+fn managed_serve_persists_nonzero_failure_for_port_conflict() {
+    let temp = TempDir::new().expect("temporary service directory should exist");
+    let occupied = TcpListener::bind(("127.0.0.1", 0)).expect("ephemeral port should bind");
+    let port = occupied
+        .local_addr()
+        .expect("ephemeral address should resolve")
+        .port();
+    let (store, definition_path, _) = install_managed_definition(&temp, port);
+
+    let mut child = spawn_managed_process(&definition_path);
+    let status = wait_for_child(&mut child, Duration::from_secs(8));
+
+    assert_eq!(status.code(), Some(1), "fatal managed exit must be nonzero");
+    let Document::Valid(runtime) = store.read_runtime() else {
+        panic!("failed runtime state should remain valid")
+    };
+    assert_eq!(runtime.phase, RuntimePhase::Failed);
+    let exit = runtime
+        .last_exit
+        .as_ref()
+        .expect("failed runtime should contain last_exit");
+    assert_eq!(exit.kind, ExitKind::RuntimeFailure);
+    assert_ne!(exit.exit_code, 0);
+    assert_eq!(exit.diagnostic_code.as_deref(), Some("MCP_SERVER_FAILED"));
+    drop(occupied);
+}
+
+#[cfg(windows)]
+fn install_managed_definition(
+    temp: &TempDir,
+    port: u16,
+) -> (ServiceStore, PathBuf, ServiceDefinition) {
+    let paths = ServicePaths::from_base(temp.path().join("managed-mcp"))
+        .expect("service paths should resolve");
+    let store = ServiceStore::new(paths.clone());
+    let configuration_id = uuid::Uuid::new_v4();
+    let definition = ServiceDefinition {
+        schema_version: SCHEMA_VERSION,
+        task_spec_version: TASK_SPEC_VERSION,
+        service_id: uuid::Uuid::new_v4(),
+        configuration_id,
+        user_sid: current_user_sid().expect("current SID should resolve"),
+        executable_path: assert_cmd::cargo::cargo_bin("ah"),
+        working_directory: temp.path().to_path_buf(),
+        config_directory: temp.path().join("config"),
+        runtime_state_path: paths.runtime.clone(),
+        instance_lock_path: paths.instance_lock.clone(),
+        expected_version: env!("CARGO_PKG_VERSION").to_owned(),
+        endpoint: ServiceEndpoint::loopback(port).expect("endpoint should be valid"),
+        server: ServerDefinition {
+            limit: None,
+            max_active: 4,
+            default_timeout_ms: 5_000,
+        },
+    };
+    let definition_path = paths.definition(configuration_id);
+    store
+        .write_immutable_definition(&definition_path, &definition)
+        .expect("managed definition should be written");
+    (store, definition_path, definition)
 }
 
 #[cfg(windows)]

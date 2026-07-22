@@ -30,6 +30,15 @@ lifecycle.status
 drift[]
 ```
 
+Treat `runtime.status=restart_backoff` as an inference, not a native Task
+Scheduler countdown. Confirm `scheduler.last_result` is nonzero, retain the
+`runtime.diagnostic_code`, and verify that `drift[]` has no
+`settings.restart_count` or `settings.restart_interval` entry. The canonical
+policy allows three retries after the initial launch with Scheduler-owned
+`PT1M` spacing. Do not infer attempts remaining or a next-retry timestamp from
+`scheduler.state=queued`; Windows does not expose the queue reason through that
+state.
+
 Use `ah mcp service start --json` only after registration is `installed` and
 drift is empty. Success means readiness matched the durable service,
 configuration, version, PID, and instance UUID; Task Scheduler submission alone

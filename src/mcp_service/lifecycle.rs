@@ -13,7 +13,7 @@ use super::{
     command::{InstallOptions, ServiceCommand},
     lock::FileLease,
     model::{
-        CurrentPointer, DriftEntry, DriftKind, LifecycleOperation, LifecycleState,
+        CurrentPointer, DriftEntry, DriftKind, ExitKind, LifecycleOperation, LifecycleState,
         LifecycleStateKind, MutationOutput, RuntimePhase, RuntimeState, RuntimeStatus,
         SCHEMA_VERSION, ServerDefinition, ServiceDefinition, ServiceEndpoint, TASK_SPEC_VERSION,
         TaskMarker, UninstallOutput, now_timestamp,
@@ -27,7 +27,7 @@ use super::{
     readiness::{HttpReadinessProbe, RuntimeControl, ShutdownReceipt},
     scheduler::{
         DesiredTaskSpec, ExpectedTaskOwnership, ObservedTask, SchedulerAdapter, SchedulerInstance,
-        SchedulerStopTarget, TaskObservation, semantic_drift,
+        SchedulerStopTarget, TaskObservation, has_canonical_restart_policy, semantic_drift,
     },
     store::{Document, ServiceStore},
 };
@@ -1351,7 +1351,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 }
                 Some(_) => {}
             }
-            self.observe_runtime(&mut output, definition, observed.scheduler_state);
+            self.observe_runtime(&mut output, definition, &observed);
         }
         if !output.drift.iter().any(is_registration_drift) {
             output.registration.status = RegistrationStatus::Installed;
@@ -1369,7 +1369,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         &self,
         output: &mut StatusOutput,
         definition: &ServiceDefinition,
-        scheduler_state: SchedulerState,
+        observed: &ObservedTask,
     ) {
         let runtime = match self.store.read_runtime() {
             Document::Missing => None,
@@ -1395,13 +1395,13 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         output.runtime.status = reduce_runtime(
             runtime.as_ref(),
             &output.readiness,
-            scheduler_state,
+            SchedulerRuntimeEvidence::from_observed(observed),
             output.lifecycle.status,
             instance_occupied,
         );
         output.runtime.diagnostic_code = match output.runtime.status {
             RuntimeStatus::IdentityMismatch => Some("MCP_SERVICE_IDENTITY_MISMATCH".to_owned()),
-            RuntimeStatus::Failed => runtime
+            RuntimeStatus::Failed | RuntimeStatus::RestartBackoff => runtime
                 .as_ref()
                 .and_then(|runtime| runtime.last_exit.as_ref())
                 .and_then(|exit| exit.diagnostic_code.clone()),
@@ -1601,7 +1601,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         reduce_runtime(
             runtime.as_ref(),
             &readiness,
-            SchedulerState::Ready,
+            SchedulerRuntimeEvidence::unverified(SchedulerState::Ready),
             LifecycleStatus::Busy,
             self.instance_lease_is_occupied(),
         )
@@ -1798,10 +1798,35 @@ fn apply_scheduler_section(output: &mut StatusOutput, observed: &ObservedTask) {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SchedulerRuntimeEvidence {
+    state: SchedulerState,
+    last_result: Option<i32>,
+    canonical_restart_policy: bool,
+}
+
+impl SchedulerRuntimeEvidence {
+    fn from_observed(observed: &ObservedTask) -> Self {
+        Self {
+            state: observed.scheduler_state,
+            last_result: observed.last_result,
+            canonical_restart_policy: has_canonical_restart_policy(&observed.spec),
+        }
+    }
+
+    fn unverified(state: SchedulerState) -> Self {
+        Self {
+            state,
+            last_result: None,
+            canonical_restart_policy: false,
+        }
+    }
+}
+
 fn reduce_runtime(
     runtime: Option<&RuntimeState>,
     readiness: &ReadinessSection,
-    scheduler: SchedulerState,
+    scheduler: SchedulerRuntimeEvidence,
     lifecycle: LifecycleStatus,
     instance_occupied: bool,
 ) -> RuntimeStatus {
@@ -1814,19 +1839,28 @@ fn reduce_runtime(
     if readiness.status == ReadinessStatus::Ready {
         return RuntimeStatus::Ready;
     }
-    if instance_occupied || matches!(scheduler, SchedulerState::Running) {
+    if instance_occupied || scheduler.state == SchedulerState::Running {
         return if runtime.is_some_and(|runtime| runtime.phase == RuntimePhase::Starting) {
             RuntimeStatus::Starting
         } else {
             RuntimeStatus::RunningNotReady
         };
     }
-    if matches!(scheduler, SchedulerState::Queued)
-        && runtime.is_some_and(|runtime| {
-            matches!(runtime.phase, RuntimePhase::Failed | RuntimePhase::Stopped)
-        })
-    {
-        return RuntimeStatus::RestartBackoff;
+    if scheduler.state == SchedulerState::Queued {
+        if lifecycle == LifecycleStatus::Idle
+            && scheduler.canonical_restart_policy
+            && scheduler.last_result.is_some_and(|result| result != 0)
+            && runtime.is_some_and(|runtime| {
+                runtime.phase == RuntimePhase::Failed
+                    && runtime
+                        .last_exit
+                        .as_ref()
+                        .is_some_and(|exit| exit.kind != ExitKind::Clean && exit.exit_code != 0)
+            })
+        {
+            return RuntimeStatus::RestartBackoff;
+        }
+        return RuntimeStatus::Starting;
     }
     if runtime.is_some_and(|runtime| runtime.phase == RuntimePhase::Failed) {
         return RuntimeStatus::Failed;
@@ -1899,7 +1933,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{cli::GlobalOptions, mcp_service::readiness::ReadinessProbe, output::OutputMode};
+    use crate::{
+        cli::GlobalOptions,
+        mcp_service::{model::LastExit, readiness::ReadinessProbe},
+        output::OutputMode,
+    };
 
     struct FakeScheduler {
         observation: Mutex<TaskObservation>,
@@ -2186,6 +2224,146 @@ mod tests {
         }
     }
 
+    fn failed_runtime(exit_code: i32) -> RuntimeState {
+        let timestamp = now_timestamp();
+        RuntimeState {
+            schema_version: SCHEMA_VERSION,
+            service_id: Uuid::new_v4(),
+            configuration_id: Uuid::new_v4(),
+            phase: RuntimePhase::Failed,
+            pid: 41,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            instance_id: Uuid::new_v4(),
+            endpoint: "http://127.0.0.1:8787/mcp".to_owned(),
+            started_at: timestamp.clone(),
+            updated_at: timestamp,
+            last_exit: Some(LastExit {
+                kind: ExitKind::RuntimeFailure,
+                exit_code,
+                diagnostic_code: Some("MCP_SERVER_FAILED".to_owned()),
+            }),
+        }
+    }
+
+    fn scheduler_evidence(
+        state: SchedulerState,
+        last_result: Option<i32>,
+        canonical_restart_policy: bool,
+    ) -> SchedulerRuntimeEvidence {
+        SchedulerRuntimeEvidence {
+            state,
+            last_result,
+            canonical_restart_policy,
+        }
+    }
+
+    #[test]
+    fn runtime_reducer_requires_complete_restart_backoff_evidence() {
+        let readiness = not_ready_section();
+        let failed = failed_runtime(1);
+        let backoff = scheduler_evidence(SchedulerState::Queued, Some(1), true);
+
+        assert_eq!(
+            reduce_runtime(
+                Some(&failed),
+                &readiness,
+                backoff,
+                LifecycleStatus::Idle,
+                false,
+            ),
+            RuntimeStatus::RestartBackoff
+        );
+
+        for incomplete in [
+            scheduler_evidence(SchedulerState::Queued, None, true),
+            scheduler_evidence(SchedulerState::Queued, Some(0), true),
+            scheduler_evidence(SchedulerState::Queued, Some(1), false),
+        ] {
+            assert_eq!(
+                reduce_runtime(
+                    Some(&failed),
+                    &readiness,
+                    incomplete,
+                    LifecycleStatus::Idle,
+                    false,
+                ),
+                RuntimeStatus::Starting
+            );
+        }
+
+        let zero_exit = failed_runtime(0);
+        assert_eq!(
+            reduce_runtime(
+                Some(&zero_exit),
+                &readiness,
+                backoff,
+                LifecycleStatus::Idle,
+                false,
+            ),
+            RuntimeStatus::Starting
+        );
+        assert_eq!(
+            reduce_runtime(
+                Some(&failed),
+                &readiness,
+                backoff,
+                LifecycleStatus::Busy,
+                false,
+            ),
+            RuntimeStatus::Starting
+        );
+
+        let mut stopped = failed.clone();
+        stopped.phase = RuntimePhase::Stopped;
+        stopped.last_exit = Some(LastExit {
+            kind: ExitKind::Clean,
+            exit_code: 0,
+            diagnostic_code: None,
+        });
+        assert_eq!(
+            reduce_runtime(
+                Some(&stopped),
+                &readiness,
+                backoff,
+                LifecycleStatus::Idle,
+                false,
+            ),
+            RuntimeStatus::Starting
+        );
+    }
+
+    #[test]
+    fn runtime_reducer_preserves_live_evidence_precedence() {
+        let failed = failed_runtime(1);
+        let backoff = scheduler_evidence(SchedulerState::Queued, Some(1), true);
+        let ready = ready_section(failed.instance_id, failed.pid);
+
+        assert_eq!(
+            reduce_runtime(Some(&failed), &ready, backoff, LifecycleStatus::Idle, false,),
+            RuntimeStatus::Ready
+        );
+        assert_eq!(
+            reduce_runtime(
+                Some(&failed),
+                &not_ready_section(),
+                backoff,
+                LifecycleStatus::Idle,
+                true,
+            ),
+            RuntimeStatus::RunningNotReady
+        );
+        assert_eq!(
+            reduce_runtime(
+                Some(&failed),
+                &not_ready_section(),
+                scheduler_evidence(SchedulerState::Running, Some(1), true),
+                LifecycleStatus::Idle,
+                false,
+            ),
+            RuntimeStatus::RunningNotReady
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn no_start_install_is_idempotent_and_publishes_verified_pointer() {
@@ -2242,6 +2420,40 @@ mod tests {
         assert_eq!(
             status.registration.diagnostic_code.as_deref(),
             Some("MCP_SERVICE_TASK_CONFLICT")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn status_preserves_scheduler_and_runtime_evidence_during_inferred_backoff() {
+        let temp = TempDir::new().unwrap();
+        let paths = ServicePaths::from_base(temp.path().join("managed")).unwrap();
+        let service = LifecycleService::new(paths, FakeScheduler::missing(), not_ready());
+        service.install(&install_options(true)).unwrap();
+        let (_, definition) = installed_definition(&service);
+        let mut runtime = RuntimeState::starting(&definition, Uuid::new_v4());
+        runtime.phase = RuntimePhase::Failed;
+        runtime.last_exit = Some(LastExit {
+            kind: ExitKind::RuntimeFailure,
+            exit_code: 1,
+            diagnostic_code: Some("MCP_SERVER_FAILED".to_owned()),
+        });
+        service.store.write_runtime(&runtime).unwrap();
+        let mut observation = service.scheduler.observation.lock().unwrap();
+        let TaskObservation::Owned(observed) = &mut *observation else {
+            panic!("task should be owned")
+        };
+        observed.scheduler_state = SchedulerState::Queued;
+        observed.last_result = Some(1);
+        drop(observation);
+
+        let status = service.status();
+
+        assert_eq!(status.runtime.status, RuntimeStatus::RestartBackoff);
+        assert_eq!(status.scheduler.last_result, Some(1));
+        assert_eq!(
+            status.runtime.diagnostic_code.as_deref(),
+            Some("MCP_SERVER_FAILED")
         );
     }
 
