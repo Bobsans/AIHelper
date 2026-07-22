@@ -399,6 +399,21 @@ pub struct MutationOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UninstallOutput {
+    pub command: String,
+    pub schema_version: u32,
+    pub changed: bool,
+    pub action: String,
+    pub service_id: Option<Uuid>,
+    pub configuration_id: Option<Uuid>,
+    pub task_path: String,
+    pub endpoint: Option<String>,
+    pub registration: String,
+    pub runtime: RuntimeStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DriftKind {
     Missing,

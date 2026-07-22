@@ -43,6 +43,27 @@ fn managed_service_status_routes_before_configuration_and_plugin_startup() {
 
 #[cfg(windows)]
 #[test]
+fn managed_service_mutation_help_routes_before_ambient_startup() {
+    for command in ["stop", "restart", "uninstall"] {
+        let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+            .env("AH_CONFIG_DIR", "")
+            .args(["mcp", "service", command, "--help"])
+            .output()
+            .expect("managed service help should start");
+        assert!(
+            output.status.success(),
+            "{command} help should bypass ordinary startup: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Usage:"),
+            "{command} should render early help"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
 fn managed_serve_preflight_fails_before_ambient_configuration_load() {
     let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
         .env("AH_CONFIG_DIR", "")
@@ -148,6 +169,24 @@ fn managed_serve_persists_exact_identity_and_enforces_single_instance() {
             .map(|exit| (exit.exit_code, exit.diagnostic_code.as_deref())),
         Some((0, None))
     );
+
+    let mut restarted = spawn_managed_process(&definition_path);
+    let restarted_readiness = wait_for_json(&client, &definition.endpoint.readiness_url);
+    assert_ne!(
+        restarted_readiness["instance_id"], readiness["instance_id"],
+        "a restarted managed runner must receive a new instance identity"
+    );
+    let Document::Valid(restarted_runtime) = store.read_runtime() else {
+        let _ = restarted.kill();
+        panic!("restarted runtime state should be valid")
+    };
+    let response = client
+        .post(format!("http://127.0.0.1:{port}/control/shutdown"))
+        .json(&json!({"instance_id": restarted_runtime.instance_id}))
+        .send()
+        .expect("restarted managed shutdown should respond");
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    assert!(wait_for_child(&mut restarted, Duration::from_secs(8)).success());
 }
 
 #[cfg(windows)]

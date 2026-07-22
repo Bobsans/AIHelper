@@ -9,12 +9,12 @@ use windows::{
                 CoUninitialize,
             },
             TaskScheduler::{
-                IAction, IExecAction, ILogonTrigger, IRegisteredTask, ITaskDefinition, ITaskFolder,
-                ITaskService, ITrigger, TASK_ACTION_EXEC, TASK_CREATE_OR_UPDATE,
-                TASK_INSTANCES_IGNORE_NEW, TASK_INSTANCES_PARALLEL, TASK_INSTANCES_QUEUE,
-                TASK_INSTANCES_STOP_EXISTING, TASK_LOGON_INTERACTIVE_TOKEN, TASK_RUNLEVEL_LUA,
-                TASK_STATE_DISABLED, TASK_STATE_QUEUED, TASK_STATE_READY, TASK_STATE_RUNNING,
-                TASK_TRIGGER_LOGON, TaskScheduler,
+                IAction, IExecAction, ILogonTrigger, IRegisteredTask, IRunningTask,
+                ITaskDefinition, ITaskFolder, ITaskService, ITrigger, TASK_ACTION_EXEC,
+                TASK_CREATE_OR_UPDATE, TASK_INSTANCES_IGNORE_NEW, TASK_INSTANCES_PARALLEL,
+                TASK_INSTANCES_QUEUE, TASK_INSTANCES_STOP_EXISTING, TASK_LOGON_INTERACTIVE_TOKEN,
+                TASK_RUNLEVEL_LUA, TASK_STATE_DISABLED, TASK_STATE_QUEUED, TASK_STATE_READY,
+                TASK_STATE_RUNNING, TASK_TRIGGER_LOGON, TaskScheduler,
             },
             Variant::VARIANT,
         },
@@ -28,8 +28,9 @@ use super::{
     model::{TaskMarker, hresult_hex, validate_uuid_json_fields},
     output::SchedulerState,
     scheduler::{
-        DesiredTaskSpec, MultipleInstancesPolicy, ObservedTask, SchedulerAdapter,
-        SchedulerRunReceipt, TASK_SOURCE, TaskObservation,
+        DesiredTaskSpec, ExpectedTaskOwnership, MultipleInstancesPolicy, ObservedTask,
+        SchedulerAdapter, SchedulerDeleteReceipt, SchedulerInstance, SchedulerRunReceipt,
+        SchedulerStopReceipt, SchedulerStopTarget, TASK_SOURCE, TaskObservation, semantic_drift,
     },
 };
 
@@ -96,6 +97,190 @@ impl SchedulerAdapter for WindowsTaskScheduler {
             Ok(SchedulerRunReceipt { submitted: true })
         })
     }
+
+    fn instances(&self, expected: &DesiredTaskSpec) -> Result<Vec<SchedulerInstance>, AppError> {
+        with_root_folder("enumerate instances", |folder| {
+            let registered = get_task(folder, &expected.task_path, "get task for instances")?;
+            require_owned_registration(&registered, &ExpectedTaskOwnership::from(expected))?;
+            enumerate_instances(&registered)
+        })
+    }
+
+    fn stop_instance(
+        &self,
+        expected: &DesiredTaskSpec,
+        target: &SchedulerStopTarget,
+    ) -> Result<SchedulerStopReceipt, AppError> {
+        with_root_folder("stop instance", |folder| {
+            let registered = get_task(folder, &expected.task_path, "get task for stop")?;
+            require_safe_task(&registered, expected)?;
+            let running = enumerate_running_tasks(&registered)?;
+            let selected = select_stop_target(&running, target)?;
+            unsafe { selected.Stop() }
+                .map_err(|error| scheduler_error("stop task instance", error))?;
+            Ok(SchedulerStopReceipt { stopped: true })
+        })
+    }
+
+    fn delete_owned(
+        &self,
+        expected: &ExpectedTaskOwnership,
+    ) -> Result<SchedulerDeleteReceipt, AppError> {
+        with_root_folder("delete owned task", |folder| {
+            let name = expected.task_path.trim_start_matches('\\');
+            let registered = match unsafe { folder.GetTask(&BSTR::from(name)) } {
+                Ok(task) => task,
+                Err(error) if is_task_missing(error.code().0) => {
+                    return Ok(SchedulerDeleteReceipt { deleted: false });
+                }
+                Err(error) => return Err(scheduler_error("get task for delete", error)),
+            };
+            require_owned_registration(&registered, expected)?;
+            unsafe { folder.DeleteTask(&BSTR::from(name), 0) }
+                .map_err(|error| scheduler_error("delete owned task", error))?;
+            match unsafe { folder.GetTask(&BSTR::from(name)) } {
+                Err(error) if is_task_missing(error.code().0) => {
+                    Ok(SchedulerDeleteReceipt { deleted: true })
+                }
+                Ok(_) => Err(AppError::external(
+                    "MCP_SERVICE_UNINSTALL_INCOMPLETE",
+                    "deleted task is still present after Task Scheduler readback",
+                )),
+                Err(error) => Err(AppError::external(
+                    "MCP_SERVICE_UNINSTALL_INCOMPLETE",
+                    scheduler_error("confirm task deletion", error).detail_message(),
+                )),
+            }
+        })
+    }
+}
+
+fn get_task(
+    folder: &ITaskFolder,
+    task_path: &str,
+    operation: &str,
+) -> Result<IRegisteredTask, AppError> {
+    let name = task_path.trim_start_matches('\\');
+    unsafe { folder.GetTask(&BSTR::from(name)) }.map_err(|error| scheduler_error(operation, error))
+}
+
+fn require_owned_registration(
+    registered: &IRegisteredTask,
+    expected: &ExpectedTaskOwnership,
+) -> Result<ObservedTask, AppError> {
+    let observation = observe_registered(registered)?;
+    let TaskObservation::Owned(observed) = observation else {
+        return Err(AppError::external(
+            "MCP_SERVICE_TASK_CHANGED",
+            "Task Scheduler registration ownership changed before mutation",
+        ));
+    };
+    if observed.spec.task_path != expected.task_path
+        || observed.spec.source != expected.source
+        || observed.spec.uri != expected.uri
+        || observed.spec.marker != expected.marker
+    {
+        return Err(AppError::external(
+            "MCP_SERVICE_TASK_CHANGED",
+            "Task Scheduler ownership marker changed before mutation",
+        ));
+    }
+    Ok(observed)
+}
+
+fn require_safe_task(
+    registered: &IRegisteredTask,
+    expected: &DesiredTaskSpec,
+) -> Result<ObservedTask, AppError> {
+    let observed = require_owned_registration(registered, &ExpectedTaskOwnership::from(expected))?;
+    let drift = semantic_drift(expected, &observed.spec);
+    if !drift.is_empty() {
+        return Err(AppError::external(
+            "MCP_SERVICE_TASK_CHANGED",
+            format!(
+                "Task Scheduler safe execution properties changed before mutation ({} fields)",
+                drift.len()
+            ),
+        ));
+    }
+    Ok(observed)
+}
+
+fn enumerate_instances(registered: &IRegisteredTask) -> Result<Vec<SchedulerInstance>, AppError> {
+    Ok(enumerate_running_tasks(registered)?
+        .into_iter()
+        .map(|(_, instance)| instance)
+        .collect())
+}
+
+fn enumerate_running_tasks(
+    registered: &IRegisteredTask,
+) -> Result<Vec<(IRunningTask, SchedulerInstance)>, AppError> {
+    let collection = unsafe { registered.GetInstances(0) }
+        .map_err(|error| scheduler_error("enumerate task instances", error))?;
+    let count = unsafe { collection.Count() }
+        .map_err(|error| scheduler_error("read task instance count", error))?;
+    let mut instances = Vec::with_capacity(count.max(0) as usize);
+    for index in 1..=count {
+        let key = VARIANT::from(index);
+        let running = unsafe { collection.get_Item(&key) }
+            .map_err(|error| scheduler_error("read task instance", error))?;
+        let instance_id = unsafe { running.InstanceGuid() }
+            .map_err(|error| scheduler_error("read task instance ID", error))?
+            .to_string();
+        let instance_id = parse_scheduler_instance_id(&instance_id)?;
+        let state = unsafe { running.State() }
+            .map_err(|error| scheduler_error("read task instance state", error))?;
+        let engine_pid = unsafe { running.EnginePID() }.ok().filter(|pid| *pid != 0);
+        instances.push((
+            running,
+            SchedulerInstance {
+                instance_id,
+                state: scheduler_state(state),
+                engine_pid,
+            },
+        ));
+    }
+    Ok(instances)
+}
+
+fn parse_scheduler_instance_id(value: &str) -> Result<uuid::Uuid, AppError> {
+    uuid::Uuid::parse_str(value.trim_matches(&['{', '}'][..])).map_err(|error| {
+        AppError::external(
+            "MCP_SERVICE_SCHEDULER_FAILED",
+            format!("Task Scheduler returned an invalid instance ID: {error}"),
+        )
+    })
+}
+
+fn select_stop_target(
+    instances: &[(IRunningTask, SchedulerInstance)],
+    target: &SchedulerStopTarget,
+) -> Result<IRunningTask, AppError> {
+    let selected = instances.iter().find(|(_, instance)| match target {
+        SchedulerStopTarget::Running {
+            instance_id,
+            expected_pid,
+        } => {
+            instance.instance_id == *instance_id
+                && instance.state == SchedulerState::Running
+                && instance.engine_pid == Some(*expected_pid)
+        }
+        SchedulerStopTarget::Queued { instance_id } => {
+            instance.instance_id == *instance_id
+                && instance.state == SchedulerState::Queued
+                && instance.engine_pid.is_none()
+                && !instances.iter().any(|(_, candidate)| {
+                    candidate.state == SchedulerState::Running || candidate.engine_pid.is_some()
+                })
+        }
+    });
+    selected.map(|(running, _)| running.clone()).ok_or_else(|| {
+        AppError::external(
+            "MCP_SERVICE_TASK_CHANGED",
+            "Task Scheduler instance identity changed before stop",
+        )
+    })
 }
 
 fn with_root_folder<T>(
@@ -470,20 +655,24 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
         };
         Ok(TaskObservation::Owned(ObservedTask {
             spec,
-            scheduler_state: if state == TASK_STATE_DISABLED {
-                SchedulerState::Disabled
-            } else if state == TASK_STATE_QUEUED {
-                SchedulerState::Queued
-            } else if state == TASK_STATE_READY {
-                SchedulerState::Ready
-            } else if state == TASK_STATE_RUNNING {
-                SchedulerState::Running
-            } else {
-                SchedulerState::Unknown
-            },
+            scheduler_state: scheduler_state(state),
             last_result,
             last_run_at: None,
         }))
+    }
+}
+
+fn scheduler_state(state: windows::Win32::System::TaskScheduler::TASK_STATE) -> SchedulerState {
+    if state == TASK_STATE_DISABLED {
+        SchedulerState::Disabled
+    } else if state == TASK_STATE_QUEUED {
+        SchedulerState::Queued
+    } else if state == TASK_STATE_READY {
+        SchedulerState::Ready
+    } else if state == TASK_STATE_RUNNING {
+        SchedulerState::Running
+    } else {
+        SchedulerState::Unknown
     }
 }
 
@@ -531,6 +720,17 @@ mod tests {
         assert!(is_task_missing(0x8007_0002u32 as i32));
         assert!(is_task_missing(0x8004_130Fu32 as i32));
         assert!(!is_task_missing(0x8007_0005u32 as i32));
+    }
+
+    #[test]
+    fn scheduler_instance_guids_and_states_are_normalized_deterministically() {
+        let expected = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert_eq!(
+            parse_scheduler_instance_id("{550E8400-E29B-41D4-A716-446655440000}").unwrap(),
+            expected
+        );
+        assert_eq!(scheduler_state(TASK_STATE_QUEUED), SchedulerState::Queued);
+        assert_eq!(scheduler_state(TASK_STATE_RUNNING), SchedulerState::Running);
     }
 
     #[test]

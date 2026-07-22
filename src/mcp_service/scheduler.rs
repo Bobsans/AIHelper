@@ -124,10 +124,67 @@ pub struct SchedulerRunReceipt {
     pub submitted: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedTaskOwnership {
+    pub task_path: String,
+    pub source: String,
+    pub uri: String,
+    pub marker: TaskMarker,
+}
+
+impl From<&DesiredTaskSpec> for ExpectedTaskOwnership {
+    fn from(value: &DesiredTaskSpec) -> Self {
+        Self {
+            task_path: value.task_path.clone(),
+            source: value.source.clone(),
+            uri: value.uri.clone(),
+            marker: value.marker.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerInstance {
+    pub instance_id: uuid::Uuid,
+    pub state: SchedulerState,
+    pub engine_pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchedulerStopTarget {
+    Running {
+        instance_id: uuid::Uuid,
+        expected_pid: u32,
+    },
+    Queued {
+        instance_id: uuid::Uuid,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerStopReceipt {
+    pub stopped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulerDeleteReceipt {
+    pub deleted: bool,
+}
+
 pub trait SchedulerAdapter {
     fn inspect(&self, task_path: &str) -> Result<TaskObservation, AppError>;
     fn register(&self, desired: &DesiredTaskSpec) -> Result<ObservedTask, AppError>;
     fn run(&self, task_path: &str) -> Result<SchedulerRunReceipt, AppError>;
+    fn instances(&self, expected: &DesiredTaskSpec) -> Result<Vec<SchedulerInstance>, AppError>;
+    fn stop_instance(
+        &self,
+        expected: &DesiredTaskSpec,
+        target: &SchedulerStopTarget,
+    ) -> Result<SchedulerStopReceipt, AppError>;
+    fn delete_owned(
+        &self,
+        expected: &ExpectedTaskOwnership,
+    ) -> Result<SchedulerDeleteReceipt, AppError>;
 }
 
 pub fn semantic_drift(desired: &DesiredTaskSpec, observed: &DesiredTaskSpec) -> Vec<DriftEntry> {

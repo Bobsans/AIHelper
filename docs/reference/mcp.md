@@ -159,6 +159,52 @@ configuration identity all match durable state. An already ready exact instance
 returns idempotent success. A different server answering on the port is never
 adopted or stopped.
 
+Stop the registered service safely:
+
+```text
+ah mcp service stop
+ah mcp service stop --json
+```
+
+`stop` first proves the exact durable PID and process instance UUID through
+readiness, then submits identity-aware control shutdown. It allows five seconds
+for graceful completion within one 15-second total deadline. If the exact
+process remains, AIHelper may stop only a revalidated owned Task Scheduler
+instance whose Scheduler UUID and engine PID match durable state. A queued
+process-free retry can be cancelled only by its exact Scheduler UUID while the
+instance lease is held free. Foreign endpoints, drifted execution properties,
+PID mismatches, and ambiguous instances are never stopped. Successful actions
+are `already_stopped`, `stopped`, and `forced_stopped`.
+
+Restart under one lifecycle operation:
+
+```text
+ah mcp service restart
+```
+
+`restart` retains the stop proof while it revalidates the owned registration,
+releases that proof immediately before Task Scheduler submission, and waits for
+exact readiness from a new process UUID. It returns `restarted` for a previously
+active service and `started` for a stopped service. A failure after stop leaves
+the registration installed and retryable; it does not attempt to resurrect the
+old process.
+
+Uninstall the managed registration and semantic lifecycle metadata:
+
+```text
+ah mcp service uninstall
+ah mcp service uninstall --json
+```
+
+`uninstall` is idempotent. It stops the exact managed instance, conditionally
+deletes only the registration whose source, URI, and ownership marker still
+match, then removes `runtime.json`, verified same-service definitions,
+`current.json`, and `lifecycle.json`. A missing task permits exact orphan control
+shutdown but never Scheduler fallback. The command preserves `ah.exe`, plugin
+DLLs, configuration, logs, unexpected or external files, and the permanent
+`lifecycle.lock` and `instance.lock` anchors. Successful actions are
+`uninstalled` and `already_uninstalled`.
+
 Inspect every layer without repairing or starting the service:
 
 ```text
@@ -171,6 +217,14 @@ JSON status schema version 1 always includes `registration`, `scheduler`,
 are emitted as explicit `null`. Not-installed, stopped, drifted, and scheduler
 error snapshots are valid status results with exit code `0`; automation should
 inspect the structured state and `diagnostic_code` fields.
+
+Install, start, stop, and restart use the same deterministic mutation schema
+version 1. It always contains `command`, `schema_version`, `changed`, `action`,
+`service_id`, `configuration_id`, `task_path`, `endpoint`, `registration`, and
+`runtime`. Uninstall uses a separate schema with the same field order and emits
+explicit `null` for unavailable last-known service ID, configuration ID, or
+endpoint. `--quiet` suppresses successful text and JSON output; diagnostics are
+still reported through the normal error channel.
 
 The per-user task is stored at the Task Scheduler root as
 `AIHelper Managed MCP - <CURRENT_USER_SID>`. AIHelper uses the typed Task
@@ -210,10 +264,14 @@ Important managed-service diagnostics include:
 - `MCP_SERVICE_IDENTITY_MISMATCH`
 - `MCP_SERVICE_SCHEDULER_FAILED`
 - `MCP_SERVICE_RESTART_REQUIRED`
+- `MCP_SERVICE_STOP_UNSAFE`
+- `MCP_SERVICE_STOP_TIMEOUT`
+- `MCP_SERVICE_TASK_CHANGED`
+- `MCP_SERVICE_RESTART_FAILED`
+- `MCP_SERVICE_UNINSTALL_INCOMPLETE`
 
 Managed lifecycle commands are currently Windows-only. Manual stdio and HTTP
-serve remain available on every supported platform. Managed `stop`, `restart`,
-and `uninstall` commands are planned but are not part of this command slice.
+serve remain available on every supported platform.
 
 ## Tool names
 

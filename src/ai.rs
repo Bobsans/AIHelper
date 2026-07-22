@@ -240,12 +240,43 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
             }],
         },
         HostCommandDoc {
+            name: "mcp.service.stop".to_owned(),
+            summary: "Stop only the exact managed instance, with a bounded Task Scheduler fallback."
+                .to_owned(),
+            usage: "mcp service stop [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Stop the installed managed service safely".to_owned(),
+                command: "ah mcp service stop --json".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "mcp.service.restart".to_owned(),
+            summary: "Stop and start the managed service under one lifecycle operation, requiring a new instance identity."
+                .to_owned(),
+            usage: "mcp service restart [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Restart and wait for a new exact instance".to_owned(),
+                command: "ah mcp service restart --json".to_owned(),
+            }],
+        },
+        HostCommandDoc {
             name: "mcp.service.status".to_owned(),
             summary: "Read registration, scheduler, runtime, readiness, lifecycle, and drift state without mutation.".to_owned(),
             usage: "mcp service status [--json]".to_owned(),
             examples: vec![HostCommandExample {
                 description: "Inspect the complete managed lifecycle snapshot".to_owned(),
                 command: "ah mcp service status --json".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "mcp.service.uninstall".to_owned(),
+            summary: "Stop and remove the owned managed registration and verified lifecycle metadata."
+                .to_owned(),
+            usage: "mcp service uninstall [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Uninstall without deleting binaries, plugins, configuration, or logs"
+                    .to_owned(),
+                command: "ah mcp service uninstall --json".to_owned(),
             }],
         },
         HostCommandDoc {

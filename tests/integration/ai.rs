@@ -32,5 +32,8 @@ fn ai_info_includes_managed_mcp_service_commands() {
         .success()
         .stdout(contains("\"name\": \"mcp.service.install\""))
         .stdout(contains("\"name\": \"mcp.service.start\""))
-        .stdout(contains("\"name\": \"mcp.service.status\""));
+        .stdout(contains("\"name\": \"mcp.service.stop\""))
+        .stdout(contains("\"name\": \"mcp.service.restart\""))
+        .stdout(contains("\"name\": \"mcp.service.status\""))
+        .stdout(contains("\"name\": \"mcp.service.uninstall\""));
 }

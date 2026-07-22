@@ -18,7 +18,10 @@ pub enum EarlyRoute {
 pub enum ServiceCommand {
     Install(InstallOptions),
     Start { options: GlobalOptions },
+    Stop { options: GlobalOptions },
+    Restart { options: GlobalOptions },
     Status { options: GlobalOptions },
+    Uninstall { options: GlobalOptions },
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +112,12 @@ pub fn route(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
                 },
             ))),
             Some(("start", _)) => Ok(EarlyRoute::Service(ServiceCommand::Start { options })),
+            Some(("stop", _)) => Ok(EarlyRoute::Service(ServiceCommand::Stop { options })),
+            Some(("restart", _)) => Ok(EarlyRoute::Service(ServiceCommand::Restart { options })),
             Some(("status", _)) => Ok(EarlyRoute::Service(ServiceCommand::Status { options })),
+            Some(("uninstall", _)) => {
+                Ok(EarlyRoute::Service(ServiceCommand::Uninstall { options }))
+            }
             _ => Err(AppError::invalid_argument(
                 "missing or unsupported mcp service subcommand",
             )),
@@ -215,7 +223,10 @@ fn service_command() -> Command {
                 ),
         )
         .subcommand(Command::new("start").about("Start the managed MCP service"))
+        .subcommand(Command::new("stop").about("Stop the managed MCP service"))
+        .subcommand(Command::new("restart").about("Restart the managed MCP service"))
         .subcommand(Command::new("status").about("Inspect managed MCP service state"))
+        .subcommand(Command::new("uninstall").about("Uninstall the managed MCP service"))
 }
 
 fn command_tokens(raw_args: &[OsString]) -> Result<Option<(String, Option<String>)>, AppError> {
@@ -316,5 +327,64 @@ mod tests {
             route(&args(&["ah", "file", "read", "mcp", "service"])).unwrap(),
             EarlyRoute::NotManaged
         ));
+    }
+
+    #[test]
+    fn routes_every_lifecycle_mutation_early() {
+        for (name, expected) in [
+            ("start", "start"),
+            ("stop", "stop"),
+            ("restart", "restart"),
+            ("status", "status"),
+            ("uninstall", "uninstall"),
+        ] {
+            let route = route(&args(&["ah", "mcp", "service", name])).unwrap();
+            let actual = match route {
+                EarlyRoute::Service(ServiceCommand::Start { .. }) => "start",
+                EarlyRoute::Service(ServiceCommand::Stop { .. }) => "stop",
+                EarlyRoute::Service(ServiceCommand::Restart { .. }) => "restart",
+                EarlyRoute::Service(ServiceCommand::Status { .. }) => "status",
+                EarlyRoute::Service(ServiceCommand::Uninstall { .. }) => "uninstall",
+                _ => "other",
+            };
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn lifecycle_mutations_accept_existing_global_options_only() {
+        for name in ["stop", "restart", "uninstall"] {
+            let parsed = route(&args(&[
+                "ah", "--cwd", ".", "mcp", "service", name, "--json", "--quiet", "--limit", "7",
+            ]))
+            .unwrap();
+            let options = match parsed {
+                EarlyRoute::Service(ServiceCommand::Stop { options })
+                | EarlyRoute::Service(ServiceCommand::Restart { options })
+                | EarlyRoute::Service(ServiceCommand::Uninstall { options }) => options,
+                _ => panic!("expected lifecycle mutation route"),
+            };
+            assert_eq!(options.output, OutputMode::Json);
+            assert!(options.quiet);
+            assert_eq!(options.limit, Some(7));
+
+            let error = route(&args(&["ah", "mcp", "service", name, "--force"])).unwrap_err();
+            assert_eq!(error.code(), "INVALID_ARGUMENT");
+        }
+    }
+
+    #[test]
+    fn service_help_lists_the_complete_public_lifecycle() {
+        let help = build_service_help_command().render_long_help().to_string();
+        for command in ["install", "start", "stop", "restart", "status", "uninstall"] {
+            assert!(
+                help.contains(command),
+                "missing {command} from service help"
+            );
+        }
+        assert_eq!(
+            route(&args(&["ah", "mcp", "service"])).unwrap_err().code(),
+            "INVALID_ARGUMENT"
+        );
     }
 }

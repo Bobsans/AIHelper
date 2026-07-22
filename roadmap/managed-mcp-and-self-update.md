@@ -602,9 +602,6 @@ managed MCP уже был остановлен, восстанавливаетс
 
 ### Этап 2: управляемый жизненный цикл HTTP MCP
 
-- [ ] Реализовать `ah mcp service stop`.
-- [ ] Реализовать `ah mcp service restart`.
-- [ ] Реализовать `ah mcp service uninstall`.
 - [ ] Настроить ограниченный restart-on-failure и restart backoff.
 - [ ] Добавить unit, integration и Windows VM tests для lifecycle-команд.
 

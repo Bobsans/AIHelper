@@ -33,7 +33,45 @@ drift[]
 Use `ah mcp service start --json` only after registration is `installed` and
 drift is empty. Success means readiness matched the durable service,
 configuration, version, PID, and instance UUID; Task Scheduler submission alone
-is not considered success. Do not delete or rewrite files below
+is not considered success.
+
+To stop an installed service, call status first and then use:
+
+```text
+ah mcp service stop --json
+```
+
+Treat `already_stopped`, `stopped`, and `forced_stopped` as successful terminal
+actions. AIHelper sends control shutdown only to the exact readiness identity;
+its fallback can target only a revalidated owned Scheduler instance with an
+exact Scheduler UUID and durable PID, or one exact process-free queued retry.
+`MCP_SERVICE_STOP_UNSAFE` means the identity proof was insufficient and no
+unknown process was stopped. `MCP_SERVICE_STOP_TIMEOUT` means a mutation was
+attempted but complete quiescence was not proven.
+
+Restart only an installed, drift-free registration:
+
+```text
+ah mcp service restart --json
+```
+
+Success requires a new process instance UUID. If restart fails after stop, leave
+the registration in place, inspect `status --json`, and retry `start` or
+`restart` according to the observed state; do not try to recover the old PID.
+
+When removal is intended, use the supported idempotent cleanup:
+
+```text
+ah mcp service uninstall --json
+```
+
+Uninstall conditionally deletes only the owned task and verified semantic state.
+It preserves the executable, plugins, configuration, logs, unexpected files,
+and lock anchors. A foreign task or unproven occupied orphan blocks cleanup. An
+`already_uninstalled` result can have `null` service, configuration, and endpoint
+identities.
+
+Do not delete or rewrite files below
 `%LOCALAPPDATA%\AIHelper\managed-mcp` to recover from an error. Preserve the
 stable diagnostic and let a later lifecycle command perform supported
 reconciliation.

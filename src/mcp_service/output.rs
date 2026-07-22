@@ -3,7 +3,9 @@ use uuid::Uuid;
 
 use crate::{error::AppError, output::OutputMode};
 
-use super::model::{DriftEntry, LifecycleOperation, MutationOutput, RuntimeStatus, SCHEMA_VERSION};
+use super::model::{
+    DriftEntry, LifecycleOperation, MutationOutput, RuntimeStatus, SCHEMA_VERSION, UninstallOutput,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -207,6 +209,46 @@ pub fn emit_mutation(
     Ok(())
 }
 
+pub fn emit_uninstall(
+    value: &UninstallOutput,
+    mode: OutputMode,
+    quiet: bool,
+) -> Result<(), AppError> {
+    if quiet {
+        return Ok(());
+    }
+    match mode {
+        OutputMode::Json => println!("{}", serde_json::to_string_pretty(value)?),
+        OutputMode::Text => {
+            println!("command={}", value.command);
+            println!("schema_version={}", value.schema_version);
+            println!("changed={}", value.changed);
+            println!("action={}", value.action);
+            println!(
+                "service_id={}",
+                value
+                    .service_id
+                    .map(|value| value.to_string())
+                    .as_deref()
+                    .unwrap_or("null")
+            );
+            println!(
+                "configuration_id={}",
+                value
+                    .configuration_id
+                    .map(|value| value.to_string())
+                    .as_deref()
+                    .unwrap_or("null")
+            );
+            println!("task_path={}", value.task_path);
+            println!("endpoint={}", value.endpoint.as_deref().unwrap_or("null"));
+            println!("registration={}", value.registration);
+            println!("runtime={}", enum_json(&value.runtime)?);
+        }
+    }
+    Ok(())
+}
+
 pub fn emit_status(value: &StatusOutput, mode: OutputMode, quiet: bool) -> Result<(), AppError> {
     if quiet {
         return Ok(());
@@ -281,5 +323,26 @@ mod tests {
         assert_eq!(value.drift[0].field, "a");
         assert_eq!(value.drift[0].kind, super::super::model::DriftKind::Missing);
         assert_eq!(value.drift[2].field, "z");
+    }
+
+    #[test]
+    fn already_uninstalled_schema_keeps_nullable_identity_fields() {
+        let value = serde_json::to_value(UninstallOutput {
+            command: "mcp.service.uninstall".to_owned(),
+            schema_version: SCHEMA_VERSION,
+            changed: false,
+            action: "already_uninstalled".to_owned(),
+            service_id: None,
+            configuration_id: None,
+            task_path: r"\task".to_owned(),
+            endpoint: None,
+            registration: "not_installed".to_owned(),
+            runtime: RuntimeStatus::Stopped,
+        })
+        .unwrap();
+        assert_eq!(value.as_object().unwrap().len(), 10);
+        assert!(value["service_id"].is_null());
+        assert!(value["configuration_id"].is_null());
+        assert!(value["endpoint"].is_null());
     }
 }

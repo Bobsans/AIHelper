@@ -25,9 +25,20 @@ pub trait ReadinessProbe {
     ) -> ReadinessSection;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShutdownReceipt {
+    Accepted,
+    Failed { detail: String },
+}
+
+pub trait RuntimeControl: ReadinessProbe {
+    fn shutdown(&self, definition: &ServiceDefinition, instance_id: Uuid) -> ShutdownReceipt;
+}
+
 #[derive(Debug, Clone)]
 pub struct HttpReadinessProbe {
     client: reqwest::blocking::Client,
+    control_client: reqwest::blocking::Client,
 }
 
 impl HttpReadinessProbe {
@@ -37,7 +48,39 @@ impl HttpReadinessProbe {
                 .connect_timeout(Duration::from_millis(250))
                 .timeout(Duration::from_millis(500))
                 .build()?,
+            control_client: reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_millis(500))
+                .timeout(Duration::from_secs(2))
+                .build()?,
         })
+    }
+}
+
+impl RuntimeControl for HttpReadinessProbe {
+    fn shutdown(&self, definition: &ServiceDefinition, instance_id: Uuid) -> ShutdownReceipt {
+        let url = format!(
+            "http://127.0.0.1:{}/control/shutdown",
+            definition.endpoint.port
+        );
+        match self
+            .control_client
+            .post(url)
+            .json(&serde_json::json!({"instance_id": instance_id}))
+            .send()
+        {
+            Ok(response) if response.status() == reqwest::StatusCode::ACCEPTED => {
+                ShutdownReceipt::Accepted
+            }
+            Ok(response) => ShutdownReceipt::Failed {
+                detail: format!(
+                    "controlled MCP shutdown returned HTTP {}",
+                    response.status().as_u16()
+                ),
+            },
+            Err(error) => ShutdownReceipt::Failed {
+                detail: format!("failed to request controlled MCP shutdown: {error}"),
+            },
+        }
     }
 }
 

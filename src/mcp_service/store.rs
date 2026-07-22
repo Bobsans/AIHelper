@@ -147,6 +147,22 @@ impl ServiceStore {
         atomic_write_json(&self.paths.lifecycle, value)
     }
 
+    pub fn remove_current(&self) -> Result<bool, AppError> {
+        remove_known_file(&self.paths.current)
+    }
+
+    pub fn remove_runtime(&self) -> Result<bool, AppError> {
+        remove_known_file(&self.paths.runtime)
+    }
+
+    pub fn remove_lifecycle(&self) -> Result<bool, AppError> {
+        remove_known_file(&self.paths.lifecycle)
+    }
+
+    pub fn remove_definition(&self, path: &Path) -> Result<bool, AppError> {
+        remove_known_file(path)
+    }
+
     pub fn definition_files(&self) -> Result<Vec<PathBuf>, AppError> {
         let entries = match fs::read_dir(&self.paths.definitions_dir) {
             Ok(entries) => entries,
@@ -168,6 +184,31 @@ impl ServiceStore {
             .collect::<Vec<_>>();
         files.sort();
         Ok(files)
+    }
+}
+
+fn remove_known_file(path: &Path) -> Result<bool, AppError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            Err(AppError::external(
+                "MCP_SERVICE_UNINSTALL_INCOMPLETE",
+                format!(
+                    "managed MCP metadata path '{}' is a directory",
+                    path.display()
+                ),
+            ))
+        }
+        Ok(metadata) => {
+            let result = if metadata.file_type().is_symlink() && metadata.is_dir() {
+                fs::remove_dir(path)
+            } else {
+                fs::remove_file(path)
+            };
+            result.map_err(|source| AppError::file_write(path.to_path_buf(), source))?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(AppError::file_write(path.to_path_buf(), source)),
     }
 }
 
@@ -300,5 +341,25 @@ mod tests {
             store.read_current(),
             Document::UnsupportedVersion(2)
         ));
+    }
+
+    #[test]
+    fn fixed_file_removal_is_idempotent_and_never_recurses_into_directories() {
+        let temp = TempDir::new().unwrap();
+        let missing = temp.path().join("missing.json");
+        assert!(!remove_known_file(&missing).unwrap());
+
+        let file = temp.path().join("runtime.json");
+        fs::write(&file, b"state").unwrap();
+        assert!(remove_known_file(&file).unwrap());
+        assert!(!remove_known_file(&file).unwrap());
+
+        let directory = temp.path().join("current.json");
+        fs::create_dir(&directory).unwrap();
+        let child = directory.join("keep.txt");
+        fs::write(&child, b"keep").unwrap();
+        let error = remove_known_file(&directory).unwrap_err();
+        assert_eq!(error.code(), "MCP_SERVICE_UNINSTALL_INCOMPLETE");
+        assert!(child.exists());
     }
 }
