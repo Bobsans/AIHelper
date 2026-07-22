@@ -669,7 +669,7 @@ Manual acceptance:
 - [ ] (external activation) Создать production Ed25519 release key, сохранить
       seed только в protected GitHub environment и встроить public key в
       AIHelper.
-- [ ] Реализовать поиск последнего подходящего stable GitHub Release по SemVer.
+- [x] Реализовать поиск последнего подходящего stable GitHub Release по SemVer.
 - [ ] Реализовать mutation-free `ah upgrade --check` с проверкой signed manifest.
 - [ ] (external activation) Проверить pipeline и updater на реальном подписанном
       GitHub Release.
