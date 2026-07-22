@@ -74,6 +74,40 @@ The core accepts scheduler, readiness, clock, and identity providers where
 deterministic tests require them. Filesystem behavior uses explicit injected
 paths rather than a broad virtual filesystem abstraction.
 
+## Early command routing
+
+All managed lifecycle paths must be classified before normal runtime startup.
+The raw-argv pre-router recognizes these built-in forms without consulting the
+plugin catalog:
+
+```text
+ah mcp service install ...
+ah mcp service start ...
+ah mcp service status ...
+ah mcp serve --transport http --managed-config <PATH>
+```
+
+It understands global options, including `--cwd`, `--json`, `--quiet`, and
+`--limit`, without treating their values as command tokens. The pre-router
+either returns `NotManaged` or a fully parsed managed command; malformed
+managed syntax is an early CLI error and must not fall through to plugin
+discovery.
+
+For `install`, `start`, and `status`, early execution may load `ConfigContext`,
+the event logger, managed service state, and Windows APIs. It must not construct
+the plugin manager, enumerate plugin directories, or load dynamic plugin DLLs.
+
+For managed serve, preflight validates the immutable definition, applies its
+explicit working and configuration directories, and acquires the instance
+lease. Normal startup and plugin discovery begin only after that succeeds.
+The event logger is created from the managed definition's resolved config
+context, not from the caller's ambient environment.
+
+Manual `mcp serve`, AI information, plugin commands, and dynamic domains keep
+the existing startup and discovery flow. The early router therefore preserves
+the current plugin-driven CLI while satisfying the requirement that lifecycle
+and recovery run before dynamic DLL loading.
+
 ## Windows bindings
 
 Keep `windows-sys` for existing low-level Win32 calls. Add the Windows-only
@@ -123,6 +157,19 @@ Task ownership requires all of the following markers:
   `urn:aihelper:managed-mcp:v1:<SERVICE_ID>`;
 - task data contains a compact versioned marker with owner, kind, service ID,
   configuration ID, and definition path.
+
+The task data schema is exact:
+
+```json
+{
+  "schema_version": 1,
+  "owner": "AIHelper",
+  "kind": "managed_mcp",
+  "service_id": "lowercase hyphenated UUID",
+  "configuration_id": "lowercase hyphenated UUID",
+  "definition_path": "absolute Windows path"
+}
+```
 
 If a task at the expected path lacks valid ownership markers, install returns
 `MCP_SERVICE_TASK_CONFLICT` and does not overwrite it. Status reports the task
@@ -188,6 +235,26 @@ All persisted Windows paths must be absolute and valid Unicode. A path that
 cannot be represented losslessly in the JSON and COM contracts is rejected with
 `MCP_SERVICE_PATH_INVALID` rather than being stored through a lossy conversion.
 
+Executable, working-directory, config-directory, definition, and task-action
+paths use one Windows identity policy:
+
+1. Resolve relative input against the already applied command working
+   directory.
+2. Require an absolute path and canonicalize existing path components.
+3. Normalize separator and trailing-separator differences.
+4. Compare normalized UTF-16 paths with ordinal case-insensitive Windows
+   comparison.
+
+Do not expand environment variables in persisted or observed task paths. The
+same comparison helper is used for idempotency, installation conflict checks,
+task drift, and readiness configuration identity. Path display in text and JSON
+retains the normalized absolute spelling selected during install.
+
+All UUIDs in on-disk and command JSON are lowercase hyphenated strings. All
+timestamps are UTC RFC 3339 strings with millisecond precision, for example
+`2026-07-22T12:34:56.789Z`. PIDs are unsigned 32-bit integers. HRESULT values
+are signed 32-bit integers plus uppercase eight-digit hexadecimal strings.
+
 ## Durable service definitions
 
 Do not make a single mutable service file the Task action source. Use immutable
@@ -234,6 +301,13 @@ A definition schema version 1 contains:
 }
 ```
 
+Every field shown in `current.json`, the task marker, and the definition is
+required. `server.limit` is the only nullable definition field and is either
+`null` or a positive platform `usize` representable by the running binary.
+Ports are unsigned 16-bit integers greater than zero. Counts and timeouts are
+positive integers. Schema readers reject unknown schema versions before
+interpreting later fields.
+
 The service ID identifies one per-user managed registration. Idempotent install
 from the same executable path reuses it. Semantic configuration equality also
 reuses the configuration ID and definition. A supported semantic change creates
@@ -244,16 +318,53 @@ silently adopted. Install returns `MCP_SERVICE_INSTALLATION_CONFLICT`. A later
 explicit uninstall and install may replace that registration. This keeps
 service identity separate from the future updater installation identity.
 
-Unknown schema versions and corrupt current or definition files return
-`MCP_SERVICE_STATE_INVALID`. They are not overwritten through best-effort
-recovery.
+For mutating commands, an unknown schema version or malformed owned definition
+returns `MCP_SERVICE_STATE_INVALID`. Such a file is not overwritten through
+best-effort recovery. Read-only status instead returns a diagnostic snapshot:
+the affected section uses `MCP_SERVICE_STATE_INVALID`, and drift identifies the
+invalid component.
 
-Install writes a new definition before task registration. After registration
-and semantic readback succeed, it atomically writes `current.json`. A crash may
-leave an unreferenced definition, but never a partially written definition.
-Retry can recover the registered definition from the owned task marker and
-action before rebuilding the current pointer. Cleanup retains the current
-definition and any definition referenced by a running instance.
+Immutable definitions are created with `create_new`, fully written, flushed,
+closed, reopened, and deserialized before task registration. If the chosen UUID
+path already exists, identical verified content is reusable; different or
+invalid content returns `MCP_SERVICE_STATE_INVALID`. Immutable definitions are
+never replaced in place. `current.json`, lifecycle metadata, and runtime state
+continue to use atomic replacement.
+
+Install writes and verifies a new definition before task registration. After
+registration and semantic readback succeed, it atomically publishes
+`current.json`. The registered owned task is the activation authority; the
+current pointer is an index that can be rebuilt only from a valid owned marker
+and valid immutable definition with the same service ID. Automatic rebuilding
+is limited to a missing or well-formed stale pointer; malformed or newer-schema
+pointers are never overwritten.
+
+### Crash reconciliation matrix
+
+Let `A` be the pointer's configuration and `B` the configuration referenced by
+the registered task.
+
+| Task observation | Current pointer | Definition | Status result | Mutating recovery |
+| --- | --- | --- | --- | --- |
+| absent | absent | none | `not_installed` | create a new service |
+| absent | valid `A` | valid `A` | `not_installed`, drift `task.missing` | reuse the service ID only when executable identity matches, then register desired config |
+| owned `A` | valid `A` | valid `A` | normal installed snapshot | normal reconciliation |
+| owned `B` | missing | valid `B` | `configuration_drift`, `current.missing` | rebuild pointer to `B` |
+| owned `B` | valid `A` with same service | valid `B` | `configuration_drift`, `current.configuration_id` | task wins; rebuild pointer to `B` |
+| owned `B` | valid `B` | missing or invalid `B` | `configuration_drift`, state-invalid diagnostic | fail without overwrite |
+| owned `B` | malformed pointer | valid `B` | `configuration_drift`, `current.invalid` | fail without overwriting an unreadable or newer pointer |
+| owned task | pointer has another service ID | any | `configuration_drift`, identity diagnostic | fail with task or installation conflict |
+| foreign task | any | any | `configuration_drift`, ownership drift | fail with `MCP_SERVICE_TASK_CONFLICT` |
+
+If task `B` starts before pointer publication, runtime `B` is reported as the
+active managed instance because the valid owned task and definition are the
+activation authority. Status still reports pointer drift. Retry rebuilds the
+pointer without stopping `B`.
+
+Cleanup retains the task-referenced definition, the current-pointer definition,
+and any definition referenced by durable runtime state. Other verified
+AIHelper-owned definitions may be removed only while the lifecycle lease is
+held.
 
 ## Per-user leases
 
@@ -278,16 +389,27 @@ diagnostic metadata when another operation owns the lease.
 `lifecycle.json` schema version 1 stores the last operation and, while the lease
 is held, its active state:
 
-```text
-operation_id
-operation: install | start | stop | restart | uninstall | upgrade | rollback
-pid
-service_id
-started_at
-state: active | completed | failed
-diagnostic_code
-finished_at
+```json
+{
+  "schema_version": 1,
+  "operation_id": "lowercase hyphenated UUID",
+  "operation": "install",
+  "pid": 1234,
+  "service_id": null,
+  "started_at": "2026-07-22T12:34:56.789Z",
+  "state": "active",
+  "diagnostic_code": null,
+  "finished_at": null
+}
 ```
+
+`operation` is one of `install`, `start`, `stop`, `restart`, `uninstall`,
+`upgrade`, or `rollback`. `state` is `active`, `completed`, or `failed`.
+`service_id` is nullable because first install may not have allocated it when
+metadata is first written. Active records require null `diagnostic_code` and
+`finished_at`. Completed records require a non-null `finished_at` and null
+diagnostic. Failed records require both a stable diagnostic code and finish
+time. No other field is nullable.
 
 The JSON is informative only. An active marker without an occupied lease is
 stale history, not proof of a running operation.
@@ -305,23 +427,39 @@ its working and configuration directories, then acquires the instance lease.
 Only after those steps may normal plugin discovery begin.
 
 The runner creates a new process instance ID for each start and writes
-`runtime.json` atomically. Runtime schema version 1 contains:
+`runtime.json` atomically. Runtime schema version 1 is exact:
 
-```text
-schema_version
-service_id
-configuration_id
-phase: starting | ready | stopping | stopped | failed
-pid
-version
-instance_id
-endpoint
-started_at
-updated_at
-last_exit_kind
-last_exit_code
-diagnostic_code
+```json
+{
+  "schema_version": 1,
+  "service_id": "lowercase hyphenated UUID",
+  "configuration_id": "lowercase hyphenated UUID",
+  "phase": "starting",
+  "pid": 1234,
+  "version": "1.1.0",
+  "instance_id": "lowercase hyphenated UUID",
+  "endpoint": "http://127.0.0.1:8787/mcp",
+  "started_at": "2026-07-22T12:34:56.789Z",
+  "updated_at": "2026-07-22T12:34:56.789Z",
+  "last_exit": null
+}
 ```
+
+`phase` is `starting`, `ready`, `stopping`, `stopped`, or `failed`. Every field
+except `last_exit` is required and non-null. `last_exit` is null for active
+phases. It is required for `stopped` and `failed` and has this schema:
+
+```json
+{
+  "kind": "clean",
+  "exit_code": 0,
+  "diagnostic_code": null
+}
+```
+
+`kind` is `clean`, `startup_failure`, or `runtime_failure`. `exit_code` is a
+signed 32-bit process exit code. `diagnostic_code` is null only for `clean` and
+is a stable non-null code for both failure kinds.
 
 Extend the HTTP serve path with a compatible managed entry point that accepts a
 preselected instance ID and a listener-bound notification. Existing public
@@ -433,7 +571,8 @@ JSON schema version 1 always contains these sections:
     "service_id": "uuid",
     "configuration_id": "uuid",
     "task_path": "task path",
-    "definition_path": "absolute path"
+    "definition_path": "absolute path",
+    "diagnostic_code": null
   },
   "scheduler": {
     "state": "running",
@@ -441,19 +580,27 @@ JSON schema version 1 always contains these sections:
     "last_result_hex": "0x00000000",
     "last_run_at": null,
     "diagnostic_code": null,
-    "hresult": null
+    "hresult": null,
+    "hresult_hex": null
   },
   "runtime": {
     "status": "ready",
+    "service_id": "uuid",
+    "configuration_id": "uuid",
     "version": "1.1.0",
     "instance_id": "uuid",
     "pid": 1234,
     "endpoint": "http://127.0.0.1:8787/mcp",
     "started_at": "timestamp",
+    "updated_at": "timestamp",
     "diagnostic_code": null
   },
   "readiness": {
     "status": "ready",
+    "http_status": 200,
+    "version": "1.1.0",
+    "instance_id": "uuid",
+    "pid": 1234,
     "diagnostic_code": null
   },
   "lifecycle": {
@@ -464,31 +611,132 @@ JSON schema version 1 always contains these sections:
 }
 ```
 
-Registration status is one of:
+All top-level fields and all section fields shown above are always serialized.
+Nullable fields are encoded as explicit JSON `null`, never omitted.
 
-- `not_installed`;
-- `installed`;
-- `configuration_drift`;
-- `scheduler_error`.
+### Registration section
 
-Runtime status is one of:
+| Field | Type | Nullability |
+| --- | --- | --- |
+| `status` | `not_installed \| installed \| configuration_drift \| scheduler_error` | never |
+| `service_id` | lowercase hyphenated UUID string | nullable |
+| `configuration_id` | lowercase hyphenated UUID string | nullable |
+| `task_path` | expected absolute scheduler path string | never |
+| `definition_path` | normalized absolute Windows path string | nullable |
+| `diagnostic_code` | stable diagnostic string | nullable |
 
-- `stopped`;
-- `starting`;
-- `running_not_ready`;
-- `ready`;
-- `stopping`;
-- `restart_backoff`;
-- `failed`;
-- `identity_mismatch`.
+For `not_installed`, valid orphaned `current.json` values are reported;
+otherwise both IDs and the definition path are null. Orphaned values do not
+change the registration status. `installed` requires non-null IDs and
+definition path and a null diagnostic. Drift and scheduler error require a
+non-null diagnostic.
 
-The runtime reducer combines registration, scheduler, lifecycle lease, runtime
-record, instance lease, and readiness observations. PID is considered reliable
-only when runtime and readiness identity match.
+### Scheduler section
 
-Drift entries have stable field names and are sorted by field. Expected and
-actual values are emitted only for non-secret properties. Status does not emit
-credentials or environment contents.
+| Field | Type | Nullability |
+| --- | --- | --- |
+| `state` | `not_installed \| unknown \| disabled \| queued \| ready \| running \| error` | never |
+| `last_result` | signed 32-bit integer | nullable |
+| `last_result_hex` | uppercase `0xXXXXXXXX` string | nullable with `last_result` |
+| `last_run_at` | UTC RFC 3339 millisecond timestamp | nullable |
+| `diagnostic_code` | stable diagnostic string | nullable |
+| `hresult` | signed 32-bit integer | nullable |
+| `hresult_hex` | uppercase `0xXXXXXXXX` string | nullable with `hresult` |
+
+`not_installed` has null result, run time, diagnostic, and HRESULT fields.
+`error` requires a diagnostic and, when COM supplied one, both HRESULT forms.
+
+### Runtime section
+
+| Field | Type | Nullability |
+| --- | --- | --- |
+| `status` | runtime status enum | never |
+| `service_id` | lowercase hyphenated UUID string | nullable |
+| `configuration_id` | lowercase hyphenated UUID string | nullable |
+| `version` | semantic version string as reported by the binary | nullable |
+| `instance_id` | lowercase hyphenated UUID string | nullable |
+| `pid` | unsigned 32-bit integer | nullable |
+| `endpoint` | absolute loopback URL string | nullable |
+| `started_at` | UTC RFC 3339 millisecond timestamp | nullable |
+| `updated_at` | UTC RFC 3339 millisecond timestamp | nullable |
+| `diagnostic_code` | stable diagnostic string | nullable |
+
+Runtime status is one of `stopped`, `starting`, `running_not_ready`, `ready`,
+`stopping`, `restart_backoff`, `failed`, or `identity_mismatch`. PID, version,
+and instance ID are considered reliable only when runtime and readiness
+identity match; otherwise they remain nullable or describe only the stale
+runtime record and the status carries a diagnostic.
+
+### Readiness section
+
+| Field | Type | Nullability |
+| --- | --- | --- |
+| `status` | `not_checked \| not_ready \| ready \| identity_mismatch \| error` | never |
+| `http_status` | unsigned 16-bit HTTP status | nullable |
+| `version` | response version string | nullable |
+| `instance_id` | lowercase hyphenated UUID string | nullable |
+| `pid` | unsigned 32-bit integer | nullable |
+| `diagnostic_code` | stable diagnostic string | nullable |
+
+`not_checked` is used only when there is no safe endpoint to probe. A transport
+failure is `not_ready`; malformed JSON or an invalid response is `error`; a
+well-formed response that does not match durable identity is
+`identity_mismatch`.
+
+### Lifecycle section
+
+`status` is `idle` or `busy`. `operation` is null for `idle`. For `busy`, it is
+either null when metadata is unreadable, or this exact object:
+
+```json
+{
+  "operation_id": "uuid",
+  "operation": "start",
+  "pid": 1234,
+  "service_id": "uuid or null",
+  "started_at": "2026-07-22T12:34:56.789Z"
+}
+```
+
+### Drift entries
+
+Each entry has this exact schema:
+
+```json
+{
+  "field": "action.arguments",
+  "kind": "mismatch",
+  "expected": "canonical non-secret value or null",
+  "actual": "canonical non-secret value or null",
+  "diagnostic_code": "MCP_SERVICE_CONFIGURATION_DRIFT"
+}
+```
+
+`kind` is `missing`, `unexpected`, `mismatch`, or `invalid`. Entries are sorted
+by `field`, then `kind`. Expected and actual are nullable strings so all
+property types use one deterministic representation. Secret values are null.
+Status never emits credentials or environment contents.
+
+### Runtime reduction
+
+The reducer applies this precedence:
+
+1. A responding server with mismatched durable identity is
+   `identity_mismatch`.
+2. A stop-like active lifecycle operation or runtime `stopping` phase is
+   `stopping`.
+3. Exact readiness is `ready`.
+4. An occupied instance lease or running scheduler task is `starting` when the
+   matching runtime phase is starting, otherwise `running_not_ready`.
+5. Scheduler `queued` after a nonzero last result, with failed or stale runtime
+   and zero restart-setting drift, is `restart_backoff`.
+6. A handled failed runtime with no running or queued scheduler task is
+   `failed`.
+7. All remaining non-running observations are `stopped`.
+
+Corrupt current, definition, runtime, or lifecycle JSON is converted into the
+relevant section diagnostic and drift entry. It does not make read-only status
+fail or repair the file.
 
 `not_installed`, stopped, drifted, and scheduler-error snapshots are valid
 status results with exit code zero. Automation inspects structured state. Only
@@ -497,23 +745,35 @@ failure to parse the command or serialize a snapshot is a command error.
 ## Mutation output
 
 Successful install and start output use typed deterministic structures rather
-than generic messages. They include:
+than generic messages. The exact JSON schema is:
 
-```text
-command
-changed
-action
-service_id
-configuration_id
-task_path
-endpoint
-registration
-runtime
+```json
+{
+  "command": "mcp.service.install",
+  "schema_version": 1,
+  "changed": true,
+  "action": "installed",
+  "service_id": "lowercase hyphenated UUID",
+  "configuration_id": "lowercase hyphenated UUID",
+  "task_path": "absolute scheduler path",
+  "endpoint": "http://127.0.0.1:8787/mcp",
+  "registration": "installed",
+  "runtime": "ready"
+}
 ```
 
-Install actions are `installed`, `updated`, or `unchanged`. Start actions are
-`started`, `waited`, or `already_ready`. Text output renders the same fields in
-a fixed order. `--quiet` suppresses successful output but never errors.
+Every field is required and non-null. `command` is `mcp.service.install` or
+`mcp.service.start`. Install actions are `installed`, `updated`, or
+`unchanged`. Start actions are `started`, `waited`, or `already_ready`.
+`registration` is `installed` for every successful mutation. `runtime` uses the
+runtime status enum; successful start always reports `ready`, while install
+with `--no-start` reports the observed state.
+
+`changed` is true when the command writes a definition or pointer, changes the
+task, sends a control shutdown, or calls `RunEx`. Waiting for another command or
+observing an already ready instance leaves it false. Text output renders the
+same fields in the schema order. `--quiet` suppresses successful output but
+never errors.
 
 ## Stable diagnostics
 
@@ -546,6 +806,8 @@ remain cross-platform and unchanged.
 
 Add unit coverage for:
 
+- early classification of every managed command before plugin discovery;
+- global-option values that resemble commands and malformed managed syntax;
 - schema version dispatch and rejection;
 - semantic definition equality;
 - canonical task-spec construction;
@@ -598,13 +860,16 @@ completed Stage 2 roadmap items:
 Реализовать ah mcp service start.
 Реализовать ah mcp service status.
 Добавить single-instance enforcement.
-Настроить ограниченный restart-on-failure и restart backoff.
 Обнаруживать Task Scheduler configuration drift.
 Сохранять полезную scheduler и lifecycle-диагностику.
 ```
 
-Keep stop, restart, uninstall, and the combined lifecycle/Windows VM test item.
-Keep target-client compatibility unchanged for later manual verification.
+Keep stop, restart, uninstall, bounded restart/backoff, and the combined
+lifecycle/Windows VM test item. The task definition and drift logic include the
+restart settings in this block, but the roadmap item remains until a real
+Scheduler crash test proves nonzero exit, bounded retries, delay, and final
+cessation. Keep target-client compatibility unchanged for later manual
+verification.
 
 ## Validation
 
@@ -627,11 +892,12 @@ Windows, and confirm unrelated user changes remain unstaged and unmodified.
   foreign task.
 - Default install and start succeed only after exact HTTP readiness.
 - `--no-start` never stops an existing process.
-- Managed startup uses explicit immutable configuration before plugin
-  discovery.
+- All lifecycle commands run before dynamic plugin discovery; managed startup
+  uses explicit immutable configuration before discovery.
 - Lifecycle and instance leases recover automatically after process death.
 - Exactly one managed HTTP MCP process can run for the user.
-- The task has bounded restart settings and no execution-time limit.
+- The registered task reads back with bounded restart settings and no
+  execution-time limit; operational crash/backoff verification remains open.
 - Status separately reports registration, scheduler, runtime, readiness,
   lifecycle operation, and sorted drift.
 - Text and JSON contracts are deterministic and contain stable diagnostics.
