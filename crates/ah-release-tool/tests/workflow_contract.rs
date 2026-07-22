@@ -28,6 +28,22 @@ fn signing_is_protected_and_publication_has_no_private_key() {
     let sign_text = serialized(sign);
     assert!(sign_text.contains("secrets.AIHELPER_RELEASE_ED25519_SEED_B64URL"));
     assert!(sign_text.contains("vars.AIHELPER_RELEASE_ED25519_PUBLIC_KEY_B64URL"));
+    let signing_step = sign["steps"]
+        .as_sequence()
+        .expect("sign job must define steps")
+        .iter()
+        .find(|step| step["name"].as_str() == Some("Generate and sign release assets"))
+        .expect("sign job must generate signed release assets");
+    assert_eq!(
+        signing_step["env"]["AIHELPER_MINIMUM_UPDATER_VERSION"].as_str(),
+        Some("1.1.0")
+    );
+    assert!(
+        signing_step["run"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--minimum-updater-version")
+    );
     assert!(!serialized(publish).contains("AIHELPER_RELEASE_ED25519"));
     assert_eq!(publish["permissions"]["contents"].as_str(), Some("write"));
 }

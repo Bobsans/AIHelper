@@ -167,12 +167,14 @@ jobs:
         env:
           AIHELPER_RELEASE_ED25519_SEED_B64URL: ${{ secrets.AIHELPER_RELEASE_ED25519_SEED_B64URL }}
           AIHELPER_RELEASE_ED25519_PUBLIC_KEY_B64URL: ${{ vars.AIHELPER_RELEASE_ED25519_PUBLIC_KEY_B64URL }}
+          AIHELPER_MINIMUM_UPDATER_VERSION: "1.1.0"
         run: |
           ./target/release/ah-release-tool sign-release \
             --assets-dir release-archives \
             --output-dir signed-release-assets \
             --repository "${{ github.repository }}" \
-            --tag "${{ github.event.release.tag_name }}"
+            --tag "${{ github.event.release.tag_name }}" \
+            --minimum-updater-version "${{ env.AIHELPER_MINIMUM_UPDATER_VERSION }}"
 
       - name: Upload verified signed asset set
         uses: actions/upload-artifact@v7

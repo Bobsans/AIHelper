@@ -29,6 +29,8 @@ enum Command {
         repository: String,
         #[arg(long)]
         tag: String,
+        #[arg(long)]
+        minimum_updater_version: String,
     },
 }
 
@@ -60,6 +62,7 @@ fn run(cli: Cli) -> Result<(), ah_release_tool::ReleaseToolError> {
             output_dir,
             repository,
             tag,
+            minimum_updater_version,
         } => {
             let seed = Zeroizing::new(
                 std::env::var("AIHELPER_RELEASE_ED25519_SEED_B64URL").map_err(|_| {
@@ -81,6 +84,7 @@ fn run(cli: Cli) -> Result<(), ah_release_tool::ReleaseToolError> {
                     output_dir,
                     repository,
                     tag,
+                    minimum_updater_version,
                 },
                 &signing,
             )?;

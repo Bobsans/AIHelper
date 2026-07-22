@@ -22,13 +22,18 @@ pub struct ReleaseRequest {
     pub output_dir: PathBuf,
     pub repository: String,
     pub tag: String,
+    pub minimum_updater_version: String,
 }
 
 pub fn sign_release_set(
     request: &ReleaseRequest,
     signing: &SigningMaterial,
 ) -> Result<Vec<PathBuf>, ReleaseToolError> {
-    let version = validate_release_metadata(&request.repository, &request.tag)?;
+    let (version, minimum_updater_version) = validate_release_metadata(
+        &request.repository,
+        &request.tag,
+        &request.minimum_updater_version,
+    )?;
     if request.output_dir.exists() {
         return Err(ReleaseToolError::metadata(format!(
             "output path '{}' already exists",
@@ -63,6 +68,7 @@ pub fn sign_release_set(
             &request.repository,
             &request.tag,
             &version,
+            &minimum_updater_version,
             signing.key_id(),
         );
         let manifest_bytes = manifest
@@ -97,6 +103,7 @@ pub fn sign_release_set(
         &request.repository,
         &request.tag,
         &version,
+        &minimum_updater_version,
         signing,
     )?;
     let output_paths = expected_output_paths(&request.output_dir);
@@ -115,6 +122,7 @@ fn build_manifest(
     repository: &str,
     tag: &str,
     version: &Version,
+    minimum_updater_version: &Version,
     key_id: &str,
 ) -> ReleaseManifest {
     let files = inventory
@@ -152,7 +160,7 @@ fn build_manifest(
             size: inventory.archive_size,
             sha256: inventory.archive_sha256.clone(),
         },
-        minimum_updater_version: version.to_string(),
+        minimum_updater_version: minimum_updater_version.to_string(),
         signing: SigningMetadata {
             key_id: key_id.to_owned(),
             algorithm: SignatureAlgorithm::Ed25519,
@@ -171,6 +179,7 @@ fn verify_staged_set(
     repository: &str,
     tag: &str,
     version: &Version,
+    minimum_updater_version: &Version,
     signing: &SigningMaterial,
 ) -> Result<(), ReleaseToolError> {
     let registry = signing.trusted_registry()?;
@@ -182,7 +191,14 @@ fn verify_staged_set(
                 "archive changed while the release set was prepared",
             ));
         }
-        let expected = build_manifest(&current, repository, tag, version, signing.key_id());
+        let expected = build_manifest(
+            &current,
+            repository,
+            tag,
+            version,
+            minimum_updater_version,
+            signing.key_id(),
+        );
         let manifest_path = staging.join(manifest_name(prior.profile.asset_name));
         let signature_path = staging.join(signature_name(prior.profile.asset_name));
         let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
@@ -222,7 +238,11 @@ fn verify_staged_set(
     Ok(())
 }
 
-fn validate_release_metadata(repository: &str, tag: &str) -> Result<Version, ReleaseToolError> {
+fn validate_release_metadata(
+    repository: &str,
+    tag: &str,
+    minimum_updater_version: &str,
+) -> Result<(Version, Version), ReleaseToolError> {
     let mut repository_parts = repository.split('/');
     let owner = repository_parts.next().unwrap_or_default();
     let name = repository_parts.next().unwrap_or_default();
@@ -252,7 +272,20 @@ fn validate_release_metadata(repository: &str, tag: &str) -> Result<Version, Rel
             env!("CARGO_PKG_VERSION")
         )));
     }
-    Ok(version)
+    let parsed_minimum_updater_version = Version::parse(minimum_updater_version).map_err(|_| {
+        ReleaseToolError::metadata("minimum updater version must contain canonical SemVer")
+    })?;
+    if parsed_minimum_updater_version.to_string() != minimum_updater_version {
+        return Err(ReleaseToolError::metadata(
+            "minimum updater version must contain canonical SemVer",
+        ));
+    }
+    if parsed_minimum_updater_version > version {
+        return Err(ReleaseToolError::metadata(
+            "minimum updater version must not be newer than the release version",
+        ));
+    }
+    Ok((version, parsed_minimum_updater_version))
 }
 
 fn repository_character(character: char) -> bool {

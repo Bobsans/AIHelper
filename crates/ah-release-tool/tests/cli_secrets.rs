@@ -15,6 +15,8 @@ fn missing_or_malformed_secrets_are_not_echoed() {
             "example/aihelper",
             "--tag",
             "v1.1.0",
+            "--minimum-updater-version",
+            "1.0.0",
         ])
         .env("AIHELPER_RELEASE_ED25519_SEED_B64URL", secret)
         .env("AIHELPER_RELEASE_ED25519_PUBLIC_KEY_B64URL", secret)

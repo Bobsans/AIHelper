@@ -661,7 +661,7 @@ Manual acceptance:
 - [x] Добавить key ID и формат подписи с каноническим представлением manifest.
 - [x] Реализовать release pipeline, публикующий archive, manifest и подпись.
 - [x] Добавить автоматические тесты manifest и подписи.
-- [ ] Сделать `minimum_updater_version` явным compatibility floor вместо
+- [x] Сделать `minimum_updater_version` явным compatibility floor вместо
       автоматического приравнивания к release version.
 - [ ] (external activation) Создать production Ed25519 release key, сохранить
       seed только в protected GitHub environment и встроить public key в

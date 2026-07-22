@@ -112,9 +112,11 @@ missing, duplicate, case-colliding, linked, encrypted, or unsafe entries fail
 the operation.
 
 The tool hashes the complete ZIP bytes for `archive.sha256` and streams every
-file entry for its managed-file size and digest. `minimum_updater_version` is
-set to the release version, which is conservative until a later policy decision
-allows an older updater to consume newer bundles.
+file entry for its managed-file size and digest. `minimum_updater_version` is an
+explicit canonical SemVer compatibility floor and cannot be newer than the
+release version. The signing workflow currently pins it to `1.1.0`; future
+releases retain the oldest compatible updater version unless a protocol change
+requires raising the floor.
 
 ### Signing material contract
 

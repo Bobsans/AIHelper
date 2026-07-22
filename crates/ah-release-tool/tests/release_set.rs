@@ -29,6 +29,7 @@ fn creates_and_verifies_exact_nine_file_release_set() {
             output_dir: output.clone(),
             repository: "example/aihelper".to_owned(),
             tag: "v1.1.0".to_owned(),
+            minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
     )
@@ -52,7 +53,7 @@ fn creates_and_verifies_exact_nine_file_release_set() {
         let verified = verify_manifest(&manifest, &signature, &registry).unwrap();
         assert_eq!(verified.manifest().release.target, profile.target);
         assert_eq!(verified.manifest().release.version, "1.1.0");
-        assert_eq!(verified.manifest().minimum_updater_version, "1.1.0");
+        assert_eq!(verified.manifest().minimum_updater_version, "1.0.0");
         assert_eq!(
             verified.manifest().archive.url,
             format!(
@@ -79,6 +80,7 @@ fn leaves_no_output_on_metadata_or_archive_failure() {
             output_dir: output.clone(),
             repository: "unsafe/repository/extra".to_owned(),
             tag: "v1.1.0".to_owned(),
+            minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
     )
@@ -94,6 +96,7 @@ fn leaves_no_output_on_metadata_or_archive_failure() {
             output_dir: output.clone(),
             repository: "example/aihelper".to_owned(),
             tag: "v1.1.0".to_owned(),
+            minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
     )
@@ -120,12 +123,42 @@ fn rejects_noncanonical_or_mismatched_release_versions() {
                 output_dir: output.clone(),
                 repository: "example/aihelper".to_owned(),
                 tag: tag.to_owned(),
+                minimum_updater_version: "1.0.0".to_owned(),
             },
             &signing,
         )
         .unwrap_err();
         assert!(!output.exists());
         assert!(error.to_string().contains("release tag"));
+    }
+}
+
+#[test]
+fn rejects_invalid_or_newer_minimum_updater_versions() {
+    let input = TempDir::new().unwrap();
+    for profile in RELEASE_PROFILES {
+        write_profile_archive(input.path(), *profile);
+    }
+    let output_parent = TempDir::new().unwrap();
+    let signing = signing_material([11_u8; 32]);
+
+    for minimum_updater_version in ["not-semver", "1.01.0", "1.2.0"] {
+        let output = output_parent
+            .path()
+            .join(minimum_updater_version.replace('.', "-"));
+        let error = sign_release_set(
+            &ReleaseRequest {
+                assets_dir: input.path().to_path_buf(),
+                output_dir: output.clone(),
+                repository: "example/aihelper".to_owned(),
+                tag: "v1.1.0".to_owned(),
+                minimum_updater_version: minimum_updater_version.to_owned(),
+            },
+            &signing,
+        )
+        .unwrap_err();
+        assert!(!output.exists());
+        assert!(error.to_string().contains("minimum updater version"));
     }
 }
 
