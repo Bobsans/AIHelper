@@ -602,7 +602,8 @@ managed MCP уже был остановлен, восстанавливаетс
 
 ### Этап 2: управляемый жизненный цикл HTTP MCP
 
-- [ ] Добавить unit, integration и Windows VM tests для lifecycle-команд.
+- [ ] Выполнить Windows VM/manual end-to-end lifecycle matrix через реальный
+      `ah.exe` и persistent per-user Task Scheduler task.
 
 Критерии завершения:
 
