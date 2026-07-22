@@ -49,6 +49,13 @@ pub(crate) fn run() -> Result<(), AppError> {
         );
         return Err(error);
     }
+    match crate::updater::command::route(&raw_args)? {
+        crate::updater::command::EarlyUpgradeRoute::NotUpgrade => {}
+        crate::updater::command::EarlyUpgradeRoute::ExitSuccess => return Ok(()),
+        crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => {
+            return crate::updater::execute(request, options);
+        }
+    }
     let managed_runner = match crate::mcp_service::command::route(&raw_args)? {
         EarlyRoute::NotManaged => None,
         EarlyRoute::ExitSuccess => return Ok(()),
@@ -169,7 +176,7 @@ fn startup(
             );
         })?;
     let mut manager = PluginManager::new();
-    manager.reserve_dynamic_domains(["ai", "plugins", "mcp"]);
+    manager.reserve_dynamic_domains(["ai", "plugins", "mcp", "upgrade"]);
     for plugin in plugins::builtins() {
         manager.register_builtin(plugin);
     }
@@ -296,6 +303,7 @@ fn command_log_name(command: &RuntimeCommand, manager: &PluginManager) -> String
         RuntimeCommand::PluginsDisable { .. } => "plugins.disable".to_owned(),
         RuntimeCommand::PluginsReset { .. } => "plugins.reset".to_owned(),
         RuntimeCommand::AiInfo { .. } => "ai.info".to_owned(),
+        RuntimeCommand::Upgrade { .. } => "upgrade.check".to_owned(),
         RuntimeCommand::Invoke { domain, argv, .. } => {
             resolve_invocation_command(manager, domain, argv)
         }
@@ -382,6 +390,7 @@ fn execution(
         RuntimeCommand::AiInfo { domain, options } => {
             ai::execute_info(&manager, domain.as_deref(), options)
         }
+        RuntimeCommand::Upgrade { request, options } => crate::updater::execute(request, options),
         RuntimeCommand::Invoke {
             domain,
             argv,

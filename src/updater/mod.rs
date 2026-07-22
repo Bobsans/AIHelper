@@ -1,3 +1,6 @@
-// The production adapter is routed by the upgrade command in the next slice.
-#[allow(dead_code)]
+pub(crate) mod check;
+pub(crate) mod command;
 pub(crate) mod github;
+mod trust;
+
+pub(crate) use check::execute;

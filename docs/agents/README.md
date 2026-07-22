@@ -11,6 +11,7 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 - [Prepare and publish a release](recipes/release.md)
 - [Write changelog entries and GitHub release notes](recipes/release-notes.md)
 - [Use AIHelper as an MCP stdio server](recipes/mcp-stdio.md)
+- [Check for a trusted AIHelper update](recipes/upgrade-check.md)
 - [Read file with line numbers](recipes/file-read.md)
 - [Inspect directory tree](recipes/file-tree.md)
 - [Search text in files](recipes/search-text.md)

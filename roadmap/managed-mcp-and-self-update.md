@@ -670,7 +670,7 @@ Manual acceptance:
       seed только в protected GitHub environment и встроить public key в
       AIHelper.
 - [x] Реализовать поиск последнего подходящего stable GitHub Release по SemVer.
-- [ ] Реализовать mutation-free `ah upgrade --check` с проверкой signed manifest.
+- [x] Реализовать mutation-free `ah upgrade --check` с проверкой signed manifest.
 - [ ] (external activation) Проверить pipeline и updater на реальном подписанном
       GitHub Release.
 

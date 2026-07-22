@@ -2,11 +2,14 @@ use std::io::Read;
 use std::time::Duration;
 
 use ah_updater_core::{
-    DiscoveredReleaseV1, GitHubReleaseDtoV1, UpdaterError, UpdaterErrorCode, WINDOWS_X64_TARGET,
-    select_highest_stable_release,
+    DiscoveredReleaseV1, GitHubReleaseDtoV1, ReleaseAssetV1, UpdaterError, UpdaterErrorCode,
+    WINDOWS_X64_TARGET, select_highest_stable_release,
 };
 use reqwest::blocking::{Client, Response};
-use reqwest::header::{ACCEPT, CONTENT_LENGTH, USER_AGENT};
+use reqwest::header::{ACCEPT, CONTENT_LENGTH, LOCATION, USER_AGENT};
+use reqwest::{StatusCode, Url};
+
+use super::check::ReleaseCheckSource;
 
 const GITHUB_RELEASES_API_ROOT: &str = "https://api.github.com/repos/Bobsans/AIHelper";
 const GITHUB_API_VERSION: &str = "2022-11-28";
@@ -15,6 +18,7 @@ const DEFAULT_PAGE_SIZE: usize = 100;
 const DEFAULT_MAX_PAGES: usize = 5;
 const DEFAULT_MAX_RELEASES: usize = 500;
 const DEFAULT_MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_ASSET_REDIRECTS: usize = 3;
 
 #[derive(Debug, Clone, Copy)]
 struct DiscoveryLimits {
@@ -71,6 +75,48 @@ impl GitHubReleaseClient {
         select_highest_stable_release(&releases, WINDOWS_X64_TARGET)
     }
 
+    pub(crate) fn download_asset(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError> {
+        let mut url = Url::parse(&asset.api_url)
+            .map_err(|_| network("GitHub release asset URL is invalid"))?;
+        for redirect_count in 0..=MAX_ASSET_REDIRECTS {
+            let response = self
+                .client
+                .get(url.clone())
+                .header(ACCEPT, "application/octet-stream")
+                .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+                .header(
+                    USER_AGENT,
+                    format!("AIHelper/{} updater", env!("CARGO_PKG_VERSION")),
+                )
+                .send()
+                .map_err(map_request_error)?;
+            if is_redirect(response.status()) {
+                if redirect_count == MAX_ASSET_REDIRECTS {
+                    return Err(network("GitHub release asset exceeded redirect bounds"));
+                }
+                let location = response
+                    .headers()
+                    .get(LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| network("GitHub release asset redirect is missing Location"))?;
+                let next = url
+                    .join(location)
+                    .map_err(|_| network("GitHub release asset redirect URL is invalid"))?;
+                validate_asset_redirect(&next)?;
+                url = next;
+                continue;
+            }
+            let bytes = read_bounded_response(response, asset.size)?;
+            if bytes.len() as u64 != asset.size {
+                return Err(network(
+                    "GitHub release asset size differs from its declaration",
+                ));
+            }
+            return Ok(bytes);
+        }
+        Err(network("GitHub release asset exceeded redirect bounds"))
+    }
+
     fn list_releases(&self) -> Result<Vec<GitHubReleaseDtoV1>, UpdaterError> {
         let mut releases = Vec::new();
         for page_number in 1..=self.limits.max_pages {
@@ -115,11 +161,21 @@ impl GitHubReleaseClient {
     }
 }
 
+impl ReleaseCheckSource for GitHubReleaseClient {
+    fn discover(&self) -> Result<DiscoveredReleaseV1, UpdaterError> {
+        self.discover()
+    }
+
+    fn download(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError> {
+        self.download_asset(asset)
+    }
+}
+
 fn read_bounded_response(
     mut response: Response,
     maximum_bytes: u64,
 ) -> Result<Vec<u8>, UpdaterError> {
-    if !response.status().is_success() {
+    if response.status() != StatusCode::OK {
         return Err(network_with_status(response.status().as_u16()));
     }
     if response
@@ -150,6 +206,37 @@ fn map_request_error(error: reqwest::Error) -> UpdaterError {
     } else {
         network("GitHub Releases request failed")
     }
+}
+
+fn is_redirect(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::SEE_OTHER
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn validate_asset_redirect(url: &Url) -> Result<(), UpdaterError> {
+    let allowed_host = matches!(
+        url.host_str(),
+        Some(
+            "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
+        )
+    );
+    if url.scheme() != "https"
+        || !allowed_host
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(network(
+            "GitHub release asset redirect must use an approved HTTPS host",
+        ));
+    }
+    Ok(())
 }
 
 fn network(detail: &'static str) -> UpdaterError {
@@ -264,6 +351,25 @@ mod tests {
         assert_eq!(error.detail(), "GitHub Releases request timed out");
     }
 
+    #[test]
+    fn downloads_exact_asset_and_rejects_insecure_redirect() {
+        let server = MockServer::spawn(vec![MockResponse::bytes(vec![b'x'; 86])]);
+        let client = test_client(&server, limits(1, 1, 1, 64 * 1024, 1_000));
+        let asset = test_asset(&server, 86);
+        assert_eq!(client.download_asset(&asset).unwrap(), vec![b'x'; 86]);
+        server.finish();
+
+        let redirect_server =
+            MockServer::spawn(vec![MockResponse::redirect("http://example.invalid/asset")]);
+        let client = test_client(&redirect_server, limits(1, 1, 1, 64 * 1024, 1_000));
+        let error = client
+            .download_asset(&test_asset(&redirect_server, 86))
+            .unwrap_err();
+        redirect_server.finish();
+        assert_eq!(error.code(), UpdaterErrorCode::Network);
+        assert!(error.detail().contains("approved HTTPS host"));
+    }
+
     fn test_client(server: &MockServer, limits: DiscoveryLimits) -> GitHubReleaseClient {
         GitHubReleaseClient::with_config(server.url.clone(), limits).unwrap()
     }
@@ -317,6 +423,16 @@ mod tests {
             "prerelease": prerelease,
             "assets": assets
         })
+    }
+
+    fn test_asset(server: &MockServer, size: u64) -> ReleaseAssetV1 {
+        ReleaseAssetV1 {
+            id: 1,
+            name: "asset".to_owned(),
+            size,
+            api_url: format!("{}/asset", server.url),
+            browser_download_url: "https://github.com/asset".to_owned(),
+        }
     }
 
     struct MockServer {
@@ -380,6 +496,26 @@ mod tests {
             Self {
                 status,
                 headers: String::new(),
+                body: Vec::new(),
+                declared_length: None,
+                delay: Duration::ZERO,
+            }
+        }
+
+        fn bytes(body: Vec<u8>) -> Self {
+            Self {
+                status: "200 OK",
+                headers: String::new(),
+                body,
+                declared_length: None,
+                delay: Duration::ZERO,
+            }
+        }
+
+        fn redirect(location: &str) -> Self {
+            Self {
+                status: "302 Found",
+                headers: format!("Location: {location}\r\n"),
                 body: Vec::new(),
                 declared_length: None,
                 delay: Duration::ZERO,

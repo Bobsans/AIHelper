@@ -1,4 +1,6 @@
-use ah_release_manifest::{TrustedKey, TrustedKeyRegistry, VerifiedManifest, verify_manifest};
+use ah_release_manifest::{
+    SIGNING_ALGORITHM, TrustedKey, TrustedKeyRegistry, VerifiedManifest, verify_manifest,
+};
 
 use crate::{UpdaterError, UpdaterErrorCode};
 
@@ -7,7 +9,26 @@ pub struct ReleaseTrust {
     registry: TrustedKeyRegistry,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReleaseTrustAnchor {
+    pub key_id: &'static str,
+    pub public_key: [u8; 32],
+}
+
 impl ReleaseTrust {
+    pub fn from_anchors(anchors: &[ReleaseTrustAnchor]) -> Result<Self, UpdaterError> {
+        Self::from_keys(
+            anchors
+                .iter()
+                .map(|anchor| TrustedKey {
+                    key_id: anchor.key_id.to_owned(),
+                    algorithm: SIGNING_ALGORITHM.to_owned(),
+                    public_key: anchor.public_key,
+                })
+                .collect(),
+        )
+    }
+
     pub fn from_keys(keys: Vec<TrustedKey>) -> Result<Self, UpdaterError> {
         if keys.is_empty() {
             return Err(UpdaterError::new(

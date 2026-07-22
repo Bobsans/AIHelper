@@ -1,5 +1,6 @@
 const CORE_SOURCES: &[&str] = &[
     include_str!("../src/lib.rs"),
+    include_str!("../src/check.rs"),
     include_str!("../src/error.rs"),
     include_str!("../src/release.rs"),
     include_str!("../src/trust.rs"),

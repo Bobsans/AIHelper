@@ -16,7 +16,8 @@ fn shows_top_level_help() {
         .stdout(contains("http"))
         .stdout(contains("project"))
         .stdout(contains("run"))
-        .stdout(contains("task"));
+        .stdout(contains("task"))
+        .stdout(contains("upgrade"));
 }
 
 #[test]

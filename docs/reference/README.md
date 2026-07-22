@@ -8,6 +8,7 @@ Operational reference:
 ## Domains
 - [ai](ai.md)
 - [mcp](mcp.md)
+- [upgrade](upgrade.md)
 - [file](file.md)
 - [search](search.md)
 - [ctx](ctx.md)

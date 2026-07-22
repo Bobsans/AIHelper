@@ -475,6 +475,7 @@ fn command_is_quiet(command: &RuntimeCommand) -> bool {
         RuntimeCommand::PluginsDisable { options, .. } => options.quiet,
         RuntimeCommand::PluginsReset { options, .. } => options.quiet,
         RuntimeCommand::AiInfo { options, .. } => options.quiet,
+        RuntimeCommand::Upgrade { options, .. } => options.quiet,
         RuntimeCommand::Invoke { options, .. } => options.quiet,
     }
 }

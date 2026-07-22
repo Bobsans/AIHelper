@@ -10,6 +10,7 @@ use crate::{error::AppError, output::OutputMode};
 const HOST_COMMAND_AI: &str = "ai";
 const HOST_COMMAND_MCP: &str = "mcp";
 const HOST_COMMAND_PLUGINS: &str = "plugins";
+const HOST_COMMAND_UPGRADE: &str = "upgrade";
 
 pub enum RuntimeCommand {
     McpServe {
@@ -38,6 +39,10 @@ pub enum RuntimeCommand {
     },
     AiInfo {
         domain: Option<String>,
+        options: GlobalOptions,
+    },
+    Upgrade {
+        request: crate::updater::command::UpgradeRequest,
         options: GlobalOptions,
     },
     Invoke {
@@ -251,6 +256,10 @@ pub fn parse_runtime_command(
                 _ => return Err(AppError::invalid_argument("unsupported plugins subcommand")),
             }
         }
+        Some((HOST_COMMAND_UPGRADE, upgrade_matches)) => RuntimeCommand::Upgrade {
+            request: crate::updater::command::request_from_matches(upgrade_matches)?,
+            options,
+        },
         Some((domain, domain_matches)) => {
             let mut argv = if domain == "run" {
                 run_check_argv.unwrap_or(collect_domain_argv(domain_matches)?)
@@ -317,10 +326,14 @@ fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
         .subcommand(build_ai_command())
         .subcommand(build_mcp_command())
         .subcommand(build_plugins_command())
+        .subcommand(crate::updater::command::build_help_command())
         .allow_external_subcommands(true);
 
     for (domain, description) in plugin_domains_for_help(plugins) {
-        if domain == HOST_COMMAND_AI || domain == HOST_COMMAND_MCP || domain == HOST_COMMAND_PLUGINS
+        if domain == HOST_COMMAND_AI
+            || domain == HOST_COMMAND_MCP
+            || domain == HOST_COMMAND_PLUGINS
+            || domain == HOST_COMMAND_UPGRADE
         {
             continue;
         }
@@ -704,6 +717,23 @@ mod tests {
         };
         assert_eq!(domain, "ollama");
         assert_eq!(argv, vec!["ask", "--model", "llama3.2", "--prompt", "ping"]);
+    }
+
+    #[test]
+    fn parser_routes_upgrade_check_as_a_host_command() {
+        let parsed = parse_runtime_command(
+            vec![
+                OsString::from("ah"),
+                OsString::from("upgrade"),
+                OsString::from("--check"),
+            ],
+            &[],
+        )
+        .unwrap();
+        let CliParseResult::Command(RuntimeCommand::Upgrade { request, .. }) = parsed else {
+            panic!("unexpected parse result")
+        };
+        assert_eq!(request, crate::updater::command::UpgradeRequest::Check);
     }
 
     #[test]

@@ -26,3 +26,5 @@ mod run;
 mod search;
 #[path = "integration/task.rs"]
 mod task;
+#[path = "integration/upgrade.rs"]
+mod upgrade;
