@@ -1002,6 +1002,150 @@ fn http_control_shutdown_validates_identity_and_exits_cleanly() {
 }
 
 #[test]
+fn http_control_shutdown_cancels_active_job_and_stops_new_work() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let workspace = TempDir::new().expect("temporary workspace should be created");
+    let ready = workspace.path().join("shutdown-job.ready");
+    let release = workspace.path().join("shutdown-job.release");
+    let completed = workspace.path().join("shutdown-job.completed");
+    let must_not_start = workspace.path().join("shutdown-new-work.txt");
+    let release_marker = ReleaseMarker::new(release.clone());
+    let mut process = HttpMcpProcess::start(&config_dir);
+    let (_, readiness) = read_readiness(&process);
+    let instance_id = readiness["instance_id"]
+        .as_str()
+        .expect("instance identity should be text")
+        .to_owned();
+    let client = HttpMcpClient::connect(&process.url, "shutdown-job-client");
+
+    let started = client.call(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.job.start",
+            "arguments": {
+                "tool": "ah.run.check",
+                "arguments": {
+                    "command": shutdown_blocker_command(&ready, &release, &completed),
+                    "timeout_secs": 60,
+                    "context": {
+                        "cwd": workspace.path().to_string_lossy(),
+                        "timeout_ms": 60_000
+                    }
+                }
+            }
+        }
+    }));
+    assert_eq!(started["result"]["isError"], false);
+    let job_id = started["result"]["structuredContent"]["job_id"]
+        .as_str()
+        .expect("active job id should be returned")
+        .to_owned();
+    wait_for_path(&ready);
+
+    let active = client.call(json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.job.status",
+            "arguments": {"job_id": job_id.clone()}
+        }
+    }));
+    assert_eq!(active["result"]["isError"], false);
+    assert_eq!(active["result"]["structuredContent"]["status"], "running");
+    assert_eq!(active["result"]["structuredContent"]["draining"], false);
+
+    let accepted = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("control client should build")
+        .post(&process.shutdown_url)
+        .header("Origin", &process.origin)
+        .json(&json!({"instance_id": instance_id.clone()}))
+        .send()
+        .expect("matching shutdown request should receive a response");
+    assert_eq!(accepted.status(), reqwest::StatusCode::ACCEPTED);
+    let accepted_body: Value = accepted
+        .json()
+        .expect("accepted shutdown response should be JSON");
+    assert_eq!(
+        accepted_body,
+        json!({"status": "shutting_down", "instance_id": instance_id})
+    );
+
+    let post_shutdown = client
+        .request(json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "ah.run.check",
+                "arguments": {
+                    "command": write_marker_command(&must_not_start),
+                    "context": {
+                        "cwd": workspace.path().to_string_lossy(),
+                        "timeout_ms": 1000
+                    }
+                }
+            }
+        }))
+        .timeout(Duration::from_secs(1))
+        .send();
+    if let Ok(response) = post_shutdown
+        && response.status().is_success()
+    {
+        let rejected = parse_http_mcp_response(response);
+        assert_ne!(
+            rejected["result"]["isError"], false,
+            "new work must not succeed after shutdown acceptance"
+        );
+    }
+    drop(client);
+
+    let exit = process.wait_for_exit(Duration::from_secs(7));
+    assert!(
+        exit.success(),
+        "HTTP MCP server should exit cleanly after cancelling the active job"
+    );
+    assert!(
+        !must_not_start.exists(),
+        "work submitted after shutdown acceptance must never start"
+    );
+
+    release_marker.release();
+    thread::sleep(Duration::from_secs(1));
+    assert!(
+        !completed.exists(),
+        "the ah.run.check child process survived MCP shutdown"
+    );
+
+    let records = log_records(&config_dir);
+    let job_events = records
+        .iter()
+        .filter(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "mcp"
+                && record["command"] == "run.check"
+                && record["job_id"] == job_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(job_events.len(), 1);
+    assert_eq!(job_events[0]["status"], "error");
+    assert_eq!(job_events[0]["diagnostic"]["code"], "CANCELLED");
+    let serve_event = records
+        .iter()
+        .find(|record| {
+            record["event"] == "command.completed"
+                && record["transport"] == "cli"
+                && record["command"] == "mcp.serve"
+        })
+        .expect("mcp.serve completion should be logged");
+    assert_eq!(serve_event["status"], "success");
+}
+
+#[test]
 fn mcp_invalid_startup_configuration_exits_nonzero() {
     let config_dir = TempDir::new().expect("temporary config dir should be created");
     let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
@@ -1395,6 +1539,25 @@ fn blocker_command(ready: &Path, release: &Path) -> Vec<String> {
 }
 
 #[cfg(windows)]
+fn shutdown_blocker_command(ready: &Path, release: &Path, completed: &Path) -> Vec<String> {
+    let ready = ready.to_string_lossy().replace('\'', "''");
+    let release = release.to_string_lossy().replace('\'', "''");
+    let completed = completed.to_string_lossy().replace('\'', "''");
+    vec![
+        "powershell.exe".to_owned(),
+        "-NoProfile".to_owned(),
+        "-Command".to_owned(),
+        format!(
+            "$ready='{ready}'; $release='{release}'; $completed='{completed}'; \
+             [IO.File]::WriteAllText($ready, 'ready'); \
+             $deadline=[DateTime]::UtcNow.AddSeconds(30); while (!(Test-Path -LiteralPath $release)) {{ \
+             if ([DateTime]::UtcNow -ge $deadline) {{ exit 2 }}; Start-Sleep -Milliseconds 10 }}; \
+             [IO.File]::WriteAllText($completed, 'completed')"
+        ),
+    ]
+}
+
+#[cfg(windows)]
 fn write_marker_command(path: &Path) -> Vec<String> {
     let path = path.to_string_lossy().replace('\'', "''");
     vec![
@@ -1416,6 +1579,21 @@ fn blocker_command(ready: &Path, release: &Path) -> Vec<String> {
         "sh".to_owned(),
         ready.to_string_lossy().into_owned(),
         release.to_string_lossy().into_owned(),
+    ]
+}
+
+#[cfg(not(windows))]
+fn shutdown_blocker_command(ready: &Path, release: &Path, completed: &Path) -> Vec<String> {
+    vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "touch \"$1\"; attempts=0; while [ ! -f \"$2\" ]; do attempts=$((attempts + 1)); \
+         [ \"$attempts\" -ge 3000 ] && exit 2; sleep 0.01; done; printf completed > \"$3\""
+            .to_owned(),
+        "sh".to_owned(),
+        ready.to_string_lossy().into_owned(),
+        release.to_string_lossy().into_owned(),
+        completed.to_string_lossy().into_owned(),
     ]
 }
 
