@@ -1,5 +1,45 @@
 # Use one local AIHelper MCP HTTP server
 
+On Windows, prefer the idempotent managed lifecycle when the server should
+survive terminal closure and start at user logon:
+
+```text
+ah mcp service status --json
+ah --cwd D:\work\project mcp service install
+```
+
+`install` registers the current executable for the current user, starts it by
+default, and succeeds only after exact readiness. Use `--no-start` when an agent
+is allowed to reconcile registration but must not change the running process:
+
+```text
+ah --cwd D:\work\project mcp service install --no-start --json
+```
+
+An agent can safely call `status --json` at any time. It is read-only, does not
+wait for a concurrent lifecycle command, and returns exit code `0` for
+not-installed, drift, and scheduler-error snapshots. Inspect these fields:
+
+```text
+registration.status
+registration.diagnostic_code
+scheduler.state
+runtime.status
+readiness.status
+lifecycle.status
+drift[]
+```
+
+Use `ah mcp service start --json` only after registration is `installed` and
+drift is empty. Success means readiness matched the durable service,
+configuration, version, PID, and instance UUID; Task Scheduler submission alone
+is not considered success. Do not delete or rewrite files below
+`%LOCALAPPDATA%\AIHelper\managed-mcp` to recover from an error. Preserve the
+stable diagnostic and let a later lifecycle command perform supported
+reconciliation.
+
+For a foreground process or on non-Windows platforms, use manual serve:
+
 Start one foreground process:
 
 ```text

@@ -23,3 +23,14 @@ fn ai_info_json_outputs_structured_manual() {
         .stdout(contains("\"name\": \"text\""))
         .stdout(contains("\u{1b}").not());
 }
+
+#[test]
+fn ai_info_includes_managed_mcp_service_commands() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args(["--json", "ai", "info"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\": \"mcp.service.install\""))
+        .stdout(contains("\"name\": \"mcp.service.start\""))
+        .stdout(contains("\"name\": \"mcp.service.status\""));
+}

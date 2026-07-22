@@ -15,6 +15,11 @@ use crate::{
     config::ConfigContext,
     error::AppError,
     event_log::{EventDiagnostic, EventLogger, SystemEventSeverity},
+    mcp_service::{
+        command::EarlyRoute,
+        model::ExitKind,
+        runner::{ManagedPreflight, ManagedRunner},
+    },
     output::{emit_muted_stderr, emit_warning},
     plugin_settings::PluginSettings,
     plugins,
@@ -44,8 +49,27 @@ pub(crate) fn run() -> Result<(), AppError> {
         );
         return Err(error);
     }
+    let managed_runner = match crate::mcp_service::command::route(&raw_args)? {
+        EarlyRoute::NotManaged => None,
+        EarlyRoute::ExitSuccess => return Ok(()),
+        EarlyRoute::Service(command) => {
+            return crate::mcp_service::lifecycle::execute(command);
+        }
+        EarlyRoute::ManagedServe { definition_path } => {
+            match ManagedRunner::preflight(&definition_path)? {
+                ManagedPreflight::AlreadyRunning => return Ok(()),
+                ManagedPreflight::Ready(runner) => Some(Arc::new(runner)),
+            }
+        }
+    };
     let logger = EventLogger::new().map(Arc::new);
-    let mut runtime = startup(raw_args, logger.as_deref(), &logged_argv)?;
+    let mut runtime = match startup(raw_args, logger.as_deref(), &logged_argv) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
+            return Err(error);
+        }
+    };
     let mut load_report = discovery(&runtime.config, &mut runtime.manager, &runtime.settings);
     record_discovery_events(logger.as_deref(), &load_report);
     let command = match routing(runtime.raw_args, &runtime.manager) {
@@ -68,12 +92,19 @@ pub(crate) fn run() -> Result<(), AppError> {
                 &error,
                 serde_json::json!({"argv": logged_argv}),
             );
+            mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
             return Err(error);
         }
     };
     render_discovery_diagnostics(&mut load_report, &command);
     let command_name = command_log_name(&command, &runtime.manager);
-    let result = execution(command, runtime.manager, runtime.settings, logger.clone());
+    let result = execution(
+        command,
+        runtime.manager,
+        runtime.settings,
+        logger.clone(),
+        managed_runner,
+    );
     if let Some(logger) = &logger {
         logger.record_cli_command(
             &command_name,
@@ -313,6 +344,7 @@ fn execution(
     manager: PluginManager,
     mut settings: PluginSettings,
     logger: Option<Arc<EventLogger>>,
+    managed_runner: Option<Arc<ManagedRunner>>,
 ) -> Result<(), AppError> {
     match command {
         RuntimeCommand::McpServe {
@@ -330,6 +362,7 @@ fn execution(
             default_timeout_ms,
             options,
             logger,
+            managed_runner,
         ),
         RuntimeCommand::PluginsList {
             state_filter,
@@ -371,18 +404,54 @@ fn execute_mcp_serve(
     default_timeout_ms: u64,
     options: cli::GlobalOptions,
     logger: Option<Arc<EventLogger>>,
+    managed_runner: Option<Arc<ManagedRunner>>,
 ) -> Result<(), AppError> {
+    let (transport, port, max_active, default_timeout_ms, options) =
+        if let Some(runner) = &managed_runner {
+            if transport != cli::McpTransport::Http {
+                return Err(AppError::invalid_argument(
+                    "managed MCP configuration requires HTTP transport",
+                ));
+            }
+            let definition = runner.definition();
+            let mut managed_options = options;
+            managed_options.limit = definition.server.limit;
+            (
+                cli::McpTransport::Http,
+                definition.endpoint.port,
+                definition.server.max_active,
+                definition.server.default_timeout_ms,
+                managed_options,
+            )
+        } else {
+            (transport, port, max_active, default_timeout_ms, options)
+        };
     let cwd = std::env::current_dir()
         .map_err(|source| AppError::cwd(std::path::PathBuf::from("."), source))
-        .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?
-        .to_string_lossy()
-        .into_owned();
+        .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error));
+    let cwd = match cwd {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
+            return Err(error);
+        }
+    }
+    .to_string_lossy()
+    .into_owned();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(max_active.saturating_add(16))
         .build()
         .map_err(|error| AppError::external("MCP_RUNTIME_FAILED", error.to_string()))
-        .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
+        .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error));
+    let runtime = match runtime {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
+            return Err(error);
+        }
+    };
+    let runner_after_serve = managed_runner.clone();
     let (result, shutdown_grace) = runtime.block_on(async move {
         let setup = async {
             let settings = Arc::new(std::sync::Mutex::new(settings));
@@ -415,13 +484,30 @@ fn execute_mcp_serve(
                     ah_mcp::serve_stdio_bounded(server, MCP_RUNTIME_SHUTDOWN_GRACE).await
                 }
                 cli::McpTransport::Http => {
-                    ah_mcp::serve_http_bounded_with_version(
-                        server,
-                        port,
-                        env!("CARGO_PKG_VERSION"),
-                        MCP_RUNTIME_SHUTDOWN_GRACE,
-                    )
-                    .await
+                    if let Some(runner) = managed_runner.clone() {
+                        let instance_id = runner.instance_id();
+                        ah_mcp::serve_http_bounded_with_identity_and_listener(
+                            server,
+                            port,
+                            env!("CARGO_PKG_VERSION"),
+                            instance_id,
+                            MCP_RUNTIME_SHUTDOWN_GRACE,
+                            move || {
+                                runner.mark_ready().map_err(|error| {
+                                    ah_mcp::McpAdapterError::Service(error.detail_message())
+                                })
+                            },
+                        )
+                        .await
+                    } else {
+                        ah_mcp::serve_http_bounded_with_version(
+                            server,
+                            port,
+                            env!("CARGO_PKG_VERSION"),
+                            MCP_RUNTIME_SHUTDOWN_GRACE,
+                        )
+                        .await
+                    }
                 }
             })
         }
@@ -440,6 +526,17 @@ fn execute_mcp_serve(
         }
     });
     shutdown_runtime(runtime, shutdown_grace);
+    if let Some(runner) = runner_after_serve {
+        match &result {
+            Ok(()) => {
+                runner.mark_stopping()?;
+                runner.mark_stopped()?;
+            }
+            Err(error) => {
+                runner.mark_failed(ExitKind::RuntimeFailure, error.exit_code(), error.code())?
+            }
+        }
+    }
     result
 }
 
@@ -463,6 +560,12 @@ fn record_mcp_system_error(
 ) -> AppError {
     record_app_system_error(logger, component, &error, serde_json::json!({}));
     error
+}
+
+fn mark_managed_failure(runner: &Option<Arc<ManagedRunner>>, kind: ExitKind, error: &AppError) {
+    if let Some(runner) = runner {
+        let _ = runner.mark_failed(kind, error.exit_code(), error.code());
+    }
 }
 
 #[cfg(test)]

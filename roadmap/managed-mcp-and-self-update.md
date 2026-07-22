@@ -7,7 +7,8 @@
 реализованы.
 
 Для завершения этапа 1 ещё нужна проверка подключения целевых MCP-клиентов.
-Управляемая фоновая установка и self-update остаются запланированными.
+Основа управляемой фоновой установки реализована; оставшиеся lifecycle-команды,
+проверки перезапуска и self-update остаются запланированными.
 
 ## Цель
 
@@ -601,20 +602,10 @@ managed MCP уже был остановлен, восстанавливаетс
 
 ### Этап 2: управляемый жизненный цикл HTTP MCP
 
-- [ ] Реализовать Windows Task Scheduler 2.0 adapter без разбора вывода
-      `schtasks.exe` или PowerShell.
-- [ ] Добавить общую per-user lifecycle- и upgrade-блокировку.
-- [ ] Определить durable runtime-state managed instance.
-- [ ] Реализовать `ah mcp service install` и `--no-start`.
-- [ ] Реализовать `ah mcp service start`.
 - [ ] Реализовать `ah mcp service stop`.
 - [ ] Реализовать `ah mcp service restart`.
-- [ ] Реализовать `ah mcp service status`.
 - [ ] Реализовать `ah mcp service uninstall`.
-- [ ] Добавить single-instance enforcement.
 - [ ] Настроить ограниченный restart-on-failure и restart backoff.
-- [ ] Обнаруживать Task Scheduler configuration drift.
-- [ ] Сохранять полезную scheduler и lifecycle-диагностику.
 - [ ] Добавить unit, integration и Windows VM tests для lifecycle-команд.
 
 Критерии завершения:

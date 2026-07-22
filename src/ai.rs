@@ -215,6 +215,40 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
             ],
         },
         HostCommandDoc {
+            name: "mcp.service.install".to_owned(),
+            summary: "Install or reconcile the per-user Windows MCP service and wait for readiness by default.".to_owned(),
+            usage: "mcp service install [--no-start] [--port PORT] [--max-active N] [--default-timeout-ms MILLISECONDS]".to_owned(),
+            examples: vec![
+                HostCommandExample {
+                    description: "Install and start the managed service".to_owned(),
+                    command: "ah mcp service install --json".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Reconcile registration without changing the process".to_owned(),
+                    command: "ah mcp service install --no-start --json".to_owned(),
+                },
+            ],
+        },
+        HostCommandDoc {
+            name: "mcp.service.start".to_owned(),
+            summary: "Start the registered Windows MCP service and require exact readiness."
+                .to_owned(),
+            usage: "mcp service start [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Start or reuse the exact managed instance".to_owned(),
+                command: "ah mcp service start --json".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "mcp.service.status".to_owned(),
+            summary: "Read registration, scheduler, runtime, readiness, lifecycle, and drift state without mutation.".to_owned(),
+            usage: "mcp service status [--json]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Inspect the complete managed lifecycle snapshot".to_owned(),
+                command: "ah mcp service status --json".to_owned(),
+            }],
+        },
+        HostCommandDoc {
             name: "plugins.list".to_owned(),
             summary: "List registered plugins and their metadata.".to_owned(),
             usage: "plugins list [--state <enabled|disabled>] [--json]".to_owned(),

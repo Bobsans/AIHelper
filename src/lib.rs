@@ -8,6 +8,7 @@ pub mod error;
 pub(crate) mod event_log;
 pub(crate) mod git_status;
 pub(crate) mod host_commands;
+pub mod mcp_service;
 pub mod output;
 mod persistence;
 pub mod plugin_settings;

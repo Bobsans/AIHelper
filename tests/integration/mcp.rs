@@ -13,6 +13,188 @@ use command_group::{CommandGroup, GroupChild};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+#[cfg(windows)]
+use aihelper::mcp_service::{
+    model::{
+        RuntimePhase, SCHEMA_VERSION, ServerDefinition, ServiceDefinition, ServiceEndpoint,
+        TASK_SPEC_VERSION,
+    },
+    paths::{ServicePaths, current_user_sid},
+    store::{Document, ServiceStore},
+};
+
+#[cfg(windows)]
+#[test]
+fn managed_service_status_routes_before_configuration_and_plugin_startup() {
+    let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+        .env("AH_CONFIG_DIR", "")
+        .args(["mcp", "service", "status", "--json"])
+        .output()
+        .expect("managed service status should start");
+    assert!(
+        output.status.success(),
+        "status should bypass ordinary startup: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("status should emit JSON");
+    assert_eq!(value["command"], "mcp.service.status");
+    assert_eq!(value["schema_version"], 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn managed_serve_preflight_fails_before_ambient_configuration_load() {
+    let output = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+        .env("AH_CONFIG_DIR", "")
+        .args([
+            "mcp",
+            "serve",
+            "--transport",
+            "http",
+            "--managed-config",
+            "missing-definition.json",
+        ])
+        .output()
+        .expect("managed serve preflight should start");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("MCP_SERVICE_STATE_INVALID"), "{stderr}");
+    assert!(
+        !stderr.contains("AH_CONFIG_DIR must not be empty"),
+        "{stderr}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn managed_serve_persists_exact_identity_and_enforces_single_instance() {
+    let temp = TempDir::new().expect("temporary service directory should exist");
+    let paths = ServicePaths::from_base(temp.path().join("managed-mcp"))
+        .expect("service paths should resolve");
+    let store = ServiceStore::new(paths.clone());
+    let port = TcpListener::bind(("127.0.0.1", 0))
+        .expect("ephemeral port should bind")
+        .local_addr()
+        .expect("ephemeral address should resolve")
+        .port();
+    let configuration_id = uuid::Uuid::new_v4();
+    let definition = ServiceDefinition {
+        schema_version: SCHEMA_VERSION,
+        task_spec_version: TASK_SPEC_VERSION,
+        service_id: uuid::Uuid::new_v4(),
+        configuration_id,
+        user_sid: current_user_sid().expect("current SID should resolve"),
+        executable_path: assert_cmd::cargo::cargo_bin("ah"),
+        working_directory: temp.path().to_path_buf(),
+        config_directory: temp.path().join("config"),
+        runtime_state_path: paths.runtime.clone(),
+        instance_lock_path: paths.instance_lock.clone(),
+        expected_version: env!("CARGO_PKG_VERSION").to_owned(),
+        endpoint: ServiceEndpoint::loopback(port).expect("endpoint should be valid"),
+        server: ServerDefinition {
+            limit: None,
+            max_active: 4,
+            default_timeout_ms: 5_000,
+        },
+    };
+    let definition_path = paths.definition(configuration_id);
+    store
+        .write_immutable_definition(&definition_path, &definition)
+        .expect("managed definition should be written");
+
+    let mut first = spawn_managed_process(&definition_path);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(500))
+        .build()
+        .expect("readiness client should build");
+    let readiness = wait_for_json(&client, &definition.endpoint.readiness_url);
+    let Document::Valid(runtime) = store.read_runtime() else {
+        let _ = first.kill();
+        panic!("managed runtime state should be valid")
+    };
+    assert_eq!(runtime.phase, RuntimePhase::Ready);
+    assert_eq!(readiness["instance_id"], runtime.instance_id.to_string());
+    assert_eq!(readiness["pid"], runtime.pid);
+    assert_eq!(runtime.configuration_id, configuration_id);
+
+    let mut second = spawn_managed_process(&definition_path);
+    let second_status = wait_for_child(&mut second, Duration::from_secs(3));
+    assert!(
+        second_status.success(),
+        "duplicate managed process should exit successfully"
+    );
+    let repeated = wait_for_json(&client, &definition.endpoint.readiness_url);
+    assert_eq!(repeated["instance_id"], readiness["instance_id"]);
+
+    let response = client
+        .post(format!("http://127.0.0.1:{port}/control/shutdown"))
+        .json(&json!({"instance_id": runtime.instance_id}))
+        .send()
+        .expect("managed shutdown should respond");
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let first_status = wait_for_child(&mut first, Duration::from_secs(8));
+    assert!(
+        first_status.success(),
+        "managed process should stop cleanly"
+    );
+    let Document::Valid(stopped) = store.read_runtime() else {
+        panic!("stopped runtime state should remain valid")
+    };
+    assert_eq!(stopped.phase, RuntimePhase::Stopped);
+    assert_eq!(
+        stopped
+            .last_exit
+            .as_ref()
+            .map(|exit| (exit.exit_code, exit.diagnostic_code.as_deref())),
+        Some((0, None))
+    );
+}
+
+#[cfg(windows)]
+fn spawn_managed_process(definition_path: &Path) -> std::process::Child {
+    ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"))
+        .args(["mcp", "serve", "--transport", "http", "--managed-config"])
+        .arg(definition_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("managed MCP process should start")
+}
+
+#[cfg(windows)]
+fn wait_for_json(client: &reqwest::blocking::Client, url: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if let Ok(response) = client.get(url).send()
+            && response.status().is_success()
+        {
+            return response.json().expect("readiness should be JSON");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "managed MCP endpoint did not become ready"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_child(child: &mut std::process::Child, timeout: Duration) -> ExitStatus {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().expect("child status should be readable") {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("managed MCP child did not exit before the deadline");
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 struct McpProcess {
     child: GroupChild,
     stdin: Option<ChildStdin>,

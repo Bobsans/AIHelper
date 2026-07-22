@@ -834,6 +834,7 @@ struct HttpLifecycleState {
 impl HttpLifecycleState {
     fn new(
         version: String,
+        instance_id: Uuid,
         authority: String,
         origin: String,
         lifecycle: Arc<HttpLifecycleController>,
@@ -843,7 +844,7 @@ impl HttpLifecycleState {
                 status: "ready",
                 version,
                 pid: std::process::id(),
-                instance_id: Uuid::new_v4(),
+                instance_id,
             },
             authority,
             origin,
@@ -1064,6 +1065,28 @@ pub async fn serve_http_bounded_with_version(
     version: impl Into<String>,
     grace: Duration,
 ) -> McpServeOutcome {
+    serve_http_bounded_with_identity_and_listener(
+        server,
+        port,
+        version,
+        Uuid::new_v4(),
+        grace,
+        || Ok(()),
+    )
+    .await
+}
+
+pub async fn serve_http_bounded_with_identity_and_listener<F>(
+    server: McpServer,
+    port: u16,
+    version: impl Into<String>,
+    instance_id: Uuid,
+    grace: Duration,
+    on_listener_bound: F,
+) -> McpServeOutcome
+where
+    F: FnOnce() -> Result<(), McpAdapterError>,
+{
     let tracker = Arc::new(ShutdownTracker::new(grace));
     let executor = Arc::clone(&server.shared.executor);
     let event_dispatcher = server.shared.event_dispatcher.clone();
@@ -1077,6 +1100,7 @@ pub async fn serve_http_bounded_with_version(
     ));
     let lifecycle = HttpLifecycleState::new(
         version.into(),
+        instance_id,
         authority.clone(),
         origin.clone(),
         Arc::clone(&lifecycle_controller),
@@ -1109,6 +1133,13 @@ pub async fn serve_http_bounded_with_version(
             };
         }
     };
+    if let Err(error) = on_listener_bound() {
+        lifecycle_controller.begin_shutdown();
+        return McpServeOutcome {
+            result: Err(error),
+            remaining_shutdown_grace: tracker.remaining(),
+        };
+    }
     let shutdown_controller = Arc::clone(&lifecycle_controller);
     let serving = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
@@ -1931,6 +1962,7 @@ mod tests {
             Arc, Barrier, Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
+        time::Duration,
     };
 
     use ah_plugin_api::{
@@ -1950,12 +1982,13 @@ mod tests {
     use serde_json::{Value, json};
     use tokio::io::AsyncReadExt;
     use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
 
     use super::{
-        EventSink, Executor, HttpLifecycleController, JOB_START_TOOL, McpAdapterError,
-        McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig, RISK_META_KEY,
-        ShutdownReader, ShutdownTracker, peer_generation_matches, refresh_catalog_after_job,
-        spawn_best_effort_notification, wait_for_transport,
+        EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
+        McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
+        RISK_META_KEY, ShutdownReader, ShutdownTracker, peer_generation_matches,
+        refresh_catalog_after_job, spawn_best_effort_notification, wait_for_transport,
     };
 
     struct TypedPlugin;
@@ -2055,6 +2088,27 @@ mod tests {
         fn cancel(&self, _request_id: &str) -> bool {
             false
         }
+    }
+
+    #[test]
+    fn managed_http_lifecycle_uses_the_preselected_instance_id() {
+        let instance_id = Uuid::new_v4();
+        let tracker = Arc::new(ShutdownTracker::new(Duration::from_secs(1)));
+        let executor: Arc<dyn Executor> = Arc::new(ClosingExecutor::default());
+        let controller = Arc::new(HttpLifecycleController::new(
+            tracker,
+            executor,
+            CancellationToken::new(),
+        ));
+        let lifecycle = HttpLifecycleState::new(
+            "1.2.3".to_owned(),
+            instance_id,
+            "127.0.0.1:8787".to_owned(),
+            "http://127.0.0.1:8787".to_owned(),
+            controller,
+        );
+        assert_eq!(lifecycle.readiness.instance_id, instance_id);
+        assert_eq!(lifecycle.readiness.version, "1.2.3");
     }
 
     impl Executor for PendingExecutor {

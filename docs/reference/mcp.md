@@ -121,6 +121,100 @@ The server binds only to `127.0.0.1`, validates `Host`, rejects nonlocal
 not an authorization boundary: any local process running as the user can invoke
 all published tools, including destructive tools.
 
+## Managed Windows service
+
+Windows users can register the HTTP server as a per-user Task Scheduler 2.0
+task. Registration uses the current interactive user with least privilege; it
+does not require elevation or store a password.
+
+Install the canonical loopback service and wait for exact HTTP readiness:
+
+```text
+ah [--cwd PATH] [--limit N] mcp service install \
+  [--port PORT] \
+  [--max-active N] \
+  [--default-timeout-ms MILLISECONDS]
+```
+
+The defaults match manual HTTP serve: port `8787`, `32` active handlers, and a
+`300000` millisecond command timeout. `--cwd`, `--limit`, the resolved
+configuration directory, and the absolute `ah.exe` path become part of the
+durable service definition. Equal repeated installs are idempotent.
+
+To register or reconcile the task without starting or stopping any process:
+
+```text
+ah mcp service install --no-start
+```
+
+Start the registered definition explicitly:
+
+```text
+ah mcp service start
+```
+
+Task Scheduler accepting a run request is not success by itself. `start` waits
+up to 15 seconds for readiness whose version, PID, process instance UUID, and
+configuration identity all match durable state. An already ready exact instance
+returns idempotent success. A different server answering on the port is never
+adopted or stopped.
+
+Inspect every layer without repairing or starting the service:
+
+```text
+ah mcp service status
+ah mcp service status --json
+```
+
+JSON status schema version 1 always includes `registration`, `scheduler`,
+`runtime`, `readiness`, `lifecycle`, and sorted `drift` sections. Nullable fields
+are emitted as explicit `null`. Not-installed, stopped, drifted, and scheduler
+error snapshots are valid status results with exit code `0`; automation should
+inspect the structured state and `diagnostic_code` fields.
+
+The per-user task is stored at the Task Scheduler root as
+`AIHelper Managed MCP - <CURRENT_USER_SID>`. AIHelper uses the typed Task
+Scheduler COM API and refuses to overwrite a task without its exact ownership
+marker. Canonical settings include one current-user logon trigger, one Exec
+action, `IgnoreNew` multiple-instance policy, three restart attempts at a
+one-minute interval, no execution time limit, and battery operation enabled.
+Status compares properties semantically and reports property-level drift; it
+does not compare exported task XML.
+
+Durable machine-local state is independent of `AH_CONFIG_DIR`:
+
+```text
+%LOCALAPPDATA%\AIHelper\managed-mcp\
+  current.json
+  definitions\<configuration-id>.json
+  runtime.json
+  lifecycle.json
+  lifecycle.lock
+  instance.lock
+```
+
+Definitions are immutable. The registered task is activation authority and
+`current.json` is a repairable index. Open Win32 handles with zero sharing
+enforce one lifecycle mutation and one managed server instance per user; lock
+files are never treated as stale merely because of their age.
+
+Important managed-service diagnostics include:
+
+- `MCP_SERVICE_NOT_INSTALLED`
+- `MCP_SERVICE_BUSY`
+- `MCP_SERVICE_TASK_CONFLICT`
+- `MCP_SERVICE_INSTALLATION_CONFLICT`
+- `MCP_SERVICE_CONFIGURATION_DRIFT`
+- `MCP_SERVICE_STATE_INVALID`
+- `MCP_SERVICE_START_TIMEOUT`
+- `MCP_SERVICE_IDENTITY_MISMATCH`
+- `MCP_SERVICE_SCHEDULER_FAILED`
+- `MCP_SERVICE_RESTART_REQUIRED`
+
+Managed lifecycle commands are currently Windows-only. Manual stdio and HTTP
+serve remain available on every supported platform. Managed `stop`, `restart`,
+and `uninstall` commands are planned but are not part of this command slice.
+
 ## Tool names
 
 Typed commands use:

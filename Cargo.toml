@@ -36,8 +36,23 @@ ah-plugin-api = { path = "crates/ah-plugin-api" }
 ah-runtime = { path = "crates/ah-runtime" }
 ah-mcp = { path = "crates/ah-mcp" }
 tokio = { version = "1.52.1", features = ["io-std", "rt-multi-thread", "time"] }
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
 
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_TaskScheduler",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+] }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
