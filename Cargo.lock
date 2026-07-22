@@ -127,6 +127,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-updater-core"
+version = "1.1.0"
+dependencies = [
+ "ah-release-manifest",
+ "base64",
+ "ed25519-dalek",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -156,6 +169,7 @@ dependencies = [
  "ah-mcp",
  "ah-plugin-api",
  "ah-runtime",
+ "ah-updater-core",
  "assert_cmd",
  "chrono",
  "clap",
