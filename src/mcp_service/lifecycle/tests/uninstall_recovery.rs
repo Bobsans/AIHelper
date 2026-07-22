@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use tempfile::TempDir;
 
 use super::{super::*, harness::*};
@@ -9,7 +7,7 @@ use super::{super::*, harness::*};
 fn uninstall_is_idempotent_and_removes_only_verified_metadata() {
     let temp = TempDir::new().unwrap();
     let paths = ServicePaths::from_base(temp.path().join("managed")).unwrap();
-    let service = LifecycleService::new(paths.clone(), FakeScheduler::missing(), not_ready());
+    let service = LifecycleService::new(paths.clone(), ScriptedScheduler::missing(), not_ready());
     service.install(&install_options(true)).unwrap();
     let (pointer, _) = installed_definition(&service);
     let unexpected = paths
@@ -22,7 +20,7 @@ fn uninstall_is_idempotent_and_removes_only_verified_metadata() {
 
     assert!(output.changed);
     assert_eq!(output.action, "uninstalled");
-    assert_eq!(service.scheduler.delete_count.load(Ordering::Relaxed), 1);
+    assert_eq!(service.scheduler.delete_count(), 1);
     assert!(!paths.current.exists());
     assert!(!paths.runtime.exists());
     assert!(!paths.lifecycle.exists());
@@ -37,7 +35,7 @@ fn uninstall_is_idempotent_and_removes_only_verified_metadata() {
 fn already_absent_uninstall_has_nullable_identity_and_no_change() {
     let temp = TempDir::new().unwrap();
     let paths = ServicePaths::from_base(temp.path().join("managed")).unwrap();
-    let service = LifecycleService::new(paths.clone(), FakeScheduler::missing(), not_ready());
+    let service = LifecycleService::new(paths.clone(), ScriptedScheduler::missing(), not_ready());
 
     let output = service.uninstall().unwrap();
 
@@ -54,17 +52,17 @@ fn already_absent_uninstall_has_nullable_identity_and_no_change() {
 fn foreign_task_and_newer_lifecycle_state_are_preserved() {
     let temp = TempDir::new().unwrap();
     let paths = ServicePaths::from_base(temp.path().join("managed")).unwrap();
-    let service = LifecycleService::new(paths.clone(), FakeScheduler::missing(), not_ready());
+    let service = LifecycleService::new(paths.clone(), ScriptedScheduler::missing(), not_ready());
     service.install(&install_options(true)).unwrap();
     let current = std::fs::read(&paths.current).unwrap();
-    *service.scheduler.observation.lock().unwrap() = TaskObservation::Foreign {
+    service.scheduler.set_observation(TaskObservation::Foreign {
         source: Some("Other".to_owned()),
         uri: None,
-    };
+    });
     let error = service.uninstall().unwrap_err();
     assert_eq!(error.code(), "MCP_SERVICE_TASK_CONFLICT");
     assert_eq!(std::fs::read(&paths.current).unwrap(), current);
-    assert_eq!(service.scheduler.delete_count.load(Ordering::Relaxed), 0);
+    assert_eq!(service.scheduler.delete_count(), 0);
 
     let newer = br#"{"schema_version":2}"#;
     std::fs::write(&paths.lifecycle, newer).unwrap();
