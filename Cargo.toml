@@ -10,6 +10,7 @@ members = [
     "crates/ah-mcp",
     "crates/ah-plugin-api",
     "crates/ah-release-manifest",
+    "crates/ah-release-tool",
     "crates/ah-runtime",
     "plugins/ah-plugin-github",
     "plugins/ah-plugin-gitlab",

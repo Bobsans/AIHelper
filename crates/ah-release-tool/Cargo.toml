@@ -1,0 +1,15 @@
+[package]
+name = "ah-release-tool"
+version = "1.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ah-release-manifest = { path = "../ah-release-manifest" }
+clap = { version = "4.5.39", features = ["derive"] }
+sha2 = "0.11"
+thiserror = "2"
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.20.0"

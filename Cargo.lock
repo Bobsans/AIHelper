@@ -97,6 +97,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-release-tool"
+version = "1.1.0"
+dependencies = [
+ "ah-release-manifest",
+ "clap",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
 name = "ah-runtime"
 version = "1.1.0"
 dependencies = [
