@@ -200,3 +200,30 @@ After local tests and workflow validation pass, the release-pipeline roadmap
 item can be removed. The production-public-key item remains until real public
 key bytes are provisioned and embedded. No test key or empty configuration
 counts as completion. All installed-manifest and updater items remain open.
+
+## Verification
+
+Implemented and verified on 2026-07-22. The release workflow now validates the
+exact three-archive set, signs canonical manifests only for published releases,
+self-verifies the complete nine-file release set, and publishes it from a
+separate job without access to the signing secret.
+
+The local verification set passed:
+
+- `cargo fmt --all -- --check`;
+- `cargo test -p ah-release-tool --locked` (13 tests);
+- `cargo test -p ah-release-manifest --locked` (29 tests);
+- `cargo test --workspace --all-targets --locked`;
+- `cargo clippy -p ah-release-tool --all-targets --locked --no-deps -- -D warnings`;
+- `cargo metadata --locked --no-deps --format-version 1`;
+- `cargo build --locked`;
+- `cargo build --release --locked`.
+
+Dependency-tree and source searches also confirmed that the production signing
+tool and seed environment variable are absent from the main `aihelper` binary.
+The remaining manifest signing helpers in `ah-release-manifest` are test-only.
+
+The production workflow intentionally fails closed until the protected
+`release-signing` environment contains the real signing seed and matching public
+key configuration. Provisioning and embedding that real public key remains a
+separate open roadmap item.

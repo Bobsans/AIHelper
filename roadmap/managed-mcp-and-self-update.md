@@ -621,7 +621,6 @@ managed MCP уже был остановлен, восстанавливаетс
 ### Этап 3: контракт релиза и основа updater
 
 - [ ] Встроить доверенный публичный release key в AIHelper.
-- [ ] Обновить release pipeline: публиковать архив, manifest и подпись.
 - [ ] После активации сохранять проверенный signed manifest как installed
       manifest текущей версии.
 - [ ] Реализовать ограниченную загрузку archive и manifest только через HTTPS.
