@@ -83,6 +83,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-release-manifest"
+version = "1.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "url",
+]
+
+[[package]]
 name = "ah-runtime"
 version = "1.1.0"
 dependencies = [
