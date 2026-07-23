@@ -188,6 +188,54 @@ pub fn select_highest_stable_release(
     })
 }
 
+pub fn select_stable_release_by_version(
+    releases: &[GitHubReleaseDtoV1],
+    target: UpdateTarget,
+    requested: &Version,
+) -> Result<DiscoveredReleaseV1, UpdaterError> {
+    if !requested.pre.is_empty() {
+        return Err(release_contract(
+            "requested release version must be canonical stable SemVer",
+        ));
+    }
+    let mut release_ids = BTreeSet::new();
+    let mut precedence = BTreeMap::new();
+    let mut selected: Option<(&GitHubReleaseDtoV1, StableReleaseVersion)> = None;
+
+    for release in releases {
+        if release.id == 0 || !release_ids.insert(release.id) {
+            return Err(release_contract(
+                "GitHub release listing contains an invalid or duplicate release ID",
+            ));
+        }
+        if release.draft || release.prerelease {
+            continue;
+        }
+        let version = StableReleaseVersion::parse_tag(&release.tag_name)?;
+        let key = stable_precedence(&version);
+        if precedence.insert(key, release.id).is_some() {
+            return Err(release_contract(
+                "GitHub release listing contains duplicate stable SemVer precedence",
+            ));
+        }
+        if version.version() == requested {
+            selected = Some((release, version));
+        }
+    }
+
+    let (release, version) = selected.ok_or_else(|| {
+        release_contract("GitHub release listing does not contain the requested stable version")
+    })?;
+    let assets = resolve_release_assets(release, target)?;
+    Ok(DiscoveredReleaseV1 {
+        release_id: release.id,
+        tag: release.tag_name.clone(),
+        version,
+        target,
+        assets,
+    })
+}
+
 fn resolve_release_assets(
     release: &GitHubReleaseDtoV1,
     target: UpdateTarget,
@@ -408,6 +456,26 @@ mod tests {
             selected.assets.signature.name,
             "ah-windows-x64.manifest.sig"
         );
+    }
+
+    #[test]
+    fn selects_one_exact_stable_release_without_falling_forward() {
+        let releases = vec![
+            release(3, "v1.3.0", false, false),
+            release(1, "v1.1.0", false, false),
+            release(2, "v1.2.0", false, false),
+        ];
+
+        let selected =
+            select_stable_release_by_version(&releases, WINDOWS_X64_TARGET, &Version::new(1, 1, 0))
+                .unwrap();
+
+        assert_eq!(selected.release_id, 1);
+        assert_eq!(selected.tag, "v1.1.0");
+        let missing =
+            select_stable_release_by_version(&releases, WINDOWS_X64_TARGET, &Version::new(9, 0, 0))
+                .unwrap_err();
+        assert_eq!(missing.code(), UpdaterErrorCode::ReleaseContract);
     }
 
     #[test]

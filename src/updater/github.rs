@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use ah_updater_core::{
     DiscoveredReleaseV1, GitHubReleaseDtoV1, ReleaseAssetV1, UpdaterError, UpdaterErrorCode,
-    WINDOWS_X64_TARGET, select_highest_stable_release,
+    WINDOWS_X64_TARGET, select_highest_stable_release, select_stable_release_by_version,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, LOCATION, USER_AGENT};
 use reqwest::{StatusCode, Url};
+use semver::Version;
 
 use super::check::ReleaseCheckSource;
 
@@ -73,6 +74,14 @@ impl GitHubReleaseClient {
     pub(crate) fn discover(&self) -> Result<DiscoveredReleaseV1, UpdaterError> {
         let releases = self.list_releases()?;
         select_highest_stable_release(&releases, WINDOWS_X64_TARGET)
+    }
+
+    pub(crate) fn discover_version(
+        &self,
+        version: &Version,
+    ) -> Result<DiscoveredReleaseV1, UpdaterError> {
+        let releases = self.list_releases()?;
+        select_stable_release_by_version(&releases, WINDOWS_X64_TARGET, version)
     }
 
     pub(crate) fn download_asset(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError> {
@@ -346,6 +355,23 @@ mod tests {
         assert!(headers.contains("accept: application/vnd.github+json"));
         assert!(headers.contains("x-github-api-version: 2022-11-28"));
         assert!(headers.contains("user-agent: aihelper/1.1.0 updater"));
+    }
+
+    #[test]
+    fn discovers_exact_current_release_without_selecting_newer_version() {
+        let server = MockServer::spawn(vec![MockResponse::json(json!([
+            release_json(2, "v1.2.0", false, false),
+            release_json(1, "v1.1.0", false, false)
+        ]))]);
+        let client = test_client(&server, limits(10, 1, 10, 64 * 1024, 1_000));
+
+        let selected = client
+            .discover_version(&Version::parse("1.1.0").unwrap())
+            .unwrap();
+        server.finish();
+
+        assert_eq!(selected.release_id, 1);
+        assert_eq!(selected.tag, "v1.1.0");
     }
 
     #[test]

@@ -674,11 +674,6 @@ Manual acceptance:
 - [ ] (external activation) Проверить pipeline и updater на реальном подписанном
       GitHub Release.
 
-### Этап 5: installation identity и legacy bootstrap
-
-- [ ] Для legacy portable-установки загружать подписанный manifest текущей
-      версии и признавать managed только файлы с совпадающими hashes.
-
 ### Этап 6: update-helper и durable transaction
 
 - [ ] Добавить отдельный `ah-update-helper.exe`, запускаемый вне installation
@@ -690,8 +685,8 @@ Manual acceptance:
 - [ ] Реализовать staging, transaction backup и durable transaction state.
 - [ ] Проверять незавершённую update transaction до загрузки динамических
       плагинов.
-- [ ] Добавить оставшиеся automated tests extraction, legacy bootstrap,
-      блокировок, failure injection и transaction recovery.
+- [ ] Добавить оставшиеся automated tests блокировок, failure injection и
+      transaction recovery.
 
 Критерии завершения:
 
@@ -899,7 +894,6 @@ Manual acceptance:
 - расположение временного staging на том же диске при необходимости;
 - recovery при недоступном `%APPDATA%`;
 - очистка orphan staging, transaction state и повреждённых backup;
-- точный bootstrap legacy portable release manifest;
 - правила совместимости пользовательской конфигурации и будущих миграций при
   update и rollback.
 
