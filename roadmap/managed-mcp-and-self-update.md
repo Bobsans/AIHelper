@@ -676,7 +676,6 @@ Manual acceptance:
 
 ### Этап 6: update-helper и durable transaction
 
-- [ ] Реализовать staging, transaction backup и durable transaction state.
 - [ ] Проверять незавершённую update transaction до загрузки динамических
       плагинов.
 - [ ] Добавить оставшиеся automated tests блокировок, failure injection и
