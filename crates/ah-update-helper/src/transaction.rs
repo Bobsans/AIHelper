@@ -114,6 +114,72 @@ impl LoadedTransaction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileMutationPhase {
+    StageCandidate,
+    BackupManaged,
+    ActivateManaged,
+    PublishInstalledRecord,
+    RollbackManaged,
+    RestoreInstalledRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailurePoint {
+    BeforeJournalWrite {
+        state: TransactionStateV1,
+        sequence: u32,
+    },
+    AfterJournalWrite {
+        state: TransactionStateV1,
+        sequence: u32,
+    },
+    BeforeFileMutation {
+        phase: FileMutationPhase,
+        index: usize,
+        relative_path: String,
+    },
+    AfterFileMutation {
+        phase: FileMutationPhase,
+        index: usize,
+        relative_path: String,
+    },
+}
+
+pub trait FailureInjector {
+    fn interrupt(&mut self, point: &FailurePoint) -> bool;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoFailureInjection;
+
+impl FailureInjector for NoFailureInjection {
+    fn interrupt(&mut self, _point: &FailurePoint) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransactionRunError {
+    Interrupted(FailurePoint),
+    Failed(UpdaterError),
+}
+
+impl TransactionRunError {
+    pub fn into_updater_error(self) -> UpdaterError {
+        match self {
+            Self::Interrupted(_) => recovery("update transaction was interrupted"),
+            Self::Failed(error) => error,
+        }
+    }
+}
+
+impl From<UpdaterError> for TransactionRunError {
+    fn from(error: UpdaterError) -> Self {
+        Self::Failed(error)
+    }
+}
+
 pub fn prepare_transaction(
     paths: &TransactionPaths,
     plan: &TransactionPlanV1,
@@ -122,6 +188,28 @@ pub fn prepare_transaction(
     candidate_signature_bytes: &[u8],
     trust: &ReleaseTrust,
 ) -> Result<LoadedTransaction, UpdaterError> {
+    let mut injector = NoFailureInjection;
+    prepare_transaction_with_injector(
+        paths,
+        plan,
+        candidate_source_root,
+        candidate_manifest_bytes,
+        candidate_signature_bytes,
+        trust,
+        &mut injector,
+    )
+    .map_err(TransactionRunError::into_updater_error)
+}
+
+pub fn prepare_transaction_with_injector(
+    paths: &TransactionPaths,
+    plan: &TransactionPlanV1,
+    candidate_source_root: &Path,
+    candidate_manifest_bytes: &[u8],
+    candidate_signature_bytes: &[u8],
+    trust: &ReleaseTrust,
+    injector: &mut impl FailureInjector,
+) -> Result<LoadedTransaction, TransactionRunError> {
     validate_prepare_paths(paths, candidate_source_root)?;
     plan.validate()?;
 
@@ -171,26 +259,55 @@ pub fn prepare_transaction(
 
     let mut journal = TransactionJournalV1::new(plan)?;
     persist_initial_journal(paths, &journal)?;
-    copy_manifest_files(
-        candidate_source_root,
-        &paths.candidate_files_root(),
-        &candidate.manifest,
-    )?;
-    copy_manifest_files(
-        &paths.installation_root,
-        &paths.backup_files_root(),
-        &active.manifest,
-    )?;
-    verify_manifest_files(&paths.candidate_files_root(), &candidate.manifest)?;
-    verify_manifest_files(&paths.backup_files_root(), &active.manifest)?;
+    let result = (|| {
+        copy_manifest_files_with_injector(
+            injector,
+            FileMutationPhase::StageCandidate,
+            candidate_source_root,
+            &paths.candidate_files_root(),
+            &candidate.manifest,
+        )?;
+        copy_manifest_files_with_injector(
+            injector,
+            FileMutationPhase::BackupManaged,
+            &paths.installation_root,
+            &paths.backup_files_root(),
+            &active.manifest,
+        )?;
+        verify_manifest_files(&paths.candidate_files_root(), &candidate.manifest)?;
+        verify_manifest_files(&paths.backup_files_root(), &active.manifest)?;
 
-    journal.advance(TransactionStateV1::BackupPrepared)?;
-    replace_journal(paths, &journal)?;
-    cleanup.disarm();
-    load_transaction(paths, trust)
+        advance_journal_with(
+            paths,
+            &mut journal,
+            TransactionStateV1::BackupPrepared,
+            injector,
+        )?;
+        load_transaction(paths, trust).map_err(Into::into)
+    })();
+    if result.is_ok() || matches!(result, Err(TransactionRunError::Interrupted(_))) {
+        cleanup.disarm();
+    }
+    result
 }
 
 pub fn load_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    let transaction = load_transaction_metadata(paths, trust)?;
+    verify_manifest_files(
+        &transaction.paths.backup_files_root(),
+        &transaction.old_manifest,
+    )?;
+    verify_manifest_files(
+        &transaction.paths.candidate_files_root(),
+        &transaction.new_manifest,
+    )?;
+    Ok(transaction)
+}
+
+fn load_transaction_metadata(
     paths: &TransactionPaths,
     trust: &ReleaseTrust,
 ) -> Result<LoadedTransaction, UpdaterError> {
@@ -233,8 +350,6 @@ pub fn load_transaction(
     )?;
     let identity = decode_identity(&identity_bytes)?;
     validate_identity(paths, &plan, &identity, &backup.manifest)?;
-    verify_manifest_files(&paths.backup_files_root(), &backup.manifest)?;
-    verify_manifest_files(&paths.candidate_files_root(), &candidate.manifest)?;
 
     Ok(LoadedTransaction {
         paths: paths.clone(),
@@ -257,7 +372,200 @@ pub fn load_prepared_transaction(
         ));
     }
     verify_active_old_release(&transaction, trust)?;
+    verify_add_destinations_absent(
+        &paths.installation_root,
+        &transaction.plan.operations,
+        &transaction.new_manifest,
+    )?;
     Ok(transaction)
+}
+
+pub fn activate_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    let mut injector = NoFailureInjection;
+    match activate_transaction_with_injector(paths, trust, &mut injector) {
+        Ok(transaction) => Ok(transaction),
+        Err(TransactionRunError::Interrupted(_)) => {
+            unreachable!("NoFailureInjection never interrupts")
+        }
+        Err(TransactionRunError::Failed(activation_error)) => {
+            let rollback_required = load_transaction_metadata(paths, trust)
+                .map(|transaction| state_requires_rollback(transaction.journal.state))
+                .unwrap_or(false);
+            if rollback_required && rollback_transaction(paths, trust).is_err() {
+                return Err(UpdaterError::new(
+                    UpdaterErrorCode::Rollback,
+                    "activation failed and automatic rollback did not complete",
+                ));
+            }
+            Err(activation_error)
+        }
+    }
+}
+
+pub fn activate_transaction_with_injector(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+    injector: &mut impl FailureInjector,
+) -> Result<LoadedTransaction, TransactionRunError> {
+    let transaction = load_prepared_transaction(paths, trust)?;
+    let mut journal = transaction.journal.clone();
+    advance_journal_with(
+        paths,
+        &mut journal,
+        TransactionStateV1::ActivationStarted,
+        injector,
+    )?;
+    for (index, operation) in transaction.plan.operations.iter().enumerate() {
+        mutate_with_checkpoint(
+            injector,
+            FileMutationPhase::ActivateManaged,
+            index,
+            operation.path(),
+            || apply_activation_operation(&transaction, operation, index),
+        )?;
+    }
+    verify_manifest_files(&paths.installation_root, &transaction.new_manifest)?;
+    advance_journal_with(
+        paths,
+        &mut journal,
+        TransactionStateV1::CandidateActivated,
+        injector,
+    )?;
+    publish_candidate_record(&transaction, injector)?;
+    verify_active_new_release(&transaction, trust)?;
+    advance_journal_with(
+        paths,
+        &mut journal,
+        TransactionStateV1::PermanentVerified,
+        injector,
+    )?;
+    load_transaction(paths, trust).map_err(Into::into)
+}
+
+pub fn commit_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    let mut injector = NoFailureInjection;
+    commit_transaction_with_injector(paths, trust, &mut injector)
+        .map_err(TransactionRunError::into_updater_error)
+}
+
+pub fn commit_transaction_with_injector(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+    injector: &mut impl FailureInjector,
+) -> Result<LoadedTransaction, TransactionRunError> {
+    let transaction = load_transaction(paths, trust)?;
+    if transaction.journal.state != TransactionStateV1::PermanentVerified {
+        return Err(transaction_error(
+            "durable transaction is not ready to commit",
+        ));
+    }
+    verify_active_new_release(&transaction, trust)?;
+    let mut journal = transaction.journal.clone();
+    advance_journal_with(
+        paths,
+        &mut journal,
+        TransactionStateV1::CommitStarted,
+        injector,
+    )?;
+    advance_journal_with(paths, &mut journal, TransactionStateV1::Committed, injector)?;
+    load_transaction(paths, trust).map_err(Into::into)
+}
+
+pub fn rollback_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    let mut injector = NoFailureInjection;
+    rollback_transaction_with_injector(paths, trust, &mut injector)
+        .map_err(TransactionRunError::into_updater_error)
+}
+
+pub fn rollback_transaction_with_injector(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+    injector: &mut impl FailureInjector,
+) -> Result<LoadedTransaction, TransactionRunError> {
+    let transaction = load_transaction_metadata(paths, trust)?;
+    verify_manifest_files(
+        &transaction.paths.backup_files_root(),
+        &transaction.old_manifest,
+    )?;
+    if !state_requires_rollback(transaction.journal.state)
+        && transaction.journal.state != TransactionStateV1::RollbackStarted
+    {
+        return Err(rollback_error(
+            "durable transaction state cannot enter rollback",
+        ));
+    }
+    let mut journal = transaction.journal.clone();
+    if journal.state != TransactionStateV1::RollbackStarted {
+        advance_journal_with(
+            paths,
+            &mut journal,
+            TransactionStateV1::RollbackStarted,
+            injector,
+        )?;
+    }
+    for (index, operation) in transaction.plan.operations.iter().enumerate().rev() {
+        mutate_with_checkpoint(
+            injector,
+            FileMutationPhase::RollbackManaged,
+            index,
+            operation.path(),
+            || apply_rollback_operation(&transaction, operation, index),
+        )?;
+    }
+    restore_backup_record(&transaction, injector)?;
+    verify_active_old_release(&transaction, trust)?;
+    advance_journal_with(
+        paths,
+        &mut journal,
+        TransactionStateV1::RolledBack,
+        injector,
+    )?;
+    load_transaction_metadata(paths, trust).map_err(Into::into)
+}
+
+pub fn recover_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    let transaction = load_transaction_metadata(paths, trust)?;
+    match transaction.journal.state {
+        TransactionStateV1::Planned | TransactionStateV1::BackupPrepared => {
+            verify_active_old_release(&transaction, trust)?;
+            Ok(transaction)
+        }
+        TransactionStateV1::ActivationStarted
+        | TransactionStateV1::CandidateActivated
+        | TransactionStateV1::PermanentVerified
+        | TransactionStateV1::CommitStarted
+        | TransactionStateV1::RollbackStarted => rollback_transaction(paths, trust),
+        TransactionStateV1::Committed => {
+            verify_active_new_release(&transaction, trust)?;
+            Ok(transaction)
+        }
+        TransactionStateV1::RolledBack => {
+            verify_active_old_release(&transaction, trust)?;
+            Ok(transaction)
+        }
+    }
+}
+
+fn state_requires_rollback(state: TransactionStateV1) -> bool {
+    matches!(
+        state,
+        TransactionStateV1::ActivationStarted
+            | TransactionStateV1::CandidateActivated
+            | TransactionStateV1::PermanentVerified
+            | TransactionStateV1::CommitStarted
+    )
 }
 
 fn verify_active_old_release(
@@ -266,7 +574,10 @@ fn verify_active_old_release(
 ) -> Result<(), UpdaterError> {
     let paths = &transaction.paths;
     let active = read_release_record(&paths.installation_state_root, trust)?;
-    if active.manifest != transaction.old_manifest {
+    let backup = read_release_record(&paths.backup_root(), trust)?;
+    if active.manifest_bytes != backup.manifest_bytes
+        || active.signature_bytes != backup.signature_bytes
+    {
         return Err(recovery(
             "active release record does not match the transaction backup",
         ));
@@ -286,12 +597,559 @@ fn verify_active_old_release(
             "active installation identity does not match the transaction backup",
         ));
     }
-    verify_manifest_files(&paths.installation_root, &transaction.old_manifest)?;
-    verify_add_destinations_absent(
-        &paths.installation_root,
-        &transaction.plan.operations,
-        &transaction.new_manifest,
+    verify_manifest_files(&paths.installation_root, &transaction.old_manifest)
+}
+
+fn verify_active_new_release(
+    transaction: &LoadedTransaction,
+    trust: &ReleaseTrust,
+) -> Result<(), UpdaterError> {
+    let paths = &transaction.paths;
+    let active = read_release_record(&paths.installation_state_root, trust)?;
+    let candidate = read_release_record(&paths.candidate_root(), trust)?;
+    if active.manifest_bytes != candidate.manifest_bytes
+        || active.signature_bytes != candidate.signature_bytes
+    {
+        return Err(recovery(
+            "active release record does not match the transaction candidate",
+        ));
+    }
+    let active_identity = read_bounded(
+        &paths.installation_state_root.join(IDENTITY_FILE),
+        MAX_IDENTITY_BYTES,
+        "failed to read active installation identity",
+    )?;
+    let backup_identity = read_bounded(
+        &paths.backup_root().join(IDENTITY_FILE),
+        MAX_IDENTITY_BYTES,
+        "failed to read transaction backup identity",
+    )?;
+    if active_identity != backup_identity {
+        return Err(recovery(
+            "active installation identity does not match the transaction backup",
+        ));
+    }
+    verify_manifest_files(&paths.installation_root, &transaction.new_manifest)
+}
+
+fn advance_journal_with(
+    paths: &TransactionPaths,
+    journal: &mut TransactionJournalV1,
+    next: TransactionStateV1,
+    injector: &mut impl FailureInjector,
+) -> Result<(), TransactionRunError> {
+    let sequence = journal
+        .transition_sequence
+        .checked_add(1)
+        .ok_or_else(|| transaction("transaction transition sequence overflow"))?;
+    checkpoint(
+        injector,
+        FailurePoint::BeforeJournalWrite {
+            state: next,
+            sequence,
+        },
+    )?;
+    journal.advance(next)?;
+    replace_journal(paths, journal)?;
+    checkpoint(
+        injector,
+        FailurePoint::AfterJournalWrite {
+            state: next,
+            sequence,
+        },
     )
+}
+
+fn mutate_with_checkpoint(
+    injector: &mut impl FailureInjector,
+    phase: FileMutationPhase,
+    index: usize,
+    relative_path: &str,
+    mutate: impl FnOnce() -> Result<(), UpdaterError>,
+) -> Result<(), TransactionRunError> {
+    checkpoint(
+        injector,
+        FailurePoint::BeforeFileMutation {
+            phase,
+            index,
+            relative_path: relative_path.to_owned(),
+        },
+    )?;
+    mutate()?;
+    checkpoint(
+        injector,
+        FailurePoint::AfterFileMutation {
+            phase,
+            index,
+            relative_path: relative_path.to_owned(),
+        },
+    )
+}
+
+fn checkpoint(
+    injector: &mut impl FailureInjector,
+    point: FailurePoint,
+) -> Result<(), TransactionRunError> {
+    if injector.interrupt(&point) {
+        Err(TransactionRunError::Interrupted(point))
+    } else {
+        Ok(())
+    }
+}
+
+fn apply_activation_operation(
+    transaction: &LoadedTransaction,
+    operation: &ManagedFileOperationV1,
+    index: usize,
+) -> Result<(), UpdaterError> {
+    let root = &transaction.paths.installation_root;
+    match operation {
+        ManagedFileOperationV1::Add { new } => {
+            let destination = optional_managed_file(root, &new.path)?;
+            if let Some(destination) = destination {
+                if file_matches(&destination, new)? {
+                    return Ok(());
+                }
+                return Err(activation(
+                    "transaction add destination contains unknown file content",
+                ));
+            }
+            install_managed_file(
+                transaction,
+                &transaction.paths.candidate_files_root(),
+                new,
+                FileMutationPhase::ActivateManaged,
+                index,
+            )
+        }
+        ManagedFileOperationV1::Replace { old, new } => {
+            let destination = optional_managed_file(root, &new.path)?
+                .ok_or_else(|| activation("transaction replacement destination is missing"))?;
+            if file_matches(&destination, new)? {
+                return Ok(());
+            }
+            if !file_matches(&destination, old)? {
+                return Err(activation(
+                    "transaction replacement destination contains unknown file content",
+                ));
+            }
+            install_managed_file(
+                transaction,
+                &transaction.paths.candidate_files_root(),
+                new,
+                FileMutationPhase::ActivateManaged,
+                index,
+            )
+        }
+        ManagedFileOperationV1::Remove { old } => {
+            let Some(destination) = optional_managed_file(root, &old.path)? else {
+                return Ok(());
+            };
+            if !file_matches(&destination, old)? {
+                return Err(activation(
+                    "transaction removal destination contains unknown file content",
+                ));
+            }
+            remove_file_synced(&destination)
+                .map_err(|_| activation("failed to remove obsolete managed file"))
+        }
+    }
+}
+
+fn apply_rollback_operation(
+    transaction: &LoadedTransaction,
+    operation: &ManagedFileOperationV1,
+    index: usize,
+) -> Result<(), UpdaterError> {
+    remove_managed_operation_temp(
+        transaction,
+        operation,
+        FileMutationPhase::ActivateManaged,
+        index,
+    )?;
+    let root = &transaction.paths.installation_root;
+    match operation {
+        ManagedFileOperationV1::Add { new } => {
+            let Some(destination) = optional_managed_file(root, &new.path)? else {
+                return Ok(());
+            };
+            if file_matches(&destination, new)? {
+                remove_file_synced(&destination)
+                    .map_err(|_| rollback("failed to remove added managed file during rollback"))?;
+            }
+            Ok(())
+        }
+        ManagedFileOperationV1::Replace { old, new } => {
+            if let Some(destination) = optional_managed_file(root, &old.path)? {
+                if file_matches(&destination, old)? {
+                    return Ok(());
+                }
+                if !file_matches(&destination, new)? {
+                    return Err(rollback(
+                        "rollback replacement destination contains unknown file content",
+                    ));
+                }
+            }
+            install_managed_file(
+                transaction,
+                &transaction.paths.backup_files_root(),
+                old,
+                FileMutationPhase::RollbackManaged,
+                index,
+            )
+        }
+        ManagedFileOperationV1::Remove { old } => {
+            if let Some(destination) = optional_managed_file(root, &old.path)? {
+                if file_matches(&destination, old)? {
+                    return Ok(());
+                }
+                return Err(rollback(
+                    "rollback removal destination contains unknown file content",
+                ));
+            }
+            install_managed_file(
+                transaction,
+                &transaction.paths.backup_files_root(),
+                old,
+                FileMutationPhase::RollbackManaged,
+                index,
+            )
+        }
+    }
+}
+
+fn install_managed_file(
+    loaded: &LoadedTransaction,
+    source_root: &Path,
+    expected: &ManagedFile,
+    phase: FileMutationPhase,
+    index: usize,
+) -> Result<(), UpdaterError> {
+    let source = existing_managed_file(source_root, &expected.path)?;
+    verify_file(&source, expected)?;
+    let destination = create_managed_destination(&loaded.paths.installation_root, &expected.path)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| transaction("managed destination has no parent directory"))?;
+    let temporary = parent.join(operation_temp_name(loaded, phase, index));
+    prepare_managed_temp(&source, &temporary, expected)?;
+    atomic_replace(&temporary, &destination)
+        .map_err(|_| mutation_error(phase, "failed to atomically replace managed file"))?;
+    verify_file(&destination, expected)
+        .map_err(|_| mutation_error(phase, "replaced managed file failed verification"))
+}
+
+fn prepare_managed_temp(
+    source: &Path,
+    temporary: &Path,
+    expected: &ManagedFile,
+) -> Result<(), UpdaterError> {
+    match fs::symlink_metadata(temporary) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            copy_verified_file(source, temporary, expected)
+        }
+        Ok(_) => {
+            ensure_direct_file(temporary)?;
+            if !file_matches(temporary, expected)? {
+                return Err(recovery(
+                    "managed operation temporary file contains unknown content",
+                ));
+            }
+            Ok(())
+        }
+        Err(_) => Err(recovery(
+            "failed to inspect managed operation temporary file",
+        )),
+    }
+}
+
+fn remove_managed_operation_temp(
+    transaction: &LoadedTransaction,
+    operation: &ManagedFileOperationV1,
+    phase: FileMutationPhase,
+    index: usize,
+) -> Result<(), UpdaterError> {
+    let expected = match operation {
+        ManagedFileOperationV1::Add { new } | ManagedFileOperationV1::Replace { new, .. } => {
+            Some(new)
+        }
+        ManagedFileOperationV1::Remove { .. } => None,
+    };
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let destination =
+        prospective_managed_file(&transaction.paths.installation_root, &expected.path)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| recovery("managed destination has no parent directory"))?;
+    let temporary = parent.join(operation_temp_name(transaction, phase, index));
+    remove_known_managed_temp(&temporary, expected)
+}
+
+fn remove_known_managed_temp(temporary: &Path, expected: &ManagedFile) -> Result<(), UpdaterError> {
+    match fs::symlink_metadata(temporary) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => {
+            ensure_direct_file(temporary)?;
+            if !file_matches(temporary, expected)? {
+                return Err(recovery(
+                    "managed operation temporary file contains unknown content",
+                ));
+            }
+            remove_file_synced(temporary)
+                .map_err(|_| recovery("failed to remove managed operation temporary file"))
+        }
+        Err(_) => Err(recovery(
+            "failed to inspect managed operation temporary file",
+        )),
+    }
+}
+
+fn operation_temp_name(
+    transaction: &LoadedTransaction,
+    phase: FileMutationPhase,
+    index: usize,
+) -> String {
+    format!(
+        ".ah-update-{}-{}-{index}.tmp",
+        transaction.plan.transaction_id,
+        phase_name(phase)
+    )
+}
+
+fn phase_name(phase: FileMutationPhase) -> &'static str {
+    match phase {
+        FileMutationPhase::StageCandidate => "stage",
+        FileMutationPhase::BackupManaged => "backup",
+        FileMutationPhase::ActivateManaged => "activate",
+        FileMutationPhase::PublishInstalledRecord => "publish",
+        FileMutationPhase::RollbackManaged => "rollback",
+        FileMutationPhase::RestoreInstalledRecord => "restore",
+    }
+}
+
+fn mutation_error(phase: FileMutationPhase, detail: &'static str) -> UpdaterError {
+    match phase {
+        FileMutationPhase::StageCandidate | FileMutationPhase::BackupManaged => transaction(detail),
+        FileMutationPhase::ActivateManaged | FileMutationPhase::PublishInstalledRecord => {
+            activation(detail)
+        }
+        FileMutationPhase::RollbackManaged | FileMutationPhase::RestoreInstalledRecord => {
+            rollback(detail)
+        }
+    }
+}
+
+fn optional_managed_file(root: &Path, relative: &str) -> Result<Option<PathBuf>, UpdaterError> {
+    let path = prospective_managed_file(root, relative)?;
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Ok(_) => {
+            ensure_direct_file(&path)?;
+            Ok(Some(path))
+        }
+        Err(_) => Err(transaction("failed to inspect managed destination file")),
+    }
+}
+
+fn file_matches(path: &Path, expected: &ManagedFile) -> Result<bool, UpdaterError> {
+    let metadata = fs::metadata(path)
+        .map_err(|_| transaction("failed to inspect managed destination file"))?;
+    if metadata.len() != expected.size {
+        return Ok(false);
+    }
+    let mut input =
+        File::open(path).map_err(|_| transaction("failed to open managed destination file"))?;
+    Ok(hash_exact(&mut input, expected.size)? == expected.sha256)
+}
+
+fn publish_candidate_record(
+    transaction: &LoadedTransaction,
+    injector: &mut impl FailureInjector,
+) -> Result<(), TransactionRunError> {
+    for (index, relative) in [INSTALLED_MANIFEST_FILE, INSTALLED_SIGNATURE_FILE]
+        .into_iter()
+        .enumerate()
+    {
+        mutate_with_checkpoint(
+            injector,
+            FileMutationPhase::PublishInstalledRecord,
+            index,
+            relative,
+            || {
+                replace_release_record_file(
+                    transaction,
+                    &transaction.paths.candidate_root().join(relative),
+                    &transaction.paths.backup_root().join(relative),
+                    &transaction.paths.installation_state_root.join(relative),
+                    FileMutationPhase::PublishInstalledRecord,
+                    index,
+                    false,
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn restore_backup_record(
+    transaction: &LoadedTransaction,
+    injector: &mut impl FailureInjector,
+) -> Result<(), TransactionRunError> {
+    for (index, relative) in [
+        IDENTITY_FILE,
+        INSTALLED_MANIFEST_FILE,
+        INSTALLED_SIGNATURE_FILE,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        mutate_with_checkpoint(
+            injector,
+            FileMutationPhase::RestoreInstalledRecord,
+            index,
+            relative,
+            || {
+                if relative != IDENTITY_FILE {
+                    remove_record_temp(
+                        transaction,
+                        &transaction.paths.candidate_root().join(relative),
+                        FileMutationPhase::PublishInstalledRecord,
+                        index - 1,
+                    )?;
+                }
+                replace_release_record_file(
+                    transaction,
+                    &transaction.paths.backup_root().join(relative),
+                    &transaction.paths.candidate_root().join(relative),
+                    &transaction.paths.installation_state_root.join(relative),
+                    FileMutationPhase::RestoreInstalledRecord,
+                    index,
+                    true,
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn replace_release_record_file(
+    loaded: &LoadedTransaction,
+    desired_source: &Path,
+    alternate_source: &Path,
+    destination: &Path,
+    phase: FileMutationPhase,
+    index: usize,
+    allow_missing: bool,
+) -> Result<(), UpdaterError> {
+    let maximum = record_limit(
+        destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| transaction("release record destination name is invalid"))?,
+    );
+    let desired = read_bounded(
+        desired_source,
+        maximum,
+        "failed to read durable release record source",
+    )?;
+    let alternate = if alternate_source.exists() {
+        Some(read_bounded(
+            alternate_source,
+            maximum,
+            "failed to read durable release record alternate",
+        )?)
+    } else {
+        None
+    };
+    match read_optional_bounded(destination, maximum)? {
+        Some(current) if current == desired => return Ok(()),
+        Some(current) if alternate.as_ref().is_some_and(|bytes| *bytes == current) => {}
+        Some(_) => {
+            return Err(recovery(
+                "active release record contains unknown durable content",
+            ));
+        }
+        None if allow_missing => {}
+        None => return Err(recovery("active release record is unexpectedly missing")),
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| transaction("release record destination has no parent"))?;
+    ensure_direct_directory(parent)?;
+    let temporary = parent.join(operation_temp_name(loaded, phase, index));
+    prepare_record_temp(&temporary, &desired)?;
+    atomic_replace(&temporary, destination)
+        .map_err(|_| transaction("failed to atomically replace active release record"))
+}
+
+fn remove_record_temp(
+    transaction: &LoadedTransaction,
+    expected_source: &Path,
+    phase: FileMutationPhase,
+    index: usize,
+) -> Result<(), UpdaterError> {
+    let parent = transaction.paths.installation_state_root();
+    let temporary = parent.join(operation_temp_name(transaction, phase, index));
+    let expected = read_bounded(
+        expected_source,
+        record_limit(
+            expected_source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| recovery("release record source name is invalid"))?,
+        ),
+        "failed to read release record temporary expectation",
+    )?;
+    match read_optional_bounded(&temporary, expected.len())? {
+        None => Ok(()),
+        Some(bytes) if bytes == expected => remove_file_synced(&temporary)
+            .map_err(|_| recovery("failed to remove release record temporary file")),
+        Some(_) => Err(recovery(
+            "release record temporary file contains unknown content",
+        )),
+    }
+}
+
+fn prepare_record_temp(temporary: &Path, expected: &[u8]) -> Result<(), UpdaterError> {
+    match read_optional_bounded(temporary, expected.len())? {
+        None => write_new_synced(temporary, expected),
+        Some(bytes) if bytes == expected => Ok(()),
+        Some(_) => Err(recovery(
+            "release record temporary file contains unknown content",
+        )),
+    }
+}
+
+fn read_optional_bounded(path: &Path, maximum: usize) -> Result<Option<Vec<u8>>, UpdaterError> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Ok(_) => read_bounded(path, maximum, "failed to read active release record").map(Some),
+        Err(_) => Err(recovery("failed to inspect active release record")),
+    }
+}
+
+fn record_limit(file_name: &str) -> usize {
+    match file_name {
+        IDENTITY_FILE => MAX_IDENTITY_BYTES,
+        INSTALLED_MANIFEST_FILE => ah_updater_core::MAX_MANIFEST_BYTES,
+        INSTALLED_SIGNATURE_FILE => ah_updater_core::DETACHED_SIGNATURE_BYTES,
+        _ => 0,
+    }
+}
+
+fn remove_file_synced(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)?;
+    sync_parent(path)
+}
+
+fn transaction_error(detail: &'static str) -> TransactionRunError {
+    TransactionRunError::Failed(transaction(detail))
+}
+
+fn rollback_error(detail: &'static str) -> TransactionRunError {
+    TransactionRunError::Failed(rollback(detail))
 }
 
 #[derive(Debug)]
@@ -515,7 +1373,16 @@ fn replace_journal(
         ".journal-{}-{}.tmp",
         journal.transaction_id, journal.transition_sequence
     ));
-    write_new_synced(&temporary, &encode_journal(journal)?)?;
+    let encoded = encode_journal(journal)?;
+    match read_optional_bounded(&temporary, MAX_JOURNAL_BYTES)? {
+        None => write_new_synced(&temporary, &encoded)?,
+        Some(existing) if existing == encoded => {}
+        Some(_) => {
+            return Err(recovery(
+                "transaction journal temporary file contains unknown content",
+            ));
+        }
+    }
     atomic_replace(&temporary, &paths.transaction_root.join(JOURNAL_FILE))
         .map_err(|_| transaction("failed to durably replace transaction journal"))
 }
@@ -543,16 +1410,20 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), UpdaterError> {
     sync_parent(path).map_err(|_| transaction("failed to sync durable transaction state metadata"))
 }
 
-fn copy_manifest_files(
+fn copy_manifest_files_with_injector(
+    injector: &mut impl FailureInjector,
+    phase: FileMutationPhase,
     source_root: &Path,
     destination_root: &Path,
     manifest: &ReleaseManifest,
-) -> Result<(), UpdaterError> {
+) -> Result<(), TransactionRunError> {
     validate_inventory_bounds(manifest)?;
-    for managed in &manifest.files {
-        let source = existing_managed_file(source_root, &managed.path)?;
-        let destination = create_managed_destination(destination_root, &managed.path)?;
-        copy_verified_file(&source, &destination, managed)?;
+    for (index, managed) in manifest.files.iter().enumerate() {
+        mutate_with_checkpoint(injector, phase, index, &managed.path, || {
+            let source = existing_managed_file(source_root, &managed.path)?;
+            let destination = create_managed_destination(destination_root, &managed.path)?;
+            copy_verified_file(&source, &destination, managed)
+        })?;
     }
     Ok(())
 }
@@ -972,4 +1843,12 @@ fn transaction(detail: impl Into<String>) -> UpdaterError {
 
 fn recovery(detail: impl Into<String>) -> UpdaterError {
     UpdaterError::new(UpdaterErrorCode::Recovery, detail)
+}
+
+fn activation(detail: impl Into<String>) -> UpdaterError {
+    UpdaterError::new(UpdaterErrorCode::Activation, detail)
+}
+
+fn rollback(detail: impl Into<String>) -> UpdaterError {
+    UpdaterError::new(UpdaterErrorCode::Rollback, detail)
 }

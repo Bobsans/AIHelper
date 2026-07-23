@@ -10,7 +10,11 @@ use ah_release_manifest::{
     TrustedKey, key_id_for_public_key,
 };
 use ah_update_helper::transaction::{
-    TransactionPaths, load_prepared_transaction, prepare_transaction,
+    FailureInjector, FailurePoint, LoadedTransaction, TransactionPaths, TransactionRunError,
+    activate_transaction, activate_transaction_with_injector, commit_transaction,
+    commit_transaction_with_injector, load_prepared_transaction, prepare_transaction,
+    prepare_transaction_with_injector, recover_transaction, rollback_transaction,
+    rollback_transaction_with_injector,
 };
 use ah_updater_core::{
     InstallationIdentityV1, ReleaseTrust, TransactionPlanV1, TransactionStateV1, UpdaterErrorCode,
@@ -133,6 +137,312 @@ fn detects_staging_or_backup_tampering_at_helper_boundary() {
     }
 }
 
+#[test]
+fn activates_commits_and_recovers_idempotently_without_touching_user_files() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+
+    let activated = activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+    assert_eq!(
+        activated.journal().state,
+        TransactionStateV1::PermanentVerified
+    );
+    fixture.assert_new_active();
+
+    let committed = commit_transaction(&fixture.paths, &fixture.trust).unwrap();
+    assert_eq!(committed.journal().state, TransactionStateV1::Committed);
+    fixture.assert_new_active();
+    let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+    assert_eq!(recovered.journal().state, TransactionStateV1::Committed);
+    fixture.assert_new_active();
+}
+
+#[test]
+fn explicit_rollback_restores_complete_old_release_and_is_recoverable() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+    activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+
+    let rolled_back = rollback_transaction(&fixture.paths, &fixture.trust).unwrap();
+
+    assert_eq!(rolled_back.journal().state, TransactionStateV1::RolledBack);
+    fixture.assert_old_active();
+    let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+    assert_eq!(recovered.journal().state, TransactionStateV1::RolledBack);
+    fixture.assert_old_active();
+}
+
+#[test]
+fn every_activation_and_commit_checkpoint_recovers_deterministically() {
+    let discovery = Fixture::new();
+    discovery.prepare().unwrap();
+    let mut recorder = RecordingInjector::default();
+    activate_transaction_with_injector(&discovery.paths, &discovery.trust, &mut recorder).unwrap();
+    commit_transaction_with_injector(&discovery.paths, &discovery.trust, &mut recorder).unwrap();
+    assert_unique_checkpoint_count(&recorder.points, 20);
+
+    for target in recorder.points {
+        let fixture = Fixture::new();
+        fixture.prepare().unwrap();
+        let mut injector = InterruptAt::new(target.clone());
+        let activation =
+            activate_transaction_with_injector(&fixture.paths, &fixture.trust, &mut injector);
+        let result = match activation {
+            Ok(_) => {
+                commit_transaction_with_injector(&fixture.paths, &fixture.trust, &mut injector)
+            }
+            Err(error) => Err(error),
+        };
+        assert_eq!(
+            result.unwrap_err(),
+            TransactionRunError::Interrupted(target.clone())
+        );
+        assert!(injector.hit);
+
+        let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+        if matches!(
+            target,
+            FailurePoint::AfterJournalWrite {
+                state: TransactionStateV1::Committed,
+                ..
+            }
+        ) {
+            assert_eq!(recovered.journal().state, TransactionStateV1::Committed);
+            fixture.assert_new_active();
+        } else {
+            assert!(matches!(
+                recovered.journal().state,
+                TransactionStateV1::BackupPrepared | TransactionStateV1::RolledBack
+            ));
+            fixture.assert_old_active();
+        }
+    }
+}
+
+#[test]
+fn every_staging_and_backup_checkpoint_leaves_recoverable_old_release() {
+    let discovery = Fixture::new();
+    let mut recorder = RecordingInjector::default();
+    prepare_transaction_with_injector(
+        &discovery.paths,
+        &discovery.plan,
+        &discovery.candidate_source,
+        &discovery.new_manifest_bytes,
+        &discovery.new_signature_bytes,
+        &discovery.trust,
+        &mut recorder,
+    )
+    .unwrap();
+    assert_unique_checkpoint_count(&recorder.points, 14);
+
+    for target in recorder.points {
+        let fixture = Fixture::new();
+        let mut injector = InterruptAt::new(target.clone());
+        let result = prepare_transaction_with_injector(
+            &fixture.paths,
+            &fixture.plan,
+            &fixture.candidate_source,
+            &fixture.new_manifest_bytes,
+            &fixture.new_signature_bytes,
+            &fixture.trust,
+            &mut injector,
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            TransactionRunError::Interrupted(target)
+        );
+        assert!(injector.hit);
+        assert!(fixture.paths.transaction_root().exists());
+        let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+        assert!(matches!(
+            recovered.journal().state,
+            TransactionStateV1::Planned | TransactionStateV1::BackupPrepared
+        ));
+        fixture.assert_old_active();
+    }
+}
+
+#[test]
+fn every_rollback_checkpoint_resumes_to_verified_old_release() {
+    let discovery = Fixture::new();
+    discovery.prepare().unwrap();
+    activate_transaction(&discovery.paths, &discovery.trust).unwrap();
+    let mut recorder = RecordingInjector::default();
+    rollback_transaction_with_injector(&discovery.paths, &discovery.trust, &mut recorder).unwrap();
+    assert_unique_checkpoint_count(&recorder.points, 16);
+
+    for target in recorder.points {
+        let fixture = Fixture::new();
+        fixture.prepare().unwrap();
+        activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+        let mut injector = InterruptAt::new(target.clone());
+
+        let result =
+            rollback_transaction_with_injector(&fixture.paths, &fixture.trust, &mut injector);
+
+        assert_eq!(
+            result.unwrap_err(),
+            TransactionRunError::Interrupted(target)
+        );
+        assert!(injector.hit);
+        let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+        assert_eq!(recovered.journal().state, TransactionStateV1::RolledBack);
+        fixture.assert_old_active();
+    }
+}
+
+#[test]
+fn rollback_uses_verified_backup_even_when_candidate_files_are_lost() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+    activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+    fs::write(
+        fixture.paths.candidate_files_root().join("plugins/new.dll"),
+        b"lost-plugin",
+    )
+    .unwrap();
+
+    let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+
+    assert_eq!(recovered.journal().state, TransactionStateV1::RolledBack);
+    fixture.assert_old_active();
+}
+
+#[test]
+fn activation_boundary_preserves_foreign_add_path_before_any_mutation() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+    let foreign = fixture.installation_root.join("plugins/new.dll");
+    fs::write(&foreign, b"foreign-user-file").unwrap();
+
+    let error = activate_transaction(&fixture.paths, &fixture.trust).unwrap_err();
+
+    assert_eq!(error.code(), UpdaterErrorCode::Transaction);
+    assert_eq!(fs::read(&foreign).unwrap(), b"foreign-user-file");
+    assert_tree_matches(&fixture.installation_root, &fixture.old_files);
+    assert_eq!(
+        fs::read(fixture.installation_root.join("user-owned.txt")).unwrap(),
+        b"preserve me"
+    );
+    let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+    assert_eq!(
+        recovered.journal().state,
+        TransactionStateV1::BackupPrepared
+    );
+}
+
+#[test]
+fn recovery_preserves_foreign_add_race_after_partial_activation() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+    let foreign = fixture.installation_root.join("plugins/new.dll");
+    let mut injector = CreateForeignAfterFirstMutation {
+        path: foreign.clone(),
+        created: false,
+    };
+
+    let error = activate_transaction_with_injector(&fixture.paths, &fixture.trust, &mut injector)
+        .unwrap_err();
+
+    assert!(injector.created);
+    assert!(matches!(
+        error,
+        TransactionRunError::Failed(ref error) if error.code() == UpdaterErrorCode::Activation
+    ));
+    let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+    assert_eq!(recovered.journal().state, TransactionStateV1::RolledBack);
+    assert_tree_matches(&fixture.installation_root, &fixture.old_files);
+    assert_eq!(fs::read(foreign).unwrap(), b"foreign-user-file");
+}
+
+#[test]
+fn recovery_fails_closed_and_retains_state_for_corrupt_backup() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+    activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+    fs::write(fixture.paths.backup_files_root().join("ah.exe"), b"broken").unwrap();
+
+    let error = recover_transaction(&fixture.paths, &fixture.trust).unwrap_err();
+
+    assert_eq!(error.code(), UpdaterErrorCode::Transaction);
+    let journal: ah_updater_core::TransactionJournalV1 = serde_json::from_slice(
+        &fs::read(fixture.paths.transaction_root().join("journal.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(journal.state, TransactionStateV1::PermanentVerified);
+    assert!(fixture.paths.transaction_root().exists());
+    fixture.assert_new_active();
+}
+
+#[derive(Default)]
+struct RecordingInjector {
+    points: Vec<FailurePoint>,
+}
+
+impl FailureInjector for RecordingInjector {
+    fn interrupt(&mut self, point: &FailurePoint) -> bool {
+        self.points.push(point.clone());
+        false
+    }
+}
+
+struct InterruptAt {
+    target: FailurePoint,
+    hit: bool,
+}
+
+impl InterruptAt {
+    fn new(target: FailurePoint) -> Self {
+        Self { target, hit: false }
+    }
+}
+
+impl FailureInjector for InterruptAt {
+    fn interrupt(&mut self, point: &FailurePoint) -> bool {
+        if !self.hit && point == &self.target {
+            self.hit = true;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+struct CreateForeignAfterFirstMutation {
+    path: PathBuf,
+    created: bool,
+}
+
+impl FailureInjector for CreateForeignAfterFirstMutation {
+    fn interrupt(&mut self, point: &FailurePoint) -> bool {
+        if !self.created
+            && matches!(
+                point,
+                FailurePoint::AfterFileMutation {
+                    phase: ah_update_helper::transaction::FileMutationPhase::ActivateManaged,
+                    index: 0,
+                    ..
+                }
+            )
+        {
+            fs::write(&self.path, b"foreign-user-file").unwrap();
+            self.created = true;
+        }
+        false
+    }
+}
+
+fn assert_unique_checkpoint_count(points: &[FailurePoint], expected: usize) {
+    assert_eq!(points.len(), expected);
+    for (index, point) in points.iter().enumerate() {
+        assert!(
+            !points[..index].contains(point),
+            "duplicate failure checkpoint: {point:?}"
+        );
+    }
+}
+
 struct Fixture {
     _temporary: TempDir,
     installation_root: PathBuf,
@@ -142,6 +452,8 @@ struct Fixture {
     plan: TransactionPlanV1,
     identity: InstallationIdentityV1,
     identity_bytes: Vec<u8>,
+    old_manifest_bytes: Vec<u8>,
+    old_signature_bytes: Vec<u8>,
     new_manifest_bytes: Vec<u8>,
     new_signature_bytes: Vec<u8>,
     old_files: BTreeMap<String, Vec<u8>>,
@@ -171,6 +483,7 @@ impl Fixture {
         ]);
         write_tree(&installation_root, &old_files);
         write_tree(&candidate_source, &new_files);
+        fs::write(installation_root.join("user-owned.txt"), b"preserve me").unwrap();
 
         let signing_key = SigningKey::from_bytes(&[23_u8; 32]);
         let trusted_key = trusted_key(&signing_key);
@@ -195,12 +508,12 @@ impl Fixture {
         fs::write(state_root.join("identity.json"), &identity_bytes).unwrap();
         fs::write(
             state_root.join("installed.manifest.json"),
-            old_manifest_bytes,
+            &old_manifest_bytes,
         )
         .unwrap();
         fs::write(
             state_root.join("installed.manifest.sig"),
-            old_signature_bytes,
+            &old_signature_bytes,
         )
         .unwrap();
         let plan = TransactionPlanV1::build(
@@ -225,6 +538,8 @@ impl Fixture {
             plan,
             identity,
             identity_bytes,
+            old_manifest_bytes,
+            old_signature_bytes,
             new_manifest_bytes,
             new_signature_bytes,
             old_files,
@@ -232,10 +547,7 @@ impl Fixture {
         }
     }
 
-    fn prepare(
-        &self,
-    ) -> Result<ah_update_helper::transaction::LoadedTransaction, ah_updater_core::UpdaterError>
-    {
+    fn prepare(&self) -> Result<LoadedTransaction, ah_updater_core::UpdaterError> {
         prepare_transaction(
             &self.paths,
             &self.plan,
@@ -244,6 +556,65 @@ impl Fixture {
             &self.new_signature_bytes,
             &self.trust,
         )
+    }
+
+    fn assert_old_active(&self) {
+        assert_tree_matches(&self.installation_root, &self.old_files);
+        assert!(!self.installation_root.join("plugins/new.dll").exists());
+        assert_eq!(
+            fs::read(
+                self.paths
+                    .installation_state_root()
+                    .join("installed.manifest.json")
+            )
+            .unwrap(),
+            self.old_manifest_bytes
+        );
+        assert_eq!(
+            fs::read(
+                self.paths
+                    .installation_state_root()
+                    .join("installed.manifest.sig")
+            )
+            .unwrap(),
+            self.old_signature_bytes
+        );
+        self.assert_identity_and_user_file();
+    }
+
+    fn assert_new_active(&self) {
+        assert_tree_matches(&self.installation_root, &self.new_files);
+        assert!(!self.installation_root.join("plugins/old.dll").exists());
+        assert_eq!(
+            fs::read(
+                self.paths
+                    .installation_state_root()
+                    .join("installed.manifest.json")
+            )
+            .unwrap(),
+            self.new_manifest_bytes
+        );
+        assert_eq!(
+            fs::read(
+                self.paths
+                    .installation_state_root()
+                    .join("installed.manifest.sig")
+            )
+            .unwrap(),
+            self.new_signature_bytes
+        );
+        self.assert_identity_and_user_file();
+    }
+
+    fn assert_identity_and_user_file(&self) {
+        assert_eq!(
+            fs::read(self.paths.installation_state_root().join("identity.json")).unwrap(),
+            self.identity_bytes
+        );
+        assert_eq!(
+            fs::read(self.installation_root.join("user-owned.txt")).unwrap(),
+            b"preserve me"
+        );
     }
 }
 

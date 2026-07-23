@@ -678,8 +678,6 @@ Manual acceptance:
 
 - [ ] Проверять незавершённую update transaction до загрузки динамических
       плагинов.
-- [ ] Добавить оставшиеся automated tests блокировок, failure injection и
-      transaction recovery.
 
 Критерии завершения:
 
