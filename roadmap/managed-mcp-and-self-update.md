@@ -676,8 +676,6 @@ Manual acceptance:
 
 ### Этап 6: update-helper и durable transaction
 
-- [ ] Реализовать Windows Restart Manager adapter для обнаружения процессов,
-      блокирующих managed-файлы.
 - [ ] Реализовать staging, transaction backup и durable transaction state.
 - [ ] Проверять незавершённую update transaction до загрузки динамических
       плагинов.
