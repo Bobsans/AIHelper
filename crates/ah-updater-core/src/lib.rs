@@ -9,6 +9,7 @@ mod error;
 mod helper;
 mod installation;
 mod release;
+mod transaction;
 mod trust;
 
 pub use check::{
@@ -25,5 +26,9 @@ pub use release::{
     CheckStatus, DiscoveredReleaseV1, GitHubAssetDtoV1, GitHubReleaseDtoV1, ReleaseAssetV1,
     ReleaseAssetsV1, StableReleaseVersion, UpdateOperation, UpdateTarget, WINDOWS_X64_TARGET,
     select_highest_stable_release, select_stable_release_by_version,
+};
+pub use transaction::{
+    ManagedFileOperationV1, TRANSACTION_JOURNAL_SCHEMA_VERSION, TRANSACTION_PLAN_SCHEMA_VERSION,
+    TransactionJournalV1, TransactionPlanV1, TransactionStateV1,
 };
 pub use trust::{ReleaseTrust, ReleaseTrustAnchor};
