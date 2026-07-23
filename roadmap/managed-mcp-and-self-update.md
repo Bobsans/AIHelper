@@ -676,10 +676,6 @@ Manual acceptance:
 
 ### Этап 5: installation identity и legacy bootstrap
 
-- [ ] Определять installation root по запущенному `ah.exe`, не изменяя
-      выбранный пользователем путь.
-- [ ] Обнаруживать установки из `cargo install` и запрещать для них self-update
-      с понятной инструкцией.
 - [ ] Для legacy portable-установки загружать подписанный manifest текущей
       версии и признавать managed только файлы с совпадающими hashes.
 
