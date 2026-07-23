@@ -137,7 +137,13 @@ fn build_manifest(
         .collect::<Vec<_>>();
     let executables = files
         .iter()
-        .filter(|file| file.purpose == ah_release_manifest::FilePurpose::Executable)
+        .filter(|file| {
+            matches!(
+                file.purpose,
+                ah_release_manifest::FilePurpose::Executable
+                    | ah_release_manifest::FilePurpose::UpdateHelper
+            )
+        })
         .map(|file| file.path.clone())
         .collect();
     let plugins = files

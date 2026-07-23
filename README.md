@@ -35,6 +35,8 @@ cargo run --bin ah -- --cwd . mcp serve
 
 ## Runtime Layout
 - `ah` (or `ah.exe`) in root directory
+- `ah-update-helper.exe` in the Windows release root for offline transactional
+  update and recovery
 - dynamic plugins in `plugins/` next to executable:
   - `plugins/ah-plugin-<name>.dll` (Windows)
   - `plugins/ah-plugin-<name>.so` (Linux)

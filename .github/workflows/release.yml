@@ -53,6 +53,10 @@ jobs:
           cargo build --release --locked -p ah-plugin-ollama
           cargo build --release --locked -p ah-plugin-postgres
 
+      - name: Build Windows update helper
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked -p ah-update-helper
+
       - name: Package archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -60,12 +64,13 @@ jobs:
           $archive = "${{ matrix.archive }}"
           New-Item -ItemType Directory -Path "dist/plugins" -Force | Out-Null
           Copy-Item -LiteralPath "target/release/ah.exe" -Destination "dist/ah.exe" -Force
+          Copy-Item -LiteralPath "target/release/ah-update-helper.exe" -Destination "dist/ah-update-helper.exe" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_github.dll" -Destination "dist/plugins/ah-plugin-github.dll" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_gitlab.dll" -Destination "dist/plugins/ah-plugin-gitlab.dll" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_ollama.dll" -Destination "dist/plugins/ah-plugin-ollama.dll" -Force
           Copy-Item -LiteralPath "target/release/ah_plugin_postgres.dll" -Destination "dist/plugins/ah-plugin-postgres.dll" -Force
           Push-Location "dist"
-          Compress-Archive -Path "ah.exe", "plugins" -DestinationPath "..\$archive" -Force
+          Compress-Archive -Path "ah.exe", "ah-update-helper.exe", "plugins" -DestinationPath "..\$archive" -Force
           Pop-Location
 
       - name: Package archive (Linux/macOS)

@@ -127,6 +127,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-update-helper"
+version = "1.1.0"
+dependencies = [
+ "ah-updater-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ah-updater-core"
 version = "1.1.0"
 dependencies = [

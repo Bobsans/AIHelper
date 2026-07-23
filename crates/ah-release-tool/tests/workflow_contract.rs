@@ -60,6 +60,15 @@ fn publish_step_lists_exactly_three_complete_triplets() {
     assert!(publish.contains("overwrite_files: false"));
 }
 
+#[test]
+fn windows_archive_builds_packages_and_smokes_update_helper() {
+    let build = serialized(job(jobs(), "build"));
+    assert!(build.contains("cargo build --release --locked -p ah-update-helper"));
+    assert!(build.contains("target/release/ah-update-helper.exe"));
+    assert!(build.contains("dist/ah-update-helper.exe"));
+    assert!(build.contains("scripts/release_smoke.py"));
+}
+
 fn jobs() -> &'static Mapping {
     let workflow = serde_yaml::from_str::<Value>(WORKFLOW).expect("release workflow must be YAML");
     Box::leak(Box::new(workflow))["jobs"]

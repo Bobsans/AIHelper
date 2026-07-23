@@ -55,6 +55,25 @@ fn creates_and_verifies_exact_nine_file_release_set() {
         assert_eq!(verified.manifest().release.version, "1.1.0");
         assert_eq!(verified.manifest().minimum_updater_version, "1.0.0");
         assert_eq!(
+            verified
+                .manifest()
+                .files
+                .iter()
+                .filter(|file| file.purpose == ah_release_manifest::FilePurpose::UpdateHelper)
+                .count(),
+            usize::from(profile.update_helper.is_some())
+        );
+        if let Some(update_helper) = profile.update_helper {
+            assert!(
+                verified
+                    .manifest()
+                    .required
+                    .executables
+                    .iter()
+                    .any(|path| path == update_helper)
+            );
+        }
+        assert_eq!(
             verified.manifest().archive.url,
             format!(
                 "https://github.com/example/aihelper/releases/download/v1.1.0/{}",

@@ -6,6 +6,7 @@ pub use ah_release_manifest::{
 
 mod check;
 mod error;
+mod helper;
 mod installation;
 mod release;
 mod trust;
@@ -15,6 +16,10 @@ pub use check::{
     verify_discovered_release, verify_discovered_release_for_check,
 };
 pub use error::{UpdaterError, UpdaterErrorCode};
+pub use helper::{
+    UPDATE_HELPER_PROTOCOL_VERSION, UPDATE_HELPER_SELF_CHECK_SCHEMA_VERSION,
+    UpdateHelperSelfCheckV1,
+};
 pub use installation::{INSTALLATION_IDENTITY_SCHEMA_VERSION, InstallationIdentityV1};
 pub use release::{
     CheckStatus, DiscoveredReleaseV1, GitHubAssetDtoV1, GitHubReleaseDtoV1, ReleaseAssetV1,

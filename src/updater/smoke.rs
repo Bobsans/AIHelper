@@ -2,7 +2,8 @@ use std::{collections::BTreeSet, ffi::OsStr, fs, path::Path, time::Duration};
 
 use ah_plugin_api::AH_PLUGIN_ABI_VERSION;
 use ah_updater_core::{
-    FilePurpose, ReleaseManifest, UpdaterError, UpdaterErrorCode, VerifiedReleaseV1,
+    FilePurpose, ReleaseManifest, UpdateHelperSelfCheckV1, UpdaterError, UpdaterErrorCode,
+    VerifiedReleaseV1,
 };
 use serde::Deserialize;
 
@@ -57,6 +58,7 @@ fn perform_offline_smoke(
     manifest: &ReleaseManifest,
 ) -> Result<(), UpdaterError> {
     let executable = main_executable(manifest)?;
+    let helper = update_helper(manifest)?;
     let program = candidate_root.join(executable);
     let config_dir = staging_root.join("smoke-config");
     fs::create_dir(&config_dir)
@@ -71,6 +73,15 @@ fn perform_offline_smoke(
     validate_completion(&version)?;
     validate_version_output(&version.stdout, &manifest.release.version)?;
 
+    let helper_check = runner.run(SmokeRequest {
+        program: &candidate_root.join(helper),
+        arguments: &["--self-check"],
+        cwd: candidate_root,
+        config_dir: &config_dir,
+    })?;
+    validate_completion(&helper_check)?;
+    validate_helper_output(&helper_check.stdout, manifest)?;
+
     let catalog = runner.run(SmokeRequest {
         program: &program,
         arguments: &["--json", "plugins", "list"],
@@ -79,6 +90,32 @@ fn perform_offline_smoke(
     })?;
     validate_completion(&catalog)?;
     validate_catalog(&catalog.stdout, manifest)
+}
+
+fn update_helper(manifest: &ReleaseManifest) -> Result<&str, UpdaterError> {
+    let mut helpers = manifest
+        .files
+        .iter()
+        .filter(|file| file.purpose == FilePurpose::UpdateHelper);
+    let helper = helpers
+        .next()
+        .ok_or_else(|| candidate("signed candidate does not contain an update helper"))?;
+    if helpers.next().is_some() {
+        return Err(candidate(
+            "signed candidate contains more than one update helper",
+        ));
+    }
+    if !manifest
+        .required
+        .executables
+        .iter()
+        .any(|path| path == &helper.path)
+    {
+        return Err(candidate(
+            "signed candidate update helper is not required by the manifest",
+        ));
+    }
+    Ok(&helper.path)
 }
 
 fn main_executable(manifest: &ReleaseManifest) -> Result<&str, UpdaterError> {
@@ -142,6 +179,16 @@ fn validate_version_output(output: &[u8], expected_version: &str) -> Result<(), 
         ));
     }
     Ok(())
+}
+
+fn validate_helper_output(output: &[u8], manifest: &ReleaseManifest) -> Result<(), UpdaterError> {
+    let response = serde_json::from_slice::<UpdateHelperSelfCheckV1>(output)
+        .map_err(|_| candidate("update helper self-check is not valid JSON"))?;
+    response.validate(
+        &manifest.release.version,
+        &manifest.release.target,
+        &manifest.release.architecture,
+    )
 }
 
 fn validate_catalog(output: &[u8], manifest: &ReleaseManifest) -> Result<(), UpdaterError> {
@@ -306,8 +353,9 @@ mod tests {
     fn validates_version_catalog_and_isolated_configuration() {
         let manifest = manifest();
         let version = success(b"ah 1.2.0\n");
+        let helper = success(&helper_output());
         let catalog = success(&serde_json::to_vec(&valid_catalog()).unwrap());
-        let runner = FakeRunner::new([Ok(version), Ok(catalog)]);
+        let runner = FakeRunner::new([Ok(version), Ok(helper), Ok(catalog)]);
         let candidate = TempDir::new().unwrap();
         let staging = TempDir::new().unwrap();
         let user_config = TempDir::new().unwrap();
@@ -317,10 +365,15 @@ mod tests {
         perform_offline_smoke(&runner, candidate.path(), staging.path(), &manifest).unwrap();
 
         let calls = runner.calls.borrow();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 3);
         assert_eq!(calls[0].program, candidate.path().join("ah.exe"));
         assert_eq!(calls[0].arguments, ["--version"]);
-        assert_eq!(calls[1].arguments, ["--json", "plugins", "list"]);
+        assert_eq!(
+            calls[1].program,
+            candidate.path().join("ah-update-helper.exe")
+        );
+        assert_eq!(calls[1].arguments, ["--self-check"]);
+        assert_eq!(calls[2].arguments, ["--json", "plugins", "list"]);
         for call in calls.iter() {
             assert_eq!(call.cwd, candidate.path());
             assert_eq!(call.config_dir, staging.path().join("smoke-config"));
@@ -359,6 +412,28 @@ mod tests {
             b"\xff".as_slice(),
         ] {
             assert_rejected([Ok(success(output))]);
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_incompatible_helper_protocol() {
+        assert_helper_rejected(b"not-json");
+
+        for response in [
+            UpdateHelperSelfCheckV1 {
+                protocol_version: 2,
+                ..valid_helper()
+            },
+            UpdateHelperSelfCheckV1 {
+                helper_version: "9.9.9".to_owned(),
+                ..valid_helper()
+            },
+            UpdateHelperSelfCheckV1 {
+                target: "x86_64-unknown-linux-gnu".to_owned(),
+                ..valid_helper()
+            },
+        ] {
+            assert_helper_rejected(&serde_json::to_vec(&response).unwrap());
         }
     }
 
@@ -412,7 +487,35 @@ mod tests {
         assert_manifest_rejected(multiple);
 
         let mut optional = manifest();
-        optional.required.executables.clear();
+        optional
+            .required
+            .executables
+            .retain(|path| path != "ah.exe");
+        assert_manifest_rejected(optional);
+    }
+
+    #[test]
+    fn rejects_manifest_without_one_required_update_helper() {
+        let mut missing = manifest();
+        missing
+            .files
+            .retain(|file| file.purpose != FilePurpose::UpdateHelper);
+        assert_manifest_rejected(missing);
+
+        let mut multiple = manifest();
+        multiple.files.push(ManagedFile {
+            path: "tools/other-helper.exe".to_owned(),
+            size: 1,
+            sha256: "4".repeat(64),
+            purpose: FilePurpose::UpdateHelper,
+        });
+        assert_manifest_rejected(multiple);
+
+        let mut optional = manifest();
+        optional
+            .required
+            .executables
+            .retain(|path| path != "ah-update-helper.exe");
         assert_manifest_rejected(optional);
     }
 
@@ -421,7 +524,15 @@ mod tests {
     }
 
     fn assert_catalog_rejected(catalog: &[u8]) {
-        assert_rejected([Ok(success(b"ah 1.2.0\n")), Ok(success(catalog))]);
+        assert_rejected([
+            Ok(success(b"ah 1.2.0\n")),
+            Ok(success(&helper_output())),
+            Ok(success(catalog)),
+        ]);
+    }
+
+    fn assert_helper_rejected(output: &[u8]) {
+        assert_rejected([Ok(success(b"ah 1.2.0\n")), Ok(success(output))]);
     }
 
     fn assert_manifest_rejected(manifest: ReleaseManifest) {
@@ -463,6 +574,14 @@ mod tests {
         entries
     }
 
+    fn helper_output() -> Vec<u8> {
+        serde_json::to_vec(&valid_helper()).unwrap()
+    }
+
+    fn valid_helper() -> UpdateHelperSelfCheckV1 {
+        UpdateHelperSelfCheckV1::new("1.2.0", "x86_64-pc-windows-msvc", "x86_64")
+    }
+
     fn plugin(domain: &str, plugin_name: &str, source: &str) -> Value {
         json!({
             "plugin_name": plugin_name,
@@ -494,6 +613,12 @@ mod tests {
             },
             files: vec![
                 ManagedFile {
+                    path: "ah-update-helper.exe".to_owned(),
+                    size: 1,
+                    sha256: "3".repeat(64),
+                    purpose: FilePurpose::UpdateHelper,
+                },
+                ManagedFile {
                     path: "ah.exe".to_owned(),
                     size: 1,
                     sha256: "1".repeat(64),
@@ -507,7 +632,7 @@ mod tests {
                 },
             ],
             required: RequiredFiles {
-                executables: vec!["ah.exe".to_owned()],
+                executables: vec!["ah-update-helper.exe".to_owned(), "ah.exe".to_owned()],
                 plugins: vec!["plugins/ah-plugin-github.dll".to_owned()],
             },
         }

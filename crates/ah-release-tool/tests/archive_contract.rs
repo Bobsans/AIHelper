@@ -21,7 +21,14 @@ fn validates_exact_supported_archive_set() {
         assert_eq!(inventory.profile, *profile);
         assert!(inventory.archive_size > 0);
         assert_eq!(inventory.archive_sha256.len(), 64);
-        assert_eq!(inventory.files.len(), 5);
+        assert_eq!(
+            inventory.files.len(),
+            if profile.update_helper.is_some() {
+                6
+            } else {
+                5
+            }
+        );
         assert!(
             inventory
                 .files
@@ -43,6 +50,14 @@ fn validates_exact_supported_archive_set() {
                 .filter(|file| file.purpose == FilePurpose::Plugin)
                 .count(),
             4
+        );
+        assert_eq!(
+            inventory
+                .files
+                .iter()
+                .filter(|file| file.purpose == FilePurpose::UpdateHelper)
+                .count(),
+            usize::from(profile.update_helper.is_some())
         );
     }
 }

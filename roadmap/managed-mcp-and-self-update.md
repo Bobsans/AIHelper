@@ -676,10 +676,6 @@ Manual acceptance:
 
 ### Этап 6: update-helper и durable transaction
 
-- [ ] Добавить отдельный `ah-update-helper.exe`, запускаемый вне installation
-      root и не использующий сеть или dynamic plugins.
-- [ ] Добавить `ah-update-helper.exe` в signed Windows release inventory.
-- [ ] Добавить offline smoke check протокола staged `ah-update-helper.exe`.
 - [ ] Реализовать Windows Restart Manager adapter для обнаружения процессов,
       блокирующих managed-файлы.
 - [ ] Реализовать staging, transaction backup и durable transaction state.
@@ -886,7 +882,7 @@ Manual acceptance:
 - точный формат manifest и его канонического представления;
 - алгоритм подписи, key rotation и отзыв скомпрометированного release key;
 - источник stable releases;
-- packaging update-helper и правила совместимости updater versions;
+- правила совместимости updater versions;
 - конкретные Windows APIs для атомарной замены отдельных файлов;
 - длительность shutdown grace period;
 - grace period перед принудительным завершением блокирующих процессов;

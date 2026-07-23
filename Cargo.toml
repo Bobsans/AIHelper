@@ -12,6 +12,7 @@ members = [
     "crates/ah-release-manifest",
     "crates/ah-release-tool",
     "crates/ah-runtime",
+    "crates/ah-update-helper",
     "crates/ah-updater-core",
     "plugins/ah-plugin-github",
     "plugins/ah-plugin-gitlab",

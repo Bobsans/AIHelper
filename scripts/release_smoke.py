@@ -34,11 +34,11 @@ class SmokeError(Exception):
 
 def platform_layout():
     if sys.platform == "win32":
-        return "ah.exe", ".dll"
+        return "ah.exe", ".dll", "ah-update-helper.exe"
     if sys.platform == "darwin":
-        return "ah", ".dylib"
+        return "ah", ".dylib", None
     if sys.platform.startswith("linux"):
-        return "ah", ".so"
+        return "ah", ".so", None
     raise SmokeError("unsupported smoke-test platform")
 
 
@@ -55,8 +55,10 @@ def normalized_member_name(name):
 
 
 def extract_archive(archive, destination):
-    executable_name, library_suffix = platform_layout()
+    executable_name, library_suffix, helper_name = platform_layout()
     expected = {executable_name}
+    if helper_name is not None:
+        expected.add(helper_name)
     expected.update(
         "plugins/ah-plugin-{}{}".format(domain, library_suffix)
         for domain in PLUGIN_DOMAINS
@@ -93,7 +95,72 @@ def extract_archive(archive, destination):
     executable = destination / executable_name
     if os.name != "nt":
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return executable
+    helper = None if helper_name is None else destination / helper_name
+    return executable, helper
+
+
+def smoke_version(executable, environment, cwd):
+    try:
+        completed = subprocess.run(
+            [str(executable), "--version"],
+            cwd=str(cwd),
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            timeout=COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SmokeError("version check timed out") from error
+    except OSError as error:
+        raise SmokeError("could not start the extracted executable") from error
+    if completed.returncode != 0 or completed.stderr:
+        raise SmokeError("version check failed")
+    output = completed.stdout.rstrip("\r\n")
+    if "\r" in output or "\n" in output or not output.startswith("ah "):
+        raise SmokeError("version check returned an invalid identity")
+    version = output[3:]
+    if not version:
+        raise SmokeError("version check returned an empty version")
+    return version
+
+
+def smoke_helper(helper, expected_version, environment, cwd):
+    try:
+        completed = subprocess.run(
+            [str(helper), "--self-check"],
+            cwd=str(cwd),
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            timeout=COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SmokeError("update helper self-check timed out") from error
+    except OSError as error:
+        raise SmokeError("could not start the update helper") from error
+    if completed.returncode != 0 or completed.stderr:
+        raise SmokeError("update helper self-check failed")
+    try:
+        response = json.loads(completed.stdout)
+    except (TypeError, ValueError) as error:
+        raise SmokeError("update helper self-check returned invalid JSON") from error
+    expected = {
+        "schema_version": 1,
+        "protocol_version": 1,
+        "helper_version": expected_version,
+        "target": "x86_64-pc-windows-msvc",
+        "architecture": "x86_64",
+    }
+    if type(response) is not dict or response != expected:
+        raise SmokeError("update helper self-check returned an incompatible identity")
 
 
 def smoke_plugins(executable, environment, cwd):
@@ -346,9 +413,12 @@ def main():
         extracted.mkdir()
         config_dir = root / "config"
         config_dir.mkdir()
-        executable = extract_archive(archive, extracted)
+        executable, helper = extract_archive(archive, extracted)
         environment = os.environ.copy()
         environment["AH_CONFIG_DIR"] = str(config_dir)
+        version = smoke_version(executable, environment, extracted)
+        if helper is not None:
+            smoke_helper(helper, version, environment, extracted)
         smoke_plugins(executable, environment, extracted)
         smoke_mcp(executable, environment, extracted)
     print("release smoke passed: {}".format(archive.name))
