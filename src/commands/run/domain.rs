@@ -47,6 +47,7 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
             max_output_bytes: args.max_output_bytes,
             tail_lines: args.tail_lines,
             cwd: args.cwd.as_deref(),
+            environment: &[],
             cancelled: super::current_request_cancelled,
         },
     )?;

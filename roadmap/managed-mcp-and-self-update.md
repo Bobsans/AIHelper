@@ -674,10 +674,6 @@ Manual acceptance:
 - [ ] (external activation) Проверить pipeline и updater на реальном подписанном
       GitHub Release.
 
-### Этап 4: verified candidate без изменения установки
-
-- [ ] Реализовать offline smoke check executable, update-helper и plugin catalog.
-
 ### Этап 5: installation identity и legacy bootstrap
 
 - [ ] Определять installation root по запущенному `ah.exe`, не изменяя
@@ -692,6 +688,7 @@ Manual acceptance:
 - [ ] Добавить отдельный `ah-update-helper.exe`, запускаемый вне installation
       root и не использующий сеть или dynamic plugins.
 - [ ] Добавить `ah-update-helper.exe` в signed Windows release inventory.
+- [ ] Добавить offline smoke check протокола staged `ah-update-helper.exe`.
 - [ ] Реализовать Windows Restart Manager adapter для обнаружения процессов,
       блокирующих managed-файлы.
 - [ ] Реализовать staging, transaction backup и durable transaction state.

@@ -1,4 +1,5 @@
 use std::{
+    env,
     ffi::{OsStr, OsString, c_void},
     fs::File,
     io,
@@ -40,6 +41,8 @@ use windows_sys::Win32::{
         },
     },
 };
+
+use super::io::EnvironmentOverride;
 
 static CREATE_PROCESS_LOCK: Mutex<()> = Mutex::new(());
 
@@ -120,9 +123,14 @@ impl Child {
     }
 }
 
-pub(super) fn spawn(program: &Path, args: &[String], cwd: Option<&Path>) -> io::Result<Child> {
+pub(super) fn spawn(
+    program: &Path,
+    args: &[String],
+    cwd: Option<&Path>,
+    environment: &[EnvironmentOverride<'_>],
+) -> io::Result<Child> {
     let command_line = command_line(program.as_os_str(), args)?;
-    spawn_prepared(program, command_line, cwd)
+    spawn_prepared(program, command_line, cwd, environment)
 }
 
 pub(super) fn spawn_batch(
@@ -130,9 +138,10 @@ pub(super) fn spawn_batch(
     script: &Path,
     args: &[String],
     cwd: Option<&Path>,
+    environment: &[EnvironmentOverride<'_>],
 ) -> io::Result<Child> {
     let command_line = batch_command_line(script, args)?;
-    spawn_prepared(command_prompt, command_line, cwd)
+    spawn_prepared(command_prompt, command_line, cwd, environment)
 }
 
 pub(super) fn system_command_prompt() -> io::Result<std::path::PathBuf> {
@@ -160,6 +169,7 @@ fn spawn_prepared(
     program: &Path,
     mut command_line: Vec<u16>,
     cwd: Option<&Path>,
+    environment_overrides: &[EnvironmentOverride<'_>],
 ) -> io::Result<Child> {
     let job = create_job()?;
     let (stdin_read, stdin_write) = create_pipe()?;
@@ -191,6 +201,7 @@ fn spawn_prepared(
 
     let application = application_name(program)?;
     let current_directory = cwd.map(wide_null).transpose()?;
+    let environment = environment_block(environment_overrides)?;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     // Windows requires HANDLE_LIST entries to be inheritable. Keep that global
     // state enabled only across CreateProcessW and serialize this backend's
@@ -207,7 +218,9 @@ fn spawn_prepared(
             null(),
             1,
             EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
-            null(),
+            environment
+                .as_ref()
+                .map_or(null(), |value| value.as_ptr().cast()),
             current_directory
                 .as_ref()
                 .map_or(null(), |value| value.as_ptr()),
@@ -234,6 +247,75 @@ fn spawn_prepared(
         stderr: Some(owned_file(stderr_read)),
         root_status: None,
     })
+}
+
+fn environment_block(overrides: &[EnvironmentOverride<'_>]) -> io::Result<Option<Vec<u16>>> {
+    if overrides.is_empty() {
+        return Ok(None);
+    }
+
+    validate_environment_overrides(overrides)?;
+    let mut entries = env::vars_os()
+        .filter(|(name, _)| {
+            !overrides.iter().any(|entry| {
+                name.to_string_lossy()
+                    .eq_ignore_ascii_case(&entry.name.to_string_lossy())
+            })
+        })
+        .collect::<Vec<_>>();
+    entries.extend(
+        overrides
+            .iter()
+            .map(|entry| (entry.name.to_os_string(), entry.value.to_os_string())),
+    );
+    entries.sort_by(|left, right| {
+        left.0
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .cmp(&right.0.to_string_lossy().to_ascii_uppercase())
+    });
+
+    let mut block = Vec::new();
+    for (name, value) in entries {
+        let name = name.encode_wide().collect::<Vec<_>>();
+        let value = value.encode_wide().collect::<Vec<_>>();
+        if name.contains(&0) || value.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "process environment contains a NUL character",
+            ));
+        }
+        block.extend(name);
+        block.push(b'=' as u16);
+        block.extend(value);
+        block.push(0);
+    }
+    block.push(0);
+    Ok(Some(block))
+}
+
+fn validate_environment_overrides(overrides: &[EnvironmentOverride<'_>]) -> io::Result<()> {
+    for (index, entry) in overrides.iter().enumerate() {
+        let name = entry.name.encode_wide().collect::<Vec<_>>();
+        if name.is_empty() || name.contains(&0) || name.contains(&(b'=' as u16)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid process environment variable name",
+            ));
+        }
+        if overrides[..index].iter().any(|previous| {
+            previous
+                .name
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&entry.name.to_string_lossy())
+        }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "duplicate process environment variable override",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn create_job() -> io::Result<OwnedHandle> {
@@ -567,7 +649,8 @@ impl Drop for OwnedHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::command_line;
+    use super::{command_line, environment_block};
+    use crate::commands::run::io::EnvironmentOverride;
     use std::ffi::OsStr;
 
     #[test]
@@ -584,5 +667,27 @@ mod tests {
             decoded,
             "tool.exe \"\" \"two words\" \"quote\\\"inside\" \"ends with slash\\\\\""
         );
+    }
+
+    #[test]
+    fn environment_block_applies_case_insensitive_override() {
+        let value = OsStr::new("isolated");
+        let block = environment_block(&[EnvironmentOverride {
+            name: OsStr::new("AH_CONFIG_DIR"),
+            value,
+        }])
+        .unwrap()
+        .unwrap();
+        let decoded = String::from_utf16_lossy(&block);
+        let matches = decoded
+            .split('\0')
+            .filter(|entry| {
+                entry
+                    .split_once('=')
+                    .is_some_and(|(name, _)| name.eq_ignore_ascii_case("AH_CONFIG_DIR"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matches, vec!["AH_CONFIG_DIR=isolated"]);
+        assert!(block.ends_with(&[0, 0]));
     }
 }

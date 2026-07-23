@@ -4,6 +4,8 @@ pub(crate) mod check;
 pub(crate) mod candidate;
 pub(crate) mod command;
 pub(crate) mod github;
+#[allow(dead_code)]
+mod smoke;
 mod trust;
 
 pub(crate) use check::execute;

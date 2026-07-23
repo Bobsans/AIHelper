@@ -35,6 +35,10 @@ impl PreparedCandidate {
         &self.root
     }
 
+    pub(super) fn staging_root(&self) -> &Path {
+        self._staging.path()
+    }
+
     pub(crate) fn verified_release(&self) -> &VerifiedReleaseV1 {
         &self.verified_release
     }

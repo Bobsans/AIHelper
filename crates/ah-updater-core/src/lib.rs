@@ -1,6 +1,8 @@
 //! Network- and filesystem-independent policy core for AIHelper self-update.
 
-pub use ah_release_manifest::{DETACHED_SIGNATURE_BYTES, ManagedFile, ReleaseManifest};
+pub use ah_release_manifest::{
+    DETACHED_SIGNATURE_BYTES, FilePurpose, ManagedFile, ReleaseManifest,
+};
 
 mod check;
 mod error;

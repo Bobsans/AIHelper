@@ -157,6 +157,7 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
             max_output_bytes: args.max_output_bytes,
             tail_lines: None,
             cwd: args.cwd.as_deref(),
+            environment: &[],
             cancelled: super::current_request_cancelled,
         },
     )?;

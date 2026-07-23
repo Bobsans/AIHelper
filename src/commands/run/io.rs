@@ -1,7 +1,8 @@
 use std::{
     collections::VecDeque,
+    ffi::OsStr,
     io::{self, ErrorKind, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -14,8 +15,6 @@ use command_group::{CommandGroup, GroupChild};
 
 #[cfg(windows)]
 use std::env;
-#[cfg(windows)]
-use std::path::Path;
 
 use crate::error::AppError;
 
@@ -44,12 +43,27 @@ pub(crate) struct RunCommandOptions<'a> {
     pub command_label: &'a str,
     pub max_output_bytes: usize,
     pub tail_lines: Option<usize>,
-    pub cwd: Option<&'a std::path::Path>,
+    pub cwd: Option<&'a Path>,
+    pub environment: &'a [EnvironmentOverride<'a>],
     pub cancelled: fn() -> bool,
+}
+
+pub(crate) struct EnvironmentOverride<'a> {
+    pub name: &'a OsStr,
+    pub value: &'a OsStr,
 }
 
 pub(crate) fn run_command(
     program: &str,
+    args: &[String],
+    options: RunCommandOptions<'_>,
+) -> Result<CapturedOutput, AppError> {
+    let spawn_program = resolve_program_for_spawn(program, options.cwd);
+    run_program(&spawn_program, args, options)
+}
+
+pub(crate) fn run_program(
+    program: &Path,
     args: &[String],
     options: RunCommandOptions<'_>,
 ) -> Result<CapturedOutput, AppError> {
@@ -59,11 +73,11 @@ pub(crate) fn run_command(
         max_output_bytes,
         tail_lines,
         cwd,
+        environment,
         cancelled,
     } = options;
     let started = Instant::now();
-    let spawn_program = resolve_program_for_spawn(program, cwd);
-    let mut child = spawn_child(&spawn_program, args, cwd)
+    let mut child = spawn_child(program, args, cwd, environment)
         .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?;
 
     let stdout_handle = child.take_stdout().map(|stdout| {
@@ -179,18 +193,19 @@ impl ManagedChild {
 }
 
 fn spawn_child(
-    program: &std::path::Path,
+    program: &Path,
     args: &[String],
-    cwd: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+    environment: &[EnvironmentOverride<'_>],
 ) -> io::Result<ManagedChild> {
     #[cfg(windows)]
     {
         if is_windows_batch(program) {
             let command_prompt = super::windows_job::system_command_prompt()?;
-            super::windows_job::spawn_batch(&command_prompt, program, args, cwd)
+            super::windows_job::spawn_batch(&command_prompt, program, args, cwd, environment)
                 .map(ManagedChild::Windows)
         } else {
-            super::windows_job::spawn(program, args, cwd).map(ManagedChild::Windows)
+            super::windows_job::spawn(program, args, cwd, environment).map(ManagedChild::Windows)
         }
     }
 
@@ -199,6 +214,7 @@ fn spawn_child(
         let mut command = Command::new(program);
         command
             .args(args)
+            .envs(environment.iter().map(|entry| (entry.name, entry.value)))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -271,7 +287,7 @@ fn capture_reader<R: Read>(
     })
 }
 
-fn resolve_program_for_spawn(program: &str, cwd: Option<&std::path::Path>) -> PathBuf {
+fn resolve_program_for_spawn(program: &str, cwd: Option<&Path>) -> PathBuf {
     #[cfg(windows)]
     {
         if let Some(resolved) = resolve_windows_program_from(program, cwd) {
@@ -400,7 +416,7 @@ fn join_output_reader(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{ffi::OsStr, io::Cursor};
 
     use super::*;
 
@@ -424,5 +440,56 @@ mod tests {
             capture_reader(Cursor::new(b"one\ntwo\nthree\n"), 64, true).expect("capture");
         assert_eq!(render_output(&captured, Some(2)), "two\nthree");
         assert_eq!(render_output(&captured, Some(0)), "");
+    }
+
+    #[test]
+    fn run_command_applies_child_only_environment_override() {
+        let environment = [EnvironmentOverride {
+            name: OsStr::new("AH_RUN_IO_TEST"),
+            value: OsStr::new("isolated-value"),
+        }];
+        #[cfg(windows)]
+        let (program, arguments) = (
+            "cmd",
+            vec![
+                "/d".to_owned(),
+                "/c".to_owned(),
+                "set AH_RUN_IO_TEST".to_owned(),
+            ],
+        );
+        #[cfg(not(windows))]
+        let (program, arguments) = (
+            "sh",
+            vec!["-c".to_owned(), "printf %s \"$AH_RUN_IO_TEST\"".to_owned()],
+        );
+
+        let output = run_command(
+            program,
+            &arguments,
+            RunCommandOptions {
+                timeout: Duration::from_secs(5),
+                command_label: "environment override test",
+                max_output_bytes: 1024,
+                tail_lines: None,
+                cwd: None,
+                environment: &environment,
+                cancelled: || false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(output.exit_code, Some(0));
+        assert!(!output.timed_out);
+        #[cfg(windows)]
+        assert_eq!(
+            String::from_utf8(output.stdout.bytes).unwrap(),
+            "AH_RUN_IO_TEST=isolated-value\r\n"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            String::from_utf8(output.stdout.bytes).unwrap(),
+            "isolated-value"
+        );
+        assert!(output.stderr.bytes.is_empty());
     }
 }
