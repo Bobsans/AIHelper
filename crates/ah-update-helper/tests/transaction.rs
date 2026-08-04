@@ -13,8 +13,8 @@ use ah_update_helper::transaction::{
     FailureInjector, FailurePoint, LoadedTransaction, TransactionPaths, TransactionRunError,
     activate_transaction, activate_transaction_with_injector, commit_transaction,
     commit_transaction_with_injector, load_prepared_transaction, prepare_transaction,
-    prepare_transaction_with_injector, recover_transaction, rollback_transaction,
-    rollback_transaction_with_injector,
+    prepare_transaction_with_injector, recover_transaction, remove_completed_transaction,
+    rollback_transaction, rollback_transaction_with_injector,
 };
 use ah_updater_core::{
     InstallationIdentityV1, ReleaseTrust, TransactionPlanV1, TransactionStateV1, UpdaterErrorCode,
@@ -373,6 +373,27 @@ fn recovery_fails_closed_and_retains_state_for_corrupt_backup() {
     assert_eq!(journal.state, TransactionStateV1::PermanentVerified);
     assert!(fixture.paths.transaction_root().exists());
     fixture.assert_new_active();
+}
+
+#[test]
+fn cleanup_removes_only_verified_terminal_transaction_state() {
+    let prepared = Fixture::new();
+    prepared.prepare().unwrap();
+    let state = remove_completed_transaction(&prepared.paths, &prepared.trust).unwrap();
+    assert_eq!(state, TransactionStateV1::BackupPrepared);
+    assert!(!prepared.paths.transaction_root().exists());
+    prepared.assert_old_active();
+
+    let active = Fixture::new();
+    active.prepare().unwrap();
+    activate_transaction(&active.paths, &active.trust).unwrap();
+    assert!(remove_completed_transaction(&active.paths, &active.trust).is_err());
+    assert!(active.paths.transaction_root().exists());
+    rollback_transaction(&active.paths, &active.trust).unwrap();
+    let state = remove_completed_transaction(&active.paths, &active.trust).unwrap();
+    assert_eq!(state, TransactionStateV1::RolledBack);
+    assert!(!active.paths.transaction_root().exists());
+    active.assert_old_active();
 }
 
 #[derive(Default)]

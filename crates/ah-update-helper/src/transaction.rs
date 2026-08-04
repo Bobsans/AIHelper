@@ -212,6 +212,7 @@ pub fn prepare_transaction_with_injector(
 ) -> Result<LoadedTransaction, TransactionRunError> {
     validate_prepare_paths(paths, candidate_source_root)?;
     plan.validate()?;
+    validate_transaction_location(paths, plan)?;
 
     let active = read_release_record(&paths.installation_state_root, trust)?;
     let candidate =
@@ -307,6 +308,25 @@ pub fn load_transaction(
     Ok(transaction)
 }
 
+pub fn inspect_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    load_transaction_metadata(paths, trust)
+}
+
+pub fn load_recovery_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<LoadedTransaction, UpdaterError> {
+    let transaction = load_transaction_metadata(paths, trust)?;
+    verify_manifest_files(
+        &transaction.paths.backup_files_root(),
+        &transaction.old_manifest,
+    )?;
+    Ok(transaction)
+}
+
 fn load_transaction_metadata(
     paths: &TransactionPaths,
     trust: &ReleaseTrust,
@@ -325,6 +345,7 @@ fn load_transaction_metadata(
             "durable transaction plan encoding is not canonical",
         ));
     }
+    validate_transaction_location(paths, &plan)?;
 
     let journal_bytes = read_bounded(
         &paths.transaction_root.join(JOURNAL_FILE),
@@ -556,6 +577,40 @@ pub fn recover_transaction(
             Ok(transaction)
         }
     }
+}
+
+pub fn remove_completed_transaction(
+    paths: &TransactionPaths,
+    trust: &ReleaseTrust,
+) -> Result<TransactionStateV1, UpdaterError> {
+    let transaction = load_transaction_metadata(paths, trust)?;
+    match transaction.journal.state {
+        TransactionStateV1::Planned => {
+            verify_active_old_release(&transaction, trust)?;
+        }
+        TransactionStateV1::BackupPrepared | TransactionStateV1::RolledBack => {
+            verify_manifest_files(&paths.backup_files_root(), &transaction.old_manifest)?;
+            verify_active_old_release(&transaction, trust)?;
+        }
+        TransactionStateV1::Committed => {
+            verify_active_new_release(&transaction, trust)?;
+        }
+        TransactionStateV1::ActivationStarted
+        | TransactionStateV1::CandidateActivated
+        | TransactionStateV1::PermanentVerified
+        | TransactionStateV1::CommitStarted
+        | TransactionStateV1::RollbackStarted => {
+            return Err(recovery(
+                "unfinished transaction cannot be removed before recovery",
+            ));
+        }
+    }
+    let state = transaction.journal.state;
+    fs::remove_dir_all(&paths.transaction_root)
+        .map_err(|_| recovery("failed to remove completed private transaction state"))?;
+    sync_parent(&paths.transaction_root)
+        .map_err(|_| recovery("failed to sync completed transaction cleanup"))?;
+    Ok(state)
 }
 
 fn state_requires_rollback(state: TransactionStateV1) -> bool {
@@ -1225,6 +1280,22 @@ fn validate_identity(
     }) {
         return Err(transaction(
             "installation identity executable is absent from the old manifest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transaction_location(
+    paths: &TransactionPaths,
+    plan: &TransactionPlanV1,
+) -> Result<(), UpdaterError> {
+    let expected = paths
+        .installation_state_root
+        .join("transactions")
+        .join(plan.transaction_id.to_string());
+    if !paths_equal(&paths.transaction_root, &expected) {
+        return Err(recovery(
+            "durable transaction root is not bound to its installation state",
         ));
     }
     Ok(())

@@ -722,7 +722,7 @@ Manual acceptance:
 - [ ] Сохранять старый постоянный backup, если новое обновление завершилось
       ошибкой и было откачено.
 - [ ] После успешного `--rollback` удалять использованный постоянный backup.
-- [ ] Реализовать recovery после завершения процесса или перезагрузки на
+- [x] Реализовать recovery после завершения процесса или перезагрузки на
       каждом durable transaction state.
 - [ ] Добавить automated failure-injection tests для каждого durable state и
       filesystem operation.

@@ -1,0 +1,214 @@
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use ah_updater_core::{ReleaseTrust, TransactionStateV1, UpdaterError, UpdaterErrorCode};
+
+use crate::transaction::{TransactionPaths, recover_transaction};
+
+const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryCommand {
+    pub paths: TransactionPaths,
+    pub parent_pid: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryExecution {
+    AlreadyRunning,
+    Recovered(TransactionStateV1),
+}
+
+pub fn parse_recovery_arguments(arguments: &[OsString]) -> Result<RecoveryCommand, UpdaterError> {
+    if arguments.len() != 8
+        || arguments[0] != "recover"
+        || arguments[1] != "--installation-root"
+        || arguments[3] != "--installation-state-root"
+        || arguments[5] != "--transaction-root"
+        || arguments[7].to_str().is_none()
+    {
+        return Err(argument("update helper recovery arguments are invalid"));
+    }
+    let parent_pid = arguments[7]
+        .to_str()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid != 0)
+        .ok_or_else(|| argument("update helper recovery parent PID is invalid"))?;
+    Ok(RecoveryCommand {
+        paths: TransactionPaths::new(
+            PathBuf::from(&arguments[2]),
+            PathBuf::from(&arguments[4]),
+            PathBuf::from(&arguments[6]),
+        ),
+        parent_pid,
+    })
+}
+
+pub fn execute_recovery(
+    command: &RecoveryCommand,
+    trust: &ReleaseTrust,
+) -> Result<RecoveryExecution, UpdaterError> {
+    #[cfg(windows)]
+    {
+        let Some(_lease) =
+            RecoveryLease::try_acquire(&command.paths.transaction_root().join("recovery.lock"))?
+        else {
+            return Ok(RecoveryExecution::AlreadyRunning);
+        };
+        wait_for_process_exit(command.parent_pid, PARENT_EXIT_TIMEOUT)?;
+        let transaction = recover_transaction(&command.paths, trust)?;
+        Ok(RecoveryExecution::Recovered(transaction.journal().state))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (command, trust);
+        Err(UpdaterError::new(
+            UpdaterErrorCode::UnsupportedPlatform,
+            "update transaction recovery requires Windows",
+        ))
+    }
+}
+
+#[cfg(windows)]
+struct RecoveryLease {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl RecoveryLease {
+    fn try_acquire(path: &Path) -> Result<Option<Self>, UpdaterError> {
+        use std::{os::windows::ffi::OsStrExt as _, ptr};
+
+        use windows_sys::Win32::{
+            Foundation::{
+                ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION, GENERIC_READ, GENERIC_WRITE,
+                GetLastError, INVALID_HANDLE_VALUE,
+            },
+            Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_ALWAYS},
+        };
+
+        let wide = path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                ptr::null(),
+                OPEN_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            let code = unsafe { GetLastError() };
+            if matches!(code, ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION) {
+                return Ok(None);
+            }
+            return Err(recovery(
+                "failed to acquire update transaction recovery lease",
+            ));
+        }
+        Ok(Some(Self { handle }))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RecoveryLease {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), UpdaterError> {
+    use windows_sys::Win32::{
+        Foundation::{
+            CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_FAILED, WAIT_OBJECT_0,
+            WAIT_TIMEOUT,
+        },
+        Storage::FileSystem::SYNCHRONIZE,
+        System::Threading::{OpenProcess, WaitForSingleObject},
+    };
+
+    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        let code = unsafe { GetLastError() };
+        if code == ERROR_INVALID_PARAMETER {
+            return Ok(());
+        }
+        return Err(recovery("failed to observe update recovery parent process"));
+    }
+    let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+    let result = unsafe { WaitForSingleObject(handle, milliseconds) };
+    unsafe {
+        CloseHandle(handle);
+    }
+    match result {
+        WAIT_OBJECT_0 => Ok(()),
+        WAIT_TIMEOUT => Err(recovery(
+            "timed out waiting for update recovery parent process",
+        )),
+        WAIT_FAILED => Err(recovery("failed while waiting for update recovery parent")),
+        _ => Err(recovery(
+            "update recovery parent wait returned an unexpected result",
+        )),
+    }
+}
+
+fn argument(detail: &'static str) -> UpdaterError {
+    UpdaterError::new(UpdaterErrorCode::Argument, detail)
+}
+
+fn recovery(detail: &'static str) -> UpdaterError {
+    UpdaterError::new(UpdaterErrorCode::Recovery, detail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_only_exact_recovery_contract() {
+        let valid = [
+            "recover",
+            "--installation-root",
+            r"C:\AIHelper",
+            "--installation-state-root",
+            r"C:\State",
+            "--transaction-root",
+            r"C:\State\transactions\00000000-0000-0000-0000-000000000001",
+            "42",
+        ]
+        .map(OsString::from);
+        let parsed = parse_recovery_arguments(&valid).unwrap();
+        assert_eq!(parsed.parent_pid, 42);
+        assert_eq!(parsed.paths.installation_root(), Path::new(r"C:\AIHelper"));
+
+        for invalid in [
+            valid[..7].to_vec(),
+            {
+                let mut invalid = valid.to_vec();
+                invalid[1] = OsString::from("--root");
+                invalid
+            },
+            {
+                let mut invalid = valid.to_vec();
+                invalid[7] = OsString::from("0");
+                invalid
+            },
+        ] {
+            assert!(parse_recovery_arguments(&invalid).is_err());
+        }
+    }
+}

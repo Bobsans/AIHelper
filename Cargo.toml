@@ -43,6 +43,7 @@ zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 ah-plugin-api = { path = "crates/ah-plugin-api" }
 ah-runtime = { path = "crates/ah-runtime" }
 ah-mcp = { path = "crates/ah-mcp" }
+ah-update-helper = { path = "crates/ah-update-helper" }
 ah-updater-core = { path = "crates/ah-updater-core" }
 tokio = { version = "1.52.1", features = ["io-std", "rt-multi-thread", "time"] }
 uuid = { version = "1.24.0", features = ["serde", "v4"] }

@@ -6,6 +6,7 @@ pub(crate) mod command;
 pub(crate) mod github;
 #[allow(dead_code)]
 mod installation;
+pub(crate) mod recovery;
 #[allow(dead_code)]
 mod smoke;
 mod trust;

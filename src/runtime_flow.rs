@@ -30,6 +30,13 @@ const MCP_RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 pub(crate) fn run() -> Result<(), AppError> {
     let started = Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
+    match crate::updater::recovery::recover_before_startup()? {
+        crate::updater::recovery::EarlyRecoveryOutcome::Continue => {}
+        crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched => {
+            emit_warning("update recovery started; rerun the command after recovery completes");
+            return Ok(());
+        }
+    }
     if is_version_fast_path(&raw_args) {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -645,6 +652,18 @@ mod tests {
             OsString::from("file"),
             OsString::from("--version"),
         ]));
+    }
+
+    #[test]
+    fn recovery_is_routed_before_version_config_and_plugin_discovery() {
+        let source = include_str!("runtime_flow.rs");
+        let recovery = source.find("recover_before_startup()?").unwrap();
+        let version = source.find("if is_version_fast_path").unwrap();
+        let config = source.find("ConfigContext::load()").unwrap();
+        let discovery = source.find("let mut load_report = discovery(").unwrap();
+        assert!(recovery < version);
+        assert!(recovery < config);
+        assert!(recovery < discovery);
     }
 
     #[test]

@@ -8,6 +8,7 @@ mod check;
 mod error;
 mod helper;
 mod installation;
+mod production;
 mod release;
 mod transaction;
 mod trust;
@@ -22,6 +23,7 @@ pub use helper::{
     UpdateHelperSelfCheckV1,
 };
 pub use installation::{INSTALLATION_IDENTITY_SCHEMA_VERSION, InstallationIdentityV1};
+pub use production::production_release_trust;
 pub use release::{
     CheckStatus, DiscoveredReleaseV1, GitHubAssetDtoV1, GitHubReleaseDtoV1, ReleaseAssetV1,
     ReleaseAssetsV1, StableReleaseVersion, UpdateOperation, UpdateTarget, WINDOWS_X64_TARGET,

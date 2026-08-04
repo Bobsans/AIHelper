@@ -188,6 +188,7 @@ dependencies = [
  "ah-plugin-api",
  "ah-release-manifest",
  "ah-runtime",
+ "ah-update-helper",
  "ah-updater-core",
  "assert_cmd",
  "base64",
