@@ -2,14 +2,10 @@
 
 ## Статус
 
-В работе. Автоматизированная реализация локального HTTP MCP и управляемого
-Windows per-user lifecycle завершена. Открыты две ручные acceptance-проверки:
-подключение целевых MCP-клиентов и persistent Windows VM lifecycle matrix.
-
-Контракт signed release manifest и код release pipeline реализованы. Pipeline
-ещё не активирован production-ключом и не проверен реальным подписанным релизом.
-Runtime self-updater пока не реализован; оставшаяся работа сгруппирована ниже в
-dependency-ordered vertical slices.
+Автоматизированная реализация локального HTTP MCP, управляемого Windows per-user
+lifecycle и Windows x64 self-updater завершена. Открыта только внешняя приёмка:
+подключение целевых MCP-клиентов, persistent Task Scheduler и updater/reboot
+Windows VM matrices, production key activation и реальный подписанный релиз.
 
 В чек-листах `[x]` означает реализовано и автоматически проверено. Пункты с
 пометкой `manual acceptance` или `external activation` остаются `[ ]` до
@@ -709,7 +705,7 @@ Manual acceptance:
 - [x] После активации сохранять проверенные canonical manifest и signature как
       installed release record текущей версии.
 - [x] Восстанавливать предыдущее состояние managed MCP.
-- [ ] Добавить deterministic text и versioned JSON diagnostics для update,
+- [x] Добавить deterministic text и versioned JSON diagnostics для update,
       rollback и recovery.
 
 ### Этап 8: постоянный backup, rollback и recovery
@@ -724,8 +720,8 @@ Manual acceptance:
 - [x] После успешного `--rollback` удалять использованный постоянный backup.
 - [x] Реализовать recovery после завершения процесса или перезагрузки на
       каждом durable transaction state.
-- [ ] Добавить automated failure-injection tests для каждого durable state и
-      filesystem operation.
+- [x] Добавить automated failure-injection tests для каждого durable state и
+      managed-file filesystem operation.
 - [ ] (manual acceptance) Выполнить Windows VM update, rollback, interruption и
       reboot matrix.
 

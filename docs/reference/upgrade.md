@@ -76,6 +76,14 @@ Production key activation is tracked separately. Until the protected signing
 key is provisioned and its public key is embedded, source builds fail closed with
 `UPDATER_TRUST` before network access.
 
+## Acceptance boundary
+
+Automated updater implementation and tests are complete. Production acceptance
+still requires provisioning the protected key, consuming a real signed release
+with a released updater, and passing the persistent Windows scheduler and
+update/rollback/interruption/reboot VM matrices. Target-client MCP connectivity
+is tracked separately with the managed service acceptance.
+
 ## JSON result
 
 Successful JSON uses schema version 1 and keeps optional fields explicit:

@@ -193,7 +193,8 @@ Completion requires all of the following:
 - The GitHub Release is published with `draft=false` and `prerelease=false`.
 - Its description covers the tagged changelog section accurately and contains
   no claims that are unsupported by the release diff or validation evidence.
-- Linux x64, Windows x64, and macOS ARM64 ZIP assets are attached.
+- Linux x64, Windows x64, and macOS ARM64 archive, manifest, and signature
+  triplets are attached: exactly nine release assets.
 - The release workflow has been inspected through completion.
 - The final repository state is clean and synchronized.
 
@@ -209,6 +210,12 @@ Verify the archive contains the executable and the executable-relative
 `ah-update-helper.exe --self-check` and verify its strict protocol identity.
 For MCP-sensitive changes, also perform a stdio handshake, inspect `tools/list`,
 confirm risk metadata, and execute a representative typed tool call.
+
+For updater-sensitive releases, use a supported Windows VM with the previous
+signed release installed. Run `ah upgrade --check --json`, apply the published
+release with `ah upgrade --json`, verify the installed version and any previously
+ready managed MCP, then run `ah upgrade --rollback --json`. Record interruption
+and reboot results separately; local tests do not replace this acceptance.
 
 ## Failure Handling
 

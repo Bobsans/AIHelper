@@ -358,6 +358,11 @@ and roadmap entries are complete. External completion evidence remains visible
 until the production key is provisioned, a real signed release is consumed, the
 three target clients connect, and the Windows VM matrices pass.
 
+As of 2026-08-05 the automated engineering scope is complete. The production
+key, live signed-release consumption, target-client connectivity, persistent
+Task Scheduler matrix, and updater interruption/reboot matrix remain open as
+external evidence.
+
 Each implementation slice uses the established workflow: implement, run the
 smallest relevant checks and applicable workspace checks, mark rather than
 delete completed roadmap entries, commit only the intended files, and record the

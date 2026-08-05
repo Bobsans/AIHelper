@@ -35,3 +35,8 @@ a retry.
 
 Source builds without the externally provisioned production trust anchor return
 `UPDATER_TRUST` before network access. Do not replace that anchor with a test key.
+
+Automated updater engineering is complete, but production acceptance remains
+separate. Keep the production key, a real signed-release update, persistent
+Windows scheduler and interruption/reboot matrices, and target-client MCP
+connectivity open until each is executed and recorded.

@@ -131,31 +131,31 @@ Feature boundaries:
 
 ### Functional Acceptance
 
-- [ ] Managed MCP automated behavior and deferred manual evidence are separately
+- [x] Managed MCP automated behavior and deferred manual evidence are separately
       visible in the roadmap.
-- [ ] `ah upgrade --check` selects the highest compatible stable GitHub release,
+- [x] `ah upgrade --check` selects the highest compatible stable GitHub release,
       verifies its signed Windows manifest, and performs no mutation.
-- [ ] The highest stable release never falls back to an older asset set, and an
+- [x] The highest stable release never falls back to an older asset set, and an
       unsigned legacy release cannot produce a trusted `up_to_date` result.
-- [ ] Candidate archive and every extracted file match the verified manifest.
-- [ ] Offline smoke validates executable version, helper protocol, and plugin
+- [x] Candidate archive and every extracted file match the verified manifest.
+- [x] Offline smoke validates executable version, helper protocol, and plugin
       catalog without user configuration.
-- [ ] Portable, legacy, and cargo-managed installations are distinguished safely.
-- [ ] Helper changes only verified managed paths and preserves every user file.
-- [ ] Managed MCP is restored only if it was running before update or rollback.
-- [ ] Failure after mutation begins restores the previous verified installation.
-- [ ] `--rollback` restores and consumes one verified permanent backup.
-- [ ] Pending transactions recover before dynamic plugin loading.
+- [x] Portable, legacy, and cargo-managed installations are distinguished safely.
+- [x] Helper changes only verified managed paths and preserves every user file.
+- [x] Managed MCP is restored only if it was running before update or rollback.
+- [x] Failure after mutation begins restores the previous verified installation.
+- [x] `--rollback` restores and consumes one verified permanent backup.
+- [x] Pending transactions recover before dynamic plugin loading.
 
 ### Quality Standards
 
-- [ ] Private signing material is absent from source, binaries, logs, argv,
-      artifacts, and state.
-- [ ] Network, archive, and diagnostics limits have success and failure tests.
-- [ ] Every durable transition and managed-file operation has failure injection.
-- [ ] Text and JSON results are deterministic and documented.
-- [ ] Existing CLI, MCP, plugin ABI, and released JSON compatibility tests pass.
-- [ ] Applicable workspace format, test, debug build, and release build checks
+- [x] Production private signing material is absent from source, binaries, logs,
+      argv, artifacts, and state.
+- [x] Network, archive, and diagnostics limits have success and failure tests.
+- [x] Every durable transition and managed-file operation has failure injection.
+- [x] Text and JSON results are deterministic and documented.
+- [x] Existing CLI, MCP, plugin ABI, and released JSON compatibility tests pass.
+- [x] Applicable workspace format, test, debug build, and release build checks
       pass before each milestone is closed.
 
 ### External Acceptance
