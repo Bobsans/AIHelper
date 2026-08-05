@@ -8,10 +8,10 @@ use std::{
 };
 
 use ah_update_helper::transaction::{
-    TransactionPaths, prepare_transaction, remove_completed_transaction,
+    TransactionPaths, load_permanent_backup, prepare_transaction, remove_completed_transaction,
 };
 use ah_updater_core::{
-    CheckStatus, FilePurpose, TransactionPlanV1, UpdateOperation, UpdateSource, UpdaterError,
+    CheckStatus, FilePurpose, ReleaseManifest, TransactionPlanV1, UpdateOperation, UpdaterError,
     UpdaterErrorCode, verify_discovered_release,
 };
 use semver::Version;
@@ -34,12 +34,16 @@ use crate::{
 };
 
 use super::{
-    candidate::prepare_candidate, command::UpgradeRequest, github::GitHubReleaseClient,
-    installation::resolve_current_managed_installation, smoke::run_offline_smoke,
+    candidate::prepare_candidate,
+    command::UpgradeRequest,
+    github::GitHubReleaseClient,
+    installation::{load_current_managed_installation, resolve_current_managed_installation},
+    smoke::run_offline_smoke,
     trust::production_release_trust,
 };
 
 const LIFECYCLE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_ACTIVATION_HELPER_COPIES: usize = 32;
 
 #[derive(Debug, Serialize)]
 struct UpgradeLaunchResult<'a> {
@@ -49,7 +53,7 @@ struct UpgradeLaunchResult<'a> {
     current_version: &'a str,
     selected_version: &'a str,
     target: &'a str,
-    source: UpdateSource,
+    source: &'a str,
     activation: &'a str,
     managed_mcp_restoration: &'a str,
     rollback: &'a str,
@@ -72,10 +76,15 @@ pub(super) fn execute(request: UpgradeRequest, options: GlobalOptions) -> Result
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<(), AppError> {
+    if request == UpgradeRequest::Rollback {
+        return execute_rollback(options);
+    }
     let operation = match request {
         UpgradeRequest::Upgrade => UpdateOperation::Upgrade,
         UpgradeRequest::Version(_) => UpdateOperation::Version,
-        UpgradeRequest::Check => unreachable!("check requests use the read-only path"),
+        UpgradeRequest::Check | UpgradeRequest::Rollback => {
+            unreachable!("request uses another updater path")
+        }
     };
     let current_version = Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|_| map_updater_error(contract("running version is not canonical SemVer")))?;
@@ -85,7 +94,9 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
     let discovered = match &request {
         UpgradeRequest::Upgrade => source.discover(),
         UpgradeRequest::Version(version) => source.discover_version(version),
-        UpgradeRequest::Check => unreachable!("check requests use the read-only path"),
+        UpgradeRequest::Check | UpgradeRequest::Rollback => {
+            unreachable!("request uses another updater path")
+        }
     }
     .map_err(map_updater_error)?;
     let manifest_bytes = source
@@ -124,7 +135,7 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
                 current_version: env!("CARGO_PKG_VERSION"),
                 selected_version: &selected_version_text,
                 target: verified.discovered().target.rust_target,
-                source: UpdateSource::GitHubRelease,
+                source: "github_release",
                 activation: "not_required",
                 managed_mcp_restoration: "not_required",
                 rollback: "not_required",
@@ -136,6 +147,65 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
     let prepared = prepare_candidate(&source, verified, installation.state_root())
         .and_then(run_offline_smoke)
         .map_err(map_updater_error)?;
+    launch_transaction(
+        operation,
+        options,
+        &installation,
+        prepared.root(),
+        prepared.verified_release().manifest(),
+        prepared.verified_release().manifest_bytes(),
+        prepared.verified_release().signature_bytes(),
+        &selected_version_text,
+        "github_release",
+        &trust,
+    )
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn execute_rollback(options: GlobalOptions) -> Result<(), AppError> {
+    let trust = production_release_trust().map_err(map_updater_error)?;
+    let installation = load_current_managed_installation(&trust).map_err(map_updater_error)?;
+    let backup = load_permanent_backup(
+        installation.portable().root(),
+        installation.state_root(),
+        installation.identity().installation_id,
+        &trust,
+    )
+    .map_err(|_| {
+        map_updater_error(UpdaterError::new(
+            UpdaterErrorCode::Rollback,
+            "no verified permanent backup is available",
+        ))
+    })?;
+    let selected_version = backup.manifest().release.version.clone();
+    launch_transaction(
+        UpdateOperation::Rollback,
+        options,
+        &installation,
+        &backup.files_root(),
+        backup.manifest(),
+        backup.manifest_bytes(),
+        backup.signature_bytes(),
+        &selected_version,
+        "permanent_backup",
+        &trust,
+    )
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+fn launch_transaction(
+    operation: UpdateOperation,
+    options: GlobalOptions,
+    installation: &super::installation::ManagedInstallation,
+    candidate_root: &Path,
+    candidate_manifest: &ReleaseManifest,
+    candidate_manifest_bytes: &[u8],
+    candidate_signature_bytes: &[u8],
+    selected_version: &str,
+    source: &str,
+    trust: &ah_updater_core::ReleaseTrust,
+) -> Result<(), AppError> {
     let transaction_id = Uuid::new_v4();
     let transactions = installation.state_root().join("transactions");
     ensure_directory(&transactions).map_err(map_updater_error)?;
@@ -147,12 +217,14 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
 
     let service_paths = ServicePaths::discover()?;
     let lease = FileLease::acquire(&service_paths.lifecycle_lock, LIFECYCLE_LOCK_TIMEOUT)?;
+    cleanup_activation_helpers(installation.state_root()).map_err(map_updater_error)?;
     let mcp_state = capture_for_update_while_locked()?;
-    let plan = TransactionPlanV1::build(
+    let plan = TransactionPlanV1::build_for_operation(
+        operation,
         transaction_id,
         installation.identity().installation_id,
         installation.manifest(),
-        prepared.verified_release().manifest(),
+        candidate_manifest,
     )
     .and_then(|plan| {
         plan.with_managed_mcp_state(mcp_state.was_running, mcp_state.previous_instance_id)
@@ -161,17 +233,26 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
     prepare_transaction(
         &paths,
         &plan,
-        prepared.root(),
-        prepared.verified_release().manifest_bytes(),
-        prepared.verified_release().signature_bytes(),
-        &trust,
+        candidate_root,
+        candidate_manifest_bytes,
+        candidate_signature_bytes,
+        trust,
     )
     .map_err(map_updater_error)?;
-    let helper = match copy_activation_helper(&prepared, installation.state_root(), transaction_id)
-    {
+    let (helper_root, helper_manifest) = if operation == UpdateOperation::Rollback {
+        (installation.portable().root(), installation.manifest())
+    } else {
+        (candidate_root, candidate_manifest)
+    };
+    let helper = match copy_activation_helper(
+        helper_root,
+        helper_manifest,
+        installation.state_root(),
+        transaction_id,
+    ) {
         Ok(helper) => helper,
         Err(error) => {
-            let _ = remove_completed_transaction(&paths, &trust);
+            let _ = remove_completed_transaction(&paths, trust);
             return Err(map_updater_error(error));
         }
     };
@@ -179,14 +260,14 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
         Ok(stopped) => stopped,
         Err(error) => {
             let _ = restore_for_update_while_locked(mcp_state);
-            let _ = remove_completed_transaction(&paths, &trust);
+            let _ = remove_completed_transaction(&paths, trust);
             let _ = fs::remove_file(&helper);
             return Err(error);
         }
     };
     if stopped != mcp_state.was_running {
         let _ = restore_for_update_while_locked(mcp_state);
-        let _ = remove_completed_transaction(&paths, &trust);
+        let _ = remove_completed_transaction(&paths, trust);
         let _ = fs::remove_file(&helper);
         return Err(AppError::external(
             "UPDATER_ACTIVATION",
@@ -194,21 +275,28 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
         ));
     }
 
-    if let Err(error) = super::handoff::launch_activation(
-        &helper,
-        &[
-            OsStr::new("activate"),
-            OsStr::new("--installation-root"),
-            paths.installation_root().as_os_str(),
-            OsStr::new("--installation-state-root"),
-            paths.installation_state_root().as_os_str(),
-            OsStr::new("--transaction-root"),
-            paths.transaction_root().as_os_str(),
-        ],
-        &lease,
-    ) {
+    let helper_operation = if operation == UpdateOperation::Rollback {
+        "rollback"
+    } else {
+        "activate"
+    };
+    let arguments = [
+        OsStr::new(helper_operation),
+        OsStr::new("--installation-root"),
+        paths.installation_root().as_os_str(),
+        OsStr::new("--installation-state-root"),
+        paths.installation_state_root().as_os_str(),
+        OsStr::new("--transaction-root"),
+        paths.transaction_root().as_os_str(),
+    ];
+    let launch = if operation == UpdateOperation::Rollback {
+        super::handoff::launch_rollback(&helper, &arguments, &lease)
+    } else {
+        super::handoff::launch_activation(&helper, &arguments, &lease)
+    };
+    if let Err(error) = launch {
         let restore = restore_for_update_while_locked(mcp_state);
-        let _ = remove_completed_transaction(&paths, &trust);
+        let _ = remove_completed_transaction(&paths, trust);
         let _ = fs::remove_file(&helper);
         restore?;
         return Err(error);
@@ -219,17 +307,21 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
             schema_version: 1,
             operation,
             status: "activation_launched",
-            current_version: env!("CARGO_PKG_VERSION"),
-            selected_version: &selected_version_text,
-            target: prepared.verified_release().discovered().target.rust_target,
-            source: UpdateSource::GitHubRelease,
+            current_version: &installation.manifest().release.version,
+            selected_version,
+            target: &candidate_manifest.release.target,
+            source,
             activation: "launched",
             managed_mcp_restoration: if mcp_state.was_running {
                 "pending"
             } else {
                 "not_required"
             },
-            rollback: "not_required",
+            rollback: if operation == UpdateOperation::Rollback {
+                "launched"
+            } else {
+                "not_required"
+            },
         },
         options,
     )
@@ -237,13 +329,12 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn copy_activation_helper(
-    candidate: &super::smoke::SmokeCheckedCandidate,
+    candidate_root: &Path,
+    candidate_manifest: &ReleaseManifest,
     state_root: &Path,
     transaction_id: Uuid,
 ) -> Result<PathBuf, UpdaterError> {
-    let helpers = candidate
-        .verified_release()
-        .manifest()
+    let helpers = candidate_manifest
         .files
         .iter()
         .filter(|file| file.purpose == FilePurpose::UpdateHelper)
@@ -253,10 +344,7 @@ fn copy_activation_helper(
             "signed candidate must contain exactly one update helper",
         ));
     };
-    let source = candidate
-        .root()
-        .join(expected.path.split('/').collect::<PathBuf>());
-    // ponytail: successful helper copies remain until Task 11 adds bounded staging cleanup.
+    let source = candidate_root.join(expected.path.split('/').collect::<PathBuf>());
     let destination = state_root.join(format!("activation-helper-{transaction_id}.exe"));
     let mut input = File::open(source)
         .map_err(|_| candidate_error("failed to open verified activation helper"))?;
@@ -298,6 +386,50 @@ fn copy_activation_helper(
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn cleanup_activation_helpers(state_root: &Path) -> Result<(), UpdaterError> {
+    let entries = fs::read_dir(state_root)
+        .map_err(|_| candidate_error("failed to enumerate activation helper copies"))?;
+    let mut count = 0_usize;
+    for entry in entries {
+        let entry =
+            entry.map_err(|_| candidate_error("failed to enumerate activation helper copies"))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(id) = name
+            .strip_prefix("activation-helper-")
+            .and_then(|name| name.strip_suffix(".exe"))
+        else {
+            continue;
+        };
+        if Uuid::parse_str(id).is_err() {
+            continue;
+        }
+        count += 1;
+        if count > MAX_ACTIVATION_HELPER_COPIES {
+            return Err(candidate_error(
+                "activation helper copy count exceeds the limit",
+            ));
+        }
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| candidate_error("failed to inspect activation helper copy"))?;
+        use std::os::windows::fs::MetadataExt as _;
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.file_attributes() & 0x400 != 0
+        {
+            return Err(candidate_error(
+                "activation helper copy is not a direct file",
+            ));
+        }
+        fs::remove_file(entry.path())
+            .map_err(|_| candidate_error("failed to remove stale activation helper copy"))?;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn ensure_directory(path: &Path) -> Result<(), UpdaterError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(()),
@@ -327,12 +459,13 @@ fn render(result: &UpgradeLaunchResult<'_>, options: GlobalOptions) -> Result<()
     match options.output {
         OutputMode::Json => println!("{}", serde_json::to_string_pretty(result)?),
         OutputMode::Text => println!(
-            "operation={} status={} current_version={} selected_version={} target={} source=github_release activation={} managed_mcp_restoration={} rollback={}",
+            "operation={} status={} current_version={} selected_version={} target={} source={} activation={} managed_mcp_restoration={} rollback={}",
             operation_name(result.operation),
             result.status,
             result.current_version,
             result.selected_version,
             result.target,
+            result.source,
             result.activation,
             result.managed_mcp_restoration,
             result.rollback,
@@ -345,7 +478,8 @@ fn operation_name(operation: UpdateOperation) -> &'static str {
     match operation {
         UpdateOperation::Upgrade => "upgrade",
         UpdateOperation::Version => "version",
-        UpdateOperation::Check | UpdateOperation::Rollback | UpdateOperation::Recovery => {
+        UpdateOperation::Rollback => "rollback",
+        UpdateOperation::Check | UpdateOperation::Recovery => {
             unreachable!("activation result contains only update operations")
         }
     }

@@ -8,7 +8,8 @@ use std::{
 };
 
 use ah_update_helper::transaction::{
-    TransactionPaths, inspect_transaction, load_recovery_transaction, remove_completed_transaction,
+    TransactionPaths, inspect_transaction, load_recovery_transaction, recover_transaction,
+    remove_completed_transaction,
 };
 use ah_updater_core::{
     FilePurpose, InstallationIdentityV1, ReleaseTrust, TransactionStateV1, UpdaterError,
@@ -28,7 +29,9 @@ pub(crate) enum EarlyRecoveryOutcome {
     RecoveryLaunched,
 }
 
-pub(crate) fn recover_before_startup() -> Result<EarlyRecoveryOutcome, AppError> {
+pub(crate) fn recover_before_startup(
+    allow_safe_managed_serve: bool,
+) -> Result<EarlyRecoveryOutcome, AppError> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
         let executable = fs::canonicalize(
@@ -43,7 +46,20 @@ pub(crate) fn recover_before_startup() -> Result<EarlyRecoveryOutcome, AppError>
             return Ok(EarlyRecoveryOutcome::Continue);
         };
         let updater_root = app_data.join("AIHelper").join("updater");
-        if discover_pending(&executable, &updater_root)?.is_none() {
+        let Some(initial_paths) = discover_pending(&executable, &updater_root)? else {
+            return Ok(EarlyRecoveryOutcome::Continue);
+        };
+        let trust = ah_updater_core::production_release_trust().map_err(map_updater_error)?;
+        let initial = inspect_transaction(&initial_paths, &trust).map_err(map_updater_error)?;
+        if allow_safe_managed_serve
+            && matches!(
+                initial.journal().state,
+                TransactionStateV1::BackupPrepared
+                    | TransactionStateV1::Committed
+                    | TransactionStateV1::RolledBack
+            )
+        {
+            recover_transaction(&initial_paths, &trust).map_err(map_updater_error)?;
             return Ok(EarlyRecoveryOutcome::Continue);
         }
 
@@ -52,7 +68,6 @@ pub(crate) fn recover_before_startup() -> Result<EarlyRecoveryOutcome, AppError>
             &service_paths.lifecycle_lock,
             RECOVERY_LOCK_TIMEOUT,
         )?;
-        let trust = ah_updater_core::production_release_trust().map_err(map_updater_error)?;
         if let Some(paths) = discover_pending(&executable, &updater_root)? {
             let inspected = inspect_transaction(&paths, &trust).map_err(map_updater_error)?;
             if matches!(
@@ -75,6 +90,7 @@ pub(crate) fn recover_before_startup() -> Result<EarlyRecoveryOutcome, AppError>
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
+        let _ = allow_safe_managed_serve;
         Ok(EarlyRecoveryOutcome::Continue)
     }
 }
@@ -122,20 +138,29 @@ fn recover_pending_for(
     };
     let inspected = inspect_transaction(&paths, trust).map_err(map_updater_error)?;
     match inspected.journal().state {
-        TransactionStateV1::Planned
-        | TransactionStateV1::BackupPrepared
-        | TransactionStateV1::Committed
-        | TransactionStateV1::RolledBack => {
+        TransactionStateV1::Planned => {
             remove_completed_transaction(&paths, trust).map_err(map_updater_error)?;
             Ok(EarlyRecoveryOutcome::Continue)
         }
-        TransactionStateV1::ActivationStarted
+        TransactionStateV1::BackupPrepared
+        | TransactionStateV1::ActivationStarted
         | TransactionStateV1::CandidateActivated
         | TransactionStateV1::PermanentVerified
         | TransactionStateV1::CommitStarted
-        | TransactionStateV1::RollbackStarted => {
-            let transaction =
-                load_recovery_transaction(&paths, trust).map_err(map_updater_error)?;
+        | TransactionStateV1::Committed
+        | TransactionStateV1::RollbackStarted
+        | TransactionStateV1::RolledBack => {
+            let transaction = if inspected.journal().state == TransactionStateV1::Committed
+                && matches!(
+                    inspected.plan().operation,
+                    ah_updater_core::UpdateOperation::Upgrade
+                        | ah_updater_core::UpdateOperation::Version
+                ) {
+                ah_update_helper::transaction::load_transaction(&paths, trust)
+            } else {
+                load_recovery_transaction(&paths, trust)
+            }
+            .map_err(map_updater_error)?;
             let helper = recovery_helper_path(&transaction)?;
             match runner.launch(&helper, &paths)? {
                 HelperRun::Launched => Ok(EarlyRecoveryOutcome::RecoveryLaunched),
@@ -151,8 +176,17 @@ fn recover_pending_for(
 fn recovery_helper_path(
     transaction: &ah_update_helper::transaction::LoadedTransaction,
 ) -> Result<PathBuf, AppError> {
-    let helpers = transaction
-        .old_manifest()
+    let use_candidate = transaction.journal().state == TransactionStateV1::Committed
+        && matches!(
+            transaction.plan().operation,
+            ah_updater_core::UpdateOperation::Upgrade | ah_updater_core::UpdateOperation::Version
+        );
+    let manifest = if use_candidate {
+        transaction.new_manifest()
+    } else {
+        transaction.old_manifest()
+    };
+    let helpers = manifest
         .files
         .iter()
         .filter(|file| file.purpose == FilePurpose::UpdateHelper)
@@ -162,10 +196,12 @@ fn recovery_helper_path(
             "transaction backup must contain exactly one update helper",
         ));
     };
-    Ok(transaction
-        .paths()
-        .backup_files_root()
-        .join(helper.path.split('/').collect::<PathBuf>()))
+    let root = if use_candidate {
+        transaction.paths().candidate_files_root()
+    } else {
+        transaction.paths().backup_files_root()
+    };
+    Ok(root.join(helper.path.split('/').collect::<PathBuf>()))
 }
 
 fn discover_pending(
@@ -356,7 +392,7 @@ mod tests {
     };
     use ah_update_helper::transaction::{
         FailureInjector, FailurePoint, TransactionRunError, activate_transaction_with_injector,
-        prepare_transaction, recover_transaction,
+        prepare_transaction,
     };
     use ah_updater_core::TransactionPlanV1;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -422,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_transaction_is_cleaned_without_launching_helper() {
+    fn prepared_transaction_runs_helper_before_cleanup() {
         let fixture = Fixture::new();
         fixture.prepare();
         let runner = InProcessRunner::new(fixture.trust.clone());
@@ -436,7 +472,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome, EarlyRecoveryOutcome::Continue);
-        assert_eq!(runner.launches.get(), 0);
+        assert_eq!(runner.launches.get(), 1);
         assert!(!fixture.paths.transaction_root().exists());
         assert_eq!(
             fs::read(fixture.installation_root.join("ah.exe")).unwrap(),

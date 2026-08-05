@@ -13,13 +13,14 @@ use crate::{
     recovery_command::{RecoveryCommand, wait_for_process_exit},
     transaction::{
         activate_transaction, commit_transaction, inspect_transaction, load_prepared_transaction,
-        remove_completed_transaction, rollback_transaction,
+        rollback_transaction,
     },
 };
 
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCKER_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
 const INSTALLED_SMOKE_ENV: &str = "AH_UPDATER_INSTALLED_SMOKE";
+const MCP_RESTORE_ENV: &str = "AH_UPDATER_MCP_RESTORE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedMcpRestoration {
@@ -77,7 +78,6 @@ pub fn restore_managed_mcp(
         }
     };
     if !transaction.plan().managed_mcp_was_running {
-        remove_completed_transaction(&command.paths, trust)?;
         return Ok(ManagedMcpRestoration::NotRequired);
     }
     let executable = main_executable(command.paths.installation_root(), manifest)?;
@@ -156,6 +156,7 @@ fn run_service_command(executable: &Path, arguments: &[&str]) -> Result<Vec<u8>,
     let output = Command::new(executable)
         .args(arguments)
         .env_remove(INSTALLED_SMOKE_ENV)
+        .env(MCP_RESTORE_ENV, "1")
         .current_dir(
             executable
                 .parent()

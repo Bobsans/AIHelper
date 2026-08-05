@@ -142,6 +142,23 @@ pub(crate) fn resolve_current_managed_installation() -> Result<ManagedInstallati
     resolve_managed_installation(&portable, &state, &source, &trust, &current_version)
 }
 
+pub(crate) fn load_current_managed_installation(
+    trust: &ReleaseTrust,
+) -> Result<ManagedInstallation, UpdaterError> {
+    ah_updater_core::UpdateTarget::current()?;
+    let portable = inspect_current_portable_installation()?;
+    let state = InstallationStatePaths::discover()?;
+    let current_version = Version::parse(env!("CARGO_PKG_VERSION")).map_err(|_| {
+        UpdaterError::new(
+            UpdaterErrorCode::ReleaseContract,
+            "running AIHelper version is not canonical SemVer",
+        )
+    })?;
+    let identity = load_identity(&state.binding(portable.executable())?)?
+        .ok_or_else(|| installation("self-update rollback requires a managed installation"))?;
+    load_managed_installation(&portable, &state, identity, trust, &current_version)
+}
+
 fn resolve_managed_installation(
     portable: &PortableInstallation,
     state: &InstallationStatePaths,

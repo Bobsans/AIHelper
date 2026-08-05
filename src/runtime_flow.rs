@@ -34,11 +34,14 @@ pub(crate) fn run() -> Result<(), AppError> {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    match crate::updater::recovery::recover_before_startup()? {
-        crate::updater::recovery::EarlyRecoveryOutcome::Continue => {}
-        crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched => {
-            emit_warning("update recovery started; rerun the command after recovery completes");
-            return Ok(());
+    if !is_updater_mcp_restore_fast_path(&raw_args) {
+        match crate::updater::recovery::recover_before_startup(is_managed_serve_request(&raw_args))?
+        {
+            crate::updater::recovery::EarlyRecoveryOutcome::Continue => {}
+            crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched => {
+                emit_warning("update recovery started; rerun the command after recovery completes");
+                return Ok(());
+            }
         }
     }
     if is_version_fast_path(&raw_args) {
@@ -137,6 +140,27 @@ pub(crate) fn run() -> Result<(), AppError> {
 fn is_installed_smoke_fast_path(raw_args: &[OsString]) -> bool {
     std::env::var_os("AH_UPDATER_INSTALLED_SMOKE").as_deref() == Some(OsStr::new("1"))
         && is_version_fast_path(raw_args)
+}
+
+fn is_updater_mcp_restore_fast_path(raw_args: &[OsString]) -> bool {
+    std::env::var_os("AH_UPDATER_MCP_RESTORE").as_deref() == Some(OsStr::new("1"))
+        && raw_args.len() == 5
+        && raw_args[1] == "--json"
+        && raw_args[2] == "mcp"
+        && raw_args[3] == "service"
+        && matches!(raw_args[4].to_str(), Some("start" | "status"))
+}
+
+fn is_managed_serve_request(raw_args: &[OsString]) -> bool {
+    raw_args
+        .windows(2)
+        .any(|pair| pair[0] == "mcp" && pair[1] == "serve")
+        && raw_args.iter().any(|argument| {
+            argument == "--managed-config"
+                || argument
+                    .to_str()
+                    .is_some_and(|value| value.starts_with("--managed-config="))
+        })
 }
 
 fn is_version_fast_path(raw_args: &[OsString]) -> bool {
@@ -666,7 +690,7 @@ mod tests {
     #[test]
     fn recovery_is_routed_before_version_config_and_plugin_discovery() {
         let source = include_str!("runtime_flow.rs");
-        let recovery = source.find("recover_before_startup()?").unwrap();
+        let recovery = source.find("recover_before_startup(").unwrap();
         let version = source.find("if is_version_fast_path").unwrap();
         let config = source.find("ConfigContext::load()").unwrap();
         let discovery = source.find("let mut load_report = discovery(").unwrap();

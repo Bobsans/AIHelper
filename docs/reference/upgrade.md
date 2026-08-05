@@ -33,6 +33,7 @@ state, acquire lifecycle locks, or stop managed MCP processes.
 ```text
 ah upgrade
 ah upgrade --version 1.2.0
+ah upgrade --rollback
 ah upgrade --json
 ```
 
@@ -53,6 +54,23 @@ If managed MCP was ready before the update, its previous instance identity is
 bound into the durable transaction. After activation or rollback, the helper
 starts the active `ah`, waits for readiness, and requires the active release
 version and a different instance identity.
+
+## Roll back once
+
+`ah upgrade --rollback` performs no network access. It loads the single signed
+backup from `%APPDATA%\AIHelper\backup\<INSTALLATION_ID>`, verifies every managed
+file, and prepares a new durable transaction before stopping managed MCP. The
+currently installed release becomes that transaction's safety backup, so an
+interrupted or failed rollback deterministically returns to the pre-rollback
+version.
+
+The permanent backup is consumed only after the restored release passes its
+installed smoke check and any previously running managed MCP returns ready. A
+failed rollback retains the permanent backup. A later successful update rotates
+it only after activation and service restoration succeed.
+
+Release builds must retain every public trust anchor needed by either the active
+installation or its retained backup until that backup is rotated or consumed.
 
 Production key activation is tracked separately. Until the protected signing
 key is provisioned and its public key is embedded, source builds fail closed with
@@ -77,6 +95,8 @@ Successful JSON uses schema version 1 and keeps optional fields explicit:
 Mutation launch results additionally contain `activation`,
 `managed_mcp_restoration`, and `rollback`. `managed_mcp_restoration` is `pending`
 only when a previously ready managed MCP must be restored by the helper.
+Rollback results use `operation=rollback`, `source=permanent_backup`, and
+`rollback=launched`.
 
 Errors use deterministic `UPDATER_<CATEGORY>` diagnostic codes. Categories
 include `UNSUPPORTED_PLATFORM`, `NETWORK`, `RELEASE_CONTRACT`, `TRUST`,

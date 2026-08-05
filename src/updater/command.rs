@@ -10,6 +10,7 @@ pub enum UpgradeRequest {
     Check,
     Upgrade,
     Version(Version),
+    Rollback,
 }
 
 #[derive(Debug)]
@@ -55,7 +56,7 @@ pub fn build_help_command() -> Command {
             Arg::new("check")
                 .long("check")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("version")
+                .conflicts_with_all(["version", "rollback"])
                 .help("Check the highest stable signed release without mutation"),
         )
         .arg(
@@ -63,13 +64,22 @@ pub fn build_help_command() -> Command {
                 .long("version")
                 .value_name("VERSION")
                 .value_parser(parse_stable_version)
+                .conflicts_with("rollback")
                 .help("Install one exact stable release without downgrade"),
+        )
+        .arg(
+            Arg::new("rollback")
+                .long("rollback")
+                .action(ArgAction::SetTrue)
+                .help("Restore and consume the single verified permanent backup"),
         )
 }
 
 pub fn request_from_matches(matches: &ArgMatches) -> Result<UpgradeRequest, AppError> {
     if matches.get_flag("check") {
         Ok(UpgradeRequest::Check)
+    } else if matches.get_flag("rollback") {
+        Ok(UpgradeRequest::Rollback)
     } else if let Some(version) = matches.get_one::<Version>("version") {
         Ok(UpgradeRequest::Version(version.clone()))
     } else {
@@ -208,13 +218,14 @@ mod tests {
         };
         assert_eq!(request, UpgradeRequest::Version(Version::new(1, 2, 3)));
 
-        assert!(
-            route(&[
-                OsString::from("ah"),
-                OsString::from("upgrade"),
-                OsString::from("--rollback"),
-            ])
-            .is_err()
-        );
+        let EarlyUpgradeRoute::Execute { request, .. } = route(&[
+            OsString::from("ah"),
+            OsString::from("upgrade"),
+            OsString::from("--rollback"),
+        ])
+        .unwrap() else {
+            panic!("unexpected route")
+        };
+        assert_eq!(request, UpgradeRequest::Rollback);
     }
 }

@@ -37,6 +37,10 @@ pub fn parse_activation_arguments(arguments: &[OsString]) -> Result<RecoveryComm
     parse_arguments(arguments, "activate")
 }
 
+pub fn parse_rollback_arguments(arguments: &[OsString]) -> Result<RecoveryCommand, UpdaterError> {
+    parse_arguments(arguments, "rollback")
+}
+
 fn parse_arguments(
     arguments: &[OsString],
     operation: &str,
@@ -243,6 +247,9 @@ mod tests {
             parse_activation_arguments(&activation).unwrap().parent_pid,
             42
         );
+        let mut rollback = valid.clone();
+        rollback[0] = OsString::from("rollback");
+        assert_eq!(parse_rollback_arguments(&rollback).unwrap().parent_pid, 42);
 
         for invalid in [
             valid[..13].to_vec(),

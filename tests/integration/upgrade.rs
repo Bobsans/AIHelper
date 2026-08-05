@@ -26,12 +26,20 @@ fn upgrade_check_routes_before_configuration_and_plugins() {
 }
 
 #[test]
-fn upgrade_check_rejects_unknown_operations_before_startup() {
+fn upgrade_rollback_routes_before_configuration_and_plugins() {
     let mut command = Command::cargo_bin("ah").unwrap();
-    command
+    let assertion = command
         .args(["upgrade", "--rollback"])
         .env("AH_CONFIG_DIR", "")
         .assert()
-        .failure()
-        .stderr(contains("unexpected argument '--rollback'"));
+        .failure();
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    let assertion = assertion.stderr(contains("UPDATER_TRUST"));
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    let assertion = assertion.stderr(contains("UPDATER_UNSUPPORTED_PLATFORM"));
+
+    assertion
+        .stderr(contains("CONFIG_INVALID").not())
+        .stdout("");
 }

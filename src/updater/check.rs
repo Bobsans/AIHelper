@@ -21,9 +21,9 @@ pub(crate) trait ReleaseCheckSource {
 pub(crate) fn execute(request: UpgradeRequest, options: GlobalOptions) -> Result<(), AppError> {
     match request {
         UpgradeRequest::Check => execute_check(options),
-        request @ (UpgradeRequest::Upgrade | UpgradeRequest::Version(_)) => {
-            super::activate::execute(request, options)
-        }
+        request @ (UpgradeRequest::Upgrade
+        | UpgradeRequest::Version(_)
+        | UpgradeRequest::Rollback) => super::activate::execute(request, options),
     }
 }
 

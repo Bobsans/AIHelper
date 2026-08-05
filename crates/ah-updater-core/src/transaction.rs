@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{UpdaterError, UpdaterErrorCode};
+use crate::{UpdateOperation, UpdaterError, UpdaterErrorCode};
 
 pub const TRANSACTION_PLAN_SCHEMA_VERSION: u32 = 1;
 pub const TRANSACTION_JOURNAL_SCHEMA_VERSION: u32 = 1;
@@ -24,6 +24,11 @@ pub struct TransactionPlanV1 {
     pub architecture: String,
     pub old_manifest_sha256: String,
     pub new_manifest_sha256: String,
+    #[serde(
+        default = "default_update_operation",
+        skip_serializing_if = "is_upgrade_operation"
+    )]
+    pub operation: UpdateOperation,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed_mcp_was_running: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -33,6 +38,22 @@ pub struct TransactionPlanV1 {
 
 impl TransactionPlanV1 {
     pub fn build(
+        transaction_id: Uuid,
+        installation_id: Uuid,
+        old_manifest: &ReleaseManifest,
+        new_manifest: &ReleaseManifest,
+    ) -> Result<Self, UpdaterError> {
+        Self::build_for_operation(
+            UpdateOperation::Upgrade,
+            transaction_id,
+            installation_id,
+            old_manifest,
+            new_manifest,
+        )
+    }
+
+    pub fn build_for_operation(
+        operation: UpdateOperation,
         transaction_id: Uuid,
         installation_id: Uuid,
         old_manifest: &ReleaseManifest,
@@ -56,11 +77,7 @@ impl TransactionPlanV1 {
         }
         let old_version = canonical_version(&old_manifest.release.version)?;
         let new_version = canonical_version(&new_manifest.release.version)?;
-        if new_version < old_version {
-            return Err(transaction(
-                "candidate release version must not be older than the installed version",
-            ));
-        }
+        validate_version_direction(operation, &old_version, &new_version)?;
 
         let old_files = inventory(old_manifest);
         let new_files = inventory(new_manifest);
@@ -103,6 +120,7 @@ impl TransactionPlanV1 {
             architecture: old_manifest.release.architecture.clone(),
             old_manifest_sha256: manifest_sha256(old_manifest)?,
             new_manifest_sha256: manifest_sha256(new_manifest)?,
+            operation,
             managed_mcp_was_running: false,
             managed_mcp_previous_instance_id: None,
             operations,
@@ -133,11 +151,7 @@ impl TransactionPlanV1 {
         }
         let old_version = canonical_version(&self.old_version)?;
         let new_version = canonical_version(&self.new_version)?;
-        if new_version < old_version {
-            return Err(transaction(
-                "candidate release version must not be older than the installed version",
-            ));
-        }
+        validate_version_direction(self.operation, &old_version, &new_version)?;
         if self.target.is_empty()
             || self.architecture.is_empty()
             || self.target.contains('\0')
@@ -172,7 +186,8 @@ impl TransactionPlanV1 {
         old_manifest: &ReleaseManifest,
         new_manifest: &ReleaseManifest,
     ) -> Result<(), UpdaterError> {
-        let expected = Self::build(
+        let expected = Self::build_for_operation(
+            self.operation,
             self.transaction_id,
             self.installation_id,
             old_manifest,
@@ -198,6 +213,34 @@ impl TransactionPlanV1 {
 
     pub fn sha256(&self) -> Result<String, UpdaterError> {
         Ok(encode_digest(Sha256::digest(self.to_canonical_bytes()?)))
+    }
+}
+
+fn default_update_operation() -> UpdateOperation {
+    UpdateOperation::Upgrade
+}
+
+fn is_upgrade_operation(operation: &UpdateOperation) -> bool {
+    *operation == UpdateOperation::Upgrade
+}
+
+fn validate_version_direction(
+    operation: UpdateOperation,
+    old_version: &Version,
+    new_version: &Version,
+) -> Result<(), UpdaterError> {
+    match operation {
+        UpdateOperation::Upgrade | UpdateOperation::Version if new_version >= old_version => Ok(()),
+        UpdateOperation::Rollback if new_version < old_version => Ok(()),
+        UpdateOperation::Upgrade | UpdateOperation::Version => Err(transaction(
+            "candidate release version must not be older than the installed version",
+        )),
+        UpdateOperation::Rollback => Err(transaction(
+            "rollback release version must be older than the installed version",
+        )),
+        UpdateOperation::Check | UpdateOperation::Recovery => Err(transaction(
+            "transaction operation must mutate an installed release",
+        )),
     }
 }
 
@@ -525,6 +568,24 @@ mod tests {
             old: file("ah.exe", "1", FilePurpose::Executable),
         });
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn permits_downgrade_only_for_explicit_rollback_transactions() {
+        let newer = manifest("2.0.0", vec![file("ah.exe", "2", FilePurpose::Executable)]);
+        let older = manifest("1.0.0", vec![file("ah.exe", "1", FilePurpose::Executable)]);
+
+        assert!(TransactionPlanV1::build(Uuid::new_v4(), Uuid::new_v4(), &newer, &older).is_err());
+        let rollback = TransactionPlanV1::build_for_operation(
+            UpdateOperation::Rollback,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            &newer,
+            &older,
+        )
+        .unwrap();
+        rollback.validate_for_manifests(&newer, &older).unwrap();
+        assert_eq!(rollback.operation, UpdateOperation::Rollback);
     }
 
     #[test]

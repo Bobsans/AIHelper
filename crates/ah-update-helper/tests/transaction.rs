@@ -12,12 +12,14 @@ use ah_release_manifest::{
 use ah_update_helper::transaction::{
     FailureInjector, FailurePoint, LoadedTransaction, TransactionPaths, TransactionRunError,
     activate_transaction, activate_transaction_with_injector, commit_transaction,
-    commit_transaction_with_injector, load_prepared_transaction, prepare_transaction,
-    prepare_transaction_with_injector, recover_transaction, remove_completed_transaction,
-    rollback_transaction, rollback_transaction_with_injector,
+    commit_transaction_with_injector, finalize_completed_transaction, load_permanent_backup,
+    load_prepared_transaction, prepare_transaction, prepare_transaction_with_injector,
+    recover_transaction, remove_completed_transaction, rollback_transaction,
+    rollback_transaction_with_injector,
 };
 use ah_updater_core::{
-    InstallationIdentityV1, ReleaseTrust, TransactionPlanV1, TransactionStateV1, UpdaterErrorCode,
+    InstallationIdentityV1, ReleaseTrust, TransactionPlanV1, TransactionStateV1, UpdateOperation,
+    UpdaterErrorCode,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -170,6 +172,73 @@ fn explicit_rollback_restores_complete_old_release_and_is_recoverable() {
     let recovered = recover_transaction(&fixture.paths, &fixture.trust).unwrap();
     assert_eq!(recovered.journal().state, TransactionStateV1::RolledBack);
     fixture.assert_old_active();
+}
+
+#[test]
+fn permanent_backup_survives_failed_user_rollback_and_is_consumed_once() {
+    let fixture = Fixture::new();
+    fixture.prepare().unwrap();
+    activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+    commit_transaction(&fixture.paths, &fixture.trust).unwrap();
+    finalize_completed_transaction(&fixture.paths, &fixture.trust).unwrap();
+
+    let failed_paths = prepare_user_rollback(&fixture);
+    activate_transaction(&failed_paths, &fixture.trust).unwrap();
+    rollback_transaction(&failed_paths, &fixture.trust).unwrap();
+    finalize_completed_transaction(&failed_paths, &fixture.trust).unwrap();
+    fixture.assert_new_active();
+    assert!(load_fixture_backup(&fixture).is_ok());
+
+    let successful_paths = prepare_user_rollback(&fixture);
+    activate_transaction(&successful_paths, &fixture.trust).unwrap();
+    commit_transaction(&successful_paths, &fixture.trust).unwrap();
+    finalize_completed_transaction(&successful_paths, &fixture.trust).unwrap();
+    fixture.assert_old_active();
+    assert!(load_fixture_backup(&fixture).is_err());
+}
+
+fn prepare_user_rollback(fixture: &Fixture) -> TransactionPaths {
+    let backup = load_fixture_backup(fixture).unwrap();
+    let current: ReleaseManifest = serde_json::from_slice(&fixture.new_manifest_bytes).unwrap();
+    let transaction_id = Uuid::new_v4();
+    let paths = TransactionPaths::new(
+        &fixture.installation_root,
+        fixture.paths.installation_state_root(),
+        fixture
+            .paths
+            .installation_state_root()
+            .join("transactions")
+            .join(transaction_id.to_string()),
+    );
+    let plan = TransactionPlanV1::build_for_operation(
+        UpdateOperation::Rollback,
+        transaction_id,
+        fixture.identity.installation_id,
+        &current,
+        backup.manifest(),
+    )
+    .unwrap();
+    prepare_transaction(
+        &paths,
+        &plan,
+        &backup.files_root(),
+        backup.manifest_bytes(),
+        backup.signature_bytes(),
+        &fixture.trust,
+    )
+    .unwrap();
+    paths
+}
+
+fn load_fixture_backup(
+    fixture: &Fixture,
+) -> Result<ah_update_helper::transaction::PermanentBackup, ah_updater_core::UpdaterError> {
+    load_permanent_backup(
+        &fixture.installation_root,
+        fixture.paths.installation_state_root(),
+        fixture.identity.installation_id,
+        &fixture.trust,
+    )
 }
 
 #[test]
@@ -486,11 +555,8 @@ impl Fixture {
         let temporary = TempDir::new().unwrap();
         let installation_root = temporary.path().join("installation");
         let candidate_source = temporary.path().join("candidate-source");
-        let state_root = temporary.path().join("state");
-        let transactions = state_root.join("transactions");
         fs::create_dir_all(&installation_root).unwrap();
         fs::create_dir_all(&candidate_source).unwrap();
-        fs::create_dir_all(&transactions).unwrap();
 
         let old_files = BTreeMap::from([
             ("ah.exe".to_owned(), b"old-ah".to_vec()),
@@ -514,6 +580,12 @@ impl Fixture {
         let (new_manifest, new_manifest_bytes, new_signature_bytes) =
             signed_manifest("1.2.0", &new_files, &trusted_key.key_id, &signing_key);
         let installation_id = Uuid::new_v4();
+        let state_root = temporary
+            .path()
+            .join("AIHelper/updater/installations")
+            .join(installation_id.to_string());
+        let transactions = state_root.join("transactions");
+        fs::create_dir_all(&transactions).unwrap();
         let transaction_id = Uuid::new_v4();
         let identity = InstallationIdentityV1::new(
             installation_id,

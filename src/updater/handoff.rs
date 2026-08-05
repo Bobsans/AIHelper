@@ -42,6 +42,14 @@ pub(super) fn launch_activation(
     launch_helper(helper, arguments, lease, "UPDATER_ACTIVATION", "activation")
 }
 
+pub(super) fn launch_rollback(
+    helper: &Path,
+    arguments: &[&OsStr],
+    lease: &FileLease,
+) -> Result<(), AppError> {
+    launch_helper(helper, arguments, lease, "UPDATER_ROLLBACK", "rollback")
+}
+
 fn launch_helper(
     helper: &Path,
     arguments: &[&OsStr],
