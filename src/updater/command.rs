@@ -1,12 +1,15 @@
 use std::{ffi::OsString, path::PathBuf};
 
 use clap::{Arg, ArgAction, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser};
+use semver::Version;
 
 use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpgradeRequest {
     Check,
+    Upgrade,
+    Version(Version),
 }
 
 #[derive(Debug)]
@@ -52,17 +55,34 @@ pub fn build_help_command() -> Command {
             Arg::new("check")
                 .long("check")
                 .action(ArgAction::SetTrue)
-                .required(true)
+                .conflicts_with("version")
                 .help("Check the highest stable signed release without mutation"),
+        )
+        .arg(
+            Arg::new("version")
+                .long("version")
+                .value_name("VERSION")
+                .value_parser(parse_stable_version)
+                .help("Install one exact stable release without downgrade"),
         )
 }
 
 pub fn request_from_matches(matches: &ArgMatches) -> Result<UpgradeRequest, AppError> {
     if matches.get_flag("check") {
         Ok(UpgradeRequest::Check)
+    } else if let Some(version) = matches.get_one::<Version>("version") {
+        Ok(UpgradeRequest::Version(version.clone()))
     } else {
-        Err(AppError::invalid_argument("missing upgrade operation"))
+        Ok(UpgradeRequest::Upgrade)
     }
+}
+
+fn parse_stable_version(value: &str) -> Result<Version, String> {
+    let version = Version::parse(value).map_err(|_| "VERSION must be canonical SemVer")?;
+    if !version.pre.is_empty() || !version.build.is_empty() || version.to_string() != value {
+        return Err("VERSION must be canonical stable SemVer".to_owned());
+    }
+    Ok(version)
 }
 
 fn build_early_command() -> Command {
@@ -169,16 +189,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_or_unknown_upgrade_operation() {
-        for args in [
-            vec![OsString::from("ah"), OsString::from("upgrade")],
-            vec![
+    fn routes_stable_update_and_rejects_unknown_operation() {
+        let EarlyUpgradeRoute::Execute { request, .. } =
+            route(&[OsString::from("ah"), OsString::from("upgrade")]).unwrap()
+        else {
+            panic!("unexpected route")
+        };
+        assert_eq!(request, UpgradeRequest::Upgrade);
+
+        let EarlyUpgradeRoute::Execute { request, .. } = route(&[
+            OsString::from("ah"),
+            OsString::from("upgrade"),
+            OsString::from("--version"),
+            OsString::from("1.2.3"),
+        ])
+        .unwrap() else {
+            panic!("unexpected route")
+        };
+        assert_eq!(request, UpgradeRequest::Version(Version::new(1, 2, 3)));
+
+        assert!(
+            route(&[
                 OsString::from("ah"),
                 OsString::from("upgrade"),
                 OsString::from("--rollback"),
-            ],
-        ] {
-            assert!(route(&args).is_err());
-        }
+            ])
+            .is_err()
+        );
     }
 }

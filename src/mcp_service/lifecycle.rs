@@ -90,6 +90,66 @@ pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
 
 #[cfg(windows)]
 pub(crate) fn stop_for_update_while_locked() -> Result<bool, AppError> {
+    let service = update_service()?;
+    Ok(service.stop_locked(StopPolicy::AllowExactOrphan)?.changed)
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ManagedMcpUpdateState {
+    pub(crate) was_running: bool,
+    pub(crate) previous_instance_id: Option<Uuid>,
+}
+
+#[cfg(windows)]
+pub(crate) fn capture_for_update_while_locked() -> Result<ManagedMcpUpdateState, AppError> {
+    let status = update_service()?.status();
+    let was_running = status.readiness.status == ReadinessStatus::Ready
+        || matches!(
+            status.scheduler.state,
+            SchedulerState::Running | SchedulerState::Queued
+        )
+        || matches!(
+            status.runtime.status,
+            RuntimeStatus::Starting | RuntimeStatus::RunningNotReady | RuntimeStatus::Ready
+        );
+    let previous_instance_id = status
+        .readiness
+        .instance_id
+        .or(status.runtime.instance_id)
+        .filter(|_| was_running);
+    Ok(ManagedMcpUpdateState {
+        was_running,
+        previous_instance_id,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn restore_for_update_while_locked(
+    state: ManagedMcpUpdateState,
+) -> Result<(), AppError> {
+    if !state.was_running {
+        return Ok(());
+    }
+    let service = update_service()?;
+    service.start_locked()?;
+    let status = service.status();
+    if status.readiness.status != ReadinessStatus::Ready
+        || status.readiness.instance_id == state.previous_instance_id
+    {
+        return Err(AppError::external(
+            "MCP_SERVICE_RESTART_FAILED",
+            "managed MCP did not return with a new ready instance identity",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn update_service() -> Result<
+    LifecycleService<super::windows_scheduler::WindowsTaskScheduler, HttpReadinessProbe>,
+    AppError,
+> {
     let paths = ServicePaths::discover()?;
     let readiness = HttpReadinessProbe::new().map_err(|error| {
         AppError::external(
@@ -97,12 +157,11 @@ pub(crate) fn stop_for_update_while_locked() -> Result<bool, AppError> {
             format!("failed to create readiness client: {error}"),
         )
     })?;
-    let service = LifecycleService::new(
+    Ok(LifecycleService::new(
         paths,
         super::windows_scheduler::WindowsTaskScheduler,
         readiness,
-    );
-    Ok(service.stop_locked(StopPolicy::AllowExactOrphan)?.changed)
+    ))
 }
 
 pub struct LifecycleService<S, R> {

@@ -8,6 +8,7 @@ publish = false
 ah-updater-core = { path = "../ah-updater-core" }
 serde_json = "1.0.140"
 sha2 = "0.11"
+uuid = { version = "1", features = ["serde", "v4"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
@@ -23,4 +24,3 @@ ah-release-manifest = { path = "../ah-release-manifest" }
 base64 = "0.22"
 ed25519-dalek = "3"
 tempfile = "3.20.0"
-uuid = { version = "1", features = ["v4"] }

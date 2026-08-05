@@ -2,13 +2,16 @@
 
 use std::{env, io, process::ExitCode};
 
+use ah_update_helper::activation_command::{
+    ManagedMcpRestoration, execute_activation, restore_managed_mcp,
+};
 use ah_update_helper::handoff::HandoffLease;
 use ah_update_helper::recovery_command::{
-    RecoveryExecution, execute_recovery, parse_recovery_arguments,
+    RecoveryExecution, execute_recovery, parse_activation_arguments, parse_recovery_arguments,
 };
 use ah_updater_core::{UpdateHelperSelfCheckV1, production_release_trust};
 
-const USAGE: &str = "usage: ah-update-helper --self-check | recover --installation-root <PATH> --installation-state-root <PATH> --transaction-root <PATH> --lifecycle-lock <PATH> --lifecycle-lock-handle <HANDLE> --handoff-event <NAME> <PARENT_PID>";
+const USAGE: &str = "usage: ah-update-helper --self-check | <activate|recover> --installation-root <PATH> --installation-state-root <PATH> --transaction-root <PATH> --lifecycle-lock <PATH> --lifecycle-lock-handle <HANDLE> --handoff-event <NAME> <PARENT_PID>";
 
 fn main() -> ExitCode {
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
@@ -21,14 +24,19 @@ fn main() -> ExitCode {
             }
         };
     }
-    let command = match parse_recovery_arguments(&arguments) {
+    let activation = arguments.first().is_some_and(|value| value == "activate");
+    let command = match if activation {
+        parse_activation_arguments(&arguments)
+    } else {
+        parse_recovery_arguments(&arguments)
+    } {
         Ok(command) => command,
         Err(_) => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
     };
-    let _handoff = match HandoffLease::claim(
+    let handoff = match HandoffLease::claim(
         command.lifecycle_lock_handle,
         &command.lifecycle_lock,
         &command.handoff_event,
@@ -39,13 +47,30 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = production_release_trust().and_then(|trust| execute_recovery(&command, &trust));
-    match result {
-        Ok(RecoveryExecution::AlreadyRunning) => ExitCode::SUCCESS,
-        Ok(RecoveryExecution::Recovered(state)) => {
+    let trust = match production_release_trust() {
+        Ok(trust) => trust,
+        Err(error) => {
+            eprintln!("{}", error.code());
+            return ExitCode::FAILURE;
+        }
+    };
+    let execution = if activation {
+        execute_activation(&command, &trust).map(Some)
+    } else {
+        match execute_recovery(&command, &trust) {
+            Ok(RecoveryExecution::AlreadyRunning) => return ExitCode::SUCCESS,
+            Ok(RecoveryExecution::Recovered(state)) => Ok(Some(state)),
+            Err(error) => Err(error),
+        }
+    };
+    drop(handoff);
+    let restoration = restore_managed_mcp(&command, &trust);
+    match (execution, restoration) {
+        (Ok(Some(state)), Ok(restoration)) => {
             let response = serde_json::json!({
                 "schema_version": 1,
                 "state": state,
+                "managed_mcp_restoration": restoration_name(restoration),
             });
             if serde_json::to_writer(io::stdout().lock(), &response).is_err() {
                 eprintln!("failed to write update recovery result");
@@ -54,10 +79,18 @@ fn main() -> ExitCode {
             println!();
             ExitCode::SUCCESS
         }
-        Err(error) => {
+        (Err(error), _) | (Ok(_), Err(error)) => {
             eprintln!("{}", error.code());
             ExitCode::FAILURE
         }
+        (Ok(None), Ok(_)) => ExitCode::SUCCESS,
+    }
+}
+
+fn restoration_name(restoration: ManagedMcpRestoration) -> &'static str {
+    match restoration {
+        ManagedMcpRestoration::NotRequired => "not_required",
+        ManagedMcpRestoration::Restored => "restored",
     }
 }
 

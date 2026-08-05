@@ -1,5 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod activation_command;
 pub mod handoff;
 pub mod process;
 pub mod recovery_command;

@@ -1,7 +1,7 @@
 # `ah upgrade`
 
-The built-in `upgrade` command checks and, in later slices, installs trusted
-AIHelper releases. It is routed before configuration and dynamic plugin loading.
+The built-in `upgrade` command checks and installs trusted AIHelper releases. It
+is routed before configuration and dynamic plugin loading.
 
 ## Read-only check
 
@@ -28,6 +28,32 @@ network access. The command:
 The check does not download the release archive, write updater or installation
 state, acquire lifecycle locks, or stop managed MCP processes.
 
+## Install an update
+
+```text
+ah upgrade
+ah upgrade --version 1.2.0
+ah upgrade --json
+```
+
+The default selects the highest stable signed release. `--version` selects one
+exact canonical stable SemVer and refuses downgrade. Both paths finish release
+discovery, archive verification, extraction, offline smoke, transaction staging,
+and verified backup before stopping a process.
+
+On Windows x64 the command copies the verified helper outside the installation,
+hands it the lifecycle lock without a gap, and exits after the helper
+acknowledges. A successful launch reports `status=activation_launched`; final
+activation then runs out of process. The helper replaces only signed managed
+paths, verifies permanent hashes and the installed version, commits the exact
+signed installed-release record, and automatically rolls back post-mutation
+failures.
+
+If managed MCP was ready before the update, its previous instance identity is
+bound into the durable transaction. After activation or rollback, the helper
+starts the active `ah`, waits for readiness, and requires the active release
+version and a different instance identity.
+
 Production key activation is tracked separately. Until the protected signing
 key is provisioned and its public key is embedded, source builds fail closed with
 `UPDATER_TRUST` before network access.
@@ -48,10 +74,15 @@ Successful JSON uses schema version 1 and keeps optional fields explicit:
 }
 ```
 
+Mutation launch results additionally contain `activation`,
+`managed_mcp_restoration`, and `rollback`. `managed_mcp_restoration` is `pending`
+only when a previously ready managed MCP must be restored by the helper.
+
 Errors use deterministic `UPDATER_<CATEGORY>` diagnostic codes. Categories
-include `UNSUPPORTED_PLATFORM`, `NETWORK`, `RELEASE_CONTRACT`, `TRUST`, and
-`COMPATIBILITY`. Diagnostics do not include response bodies, signatures, or
-untrusted key IDs.
+include `UNSUPPORTED_PLATFORM`, `NETWORK`, `RELEASE_CONTRACT`, `TRUST`,
+`COMPATIBILITY`, `CANDIDATE`, `INSTALLATION`, `ACTIVATION`, `ROLLBACK`, and
+`RECOVERY`. Diagnostics do not include response bodies, signatures, or untrusted
+key IDs.
 
 ## Network limits
 

@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -30,6 +30,10 @@ const MCP_RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 pub(crate) fn run() -> Result<(), AppError> {
     let started = Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
+    if is_installed_smoke_fast_path(&raw_args) {
+        println!("ah {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     match crate::updater::recovery::recover_before_startup()? {
         crate::updater::recovery::EarlyRecoveryOutcome::Continue => {}
         crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched => {
@@ -128,6 +132,11 @@ pub(crate) fn run() -> Result<(), AppError> {
         );
     }
     result
+}
+
+fn is_installed_smoke_fast_path(raw_args: &[OsString]) -> bool {
+    std::env::var_os("AH_UPDATER_INSTALLED_SMOKE").as_deref() == Some(OsStr::new("1"))
+        && is_version_fast_path(raw_args)
 }
 
 fn is_version_fast_path(raw_args: &[OsString]) -> bool {

@@ -694,8 +694,8 @@ Manual acceptance:
 
 ### Этап 7: activation и managed MCP integration
 
-- [ ] Реализовать `ah upgrade`.
-- [ ] Реализовать `ah upgrade --version <VERSION>` без downgrade.
+- [x] Реализовать `ah upgrade`.
+- [x] Реализовать `ah upgrade --version <VERSION>` без downgrade.
 - [x] Реализовать безопасную передачу lifecycle- и upgrade-блокировки
       update-helper.
 - [x] Интегрировать graceful shutdown managed MCP в update transaction.
@@ -703,12 +703,12 @@ Manual acceptance:
       процессов AIHelper.
 - [x] Отменять обновление до замены файлов при сохраняющейся сторонней
       блокировке.
-- [ ] Реализовать транзакционную замену только managed-файлов.
-- [ ] Сохранять пользовательские файлы и постоянный installation path.
-- [ ] Реализовать автоматический rollback при ошибке замены или проверки.
-- [ ] После активации сохранять проверенные canonical manifest и signature как
+- [x] Реализовать транзакционную замену только managed-файлов.
+- [x] Сохранять пользовательские файлы и постоянный installation path.
+- [x] Реализовать автоматический rollback при ошибке замены или проверки.
+- [x] После активации сохранять проверенные canonical manifest и signature как
       installed release record текущей версии.
-- [ ] Восстанавливать предыдущее состояние managed MCP.
+- [x] Восстанавливать предыдущее состояние managed MCP.
 - [ ] Добавить deterministic text и versioned JSON diagnostics для update,
       rollback и recovery.
 

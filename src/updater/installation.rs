@@ -42,10 +42,9 @@ impl PortableInstallation {
 #[derive(Debug)]
 pub(crate) struct ManagedInstallation {
     portable: PortableInstallation,
+    state_root: PathBuf,
     identity: InstallationIdentityV1,
     manifest: ReleaseManifest,
-    manifest_bytes: Vec<u8>,
-    signature_bytes: Vec<u8>,
 }
 
 impl ManagedInstallation {
@@ -57,16 +56,12 @@ impl ManagedInstallation {
         &self.identity
     }
 
+    pub(crate) fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
     pub(crate) fn manifest(&self) -> &ReleaseManifest {
         &self.manifest
-    }
-
-    pub(crate) fn manifest_bytes(&self) -> &[u8] {
-        &self.manifest_bytes
-    }
-
-    pub(crate) fn signature_bytes(&self) -> &[u8] {
-        &self.signature_bytes
     }
 }
 
@@ -210,10 +205,9 @@ fn load_managed_installation(
     verify_managed_files(portable.root(), &manifest)?;
     Ok(ManagedInstallation {
         portable: portable.clone(),
+        state_root: directory,
         identity,
         manifest,
-        manifest_bytes,
-        signature_bytes,
     })
 }
 
@@ -810,8 +804,6 @@ mod tests {
         assert_eq!(source.downloads.get(), 2);
         assert_eq!(managed.portable(), &installation.portable);
         assert_eq!(managed.manifest().release.version, TEST_VERSION);
-        assert_eq!(managed.manifest_bytes(), fixture.manifest);
-        assert_eq!(managed.signature_bytes(), fixture.signature);
         assert_eq!(
             managed.identity().executable_path,
             installation.portable.executable().to_str().unwrap()

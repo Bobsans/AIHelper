@@ -30,8 +30,19 @@ pub enum RecoveryExecution {
 }
 
 pub fn parse_recovery_arguments(arguments: &[OsString]) -> Result<RecoveryCommand, UpdaterError> {
+    parse_arguments(arguments, "recover")
+}
+
+pub fn parse_activation_arguments(arguments: &[OsString]) -> Result<RecoveryCommand, UpdaterError> {
+    parse_arguments(arguments, "activate")
+}
+
+fn parse_arguments(
+    arguments: &[OsString],
+    operation: &str,
+) -> Result<RecoveryCommand, UpdaterError> {
     if arguments.len() != 14
-        || arguments[0] != "recover"
+        || arguments[0] != operation
         || arguments[1] != "--installation-root"
         || arguments[3] != "--installation-state-root"
         || arguments[5] != "--transaction-root"
@@ -40,7 +51,7 @@ pub fn parse_recovery_arguments(arguments: &[OsString]) -> Result<RecoveryComman
         || arguments[11] != "--handoff-event"
         || arguments[13].to_str().is_none()
     {
-        return Err(argument("update helper recovery arguments are invalid"));
+        return Err(argument("update helper arguments are invalid"));
     }
     let lifecycle_lock_handle = arguments[10]
         .to_str()
@@ -57,7 +68,7 @@ pub fn parse_recovery_arguments(arguments: &[OsString]) -> Result<RecoveryComman
         .to_str()
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|pid| *pid != 0)
-        .ok_or_else(|| argument("update helper recovery parent PID is invalid"))?;
+        .ok_or_else(|| argument("update helper parent PID is invalid"))?;
     Ok(RecoveryCommand {
         paths: TransactionPaths::new(
             PathBuf::from(&arguments[2]),
@@ -157,7 +168,7 @@ impl Drop for RecoveryLease {
 }
 
 #[cfg(windows)]
-fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), UpdaterError> {
+pub(crate) fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), UpdaterError> {
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_FAILED, WAIT_OBJECT_0,
@@ -226,6 +237,12 @@ mod tests {
         let parsed = parse_recovery_arguments(&valid).unwrap();
         assert_eq!(parsed.parent_pid, 42);
         assert_eq!(parsed.paths.installation_root(), Path::new(r"C:\AIHelper"));
+        let mut activation = valid.clone();
+        activation[0] = OsString::from("activate");
+        assert_eq!(
+            parse_activation_arguments(&activation).unwrap().parent_pid,
+            42
+        );
 
         for invalid in [
             valid[..13].to_vec(),

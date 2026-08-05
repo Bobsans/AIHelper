@@ -31,6 +31,24 @@ pub(super) fn launch_recovery(
     arguments: &[&OsStr],
     lease: &FileLease,
 ) -> Result<(), AppError> {
+    launch_helper(helper, arguments, lease, "UPDATER_RECOVERY", "recovery")
+}
+
+pub(super) fn launch_activation(
+    helper: &Path,
+    arguments: &[&OsStr],
+    lease: &FileLease,
+) -> Result<(), AppError> {
+    launch_helper(helper, arguments, lease, "UPDATER_ACTIVATION", "activation")
+}
+
+fn launch_helper(
+    helper: &Path,
+    arguments: &[&OsStr],
+    lease: &FileLease,
+    error_code: &'static str,
+    operation: &'static str,
+) -> Result<(), AppError> {
     let event_name = format!("Local\\AIHelper.Update.Handoff.{}", uuid::Uuid::new_v4());
     let wide_event = wide_null(OsStr::new(&event_name))?;
     let event = OwnedHandle::new(unsafe { CreateEventW(null(), 1, 0, wide_event.as_ptr()) })?;
@@ -78,7 +96,10 @@ pub(super) fn launch_recovery(
     drop(inherit_guard);
     drop(spawn_guard);
     if created == 0 {
-        return Err(handoff("failed to launch verified update recovery helper"));
+        return Err(handoff_for(
+            error_code,
+            format!("failed to launch verified update {operation} helper"),
+        ));
     }
     let process = OwnedHandle::new(process_info.hProcess)?;
     let _thread = OwnedHandle::new(process_info.hThread)?;
@@ -92,14 +113,20 @@ pub(super) fn launch_recovery(
         WAIT_OBJECT_0 => Ok(()),
         WAIT_TIMEOUT | WAIT_FAILED => {
             unsafe { TerminateProcess(process.raw(), 1) };
-            Err(handoff(
-                "verified update recovery helper did not acknowledge lifecycle lock handoff",
+            Err(handoff_for(
+                error_code,
+                format!(
+                    "verified update {operation} helper did not acknowledge lifecycle lock handoff"
+                ),
             ))
         }
         _ => {
             unsafe { TerminateProcess(process.raw(), 1) };
-            Err(handoff(
-                "verified update recovery helper returned an invalid handoff acknowledgement",
+            Err(handoff_for(
+                error_code,
+                format!(
+                    "verified update {operation} helper returned an invalid handoff acknowledgement"
+                ),
             ))
         }
     }
@@ -150,8 +177,12 @@ fn wide_null(value: &OsStr) -> Result<Vec<u16>, AppError> {
     Ok(wide)
 }
 
+fn handoff_for(code: &'static str, detail: impl Into<String>) -> AppError {
+    AppError::external(code, detail)
+}
+
 fn handoff(detail: &'static str) -> AppError {
-    AppError::external("UPDATER_RECOVERY", detail)
+    handoff_for("UPDATER_RECOVERY", detail)
 }
 
 struct AttributeList {

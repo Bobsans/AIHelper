@@ -24,6 +24,10 @@ pub struct TransactionPlanV1 {
     pub architecture: String,
     pub old_manifest_sha256: String,
     pub new_manifest_sha256: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed_mcp_was_running: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_mcp_previous_instance_id: Option<Uuid>,
     pub operations: Vec<ManagedFileOperationV1>,
 }
 
@@ -99,10 +103,23 @@ impl TransactionPlanV1 {
             architecture: old_manifest.release.architecture.clone(),
             old_manifest_sha256: manifest_sha256(old_manifest)?,
             new_manifest_sha256: manifest_sha256(new_manifest)?,
+            managed_mcp_was_running: false,
+            managed_mcp_previous_instance_id: None,
             operations,
         };
         plan.validate()?;
         Ok(plan)
+    }
+
+    pub fn with_managed_mcp_state(
+        mut self,
+        was_running: bool,
+        previous_instance_id: Option<Uuid>,
+    ) -> Result<Self, UpdaterError> {
+        self.managed_mcp_was_running = was_running;
+        self.managed_mcp_previous_instance_id = previous_instance_id;
+        self.validate()?;
+        Ok(self)
     }
 
     pub fn validate(&self) -> Result<(), UpdaterError> {
@@ -130,6 +147,11 @@ impl TransactionPlanV1 {
         }
         validate_digest(&self.old_manifest_sha256)?;
         validate_digest(&self.new_manifest_sha256)?;
+        if !self.managed_mcp_was_running && self.managed_mcp_previous_instance_id.is_some() {
+            return Err(transaction(
+                "stopped managed MCP state cannot contain a previous instance identity",
+            ));
+        }
 
         let mut previous_path: Option<&str> = None;
         for operation in &self.operations {
@@ -155,6 +177,10 @@ impl TransactionPlanV1 {
             self.installation_id,
             old_manifest,
             new_manifest,
+        )?
+        .with_managed_mcp_state(
+            self.managed_mcp_was_running,
+            self.managed_mcp_previous_instance_id,
         )?;
         if self != &expected {
             return Err(transaction(
@@ -450,6 +476,29 @@ mod tests {
             serde_json::from_slice::<TransactionPlanV1>(&plan.to_canonical_bytes().unwrap())
                 .unwrap(),
             plan
+        );
+    }
+
+    #[test]
+    fn managed_mcp_state_is_bound_to_the_transaction_plan() {
+        let old = manifest("1.1.0", vec![file("ah.exe", "1", FilePurpose::Executable)]);
+        let new = manifest("1.2.0", vec![file("ah.exe", "2", FilePurpose::Executable)]);
+        let instance_id = Uuid::new_v4();
+        let plan = TransactionPlanV1::build(Uuid::new_v4(), Uuid::new_v4(), &old, &new)
+            .unwrap()
+            .with_managed_mcp_state(true, Some(instance_id))
+            .unwrap();
+
+        plan.validate_for_manifests(&old, &new).unwrap();
+        assert!(
+            String::from_utf8(plan.to_canonical_bytes().unwrap())
+                .unwrap()
+                .contains(&instance_id.to_string())
+        );
+        assert!(
+            plan.clone()
+                .with_managed_mcp_state(false, Some(instance_id))
+                .is_err()
         );
     }
 
