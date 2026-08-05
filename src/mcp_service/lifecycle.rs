@@ -88,6 +88,23 @@ pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
     }
 }
 
+#[cfg(windows)]
+pub(crate) fn stop_for_update_while_locked() -> Result<bool, AppError> {
+    let paths = ServicePaths::discover()?;
+    let readiness = HttpReadinessProbe::new().map_err(|error| {
+        AppError::external(
+            "MCP_SERVICE_STATE_INVALID",
+            format!("failed to create readiness client: {error}"),
+        )
+    })?;
+    let service = LifecycleService::new(
+        paths,
+        super::windows_scheduler::WindowsTaskScheduler,
+        readiness,
+    );
+    Ok(service.stop_locked(StopPolicy::AllowExactOrphan)?.changed)
+}
+
 pub struct LifecycleService<S, R> {
     store: ServiceStore,
     scheduler: S,

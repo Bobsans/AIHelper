@@ -2,12 +2,13 @@
 
 use std::{env, io, process::ExitCode};
 
+use ah_update_helper::handoff::HandoffLease;
 use ah_update_helper::recovery_command::{
     RecoveryExecution, execute_recovery, parse_recovery_arguments,
 };
 use ah_updater_core::{UpdateHelperSelfCheckV1, production_release_trust};
 
-const USAGE: &str = "usage: ah-update-helper --self-check | recover --installation-root <PATH> --installation-state-root <PATH> --transaction-root <PATH> <PARENT_PID>";
+const USAGE: &str = "usage: ah-update-helper --self-check | recover --installation-root <PATH> --installation-state-root <PATH> --transaction-root <PATH> --lifecycle-lock <PATH> --lifecycle-lock-handle <HANDLE> --handoff-event <NAME> <PARENT_PID>";
 
 fn main() -> ExitCode {
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
@@ -25,6 +26,17 @@ fn main() -> ExitCode {
         Err(_) => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
+        }
+    };
+    let _handoff = match HandoffLease::claim(
+        command.lifecycle_lock_handle,
+        &command.lifecycle_lock,
+        &command.handoff_event,
+    ) {
+        Ok(lease) => lease,
+        Err(error) => {
+            eprintln!("{}", error.code());
+            return ExitCode::FAILURE;
         }
     };
     let result = production_release_trust().and_then(|trust| execute_recovery(&command, &trust));

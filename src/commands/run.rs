@@ -48,7 +48,7 @@ pub struct CheckArgs {
 pub(crate) mod io;
 pub(crate) mod output;
 #[cfg(windows)]
-mod windows_job;
+pub(crate) mod windows_job;
 
 mod adapters {
     pub(crate) use super::io;

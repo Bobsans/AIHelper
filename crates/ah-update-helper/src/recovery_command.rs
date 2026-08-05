@@ -6,13 +6,20 @@ use std::{
 
 use ah_updater_core::{ReleaseTrust, TransactionStateV1, UpdaterError, UpdaterErrorCode};
 
-use crate::transaction::{TransactionPaths, recover_transaction};
+use crate::{
+    process::quiesce_transaction_blockers,
+    transaction::{TransactionPaths, load_recovery_transaction, recover_transaction},
+};
 
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+const BLOCKER_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecoveryCommand {
     pub paths: TransactionPaths,
+    pub lifecycle_lock: PathBuf,
+    pub lifecycle_lock_handle: usize,
+    pub handoff_event: String,
     pub parent_pid: u32,
 }
 
@@ -23,16 +30,30 @@ pub enum RecoveryExecution {
 }
 
 pub fn parse_recovery_arguments(arguments: &[OsString]) -> Result<RecoveryCommand, UpdaterError> {
-    if arguments.len() != 8
+    if arguments.len() != 14
         || arguments[0] != "recover"
         || arguments[1] != "--installation-root"
         || arguments[3] != "--installation-state-root"
         || arguments[5] != "--transaction-root"
-        || arguments[7].to_str().is_none()
+        || arguments[7] != "--lifecycle-lock"
+        || arguments[9] != "--lifecycle-lock-handle"
+        || arguments[11] != "--handoff-event"
+        || arguments[13].to_str().is_none()
     {
         return Err(argument("update helper recovery arguments are invalid"));
     }
-    let parent_pid = arguments[7]
+    let lifecycle_lock_handle = arguments[10]
+        .to_str()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|handle| *handle != 0)
+        .ok_or_else(|| argument("update helper lifecycle lock handle is invalid"))?;
+    let handoff_event = arguments[12]
+        .to_str()
+        .filter(|value| value.starts_with("Local\\AIHelper.Update.Handoff."))
+        .filter(|value| value.len() <= 128)
+        .ok_or_else(|| argument("update helper handoff event is invalid"))?
+        .to_owned();
+    let parent_pid = arguments[13]
         .to_str()
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|pid| *pid != 0)
@@ -43,6 +64,9 @@ pub fn parse_recovery_arguments(arguments: &[OsString]) -> Result<RecoveryComman
             PathBuf::from(&arguments[4]),
             PathBuf::from(&arguments[6]),
         ),
+        lifecycle_lock: PathBuf::from(&arguments[8]),
+        lifecycle_lock_handle,
+        handoff_event,
         parent_pid,
     })
 }
@@ -59,6 +83,8 @@ pub fn execute_recovery(
             return Ok(RecoveryExecution::AlreadyRunning);
         };
         wait_for_process_exit(command.parent_pid, PARENT_EXIT_TIMEOUT)?;
+        let transaction = load_recovery_transaction(&command.paths, trust)?;
+        quiesce_transaction_blockers(&transaction, BLOCKER_GRACE_TIMEOUT)?;
         let transaction = recover_transaction(&command.paths, trust)?;
         Ok(RecoveryExecution::Recovered(transaction.journal().state))
     }
@@ -188,6 +214,12 @@ mod tests {
             r"C:\State",
             "--transaction-root",
             r"C:\State\transactions\00000000-0000-0000-0000-000000000001",
+            "--lifecycle-lock",
+            r"C:\State\managed-mcp\lifecycle.lock",
+            "--lifecycle-lock-handle",
+            "1234",
+            "--handoff-event",
+            "Local\\AIHelper.Update.Handoff.00000000-0000-0000-0000-000000000001",
             "42",
         ]
         .map(OsString::from);
@@ -196,7 +228,7 @@ mod tests {
         assert_eq!(parsed.paths.installation_root(), Path::new(r"C:\AIHelper"));
 
         for invalid in [
-            valid[..7].to_vec(),
+            valid[..13].to_vec(),
             {
                 let mut invalid = valid.to_vec();
                 invalid[1] = OsString::from("--root");
@@ -204,7 +236,12 @@ mod tests {
             },
             {
                 let mut invalid = valid.to_vec();
-                invalid[7] = OsString::from("0");
+                invalid[13] = OsString::from("0");
+                invalid
+            },
+            {
+                let mut invalid = valid.to_vec();
+                invalid[10] = OsString::from("0");
                 invalid
             },
         ] {

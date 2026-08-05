@@ -55,6 +55,11 @@ impl FileLease {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    #[cfg(windows)]
+    pub(crate) fn raw_handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.handle.0
+    }
 }
 
 #[cfg(windows)]

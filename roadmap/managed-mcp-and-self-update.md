@@ -676,7 +676,7 @@ Manual acceptance:
 
 ### Этап 6: update-helper и durable transaction
 
-- [ ] Проверять незавершённую update transaction до загрузки динамических
+- [x] Проверять незавершённую update transaction до загрузки динамических
       плагинов.
 
 Критерии завершения:
@@ -696,12 +696,12 @@ Manual acceptance:
 
 - [ ] Реализовать `ah upgrade`.
 - [ ] Реализовать `ah upgrade --version <VERSION>` без downgrade.
-- [ ] Реализовать безопасную передачу lifecycle- и upgrade-блокировки
+- [x] Реализовать безопасную передачу lifecycle- и upgrade-блокировки
       update-helper.
-- [ ] Интегрировать graceful shutdown managed MCP в update transaction.
-- [ ] Реализовать grace period и принудительное завершение блокирующих
+- [x] Интегрировать graceful shutdown managed MCP в update transaction.
+- [x] Реализовать grace period и принудительное завершение блокирующих
       процессов AIHelper.
-- [ ] Отменять обновление до замены файлов при сохраняющейся сторонней
+- [x] Отменять обновление до замены файлов при сохраняющейся сторонней
       блокировке.
 - [ ] Реализовать транзакционную замену только managed-файлов.
 - [ ] Сохранять пользовательские файлы и постоянный installation path.

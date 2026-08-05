@@ -1,9 +1,9 @@
 use std::{
+    ffi::OsStr,
     fmt::Write as _,
     fs::{self, File},
     io::{self, Read},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::Duration,
 };
 
@@ -48,12 +48,30 @@ pub(crate) fn recover_before_startup() -> Result<EarlyRecoveryOutcome, AppError>
         }
 
         let service_paths = crate::mcp_service::paths::ServicePaths::discover()?;
-        let _lease = crate::mcp_service::lock::FileLease::acquire(
+        let lease = crate::mcp_service::lock::FileLease::acquire(
             &service_paths.lifecycle_lock,
             RECOVERY_LOCK_TIMEOUT,
         )?;
         let trust = ah_updater_core::production_release_trust().map_err(map_updater_error)?;
-        recover_pending_for(&executable, &updater_root, &trust, &ProcessRecoveryRunner)
+        if let Some(paths) = discover_pending(&executable, &updater_root)? {
+            let inspected = inspect_transaction(&paths, &trust).map_err(map_updater_error)?;
+            if matches!(
+                inspected.journal().state,
+                TransactionStateV1::ActivationStarted
+                    | TransactionStateV1::CandidateActivated
+                    | TransactionStateV1::PermanentVerified
+                    | TransactionStateV1::CommitStarted
+                    | TransactionStateV1::RollbackStarted
+            ) {
+                crate::mcp_service::lifecycle::stop_for_update_while_locked()?;
+            }
+        }
+        recover_pending_for(
+            &executable,
+            &updater_root,
+            &trust,
+            &ProcessRecoveryRunner(&lease),
+        )
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
@@ -72,34 +90,23 @@ enum HelperRun {
     Launched,
 }
 
-struct ProcessRecoveryRunner;
+struct ProcessRecoveryRunner<'a>(&'a crate::mcp_service::lock::FileLease);
 
-impl RecoveryHelperRunner for ProcessRecoveryRunner {
+impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {
     fn launch(&self, helper: &Path, paths: &TransactionPaths) -> Result<HelperRun, AppError> {
-        let mut command = Command::new(helper);
-        command
-            .arg("recover")
-            .arg("--installation-root")
-            .arg(paths.installation_root())
-            .arg("--installation-state-root")
-            .arg(paths.installation_state_root())
-            .arg("--transaction-root")
-            .arg(paths.transaction_root())
-            .arg(std::process::id().to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .current_dir(paths.installation_state_root());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt as _;
-
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-        command
-            .spawn()
-            .map_err(|_| recovery_error("failed to launch verified update recovery helper"))?;
+        crate::updater::handoff::launch_recovery(
+            helper,
+            &[
+                OsStr::new("recover"),
+                OsStr::new("--installation-root"),
+                paths.installation_root().as_os_str(),
+                OsStr::new("--installation-state-root"),
+                paths.installation_state_root().as_os_str(),
+                OsStr::new("--transaction-root"),
+                paths.transaction_root().as_os_str(),
+            ],
+            self.0,
+        )?;
         Ok(HelperRun::Launched)
     }
 }

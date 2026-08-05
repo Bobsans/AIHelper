@@ -44,7 +44,7 @@ use windows_sys::Win32::{
 
 use super::io::EnvironmentOverride;
 
-static CREATE_PROCESS_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static CREATE_PROCESS_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) struct Child {
     process: OwnedHandle,

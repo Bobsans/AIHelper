@@ -32,11 +32,11 @@ conflict, stop and surface the conflict before mutating state.
 
 Classify the user's request before taking action:
 
-| Mode | Sufficient request | Allowed work |
-| --- | --- | --- |
-| Inspect | Inspect, plan, recommend a version, or explain release state | Read-only inspection and recommendations |
-| Prepare | Prepare a release, bump a version, or draft release notes | Local version, `Cargo.lock`, changelog, notes, and validation changes |
-| Publish | Explicitly publish or complete the release | The guarded commit, push, preflight, tag, GitHub Release, and verification phases |
+| Mode    | Sufficient request                                           | Allowed work                                                                      |
+|---------|--------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| Inspect | Inspect, plan, recommend a version, or explain release state | Read-only inspection and recommendations                                          |
+| Prepare | Prepare a release, bump a version, or draft release notes    | Local version, `Cargo.lock`, changelog, notes, and validation changes             |
+| Publish | Explicitly publish or complete the release                   | The guarded commit, push, preflight, tag, GitHub Release, and verification phases |
 
 A generic request such as "do a release" is not publication authority. Ask one
 short question to choose `Prepare` or `Publish` before crossing that boundary.
@@ -46,7 +46,7 @@ workflow, create or push a tag, or create a GitHub Release.
 Never replace, move, delete, recreate, or overwrite an existing tag or GitHub
 Release without separate explicit approval. Never silently enable the `github`
 plugin. If a required domain is disabled, report the blocker and ask before
-changing plugin state.
+changing the plugin state.
 
 ## Preserve Repository State
 
@@ -83,7 +83,7 @@ assuming a fixed package list, and require one release version across all of
 them.
 
 Inspection mode ends after reporting the evidence, recommendation, repository
-state, blockers, and next authorized phase.
+state, blockers, and the next authorized phase.
 
 ## Prepare
 
@@ -190,7 +190,7 @@ limitations, smoke results, final repository state, and any deviation.
 ## Handle Failure And Report State
 
 On any failure, preserve evidence and stop before the next irreversible phase.
-Do not repair published state, rerun an operation that may overwrite it, or
+Do not repair the published state, rerun an operation that may overwrite it, or
 weaken a gate without explicit approval.
 
 Every phase report must distinguish:
