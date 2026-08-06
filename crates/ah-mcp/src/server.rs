@@ -952,6 +952,8 @@ impl ShutdownTracker {
                 return;
             }
             let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             if self.started_at.get().is_some() {
                 continue;
             }

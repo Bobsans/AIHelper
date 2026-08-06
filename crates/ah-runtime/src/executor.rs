@@ -128,6 +128,8 @@ impl ExecutionLifecycle {
                 return;
             }
             let changed = self.state.physical_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             if self.is_physically_complete() {
                 return;
             }
@@ -446,6 +448,8 @@ impl ExecutionState {
                 return reason;
             }
             let changed = self.stop_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             if let Some(reason) = self.stop_reason() {
                 return reason;
             }
