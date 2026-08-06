@@ -8,10 +8,12 @@ use ah_updater_core::{
     FilePurpose, ReleaseTrust, TransactionStateV1, UpdaterError, UpdaterErrorCode,
 };
 
+#[cfg(windows)]
+use crate::recovery_command::wait_for_process_exit;
 use crate::{
     bounded_process::{self, EnvironmentOverride},
     process::quiesce_transaction_blockers,
-    recovery_command::{RecoveryCommand, wait_for_process_exit},
+    recovery_command::RecoveryCommand,
     transaction::{
         activate_transaction, commit_transaction, inspect_transaction, load_prepared_transaction,
         rollback_transaction,
