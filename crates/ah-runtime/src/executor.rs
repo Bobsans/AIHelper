@@ -949,6 +949,7 @@ mod tests {
     async fn close_cancels_active_and_rejects_new_work() {
         let (executor, _plugin, gate) = executor(true, 1);
         let active = executor.try_submit(request("active", 1_000)).unwrap();
+        let lifecycle = active.lifecycle();
         wait_for_started(gate, 1).await;
         executor.close();
         assert!(matches!(
@@ -962,5 +963,6 @@ mod tests {
                 .expect("late execution must be rejected"),
             RuntimeError::ExecutorShuttingDown
         ));
+        lifecycle.wait_physical().await;
     }
 }
