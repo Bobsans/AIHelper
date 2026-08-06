@@ -44,7 +44,9 @@ mod windows {
 
     use windows_sys::Win32::{
         Foundation::{CloseHandle, HANDLE},
-        Storage::FileSystem::{FILE_TYPE_DISK, GetFileType, GetFinalPathNameByHandleW},
+        Storage::FileSystem::{
+            FILE_NAME_OPENED, FILE_TYPE_DISK, GetFileType, GetFinalPathNameByHandleW,
+        },
         System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent},
     };
 
@@ -70,13 +72,18 @@ mod windows {
     }
 
     fn final_path(handle: HANDLE) -> Result<String, ah_updater_core::UpdaterError> {
-        let needed = unsafe { GetFinalPathNameByHandleW(handle, null_mut(), 0, 0) };
+        let needed = unsafe { GetFinalPathNameByHandleW(handle, null_mut(), 0, FILE_NAME_OPENED) };
         if needed == 0 || needed > 32_768 {
             return Err(handoff("failed to resolve inherited lifecycle lock path"));
         }
         let mut buffer = vec![0_u16; needed as usize + 1];
         let written = unsafe {
-            GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
+            GetFinalPathNameByHandleW(
+                handle,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                FILE_NAME_OPENED,
+            )
         };
         if written == 0 || written as usize >= buffer.len() {
             return Err(handoff("failed to read inherited lifecycle lock path"));
@@ -122,15 +129,13 @@ fn handoff(detail: &'static str) -> UpdaterError {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn unsupported_platform_fails_closed() {
-        #[cfg(not(windows))]
-        assert_eq!(
-            HandoffLease::claim(1, Path::new("/tmp/lifecycle.lock"), "event")
-                .unwrap_err()
-                .code(),
-            UpdaterErrorCode::UnsupportedPlatform
-        );
+        let error = HandoffLease::claim(1, Path::new("/tmp/lifecycle.lock"), "event")
+            .err()
+            .expect("unsupported platform must reject lifecycle handoff");
+        assert_eq!(error.code(), UpdaterErrorCode::UnsupportedPlatform);
     }
 
     #[cfg(windows)]
