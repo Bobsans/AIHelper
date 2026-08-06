@@ -75,12 +75,18 @@ pub fn normalize_absolute_path(path: &Path, cwd: Option<&Path>) -> Result<PathBu
             absolute.display()
         )));
     }
-    let normalized = if absolute.exists() {
-        std::fs::canonicalize(&absolute)
-            .map_err(|error| path_invalid(format!("failed to canonicalize path: {error}")))?
-    } else {
-        normalize_components(&absolute)?
-    };
+    let existing = absolute
+        .ancestors()
+        .find(|path| path.exists())
+        .ok_or_else(|| path_invalid("path has no accessible existing ancestor"))?;
+    let mut normalized = std::fs::canonicalize(existing)
+        .map_err(|error| path_invalid(format!("failed to canonicalize path: {error}")))?;
+    normalized.push(
+        absolute
+            .strip_prefix(existing)
+            .map_err(|_| path_invalid("failed to resolve path from its existing ancestor"))?,
+    );
+    let normalized = normalize_components(&normalized)?;
     Ok(strip_verbatim_prefix(normalized))
 }
 

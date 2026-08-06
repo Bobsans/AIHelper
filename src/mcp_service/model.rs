@@ -520,17 +520,22 @@ mod tests {
     use super::*;
 
     fn definition() -> ServiceDefinition {
+        let root = if cfg!(windows) {
+            PathBuf::from(r"C:\AIHelper")
+        } else {
+            PathBuf::from("/aihelper")
+        };
         ServiceDefinition {
             schema_version: SCHEMA_VERSION,
             task_spec_version: TASK_SPEC_VERSION,
             service_id: Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
             configuration_id: Uuid::parse_str("22222222-2222-4222-8222-222222222222").unwrap(),
             user_sid: "S-1-5-21-1".to_owned(),
-            executable_path: PathBuf::from(r"C:\AIHelper\ah.exe"),
-            working_directory: PathBuf::from(r"C:\Work"),
-            config_directory: PathBuf::from(r"C:\Config"),
-            runtime_state_path: PathBuf::from(r"C:\State\runtime.json"),
-            instance_lock_path: PathBuf::from(r"C:\State\instance.lock"),
+            executable_path: root.join("ah"),
+            working_directory: root.join("work"),
+            config_directory: root.join("config"),
+            runtime_state_path: root.join("state/runtime.json"),
+            instance_lock_path: root.join("state/instance.lock"),
             expected_version: "1.1.0".to_owned(),
             endpoint: ServiceEndpoint::loopback(8787).unwrap(),
             server: ServerDefinition {
