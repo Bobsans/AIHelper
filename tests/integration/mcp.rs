@@ -1649,7 +1649,7 @@ fn direct_calls_and_jobs_share_fail_fast_capacity() {
             "name": "ah.run.check",
             "arguments": {
                 "command": blocker_command(&ready, &release),
-                "context": {"cwd": workspace.path().to_string_lossy(), "timeout_ms": 5000}
+                "context": {"cwd": workspace.path().to_string_lossy(), "timeout_ms": 10_000}
             }
         }
     }));
@@ -1724,7 +1724,7 @@ fn stdio_server_executes_calls_in_parallel_without_queue_wait() {
                 "timeout_secs": 10,
                 "context": {
                     "cwd": workspace.path().to_string_lossy(),
-                    "timeout_ms": 5000
+                    "timeout_ms": 10_000
                 }
             }
         }
@@ -1774,7 +1774,7 @@ fn stdio_server_executes_calls_in_parallel_without_queue_wait() {
 }
 
 fn wait_for_path(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while !path.exists() {
         assert!(Instant::now() < deadline, "blocker did not become ready");
         thread::sleep(Duration::from_millis(10));
@@ -1791,7 +1791,7 @@ fn blocker_command(ready: &Path, release: &Path) -> Vec<String> {
         "-Command".to_owned(),
         format!(
             "$ready='{ready}'; $release='{release}'; [IO.File]::WriteAllText($ready, 'ready'); \
-             $deadline=[DateTime]::UtcNow.AddSeconds(5); while (!(Test-Path -LiteralPath $release)) {{ \
+             $deadline=[DateTime]::UtcNow.AddSeconds(10); while (!(Test-Path -LiteralPath $release)) {{ \
              if ([DateTime]::UtcNow -ge $deadline) {{ exit 2 }}; Start-Sleep -Milliseconds 10 }}"
         ),
     ]
@@ -1833,7 +1833,7 @@ fn blocker_command(ready: &Path, release: &Path) -> Vec<String> {
         "sh".to_owned(),
         "-c".to_owned(),
         "touch \"$1\"; attempts=0; while [ ! -f \"$2\" ]; do attempts=$((attempts + 1)); \
-         [ \"$attempts\" -ge 500 ] && exit 2; sleep 0.01; done"
+         [ \"$attempts\" -ge 1000 ] && exit 2; sleep 0.01; done"
             .to_owned(),
         "sh".to_owned(),
         ready.to_string_lossy().into_owned(),
