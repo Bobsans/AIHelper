@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Bobsans/AIHelper/security/advisories/new
+    about: Report vulnerabilities privately instead of opening a public issue.
+  - name: Read the command reference
+    url: https://github.com/Bobsans/AIHelper/tree/main/docs/reference
+    about: Check command behavior, options, and platform limitations.

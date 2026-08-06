@@ -28,7 +28,7 @@ fn creates_and_verifies_exact_nine_file_release_set() {
             assets_dir: input.path().to_path_buf(),
             output_dir: output.clone(),
             repository: "example/aihelper".to_owned(),
-            tag: "v1.1.0".to_owned(),
+            tag: "v1.2.0".to_owned(),
             minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
@@ -52,7 +52,7 @@ fn creates_and_verifies_exact_nine_file_release_set() {
         assert!(!signature.ends_with(b"\n"));
         let verified = verify_manifest(&manifest, &signature, &registry).unwrap();
         assert_eq!(verified.manifest().release.target, profile.target);
-        assert_eq!(verified.manifest().release.version, "1.1.0");
+        assert_eq!(verified.manifest().release.version, "1.2.0");
         assert_eq!(verified.manifest().minimum_updater_version, "1.0.0");
         assert_eq!(
             verified
@@ -76,7 +76,7 @@ fn creates_and_verifies_exact_nine_file_release_set() {
         assert_eq!(
             verified.manifest().archive.url,
             format!(
-                "https://github.com/example/aihelper/releases/download/v1.1.0/{}",
+                "https://github.com/example/aihelper/releases/download/v1.2.0/{}",
                 profile.asset_name
             )
         );
@@ -98,7 +98,7 @@ fn leaves_no_output_on_metadata_or_archive_failure() {
             assets_dir: input.path().to_path_buf(),
             output_dir: output.clone(),
             repository: "unsafe/repository/extra".to_owned(),
-            tag: "v1.1.0".to_owned(),
+            tag: "v1.2.0".to_owned(),
             minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
@@ -114,7 +114,7 @@ fn leaves_no_output_on_metadata_or_archive_failure() {
             assets_dir: input.path().to_path_buf(),
             output_dir: output.clone(),
             repository: "example/aihelper".to_owned(),
-            tag: "v1.1.0".to_owned(),
+            tag: "v1.2.0".to_owned(),
             minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
@@ -134,7 +134,7 @@ fn rejects_noncanonical_or_mismatched_release_versions() {
     let output_parent = TempDir::new().unwrap();
     let signing = signing_material([11_u8; 32]);
 
-    for tag in ["1.1.0", "v1.01.0", "v1.2.0"] {
+    for tag in ["1.2.0", "v1.02.0", "v1.3.0"] {
         let output = output_parent.path().join(tag.replace('.', "-"));
         let error = sign_release_set(
             &ReleaseRequest {
@@ -161,7 +161,7 @@ fn rejects_invalid_or_newer_minimum_updater_versions() {
     let output_parent = TempDir::new().unwrap();
     let signing = signing_material([11_u8; 32]);
 
-    for minimum_updater_version in ["not-semver", "1.01.0", "1.2.0"] {
+    for minimum_updater_version in ["not-semver", "1.02.0", "1.3.0"] {
         let output = output_parent
             .path()
             .join(minimum_updater_version.replace('.', "-"));
@@ -170,7 +170,7 @@ fn rejects_invalid_or_newer_minimum_updater_versions() {
                 assets_dir: input.path().to_path_buf(),
                 output_dir: output.clone(),
                 repository: "example/aihelper".to_owned(),
-                tag: "v1.1.0".to_owned(),
+                tag: "v1.2.0".to_owned(),
                 minimum_updater_version: minimum_updater_version.to_owned(),
             },
             &signing,

@@ -140,6 +140,37 @@ fn rejects_links_and_malformed_zip_files() {
     );
 }
 
+#[test]
+fn rejects_special_unix_entry_types() {
+    let profile = RELEASE_PROFILES[0];
+    let special = TempDir::new().unwrap();
+    let archive_path = special.path().join(profile.asset_name);
+    let file = File::create(&archive_path).unwrap();
+    let mut writer = ZipWriter::new(file);
+    for (path, _) in profile.managed_paths() {
+        writer
+            .start_file(path.as_str(), SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(path.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap();
+    let mut bytes = fs::read(&archive_path).unwrap();
+    let central = bytes
+        .windows(4)
+        .position(|window| window == b"PK\x01\x02")
+        .unwrap();
+    bytes[central + 5] = 3;
+    bytes[central + 38..central + 42].copy_from_slice(&(0o010644_u32 << 16).to_le_bytes());
+    fs::write(&archive_path, bytes).unwrap();
+
+    assert!(
+        validate_archive(&archive_path, profile)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported Unix file type")
+    );
+}
+
 fn write_profile_archive(
     directory: &Path,
     profile: ReleaseProfile,

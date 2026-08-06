@@ -1,0 +1,109 @@
+name: Bug report
+description: Report a reproducible problem with AIHelper
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets or private security
+        details. Use Private Vulnerability Reporting for vulnerabilities.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug summary
+      description: What went wrong?
+      placeholder: Describe the problem in one or two sentences.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - CLI
+        - MCP stdio
+        - MCP HTTP
+        - Managed MCP service
+        - Updater
+        - Plugin
+        - Release packaging
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AIHelper version
+      description: Paste the complete output of `ah --version`.
+      placeholder: ah 1.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: Windows 11 x64, Ubuntu 24.04 x64, or macOS arm64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation source
+      options:
+        - GitHub Release archive
+        - Built from source
+        - Updated with `ah upgrade`
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. Run ...
+        2. Configure ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Add relevant logs, diagnostic codes, or JSON after removing secrets and personal data.
+      render: shell
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: This is not a private security vulnerability.
+          required: true
+        - label: I removed secrets, credentials, signing material, and personal data.
+          required: true
+        - label: I agree to follow the Code of Conduct.
+          required: true

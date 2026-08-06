@@ -354,7 +354,7 @@ mod tests {
         let headers = requests[0].to_ascii_lowercase();
         assert!(headers.contains("accept: application/vnd.github+json"));
         assert!(headers.contains("x-github-api-version: 2022-11-28"));
-        assert!(headers.contains("user-agent: aihelper/1.1.0 updater"));
+        assert!(headers.contains("user-agent: aihelper/1.2.0 updater"));
     }
 
     #[test]

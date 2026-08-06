@@ -6,7 +6,7 @@ use std::path::Path;
 
 use ah_release_manifest::FilePurpose;
 use sha2::{Digest, Sha256};
-use zip::ZipArchive;
+use zip::{CompressionMethod, ZipArchive};
 
 use crate::{RELEASE_PROFILES, ReleaseProfile, ReleaseToolError};
 
@@ -142,6 +142,26 @@ pub fn validate_archive(
                 "symbolic links are not allowed",
             ));
         }
+        if !matches!(
+            entry.compression(),
+            CompressionMethod::Stored | CompressionMethod::Deflated
+        ) {
+            return Err(ReleaseToolError::entry(
+                profile.asset_name,
+                name,
+                "unsupported compression method",
+            ));
+        }
+        if entry
+            .unix_mode()
+            .is_some_and(|mode| !supported_unix_mode(mode, entry.is_dir()))
+        {
+            return Err(ReleaseToolError::entry(
+                profile.asset_name,
+                name,
+                "unsupported Unix file type",
+            ));
+        }
 
         let normalized = name.trim_end_matches('/').to_owned();
         let equivalent = normalized.to_ascii_lowercase();
@@ -240,6 +260,15 @@ pub fn validate_archive(
     })
 }
 
+fn supported_unix_mode(mode: u32, is_directory: bool) -> bool {
+    let file_type = mode & 0o170000;
+    if is_directory {
+        matches!(file_type, 0 | 0o040000)
+    } else {
+        matches!(file_type, 0 | 0o100000)
+    }
+}
+
 fn validate_entry_name(
     archive: &str,
     name: &str,
@@ -317,4 +346,20 @@ fn hash_reader(reader: &mut impl Read, maximum: u64) -> io::Result<(u64, String)
         write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
     }
     Ok((total, encoded))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::supported_unix_mode;
+
+    #[test]
+    fn unix_modes_accept_only_regular_files_and_directories() {
+        assert!(supported_unix_mode(0, false));
+        assert!(supported_unix_mode(0o100755, false));
+        assert!(supported_unix_mode(0, true));
+        assert!(supported_unix_mode(0o040755, true));
+        assert!(!supported_unix_mode(0o010644, false));
+        assert!(!supported_unix_mode(0o120777, false));
+        assert!(!supported_unix_mode(0o100755, true));
+    }
 }

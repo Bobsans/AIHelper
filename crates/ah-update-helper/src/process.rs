@@ -358,7 +358,7 @@ mod tests {
     fn uninspectable_process_fails_closed_as_foreign() {
         let process = process(4, 40);
         let control = FakeControl::new([(4, ProcessIdentity::Uninspectable)]);
-        let result = classify(&[process.clone()], &BTreeSet::new(), &control).unwrap();
+        let result = classify(std::slice::from_ref(&process), &BTreeSet::new(), &control).unwrap();
         assert_eq!(result.foreign, vec![process]);
         assert_eq!(
             reject_foreign(&result).unwrap_err().code(),

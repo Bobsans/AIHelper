@@ -72,15 +72,15 @@ it only after activation and service restoration succeed.
 Release builds must retain every public trust anchor needed by either the active
 installation or its retained backup until that backup is rotated or consumed.
 
-Production key activation is tracked separately. Until the protected signing
-key is provisioned and its public key is embedded, source builds fail closed with
-`UPDATER_TRUST` before network access.
+Production builds embed the public trust anchor matching the protected
+`release-signing` environment. The signing seed remains external to the source
+tree and runtime binaries.
 
 ## Acceptance boundary
 
-Automated updater implementation and tests are complete. Production acceptance
-still requires provisioning the protected key, consuming a real signed release
-with a released updater, and passing the persistent Windows scheduler and
+Automated updater implementation, tests, and production key activation are
+complete. Production acceptance still requires consuming a real signed release
+with a released updater and passing the persistent Windows scheduler and
 update/rollback/interruption/reboot VM matrices. Target-client MCP connectivity
 is tracked separately with the managed service acceptance.
 

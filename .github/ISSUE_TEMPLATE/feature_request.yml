@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose an outcome that would improve an AIHelper workflow
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and desired outcome. Implementation details are
+        welcome but are not required.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What is difficult, repetitive, unsafe, or currently impossible?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Primary audience
+      options:
+        - AI agent or MCP user
+        - CLI automation
+        - DevOps workflow
+        - Plugin developer
+        - Documentation contributor
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable behavior or result you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or current workaround
+      description: What have you tried, and why is it insufficient?
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility or automation impact
+      description: Note any CLI, JSON, MCP, plugin ABI, platform, or scripting constraints.
+
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: I agree to follow the Code of Conduct.
+          required: true

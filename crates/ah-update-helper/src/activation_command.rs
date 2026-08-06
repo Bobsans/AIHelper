@@ -1,6 +1,6 @@
 use std::{
+    ffi::OsStr,
     path::{Path, PathBuf},
-    process::Command,
     time::Duration,
 };
 
@@ -9,6 +9,7 @@ use ah_updater_core::{
 };
 
 use crate::{
+    bounded_process::{self, EnvironmentOverride},
     process::quiesce_transaction_blockers,
     recovery_command::{RecoveryCommand, wait_for_process_exit},
     transaction::{
@@ -19,6 +20,8 @@ use crate::{
 
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCKER_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
+const CHILD_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_CHILD_OUTPUT_BYTES: usize = 64 * 1024;
 const INSTALLED_SMOKE_ENV: &str = "AH_UPDATER_INSTALLED_SMOKE";
 const MCP_RESTORE_ENV: &str = "AH_UPDATER_MCP_RESTORE";
 
@@ -112,12 +115,32 @@ fn run_installed_smoke(
         transaction.paths().installation_root(),
         transaction.new_manifest(),
     )?;
-    let output = Command::new(executable)
-        .arg("--version")
-        .env(INSTALLED_SMOKE_ENV, "1")
-        .current_dir(transaction.paths().installation_root())
-        .output()
-        .map_err(|_| activation("failed to launch installed release smoke check"))?;
+    let output = bounded_process::run(
+        &executable,
+        &["--version"],
+        transaction.paths().installation_root(),
+        &[
+            EnvironmentOverride {
+                name: OsStr::new(INSTALLED_SMOKE_ENV),
+                value: Some(OsStr::new("1")),
+            },
+            EnvironmentOverride {
+                name: OsStr::new(MCP_RESTORE_ENV),
+                value: None,
+            },
+        ],
+        CHILD_COMMAND_TIMEOUT,
+        MAX_CHILD_OUTPUT_BYTES,
+    )
+    .map_err(|_| activation("failed to launch installed release smoke check"))?;
+    if output.timed_out {
+        return Err(activation("installed release smoke check timed out"));
+    }
+    if output.stdout_truncated || output.stderr_truncated {
+        return Err(activation(
+            "installed release smoke output exceeds its limit",
+        ));
+    }
     if !output.status.success() || !output.stderr.is_empty() {
         return Err(activation("installed release smoke check failed"));
     }
@@ -153,17 +176,35 @@ fn main_executable(
 }
 
 fn run_service_command(executable: &Path, arguments: &[&str]) -> Result<Vec<u8>, UpdaterError> {
-    let output = Command::new(executable)
-        .args(arguments)
-        .env_remove(INSTALLED_SMOKE_ENV)
-        .env(MCP_RESTORE_ENV, "1")
-        .current_dir(
-            executable
-                .parent()
-                .ok_or_else(|| recovery("installed executable has no parent directory"))?,
-        )
-        .output()
-        .map_err(|_| recovery("failed to launch installed managed MCP command"))?;
+    let cwd = executable
+        .parent()
+        .ok_or_else(|| recovery("installed executable has no parent directory"))?;
+    let output = bounded_process::run(
+        executable,
+        arguments,
+        cwd,
+        &[
+            EnvironmentOverride {
+                name: OsStr::new(INSTALLED_SMOKE_ENV),
+                value: None,
+            },
+            EnvironmentOverride {
+                name: OsStr::new(MCP_RESTORE_ENV),
+                value: Some(OsStr::new("1")),
+            },
+        ],
+        CHILD_COMMAND_TIMEOUT,
+        MAX_CHILD_OUTPUT_BYTES,
+    )
+    .map_err(|_| recovery("failed to launch installed managed MCP command"))?;
+    if output.timed_out {
+        return Err(recovery("installed managed MCP command timed out"));
+    }
+    if output.stdout_truncated || output.stderr_truncated {
+        return Err(recovery(
+            "installed managed MCP command output exceeds its limit",
+        ));
+    }
     if !output.status.success() || !output.stderr.is_empty() {
         return Err(recovery("installed managed MCP command failed"));
     }

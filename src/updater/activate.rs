@@ -294,12 +294,14 @@ fn launch_transaction(
     } else {
         super::handoff::launch_activation(&helper, &arguments, &lease)
     };
-    if let Err(error) = launch {
-        let restore = restore_for_update_while_locked(mcp_state);
-        let _ = remove_completed_transaction(&paths, trust);
-        let _ = fs::remove_file(&helper);
-        restore?;
-        return Err(error);
+    if let Err(failure) = launch {
+        if failure.cleanup_safe() {
+            let restore = restore_for_update_while_locked(mcp_state);
+            let _ = remove_completed_transaction(&paths, trust);
+            let _ = fs::remove_file(&helper);
+            restore?;
+        }
+        return Err(failure.into_error());
     }
 
     render(

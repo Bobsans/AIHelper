@@ -7,6 +7,26 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-06
+
+### Added
+
+- Local Streamable HTTP MCP serving adds exact readiness identity,
+  identity-aware control shutdown, and the transport-independent
+  `ah.job.start`, `ah.job.status`, `ah.job.result`, and `ah.job.cancel` tools
+  over bounded fail-fast parallel execution.
+- `ah mcp service install`, `start`, `stop`, `restart`, `uninstall`, and `status`
+  manage a per-user Windows Task Scheduler service with exact readiness,
+  deterministic JSON status, idempotent lifecycle operations, and bounded
+  restart policy.
+- Windows x64 installations gain signed `ah upgrade --check`, `ah upgrade`,
+  exact `ah upgrade --version VERSION`, and offline
+  `ah upgrade --rollback`, including durable interruption recovery, one verified
+  permanent backup, and managed MCP restoration.
+- Release publication produces canonical Ed25519 manifest and detached-signature
+  companions for every platform archive; the Windows archive also includes the
+  isolated `ah-update-helper.exe` activation and recovery binary.
+
 ### Changed
 
 - Standalone `ah --version` and `ah -V` requests bypass runtime startup and
@@ -22,6 +42,25 @@ Versioning.
 - `git status` now collects branch and worktree state from one porcelain v2
   snapshot and reads commit/tag metadata concurrently, reducing child process
   startup overhead without changing output fields.
+
+### Fixed
+
+- MCP readiness, control shutdown, active-job cancellation, and managed-service
+  recovery now preserve exact process identity and report bounded shutdown or
+  restart failures instead of accepting ambiguous state.
+- Update activation, recovery, and rollback preserve durable state when helper
+  termination is uncertain, retain operation-specific diagnostics, and bound
+  helper subprocess time, output, and descendant lifetime.
+
+### Security
+
+- The updater verifies canonical manifests, detached Ed25519 signatures, archive
+  identity, and every signed managed-file digest against an embedded production
+  trust anchor before activation; private signing material remains outside the
+  repository and runtime binaries.
+- Release signing rejects unsafe archive entry types and unsupported compression,
+  bounds state reads during I/O, and pins external GitHub Actions to immutable
+  commit SHAs.
 
 ## [1.1.0] - 2026-07-20
 
@@ -256,7 +295,8 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Bobsans/AIHelper/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Bobsans/AIHelper/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Bobsans/AIHelper/compare/v0.6.3...v1.0.0
 [0.6.3]: https://github.com/Bobsans/AIHelper/compare/v0.6.2...v0.6.3

@@ -36,7 +36,7 @@ fn signing_is_protected_and_publication_has_no_private_key() {
         .expect("sign job must generate signed release assets");
     assert_eq!(
         signing_step["env"]["AIHELPER_MINIMUM_UPDATER_VERSION"].as_str(),
-        Some("1.1.0")
+        Some("1.2.0")
     );
     assert!(
         signing_step["run"]

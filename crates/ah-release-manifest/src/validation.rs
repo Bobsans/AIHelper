@@ -43,10 +43,7 @@ fn validate_semver(field: &'static str, raw: &str) -> Result<(), ManifestError> 
 }
 
 fn validate_target(target: &str, architecture: &str) -> Result<(), ManifestError> {
-    if SUPPORTED_TARGETS
-        .iter()
-        .any(|candidate| *candidate == (target, architecture))
-    {
+    if SUPPORTED_TARGETS.contains(&(target, architecture)) {
         return Ok(());
     }
 

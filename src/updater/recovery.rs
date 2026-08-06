@@ -2,7 +2,7 @@ use std::{
     ffi::OsStr,
     fmt::Write as _,
     fs::{self, File},
-    io::{self, Read},
+    io,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -122,7 +122,8 @@ impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {
                 paths.transaction_root().as_os_str(),
             ],
             self.0,
-        )?;
+        )
+        .map_err(crate::updater::handoff::LaunchFailure::into_error)?;
         Ok(HelperRun::Launched)
     }
 }
@@ -292,11 +293,14 @@ fn read_required_identity(path: &Path) -> Result<InstallationIdentityV1, AppErro
     if metadata.len() > MAX_IDENTITY_BYTES as u64 {
         return Err(recovery_error("updater identity file exceeds its limit"));
     }
-    let mut file =
+    let file =
         File::open(path).map_err(|_| recovery_error("failed to open updater identity file"))?;
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut bytes)
-        .map_err(|_| recovery_error("failed to read updater identity file"))?;
+    let bytes = match super::installation::read_at_most(file, MAX_IDENTITY_BYTES)
+        .map_err(|_| recovery_error("failed to read updater identity file"))?
+    {
+        Some(bytes) => bytes,
+        None => return Err(recovery_error("updater identity file exceeds its limit")),
+    };
     let identity: InstallationIdentityV1 = serde_json::from_slice(&bytes)
         .map_err(|_| recovery_error("updater identity file is malformed"))?;
     identity.validate().map_err(map_updater_error)?;

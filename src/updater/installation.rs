@@ -1,7 +1,7 @@
 use std::{
     fmt::Write as _,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -530,12 +530,24 @@ fn read_bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, UpdaterErro
             "installation state file exceeds its size limit",
         ));
     }
-    let mut file =
+    let file =
         File::open(path).map_err(|_| installation("failed to open installation state file"))?;
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut bytes)
-        .map_err(|_| installation("failed to read installation state file"))?;
-    Ok(bytes)
+    match read_at_most(file, maximum)
+        .map_err(|_| installation("failed to read installation state file"))?
+    {
+        Some(bytes) => Ok(bytes),
+        None => Err(installation(
+            "installation state file exceeds its size limit",
+        )),
+    }
+}
+
+pub(super) fn read_at_most(reader: impl Read, maximum: usize) -> io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::with_capacity(maximum.min(8 * 1024));
+    reader
+        .take(maximum.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    Ok((bytes.len() <= maximum).then_some(bytes))
 }
 
 fn ensure_state_directory(path: &Path) -> Result<(), UpdaterError> {
@@ -704,7 +716,7 @@ fn installation(detail: &'static str) -> UpdaterError {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, fs};
+    use std::{cell::Cell, fs, io::Cursor};
 
     use ah_release_manifest::{
         ArchiveMetadata, FilePurpose, ManagedFile, ReleaseMetadata, RequiredFiles, SCHEMA_VERSION,
@@ -721,6 +733,15 @@ mod tests {
     const TEST_VERSION: &str = "1.1.0";
     const EXECUTABLE_BYTES: &[u8] = b"portable executable";
     const PLUGIN_BYTES: &[u8] = b"plugin-good";
+
+    #[test]
+    fn bounded_reader_rejects_limit_plus_one() {
+        assert_eq!(
+            read_at_most(Cursor::new(b"1234"), 4).unwrap(),
+            Some(b"1234".to_vec())
+        );
+        assert_eq!(read_at_most(Cursor::new(b"12345"), 4).unwrap(), None);
+    }
 
     #[test]
     fn derives_canonical_root_without_mutating_portable_installation() {

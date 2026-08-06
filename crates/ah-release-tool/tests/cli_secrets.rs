@@ -14,7 +14,7 @@ fn missing_or_malformed_secrets_are_not_echoed() {
             "--repository",
             "example/aihelper",
             "--tag",
-            "v1.1.0",
+            "v1.2.0",
             "--minimum-updater-version",
             "1.0.0",
         ])

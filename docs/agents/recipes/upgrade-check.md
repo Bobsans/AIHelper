@@ -33,10 +33,11 @@ the one verified permanent backup without network access. If rollback fails, the
 pre-rollback installation and permanent backup remain available for recovery or
 a retry.
 
-Source builds without the externally provisioned production trust anchor return
-`UPDATER_TRUST` before network access. Do not replace that anchor with a test key.
+Production builds embed the public trust anchor matching the protected external
+release-signing key. The signing seed must remain outside the repository and
+runtime binaries.
 
-Automated updater engineering is complete, but production acceptance remains
-separate. Keep the production key, a real signed-release update, persistent
-Windows scheduler and interruption/reboot matrices, and target-client MCP
-connectivity open until each is executed and recorded.
+Automated updater engineering and production key activation are complete, but
+production acceptance remains separate. Keep a real signed-release update,
+persistent Windows scheduler and interruption/reboot matrices, and target-client
+MCP connectivity open until each is executed and recorded.
