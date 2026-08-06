@@ -106,8 +106,10 @@ enum HelperRun {
     Launched,
 }
 
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 struct ProcessRecoveryRunner<'a>(&'a crate::mcp_service::lock::FileLease);
 
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {
     fn launch(&self, helper: &Path, paths: &TransactionPaths) -> Result<HelperRun, AppError> {
         crate::updater::handoff::launch_recovery(

@@ -19,17 +19,14 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use crate::mcp_service::lifecycle::{
+    capture_for_update_while_locked, restore_for_update_while_locked, stop_for_update_while_locked,
+};
 use crate::{
     cli::GlobalOptions,
     error::AppError,
-    mcp_service::{
-        lifecycle::{
-            capture_for_update_while_locked, restore_for_update_while_locked,
-            stop_for_update_while_locked,
-        },
-        lock::FileLease,
-        paths::ServicePaths,
-    },
+    mcp_service::{lock::FileLease, paths::ServicePaths},
     output::OutputMode,
 };
 
