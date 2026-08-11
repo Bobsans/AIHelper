@@ -1,11 +1,13 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
 
 use crate::error::AppError;
+#[cfg(windows)]
+use std::sync::Mutex;
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::HANDLE;
 
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
