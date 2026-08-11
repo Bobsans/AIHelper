@@ -23,7 +23,10 @@ use super::{
         RegistrationStatus, SchedulerSection, SchedulerState, StatusOutput, emit_mutation,
         emit_status, emit_uninstall,
     },
-    paths::{ServicePaths, current_user_sid, normalize_absolute_path, paths_equal, task_path},
+    paths::{
+        ServicePaths, current_executable_path, current_user_sid, normalize_absolute_path,
+        paths_equal, require_managed_service_executable, task_path,
+    },
     readiness::{HttpReadinessProbe, RuntimeControl, ShutdownReceipt},
     scheduler::{
         DesiredTaskSpec, ExpectedTaskOwnership, ObservedTask, SchedulerAdapter, SchedulerInstance,
@@ -41,6 +44,9 @@ const STOP_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
 pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
     #[cfg(windows)]
     {
+        if matches!(&command, ServiceCommand::Install(_)) {
+            require_managed_service_executable(&current_executable_path()?)?;
+        }
         let paths = ServicePaths::discover()?;
         let scheduler = super::windows_scheduler::WindowsTaskScheduler;
         let readiness = HttpReadinessProbe::new().map_err(|error| {
@@ -232,15 +238,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             &std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))?,
             None,
         )?;
-        let executable = normalize_absolute_path(
-            &std::env::current_exe().map_err(|error| {
-                AppError::external(
-                    "MCP_SERVICE_PATH_INVALID",
-                    format!("failed to resolve current executable: {error}"),
-                )
-            })?,
-            None,
-        )?;
+        let executable = current_executable_path()?;
         let config = ConfigContext::load()?;
         let config_dir = normalize_absolute_path(&config.paths().config_dir, Some(&cwd))?;
         let user_sid = current_user_sid()?;
@@ -448,7 +446,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         desired_task: &DesiredTaskSpec,
     ) -> Result<StartResult, AppError> {
         let runtime = self.store.read_runtime().valid()?;
-        let readiness = self.readiness.inspect(definition, runtime.as_ref());
+        let readiness = self.readiness.inspect(definition, runtime.as_ref(), false);
         if readiness.status == ReadinessStatus::Ready {
             return Ok(StartResult {
                 changed: false,
@@ -465,10 +463,10 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
         let scheduler_starting = matches!(
             self.scheduler.inspect(&desired_task.task_path)?,
-            TaskObservation::Owned(ObservedTask {
-                scheduler_state: SchedulerState::Running | SchedulerState::Queued,
-                ..
-            })
+            TaskObservation::Owned(observed) if matches!(
+                observed.scheduler_state,
+                SchedulerState::Running | SchedulerState::Queued
+            )
         );
         let already_starting = runtime.as_ref().is_some_and(|runtime| {
             runtime.service_id == definition.service_id
@@ -485,7 +483,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         let deadline = Instant::now() + self.start_timeout;
         loop {
             let runtime = self.store.read_runtime().valid()?;
-            let readiness = self.readiness.inspect(definition, runtime.as_ref());
+            let readiness = self.readiness.inspect(definition, runtime.as_ref(), false);
             if readiness.status == ReadinessStatus::Ready {
                 return Ok(StartResult {
                     changed,
@@ -589,9 +587,9 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         let runtime = self.store.read_runtime().valid()?;
         let readiness = self
             .readiness
-            .inspect(&context.definition, runtime.as_ref());
+            .inspect(&context.definition, runtime.as_ref(), false);
         let old_instance_id = (readiness.status == ReadinessStatus::Ready)
-            .then(|| readiness.instance_id)
+            .then_some(readiness.instance_id)
             .flatten();
         let initial_guard = FileLease::try_acquire(&self.store.paths().instance_lock)?;
         let scheduler_active = matches!(
@@ -751,7 +749,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             let runtime = self.store.read_runtime().valid()?;
             let readiness = self
                 .readiness
-                .inspect(&context.definition, runtime.as_ref());
+                .inspect(&context.definition, runtime.as_ref(), true);
             let old_still_ready =
                 old_instance_id.is_some_and(|old| readiness.instance_id == Some(old));
             let scheduler_inactive = !matches!(
@@ -845,7 +843,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 ));
             }
         };
-        let readiness = self.readiness.inspect(&definition, Some(&runtime));
+        let readiness = self.readiness.inspect(&definition, Some(&runtime), false);
         if readiness.status != ReadinessStatus::Ready {
             return Err(AppError::external(
                 "MCP_SERVICE_STOP_UNSAFE",
@@ -863,7 +861,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         loop {
             if let Some(guard) = FileLease::try_acquire(&self.store.paths().instance_lock)? {
                 let runtime = self.store.read_runtime().valid()?;
-                let readiness = self.readiness.inspect(&definition, runtime.as_ref());
+                let readiness = self.readiness.inspect(&definition, runtime.as_ref(), false);
                 if readiness.instance_id != Some(instance_id) {
                     return Ok(StopResult {
                         ownership: None,
@@ -957,14 +955,17 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 if let Some(definition) = last_definition.clone() {
                     match self.context_from_owned_task(
                         expected_task_path.clone(),
-                        observed.clone(),
+                        observed.as_ref().clone(),
                         definition,
                     ) {
                         Ok(context) => self.stop_installed(context)?,
-                        Err(_) => self.prove_inactive_owned_task(&expected_task_path, observed)?,
+                        Err(_) => self.prove_inactive_owned_task(
+                            &expected_task_path,
+                            observed.as_ref().clone(),
+                        )?,
                     }
                 } else {
-                    self.prove_inactive_owned_task(&expected_task_path, observed)?
+                    self.prove_inactive_owned_task(&expected_task_path, observed.as_ref().clone())?
                 }
             }
             TaskObservation::Missing => self.stop_orphan()?,
@@ -1218,7 +1219,9 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             if !self.instance_lease_is_occupied() {
                 return Ok(());
             }
-            let readiness = self.readiness.inspect(old_definition, Some(&runtime));
+            let readiness = self
+                .readiness
+                .inspect(old_definition, Some(&runtime), false);
             if readiness.status != ReadinessStatus::Ready {
                 return Err(AppError::external(
                     "MCP_SERVICE_RESTART_REQUIRED",
@@ -1487,7 +1490,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             output.runtime.started_at = Some(runtime.started_at.clone());
             output.runtime.updated_at = Some(runtime.updated_at.clone());
         }
-        output.readiness = self.readiness.inspect(definition, runtime.as_ref());
+        output.readiness = self.readiness.inspect(definition, runtime.as_ref(), false);
         let instance_occupied = self.instance_lease_is_occupied();
         output.runtime.status = reduce_runtime(
             runtime.as_ref(),
@@ -1601,7 +1604,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         Ok(InstalledContext {
             current,
             definition,
-            observed,
+            observed: observed.as_ref().clone(),
             desired,
         })
     }
@@ -1694,7 +1697,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
 
     fn observed_runtime_status(&self, definition: &ServiceDefinition) -> RuntimeStatus {
         let runtime = self.store.read_runtime().valid().ok().flatten();
-        let readiness = self.readiness.inspect(definition, runtime.as_ref());
+        let readiness = self.readiness.inspect(definition, runtime.as_ref(), false);
         reduce_runtime(
             runtime.as_ref(),
             &readiness,

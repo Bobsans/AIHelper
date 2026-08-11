@@ -8,14 +8,18 @@ pub struct ReleaseProfile {
     pub target: &'static str,
     pub architecture: &'static str,
     pub executable: &'static str,
+    pub service_worker: Option<&'static str>,
     pub update_helper: Option<&'static str>,
     pub plugin_suffix: &'static str,
 }
 
 impl ReleaseProfile {
     pub fn managed_paths(&self) -> Vec<(String, FilePurpose)> {
-        let mut paths = Vec::with_capacity(2 + PLUGIN_DOMAINS.len());
+        let mut paths = Vec::with_capacity(3 + PLUGIN_DOMAINS.len());
         paths.push((self.executable.to_owned(), FilePurpose::Executable));
+        if let Some(service_worker) = self.service_worker {
+            paths.push((service_worker.to_owned(), FilePurpose::Support));
+        }
         if let Some(update_helper) = self.update_helper {
             paths.push((update_helper.to_owned(), FilePurpose::UpdateHelper));
         }
@@ -36,6 +40,7 @@ pub const RELEASE_PROFILES: &[ReleaseProfile] = &[
         target: "x86_64-unknown-linux-gnu",
         architecture: "x86_64",
         executable: "ah",
+        service_worker: None,
         update_helper: None,
         plugin_suffix: ".so",
     },
@@ -44,6 +49,7 @@ pub const RELEASE_PROFILES: &[ReleaseProfile] = &[
         target: "aarch64-apple-darwin",
         architecture: "aarch64",
         executable: "ah",
+        service_worker: None,
         update_helper: None,
         plugin_suffix: ".dylib",
     },
@@ -52,6 +58,7 @@ pub const RELEASE_PROFILES: &[ReleaseProfile] = &[
         target: "x86_64-pc-windows-msvc",
         architecture: "x86_64",
         executable: "ah.exe",
+        service_worker: Some("ah-mcp-service.exe"),
         update_helper: Some("ah-update-helper.exe"),
         plugin_suffix: ".dll",
     },

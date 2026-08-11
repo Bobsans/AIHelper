@@ -153,8 +153,7 @@ password.
 Task ownership requires all of the following markers:
 
 - `RegistrationInfo.Source` equals `AIHelper.ManagedMcp`;
-- `RegistrationInfo.URI` uses
-  `urn:aihelper:managed-mcp:v1:<SERVICE_ID>`;
+- `RegistrationInfo.URI` equals the rooted task path returned by Task Scheduler;
 - task data contains a compact versioned marker with owner, kind, service ID,
   configuration ID, and definition path.
 

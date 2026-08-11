@@ -1,8 +1,9 @@
 use std::{
-    ffi::{CStr, CString, c_char},
+    ffi::{CStr, CString, OsStr, c_char},
     fmt::Display,
     io::{self, IsTerminal},
     panic::{AssertUnwindSafe, catch_unwind},
+    process::Command,
     ptr,
 };
 
@@ -17,6 +18,18 @@ pub const AH_PLUGIN_MANUAL_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_manual_json_v1\0"
 pub const AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_command_catalog_json_v1\0";
 pub const AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_invoke_command_json_v1\0";
 pub const AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL: &[u8] = b"ah_plugin_cancel_command_v1\0";
+
+pub fn noninteractive_command<S: AsRef<OsStr>>(program: S) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
 
 pub mod plugin_capabilities {
     pub const MANUAL_JSON: &str = "manual_json";
@@ -1115,6 +1128,23 @@ pub fn null_response_ptr() -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn noninteractive_child_has_no_console_window() {
+        let output = noninteractive_command("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r#"Add-Type -Name NativeMethods -Namespace Win32 -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'; [Win32.NativeMethods]::GetConsoleWindow().ToInt64()"#,
+            ])
+            .output()
+            .expect("run console probe");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
 
     #[test]
     fn formatter_applies_semantic_ansi_style_when_enabled() {

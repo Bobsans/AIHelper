@@ -63,6 +63,9 @@ fn publish_step_lists_exactly_three_complete_triplets() {
 #[test]
 fn windows_archive_builds_packages_and_smokes_update_helper() {
     let build = serialized(job(jobs(), "build"));
+    assert!(build.contains("cargo build --release --locked --bin ah-mcp-service"));
+    assert!(build.contains("target/release/ah-mcp-service.exe"));
+    assert!(build.contains("dist/ah-mcp-service.exe"));
     assert!(build.contains("cargo build --release --locked -p ah-update-helper"));
     assert!(build.contains("target/release/ah-update-helper.exe"));
     assert!(build.contains("dist/ah-update-helper.exe"));

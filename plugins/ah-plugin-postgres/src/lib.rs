@@ -12,7 +12,7 @@ use std::{
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
-    TextFormatter, TextStyle,
+    TextFormatter, TextStyle, noninteractive_command,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::blocking::Client;
@@ -1048,7 +1048,7 @@ fn resolve_psql_path(path: &Path) -> Result<(PathBuf, PathBuf), String> {
 }
 
 fn psql_version(psql_path: &Path, bin_dir: &Path) -> Result<ToolVersion, String> {
-    let output = Command::new(psql_path)
+    let output = noninteractive_command(psql_path)
         .arg("--version")
         .env("PATH", prepend_path_env(bin_dir))
         .stdin(Stdio::null())
@@ -2701,7 +2701,7 @@ fn run_psql_capture(
     mode: PsqlOutputMode,
     read_only: bool,
 ) -> Result<PsqlOutput, InvocationResponse> {
-    let mut command = Command::new(&context.psql_path);
+    let mut command = noninteractive_command(&context.psql_path);
     command
         .args(["-X", "-v", "ON_ERROR_STOP=1", "--no-password", "-q"])
         .env("PATH", prepend_path_env(&context.bin_dir))

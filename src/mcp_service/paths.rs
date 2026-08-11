@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
+pub(crate) const MANAGED_SERVICE_EXECUTABLE: &str = "ah-mcp-service.exe";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServicePaths {
     pub base_dir: PathBuf,
@@ -49,6 +51,37 @@ impl ServicePaths {
         self.definitions_dir
             .join(format!("{configuration_id}.json"))
     }
+}
+
+pub(crate) fn current_executable_path() -> Result<PathBuf, AppError> {
+    normalize_absolute_path(
+        &std::env::current_exe().map_err(|error| {
+            AppError::external(
+                "MCP_SERVICE_PATH_INVALID",
+                format!("failed to resolve current executable: {error}"),
+            )
+        })?,
+        None,
+    )
+}
+
+pub(crate) fn managed_service_executable_path(executable: &Path) -> PathBuf {
+    if cfg!(windows) {
+        executable.with_file_name(MANAGED_SERVICE_EXECUTABLE)
+    } else {
+        executable.to_owned()
+    }
+}
+
+pub(crate) fn require_managed_service_executable(executable: &Path) -> Result<(), AppError> {
+    let worker = managed_service_executable_path(executable);
+    if !worker.is_file() {
+        return Err(AppError::external(
+            "MCP_SERVICE_WORKER_MISSING",
+            format!("managed MCP worker is missing: '{}'", worker.display()),
+        ));
+    }
+    Ok(())
 }
 
 pub fn task_name(user_sid: &str) -> String {
@@ -127,6 +160,64 @@ pub fn current_user_sid() -> Result<String, AppError> {
     }
 }
 
+#[cfg(windows)]
+pub(crate) fn account_sid(account: &str) -> Result<String, AppError> {
+    use windows::{
+        Win32::Security::{LookupAccountNameW, PSID, SID_NAME_USE},
+        core::{PCWSTR, PWSTR},
+    };
+
+    if account.starts_with("S-1-") {
+        return Ok(account.to_owned());
+    }
+
+    let account = account.encode_utf16().chain([0]).collect::<Vec<_>>();
+    // SAFETY: both calls use initialized, correctly sized buffers. The first
+    // call only determines their required sizes.
+    unsafe {
+        let mut sid_size = 0;
+        let mut domain_size = 0;
+        let mut sid_kind = SID_NAME_USE::default();
+        let _ = LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR(account.as_ptr()),
+            None,
+            &mut sid_size,
+            None,
+            &mut domain_size,
+            &mut sid_kind,
+        );
+        if sid_size == 0 {
+            return Err(AppError::external(
+                "MCP_SERVICE_STATE_INVALID",
+                format!(
+                    "failed to resolve task account SID: {}",
+                    windows::core::Error::from_thread()
+                ),
+            ));
+        }
+
+        let mut sid = vec![0u8; sid_size as usize];
+        let mut domain = vec![0u16; domain_size as usize];
+        LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR(account.as_ptr()),
+            Some(PSID(sid.as_mut_ptr().cast())),
+            &mut sid_size,
+            (!domain.is_empty()).then_some(PWSTR(domain.as_mut_ptr())),
+            &mut domain_size,
+            &mut sid_kind,
+        )
+        .map_err(|error| {
+            AppError::external(
+                "MCP_SERVICE_STATE_INVALID",
+                format!("failed to resolve task account SID: {error}"),
+            )
+        })?;
+        sid_string(PSID(sid.as_mut_ptr().cast()), "task account")
+    }
+}
+
 fn normalize_components(path: &Path) -> Result<PathBuf, AppError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -199,16 +290,10 @@ fn windows_local_app_data() -> Result<PathBuf, AppError> {
 
 #[cfg(windows)]
 fn windows_current_user_sid() -> Result<String, AppError> {
-    use windows::{
-        Win32::{
-            Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree},
-            Security::{
-                Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY,
-                TOKEN_USER, TokenUser,
-            },
-            System::Threading::{GetCurrentProcess, OpenProcessToken},
-        },
-        core::PWSTR,
+    use windows::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
     };
 
     // SAFETY: token and SID buffers are sized through the documented probe
@@ -245,23 +330,40 @@ fn windows_current_user_sid() -> Result<String, AppError> {
                 )
             })?;
             let token_user = &*(buffer.as_ptr().cast::<TOKEN_USER>());
-            let mut sid = PWSTR::null();
-            ConvertSidToStringSidW(token_user.User.Sid, &mut sid).map_err(|error| {
-                AppError::external(
-                    "MCP_SERVICE_STATE_INVALID",
-                    format!("failed to convert current user SID: {error}"),
-                )
-            })?;
-            let value = sid.to_string().map_err(|error| {
-                AppError::external(
-                    "MCP_SERVICE_STATE_INVALID",
-                    format!("current user SID is not valid Unicode: {error}"),
-                )
-            });
-            LocalFree(Some(HLOCAL(sid.0.cast())));
-            value
+            sid_string(token_user.User.Sid, "current user")
         })();
         let _ = CloseHandle(token);
+        result
+    }
+}
+
+#[cfg(windows)]
+fn sid_string(sid: windows::Win32::Security::PSID, description: &str) -> Result<String, AppError> {
+    use windows::{
+        Win32::{
+            Foundation::{HLOCAL, LocalFree},
+            Security::Authorization::ConvertSidToStringSidW,
+        },
+        core::PWSTR,
+    };
+
+    // SAFETY: ConvertSidToStringSidW allocates the returned string with
+    // LocalAlloc; it is converted before being released with LocalFree.
+    unsafe {
+        let mut value = PWSTR::null();
+        ConvertSidToStringSidW(sid, &mut value).map_err(|error| {
+            AppError::external(
+                "MCP_SERVICE_STATE_INVALID",
+                format!("failed to convert {description} SID: {error}"),
+            )
+        })?;
+        let result = value.to_string().map_err(|error| {
+            AppError::external(
+                "MCP_SERVICE_STATE_INVALID",
+                format!("{description} SID is not valid Unicode: {error}"),
+            )
+        });
+        LocalFree(Some(HLOCAL(value.0.cast())));
         result
     }
 }
@@ -269,6 +371,42 @@ fn windows_current_user_sid() -> Result<String, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_service_worker_is_a_sibling_on_windows() {
+        let executable = if cfg!(windows) {
+            PathBuf::from(r"C:\AIHelper\ah.exe")
+        } else {
+            PathBuf::from("/opt/aihelper/ah")
+        };
+        let expected = if cfg!(windows) {
+            PathBuf::from(r"C:\AIHelper\ah-mcp-service.exe")
+        } else {
+            executable.clone()
+        };
+        assert_eq!(managed_service_executable_path(&executable), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_service_worker_must_exist() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("ah.exe");
+        let error = require_managed_service_executable(&executable).unwrap_err();
+        assert_eq!(error.code(), "MCP_SERVICE_WORKER_MISSING");
+
+        std::fs::write(managed_service_executable_path(&executable), b"worker").unwrap();
+        require_managed_service_executable(&executable).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn account_names_normalize_to_sids() {
+        let account = std::env::var("USERNAME").unwrap();
+        let sid = account_sid(&account).unwrap();
+        assert!(sid.starts_with("S-1-"));
+        assert_eq!(account_sid(&sid).unwrap(), sid);
+    }
 
     #[test]
     fn paths_derive_the_complete_store_layout() {

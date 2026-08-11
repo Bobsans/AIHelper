@@ -425,7 +425,7 @@ impl SchedulerAdapter for ScriptedScheduler {
                 last_result: Some(0),
                 last_run_at: None,
             });
-        state.observation = TaskObservation::Owned(observed.clone());
+        state.observation = TaskObservation::Owned(Box::new(observed.clone()));
         Ok(observed)
     }
 
@@ -680,6 +680,7 @@ impl ReadinessProbe for ScriptedRuntimeControl {
         &self,
         definition: &ServiceDefinition,
         runtime: Option<&RuntimeState>,
+        _grace_period: bool,
     ) -> ReadinessSection {
         push_event(
             &self.journal,
@@ -833,7 +834,7 @@ impl LifecycleHarness {
 
     pub(super) fn set_owned_task(&self, observed: ObservedTask) {
         self.scheduler
-            .set_observation(TaskObservation::Owned(observed));
+            .set_observation(TaskObservation::Owned(Box::new(observed)));
     }
 
     pub(super) fn queue_readiness(&self, section: ReadinessSection) {

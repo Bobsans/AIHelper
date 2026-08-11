@@ -1,11 +1,12 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
 
 use crate::error::AppError;
+use windows_sys::Win32::Foundation::HANDLE;
 
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -13,7 +14,7 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 pub struct FileLease {
     path: PathBuf,
     #[cfg(windows)]
-    handle: windows::Win32::Foundation::HANDLE,
+    mutex_handle: Mutex<HANDLE>,
 }
 
 impl FileLease {
@@ -58,73 +59,66 @@ impl FileLease {
 
     #[cfg(windows)]
     pub(crate) fn raw_handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
-        self.handle.0
+        *self.mutex_handle.lock().unwrap()
     }
 }
 
 #[cfg(windows)]
 impl Drop for FileLease {
     fn drop(&mut self) {
-        use windows::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::Foundation::CloseHandle;
 
-        // SAFETY: this object exclusively owns the handle returned by
-        // CreateFileW and closes it exactly once.
-        let _ = unsafe { CloseHandle(self.handle) };
+        let handle = *self.mutex_handle.lock().unwrap();
+        if !handle.is_null() {
+            let _ = unsafe { CloseHandle(handle) };
+        }
     }
 }
 
 #[cfg(windows)]
 fn try_acquire_windows(path: &Path) -> Result<Option<FileLease>, AppError> {
-    use std::os::windows::ffi::OsStrExt;
+    use std::sync::Mutex;
 
-    use windows::{
-        Win32::Storage::FileSystem::{
-            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-            FILE_SHARE_MODE, OPEN_ALWAYS,
-        },
-        core::PCWSTR,
-    };
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    use windows_sys::core::PCWSTR;
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
+        std::fs::create_dir_all(parent)
             .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
     }
-    let wide = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    // SAFETY: the filename is NUL-terminated and remains alive for the call.
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(wide.as_ptr()),
-            FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
-            FILE_SHARE_MODE(0),
-            None,
-            OPEN_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-    };
-    match handle {
-        Ok(handle) => Ok(Some(FileLease {
-            path: path.to_path_buf(),
-            handle,
-        })),
-        Err(error) if is_busy_hresult(error.code().0) => Ok(None),
-        Err(error) => Err(AppError::external(
+
+    // Convert path to a valid Windows mutex name (no backslashes, limited length)
+    let mutex_name = format!(
+        "Global\\AIHelper-MCP-{}",
+        path.to_string_lossy().replace(['\\', '/', ':'], "-")
+    );
+    let mutex_name_wide: Vec<u16> = mutex_name.encode_utf16().chain(Some(0)).collect();
+
+    let handle =
+        unsafe { CreateMutexW(std::ptr::null_mut(), 0, mutex_name_wide.as_ptr() as PCWSTR) };
+
+    let error_code = unsafe { GetLastError() };
+    if handle.is_null() {
+        return Err(AppError::external(
             "MCP_SERVICE_STATE_INVALID",
             format!(
-                "failed to open managed MCP lease '{}': {error}",
-                path.display()
+                "failed to create managed MCP mutex '{}': {}",
+                path.display(),
+                std::io::Error::from_raw_os_error(error_code as i32)
             ),
-        )),
+        ));
     }
-}
 
-#[cfg(windows)]
-fn is_busy_hresult(value: i32) -> bool {
-    matches!(value as u32, 0x8007_0020 | 0x8007_0021)
+    if error_code == ERROR_ALREADY_EXISTS {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+        return Ok(None);
+    }
+
+    Ok(Some(FileLease {
+        path: path.to_path_buf(),
+        mutex_handle: Mutex::new(handle),
+    }))
 }
 
 #[cfg(test)]
@@ -138,7 +132,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("lifecycle.lock");
         let first = FileLease::try_acquire(&path).unwrap().unwrap();
-        assert!(path.exists());
+        // With named mutex, no lock file is created; test intra-process blocking
         assert!(FileLease::try_acquire(&path).unwrap().is_none());
         drop(first);
         let second = FileLease::try_acquire(&path).unwrap().unwrap();

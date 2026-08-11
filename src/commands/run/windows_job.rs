@@ -33,9 +33,9 @@ use windows_sys::Win32::{
         Pipes::CreatePipe,
         SystemInformation::GetSystemDirectoryW,
         Threading::{
-            CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
-            EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE,
-            InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+            DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
+            INFINITE, InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
             PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
             STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
         },
@@ -217,7 +217,7 @@ fn spawn_prepared(
             null(),
             null(),
             1,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
             environment
                 .as_ref()
                 .map_or(null(), |value| value.as_ptr().cast()),

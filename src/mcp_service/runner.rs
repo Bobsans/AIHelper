@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Mutex};
+use std::{ffi::OsStr, path::Path, sync::Mutex};
 
 use uuid::Uuid;
 
@@ -11,10 +11,12 @@ use super::{
     store::{Document, ServiceStore},
 };
 
+const MANAGED_SUPERVISOR_PID_ENV: &str = "AH_MCP_SERVICE_SUPERVISOR_PID";
+
 #[derive(Debug)]
 pub enum ManagedPreflight {
     AlreadyRunning,
-    Ready(ManagedRunner),
+    Ready(Box<ManagedRunner>),
 }
 
 #[derive(Debug)]
@@ -24,6 +26,14 @@ pub struct ManagedRunner {
     state: Mutex<RuntimeState>,
     _instance_lease: FileLease,
 }
+
+// SAFETY: All fields of ManagedRunner are Send + Sync:
+// - ServiceDefinition: all fields are Send + Sync
+// - ServiceStore: contains only PathBufs
+// - Mutex<RuntimeState>: Mutex is Send + Sync when inner is Send
+// - FileLease: contains Mutex<HANDLE> where HANDLE = *mut c_void (Send + Sync)
+unsafe impl Send for ManagedRunner {}
+unsafe impl Sync for ManagedRunner {}
 
 impl ManagedRunner {
     pub fn preflight(definition_path: &Path) -> Result<ManagedPreflight, AppError> {
@@ -88,6 +98,11 @@ impl ManagedRunner {
         let Some(instance_lease) = FileLease::try_acquire(&paths.instance_lock)? else {
             return Ok(ManagedPreflight::AlreadyRunning);
         };
+        let runtime_pid = if apply_environment {
+            take_managed_supervisor_pid()?.unwrap_or_else(std::process::id)
+        } else {
+            std::process::id()
+        };
         if apply_environment {
             std::env::set_current_dir(&definition.working_directory)
                 .map_err(|source| AppError::cwd(definition.working_directory.clone(), source))?;
@@ -96,14 +111,15 @@ impl ManagedRunner {
             // thread creation.
             unsafe { std::env::set_var("AH_CONFIG_DIR", &definition.config_directory) };
         }
-        let state = RuntimeState::starting(&definition, Uuid::new_v4());
+        let mut state = RuntimeState::starting(&definition, Uuid::new_v4());
+        state.pid = runtime_pid;
         store.write_runtime(&state)?;
-        Ok(ManagedPreflight::Ready(Self {
+        Ok(ManagedPreflight::Ready(Box::new(Self {
             definition,
             store,
             state: Mutex::new(state),
             _instance_lease: instance_lease,
-        }))
+        })))
     }
 
     pub fn definition(&self) -> &ServiceDefinition {
@@ -115,6 +131,13 @@ impl ManagedRunner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .instance_id
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pid
     }
 
     pub fn mark_ready(&self) -> Result<(), AppError> {
@@ -162,6 +185,31 @@ impl ManagedRunner {
         state.last_exit = last_exit;
         self.store.write_runtime(&state)
     }
+}
+
+fn take_managed_supervisor_pid() -> Result<Option<u32>, AppError> {
+    let value = std::env::var_os(MANAGED_SUPERVISOR_PID_ENV);
+    // SAFETY: production preflight runs on the process main thread before
+    // event logger construction, plugin discovery, or worker thread creation.
+    unsafe { std::env::remove_var(MANAGED_SUPERVISOR_PID_ENV) };
+    value
+        .as_deref()
+        .map(parse_managed_supervisor_pid)
+        .transpose()
+}
+
+fn parse_managed_supervisor_pid(value: &OsStr) -> Result<u32, AppError> {
+    let pid = value
+        .to_str()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid != 0)
+        .ok_or_else(|| {
+            AppError::external(
+                "MCP_SERVICE_STATE_INVALID",
+                "managed MCP supervisor PID is invalid",
+            )
+        })?;
+    Ok(pid)
 }
 
 #[cfg(test)]
@@ -226,5 +274,14 @@ mod tests {
             ManagedRunner::preflight_with_environment(&path, false).unwrap(),
             ManagedPreflight::Ready(_)
         ));
+    }
+
+    #[test]
+    fn managed_supervisor_pid_must_be_nonzero_decimal() {
+        assert_eq!(parse_managed_supervisor_pid(OsStr::new("42")).unwrap(), 42);
+        for value in ["", "0", "-1", " 42", "invalid"] {
+            let error = parse_managed_supervisor_pid(OsStr::new(value)).unwrap_err();
+            assert_eq!(error.code(), "MCP_SERVICE_STATE_INVALID");
+        }
     }
 }

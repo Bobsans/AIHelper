@@ -26,8 +26,7 @@ fn uninstall_is_idempotent_and_removes_only_verified_metadata() {
     assert!(!paths.lifecycle.exists());
     assert!(!pointer.definition_path.exists());
     assert!(unexpected.exists());
-    assert!(paths.lifecycle_lock.exists());
-    assert!(paths.instance_lock.exists());
+    // lifecycle_lock and instance_lock are now named mutexes, not files
 }
 
 #[cfg(windows)]
@@ -102,8 +101,7 @@ fn running_uninstall_stops_deletes_then_cleans_only_semantic_metadata() {
             sentinel.display()
         );
     }
-    assert!(harness.paths.lifecycle_lock.exists());
-    assert!(harness.paths.instance_lock.exists());
+    // lifecycle_lock and instance_lock are now named mutexes, not files
 }
 
 #[cfg(windows)]

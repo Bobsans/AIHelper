@@ -1,8 +1,4 @@
-use std::{
-    ffi::OsStr,
-    path::Path,
-    process::{Command, Output},
-};
+use std::{ffi::OsStr, path::Path, process::Output};
 
 pub fn apply_limit<T>(items: &mut Vec<T>, limit: Option<usize>) -> bool {
     if let Some(limit_value) = limit
@@ -48,7 +44,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut command = Command::new(program);
+    let mut command = ah_plugin_api::noninteractive_command(program);
     for value in args {
         command.arg(value.as_ref());
     }
@@ -64,7 +60,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut command = Command::new(program);
+    let mut command = ah_plugin_api::noninteractive_command(program);
     command.current_dir(current_dir);
     for value in args {
         command.arg(value.as_ref());

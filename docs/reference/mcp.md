@@ -139,7 +139,8 @@ ah [--cwd PATH] [--limit N] mcp service install \
 The defaults match manual HTTP serve: port `8787`, `32` active handlers, and a
 `300000` millisecond command timeout. `--cwd`, `--limit`, the resolved
 configuration directory, and the absolute `ah.exe` path become part of the
-durable service definition. Equal repeated installs are idempotent.
+durable service definition. The sibling `ah-mcp-service.exe` is required and
+becomes the Task Scheduler action. Equal repeated installs are idempotent.
 
 To register or reconcile the task without starting or stopping any process:
 
@@ -152,6 +153,12 @@ Start the registered definition explicitly:
 ```text
 ah mcp service start
 ```
+
+The controller returns after readiness while Task Scheduler runs the thin,
+windowless `ah-mcp-service.exe` launcher. It starts the sibling `ah.exe` in a
+kill-on-close job without creating or attaching to a console, so closing the
+launching console does not stop the service. Foreground `mcp serve` and stdio
+transport keep their normal console lifecycle.
 
 Task Scheduler accepting a run request is not success by itself. `start` waits
 up to 15 seconds for readiness whose version, PID, process instance UUID, and
@@ -271,6 +278,7 @@ Important managed-service diagnostics include:
 - `MCP_SERVICE_CONFIGURATION_DRIFT`
 - `MCP_SERVICE_STATE_INVALID`
 - `MCP_SERVICE_START_TIMEOUT`
+- `MCP_SERVICE_WORKER_MISSING`
 - `MCP_SERVICE_IDENTITY_MISMATCH`
 - `MCP_SERVICE_SCHEDULER_FAILED`
 - `MCP_SERVICE_RESTART_REQUIRED`

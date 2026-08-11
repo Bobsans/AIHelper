@@ -186,7 +186,7 @@ fn drifted_register_readback_keeps_old_pointer_and_retry_converges() {
         _ => panic!("installed task should be owned"),
     };
     let old_current = std::fs::read(&harness.paths.current).unwrap();
-    harness.scheduler.queue_register_readback(old_observed);
+    harness.scheduler.queue_register_readback(*old_observed);
     harness.clear_adapter_events();
     let mut options = install_options(true);
     options.port = 8788;

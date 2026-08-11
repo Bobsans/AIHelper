@@ -7,6 +7,12 @@ Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows managed MCP launches use a thin windowless service launcher,
+  eliminating transient console flashes and the duplicate full-size binary
+  while preserving Task Scheduler process ownership.
+
 ## [1.2.0] - 2026-08-06
 
 ### Added

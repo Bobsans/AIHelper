@@ -27,6 +27,7 @@ use crate::error::AppError;
 use super::{
     model::{TaskMarker, hresult_hex, validate_uuid_json_fields},
     output::SchedulerState,
+    paths::account_sid,
     scheduler::{
         DesiredTaskSpec, ExpectedTaskOwnership, MultipleInstancesPolicy, ObservedTask,
         SchedulerAdapter, SchedulerDeleteReceipt, SchedulerInstance, SchedulerRunReceipt,
@@ -73,7 +74,7 @@ impl SchedulerAdapter for WindowsTaskScheduler {
             }
             .map_err(|error| scheduler_error("register task definition", error))?;
             match observe_registered(&registered)? {
-                TaskObservation::Owned(observed) => Ok(observed),
+                TaskObservation::Owned(observed) => Ok(*observed),
                 TaskObservation::Missing => Err(AppError::external(
                     "MCP_SERVICE_SCHEDULER_FAILED",
                     "registered task disappeared during readback",
@@ -185,7 +186,7 @@ fn require_owned_registration(
             "Task Scheduler ownership marker changed before mutation",
         ));
     }
-    Ok(observed)
+    Ok(*observed)
 }
 
 fn require_safe_task(
@@ -455,6 +456,10 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
             .map_err(|error| scheduler_error("read registration info", error))?;
         let source = read_bstr(|value| registration.Source(value))?;
         let uri = read_bstr(|value| registration.URI(value))?;
+        let task_path = registered
+            .Path()
+            .map_err(|error| scheduler_error("read task path", error))?
+            .to_string();
         let marker_json = read_bstr(|value| definition.Data(value))?;
         let marker_value = serde_json::from_str::<serde_json::Value>(&marker_json).ok();
         let marker = marker_value
@@ -467,8 +472,7 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
                 uri: Some(uri),
             });
         };
-        let expected_uri = format!("urn:aihelper:managed-mcp:v1:{}", marker.service_id);
-        if source != TASK_SOURCE || uri != expected_uri {
+        if source != TASK_SOURCE || uri != task_path {
             return Ok(TaskObservation::Foreign {
                 source: Some(source),
                 uri: Some(uri),
@@ -478,7 +482,7 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
         let principal = definition
             .Principal()
             .map_err(|error| scheduler_error("read task principal", error))?;
-        let user_sid = read_bstr(|value| principal.UserId(value))?;
+        let user_sid = account_sid(&read_bstr(|value| principal.UserId(value))?)?;
         let mut logon_type = Default::default();
         principal
             .LogonType(&mut logon_type)
@@ -509,7 +513,7 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
                 let logon: ILogonTrigger = base
                     .cast()
                     .map_err(|error| scheduler_error("cast logon trigger", error))?;
-                read_bstr(|value| logon.UserId(value))?
+                account_sid(&read_bstr(|value| logon.UserId(value))?)?
             } else {
                 String::new()
             };
@@ -591,10 +595,6 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
         let restart_interval = read_bstr(|value| settings.RestartInterval(value))?;
         let enabled = read_bool(|value| settings.Enabled(value))?;
 
-        let task_path = registered
-            .Path()
-            .map_err(|error| scheduler_error("read task path", error))?
-            .to_string();
         let task_name = registered
             .Name()
             .map_err(|error| scheduler_error("read task name", error))?
@@ -653,12 +653,12 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
             restart_interval,
             enabled,
         };
-        Ok(TaskObservation::Owned(ObservedTask {
+        Ok(TaskObservation::Owned(Box::new(ObservedTask {
             spec,
             scheduler_state: scheduler_state(state),
             last_result,
             last_run_at: None,
-        }))
+        })))
     }
 }
 

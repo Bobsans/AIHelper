@@ -33,6 +33,7 @@ the outcome.
 On Windows 10, Windows Server 2016, and newer, native executables are assigned
 to a Job Object during process creation so timeout and cancellation cannot race
 with descendant startup. Batch scripts retain the same process-tree guarantee.
+Non-interactive child processes run without creating visible console windows.
 
 Interactive text output uses semantic colors for success, failure, timeout, and
 stdout/stderr headings. Child process output is never recolored. Colors are

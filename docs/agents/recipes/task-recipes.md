@@ -21,6 +21,7 @@ ah task run quick-diff
 - `task list --json`: task catalog from `.ah/tasks.json`
 - `task run --json`: exit status + captured stdout/stderr
 - task output is byte-bounded while read; timeout terminates descendant processes
+- Windows task commands do not create visible console windows
 
 ## When To Use
 - Standardize repetitive AI support workflows

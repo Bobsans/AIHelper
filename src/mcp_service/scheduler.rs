@@ -7,7 +7,7 @@ use crate::error::AppError;
 use super::{
     model::{DriftEntry, TaskMarker},
     output::SchedulerState,
-    paths::paths_equal,
+    paths::{managed_service_executable_path, paths_equal},
 };
 
 pub const TASK_SOURCE: &str = "AIHelper.ManagedMcp";
@@ -54,18 +54,20 @@ impl DesiredTaskSpec {
         executable_path: PathBuf,
         working_directory: PathBuf,
     ) -> Self {
+        let executable_path = managed_service_executable_path(&executable_path);
         let task_name = task_path.trim_start_matches('\\').to_owned();
         let arguments = format!(
             "mcp serve --transport http --managed-config \"{}\"",
             marker.definition_path.display()
         );
         let trigger_user_sid = user_sid.clone();
+        let uri = task_path.clone();
         Self {
             task_path,
             task_name,
             user_sid,
             source: TASK_SOURCE.to_owned(),
-            uri: format!("urn:aihelper:managed-mcp:v1:{}", marker.service_id),
+            uri,
             marker,
             executable_path,
             arguments,
@@ -118,7 +120,7 @@ pub struct ObservedTask {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskObservation {
     Missing,
-    Owned(ObservedTask),
+    Owned(Box<ObservedTask>),
     Foreign {
         source: Option<String>,
         uri: Option<String>,
@@ -490,6 +492,15 @@ mod tests {
         assert!(has_canonical_restart_policy(&spec));
         assert_eq!(spec.execution_time_limit, "PT0S");
         assert!(!spec.disallow_start_on_batteries);
+        assert_eq!(spec.uri, spec.task_path);
+        assert_eq!(
+            spec.executable_path,
+            if cfg!(windows) {
+                PathBuf::from(r"C:\AIHelper\ah-mcp-service.exe")
+            } else {
+                PathBuf::from("/aihelper/ah")
+            }
+        );
     }
 
     #[test]

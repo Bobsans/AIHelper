@@ -839,6 +839,7 @@ impl HttpLifecycleState {
     fn new(
         version: String,
         instance_id: Uuid,
+        pid: u32,
         authority: String,
         origin: String,
         lifecycle: Arc<HttpLifecycleController>,
@@ -847,7 +848,7 @@ impl HttpLifecycleState {
             readiness: ReadinessResponse {
                 status: "ready",
                 version,
-                pid: std::process::id(),
+                pid,
                 instance_id,
             },
             authority,
@@ -1076,6 +1077,7 @@ pub async fn serve_http_bounded_with_version(
         port,
         version,
         Uuid::new_v4(),
+        std::process::id(),
         grace,
         || Ok(()),
     )
@@ -1087,6 +1089,7 @@ pub async fn serve_http_bounded_with_identity_and_listener<F>(
     port: u16,
     version: impl Into<String>,
     instance_id: Uuid,
+    pid: u32,
     grace: Duration,
     on_listener_bound: F,
 ) -> McpServeOutcome
@@ -1107,6 +1110,7 @@ where
     let lifecycle = HttpLifecycleState::new(
         version.into(),
         instance_id,
+        pid,
         authority.clone(),
         origin.clone(),
         Arc::clone(&lifecycle_controller),
@@ -2130,8 +2134,9 @@ mod tests {
     }
 
     #[test]
-    fn managed_http_lifecycle_uses_the_preselected_instance_id() {
+    fn managed_http_lifecycle_uses_the_preselected_identity() {
         let instance_id = Uuid::new_v4();
+        let pid = 42;
         let tracker = Arc::new(ShutdownTracker::new(Duration::from_secs(1)));
         let executor: Arc<dyn Executor> = Arc::new(ClosingExecutor::default());
         let controller = Arc::new(HttpLifecycleController::new(
@@ -2142,11 +2147,13 @@ mod tests {
         let lifecycle = HttpLifecycleState::new(
             "1.2.3".to_owned(),
             instance_id,
+            pid,
             "127.0.0.1:8787".to_owned(),
             "http://127.0.0.1:8787".to_owned(),
             controller,
         );
         assert_eq!(lifecycle.readiness.instance_id, instance_id);
+        assert_eq!(lifecycle.readiness.pid, pid);
         assert_eq!(lifecycle.readiness.version, "1.2.3");
     }
 

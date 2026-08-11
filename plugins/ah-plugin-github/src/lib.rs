@@ -4,7 +4,7 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -12,7 +12,7 @@ use std::{
 use ah_plugin_api::InvocationRequest;
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
-    TextFormatter, TextStyle,
+    TextFormatter, TextStyle, noninteractive_command,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
@@ -1550,7 +1550,7 @@ fn resolve_repo(
 }
 
 fn read_git_remote_url(remote: &str, cwd: Option<&Path>) -> Result<String, InvocationResponse> {
-    let mut command = Command::new("git");
+    let mut command = noninteractive_command("git");
     command.args(["remote", "get-url", remote]);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -1646,7 +1646,7 @@ fn env_token(name: &str) -> Option<String> {
 }
 
 fn git_credential_token() -> Option<String> {
-    let mut child = Command::new("git")
+    let mut child = noninteractive_command("git")
         .args(["credential", "fill"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::piped())

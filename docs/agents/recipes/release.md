@@ -146,9 +146,10 @@ The preflight must build and package:
 Inspect individual jobs and artifacts. All matrix jobs are blocking and each
 archive must pass packaged CLI and MCP smoke checks before upload. AIHelper
 release policy requires all three expected archives before publication. The
-Windows archive must also contain `ah-update-helper.exe`, and its side-effect-free
-`--self-check` must report helper protocol v1 with the same version and target as
-the packaged `ah.exe`.
+Windows archive must also contain `ah-mcp-service.exe` and
+`ah-update-helper.exe`; the update helper's side-effect-free `--self-check` must
+report helper protocol v1 with the same version and target as the packaged
+`ah.exe`.
 
 ## Publish
 
@@ -206,8 +207,9 @@ ah plugins list --json
 ```
 
 Verify the archive contains the executable and the executable-relative
-`plugins/` directory. For Windows, also run
-`ah-update-helper.exe --self-check` and verify its strict protocol identity.
+`plugins/` directory. For Windows, also verify `ah-mcp-service.exe` is present,
+then run `ah-update-helper.exe --self-check` and verify its strict protocol
+identity.
 For MCP-sensitive changes, also perform a stdio handshake, inspect `tools/list`,
 confirm risk metadata, and execute a representative typed tool call.
 

@@ -1,5 +1,10 @@
 # Managed MCP console detachment
 
+Superseded by
+[`2026-08-06-mcp-windowless-worker-design.md`](2026-08-06-mcp-windowless-worker-design.md)
+after validation showed that post-start detachment cannot prevent the initial
+Windows console flash.
+
 ## Problem
 
 The per-user Task Scheduler action starts the managed MCP worker as the

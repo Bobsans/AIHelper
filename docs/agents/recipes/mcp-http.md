@@ -8,9 +8,16 @@ ah mcp service status --json
 ah --cwd D:\work\project mcp service install
 ```
 
-`install` registers the current executable for the current user, starts it by
-default, and succeeds only after exact readiness. Use `--no-start` when an agent
-is allowed to reconcile registration but must not change the running process:
+The managed server runs through the sibling windowless
+`ah-mcp-service.exe` launcher. The launcher starts `ah.exe` in a kill-on-close
+job without creating a console and does not depend on the controller console
+after readiness. Non-interactive external tools invoked by MCP commands also
+run without creating visible console windows.
+
+`install` records the current `ah.exe`, requires its sibling service launcher,
+registers that launcher for the current user, starts it by default, and succeeds
+only after exact readiness. Use `--no-start` when an agent is allowed to
+reconcile registration but must not change the running process:
 
 ```text
 ah --cwd D:\work\project mcp service install --no-start --json

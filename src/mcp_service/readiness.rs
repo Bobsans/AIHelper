@@ -22,6 +22,7 @@ pub trait ReadinessProbe {
         &self,
         definition: &ServiceDefinition,
         runtime: Option<&RuntimeState>,
+        grace_period: bool,
     ) -> ReadinessSection;
 }
 
@@ -89,6 +90,7 @@ impl ReadinessProbe for HttpReadinessProbe {
         &self,
         definition: &ServiceDefinition,
         runtime: Option<&RuntimeState>,
+        grace_period: bool,
     ) -> ReadinessSection {
         let response = match self.client.get(&definition.endpoint.readiness_url).send() {
             Ok(response) => response,
@@ -123,8 +125,9 @@ impl ReadinessProbe for HttpReadinessProbe {
             && runtime.is_some_and(|runtime| {
                 runtime.service_id == definition.service_id
                     && runtime.configuration_id == definition.configuration_id
-                    && payload.pid == runtime.pid
-                    && payload.instance_id == runtime.instance_id
+                    && (grace_period
+                        || (payload.pid == runtime.pid
+                            && payload.instance_id == runtime.instance_id))
             });
         ReadinessSection {
             status: if identity_matches {

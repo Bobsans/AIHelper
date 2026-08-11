@@ -79,7 +79,7 @@ pub(crate) fn run() -> Result<(), AppError> {
         EarlyRoute::ManagedServe { definition_path } => {
             match ManagedRunner::preflight(&definition_path)? {
                 ManagedPreflight::AlreadyRunning => return Ok(()),
-                ManagedPreflight::Ready(runner) => Some(Arc::new(runner)),
+                ManagedPreflight::Ready(runner) => Some(Arc::new(*runner)),
             }
         }
     };
@@ -402,7 +402,7 @@ fn execution(
             max_active,
             default_timeout_ms,
             options,
-        } => execute_mcp_serve(
+        } => execute_mcp_serve(McpServeConfig {
             manager,
             settings,
             transport,
@@ -412,7 +412,7 @@ fn execution(
             options,
             logger,
             managed_runner,
-        )
+        })
         .map(|_| None),
         RuntimeCommand::PluginsList {
             state_filter,
@@ -450,7 +450,7 @@ fn execution(
     }
 }
 
-fn execute_mcp_serve(
+struct McpServeConfig {
     manager: PluginManager,
     settings: PluginSettings,
     transport: cli::McpTransport,
@@ -460,16 +460,18 @@ fn execute_mcp_serve(
     options: cli::GlobalOptions,
     logger: Option<Arc<EventLogger>>,
     managed_runner: Option<Arc<ManagedRunner>>,
-) -> Result<(), AppError> {
+}
+
+fn execute_mcp_serve(config: McpServeConfig) -> Result<(), AppError> {
     let (transport, port, max_active, default_timeout_ms, options) =
-        if let Some(runner) = &managed_runner {
-            if transport != cli::McpTransport::Http {
+        if let Some(runner) = &config.managed_runner {
+            if config.transport != cli::McpTransport::Http {
                 return Err(AppError::invalid_argument(
                     "managed MCP configuration requires HTTP transport",
                 ));
             }
             let definition = runner.definition();
-            let mut managed_options = options;
+            let mut managed_options = config.options;
             managed_options.limit = definition.server.limit;
             (
                 cli::McpTransport::Http,
@@ -479,15 +481,21 @@ fn execute_mcp_serve(
                 managed_options,
             )
         } else {
-            (transport, port, max_active, default_timeout_ms, options)
+            (
+                config.transport,
+                config.port,
+                config.max_active,
+                config.default_timeout_ms,
+                config.options,
+            )
         };
     let cwd = std::env::current_dir()
         .map_err(|source| AppError::cwd(std::path::PathBuf::from("."), source))
-        .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error));
+        .map_err(|error| record_mcp_system_error(config.logger.as_deref(), "mcp_server", error));
     let cwd = match cwd {
         Ok(cwd) => cwd,
         Err(error) => {
-            mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
+            mark_managed_failure(&config.managed_runner, ExitKind::StartupFailure, &error);
             return Err(error);
         }
     }
@@ -498,20 +506,20 @@ fn execute_mcp_serve(
         .max_blocking_threads(max_active.saturating_add(16))
         .build()
         .map_err(|error| AppError::external("MCP_RUNTIME_FAILED", error.to_string()))
-        .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error));
+        .map_err(|error| record_mcp_system_error(config.logger.as_deref(), "mcp_server", error));
     let runtime = match runtime {
         Ok(runtime) => runtime,
         Err(error) => {
-            mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
+            mark_managed_failure(&config.managed_runner, ExitKind::StartupFailure, &error);
             return Err(error);
         }
     };
-    let runner_after_serve = managed_runner.clone();
+    let runner_after_serve = config.managed_runner.clone();
     let (result, shutdown_grace) = runtime.block_on(async move {
         let setup = async {
-            let settings = Arc::new(std::sync::Mutex::new(settings));
+            let settings = Arc::new(std::sync::Mutex::new(config.settings));
             let manager = Arc::new_cyclic(|weak| {
-                let mut manager = manager;
+                let mut manager = config.manager;
                 for plugin in crate::host_commands::builtins(weak.clone(), Arc::clone(&settings)) {
                     manager.register_host_builtin(plugin);
                 }
@@ -521,16 +529,21 @@ fn execute_mcp_serve(
                 ParallelExecutor::new(Arc::clone(&manager), max_active)
                     .map_err(crate::map_runtime_error)
                     .map_err(|error| {
-                        record_mcp_system_error(logger.as_deref(), "mcp_server", error)
+                        record_mcp_system_error(config.logger.as_deref(), "mcp_server", error)
                     })?,
             );
-            let config = ah_mcp::McpServerConfig::new(cwd, options.limit, default_timeout_ms)
-                .map_err(|error| AppError::external("MCP_CONFIG_INVALID", error.to_string()))
-                .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
-            let mut server = ah_mcp::McpServer::new(manager, executor, config)
+            let config_server =
+                ah_mcp::McpServerConfig::new(cwd, options.limit, default_timeout_ms)
+                    .map_err(|error| AppError::external("MCP_CONFIG_INVALID", error.to_string()))
+                    .map_err(|error| {
+                        record_mcp_system_error(config.logger.as_deref(), "mcp_server", error)
+                    })?;
+            let mut server = ah_mcp::McpServer::new(manager, executor, config_server)
                 .map_err(|error| AppError::external("MCP_SERVER_FAILED", error.to_string()))
-                .map_err(|error| record_mcp_system_error(logger.as_deref(), "mcp_server", error))?;
-            if let Some(logger) = logger.clone() {
+                .map_err(|error| {
+                    record_mcp_system_error(config.logger.as_deref(), "mcp_server", error)
+                })?;
+            if let Some(logger) = config.logger.clone() {
                 let event_sink: Arc<dyn ah_mcp::EventSink> = logger;
                 server = server.with_event_sink(event_sink);
             }
@@ -539,13 +552,15 @@ fn execute_mcp_serve(
                     ah_mcp::serve_stdio_bounded(server, MCP_RUNTIME_SHUTDOWN_GRACE).await
                 }
                 cli::McpTransport::Http => {
-                    if let Some(runner) = managed_runner.clone() {
+                    if let Some(runner) = config.managed_runner.clone() {
                         let instance_id = runner.instance_id();
+                        let pid = runner.pid();
                         ah_mcp::serve_http_bounded_with_identity_and_listener(
                             server,
                             port,
                             env!("CARGO_PKG_VERSION"),
                             instance_id,
+                            pid,
                             MCP_RUNTIME_SHUTDOWN_GRACE,
                             move || {
                                 runner.mark_ready().map_err(|error| {
@@ -573,7 +588,7 @@ fn execute_mcp_serve(
                 let result = transport_result
                     .map_err(map_mcp_transport_error)
                     .map_err(|error| {
-                        record_mcp_system_error(logger.as_deref(), "mcp_transport", error)
+                        record_mcp_system_error(config.logger.as_deref(), "mcp_transport", error)
                     });
                 (result, remaining_grace)
             }

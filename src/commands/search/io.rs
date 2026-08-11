@@ -164,16 +164,16 @@ pub(crate) fn collect_text_matches(
                 "search request was cancelled",
             ));
         }
-        let (file_matches, file_truncated) = match_file(
-            &path,
+        let (file_matches, file_truncated) = match_file(MatchFileConfig {
+            path: &path,
             root,
             matcher,
             context_lines,
             max_bytes,
             follow_symlinks,
-            &mut stats,
-            max_count.saturating_sub(matches.len()),
-        )?;
+            stats: &mut stats,
+            match_limit: max_count.saturating_sub(matches.len()),
+        })?;
         matches.extend(file_matches);
         if file_truncated {
             truncated = true;
@@ -184,33 +184,36 @@ pub(crate) fn collect_text_matches(
     Ok((matches, stats, truncated))
 }
 
-fn match_file(
-    path: &Path,
-    root: &Path,
-    matcher: &PatternMatcher,
+struct MatchFileConfig<'a> {
+    path: &'a Path,
+    root: &'a Path,
+    matcher: &'a PatternMatcher,
     context_lines: usize,
     max_bytes: u64,
     follow_symlinks: bool,
-    stats: &mut TextCollectStats,
+    stats: &'a mut TextCollectStats,
     match_limit: usize,
-) -> Result<(Vec<TextMatch>, bool), AppError> {
+}
+
+fn match_file(config: MatchFileConfig<'_>) -> Result<(Vec<TextMatch>, bool), AppError> {
     let policy = TextFilePolicy {
-        max_bytes,
-        follow_symlinks,
+        max_bytes: config.max_bytes,
+        follow_symlinks: config.follow_symlinks,
     };
-    match safety::inspect_text_file(path, policy)? {
+    match safety::inspect_text_file(config.path, policy)? {
         TextFileDecision::Allow(_) => {}
         TextFileDecision::Skip(reason) => {
-            register_skip_reason(stats, reason);
+            register_skip_reason(config.stats, reason);
             return Ok((Vec::new(), false));
         }
     }
 
-    let bytes = fs::read(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+    let bytes = fs::read(config.path)
+        .map_err(|source| AppError::file_read(config.path.to_path_buf(), source))?;
     let text = match String::from_utf8(bytes) {
         Ok(value) => value,
         Err(_) => {
-            register_skip_reason(stats, TextFileSkipReason::Binary);
+            register_skip_reason(config.stats, TextFileSkipReason::Binary);
             return Ok((Vec::new(), false));
         }
     };
@@ -220,7 +223,7 @@ fn match_file(
     let lines = text.lines().collect::<Vec<_>>();
 
     let mut matches = Vec::new();
-    let normalized_path = display_path(path, root);
+    let normalized_path = display_path(config.path, config.root);
     for (index, line) in lines.iter().enumerate() {
         if crate::commands::search::current_request_cancelled() {
             return Err(AppError::external(
@@ -228,12 +231,14 @@ fn match_file(
                 "search request was cancelled",
             ));
         }
-        if let Some(column) = crate::commands::search::domain::find_match_column(matcher, line) {
-            if matches.len() >= match_limit {
+        if let Some(column) =
+            crate::commands::search::domain::find_match_column(config.matcher, line)
+        {
+            if matches.len() >= config.match_limit {
                 return Ok((matches, true));
             }
             let line_number = index + 1;
-            let (before, after) = build_context_lines(context_lines, index, &lines);
+            let (before, after) = build_context_lines(config.context_lines, index, &lines);
             matches.push(TextMatch {
                 path: normalized_path.clone(),
                 line: line_number,

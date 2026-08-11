@@ -34,11 +34,11 @@ class SmokeError(Exception):
 
 def platform_layout():
     if sys.platform == "win32":
-        return "ah.exe", ".dll", "ah-update-helper.exe"
+        return "ah.exe", ".dll", "ah-update-helper.exe", ("ah-mcp-service.exe",)
     if sys.platform == "darwin":
-        return "ah", ".dylib", None
+        return "ah", ".dylib", None, ()
     if sys.platform.startswith("linux"):
-        return "ah", ".so", None
+        return "ah", ".so", None, ()
     raise SmokeError("unsupported smoke-test platform")
 
 
@@ -55,10 +55,11 @@ def normalized_member_name(name):
 
 
 def extract_archive(archive, destination):
-    executable_name, library_suffix, helper_name = platform_layout()
+    executable_name, library_suffix, helper_name, support_names = platform_layout()
     expected = {executable_name}
     if helper_name is not None:
         expected.add(helper_name)
+    expected.update(support_names)
     expected.update(
         "plugins/ah-plugin-{}{}".format(domain, library_suffix)
         for domain in PLUGIN_DOMAINS

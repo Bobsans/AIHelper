@@ -57,7 +57,7 @@ fn executable_paths(transaction: &LoadedTransaction) -> BTreeSet<String> {
         .files
         .iter()
         .chain(&transaction.new_manifest().files)
-        .filter(|file| file.purpose == FilePurpose::Executable)
+        .filter(|file| is_process_image(&file.path, file.purpose))
         .map(|file| {
             normalize_path(
                 &transaction
@@ -67,6 +67,13 @@ fn executable_paths(transaction: &LoadedTransaction) -> BTreeSet<String> {
             )
         })
         .collect()
+}
+
+fn is_process_image(path: &str, purpose: FilePurpose) -> bool {
+    purpose == FilePurpose::Executable
+        || Path::new(path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
 }
 
 #[cfg(windows)]
@@ -320,6 +327,19 @@ mod tests {
     use std::{cell::RefCell, collections::BTreeMap, collections::VecDeque};
 
     use super::*;
+
+    #[test]
+    fn support_executables_are_same_installation_process_images() {
+        assert!(is_process_image("ah-mcp-service.exe", FilePurpose::Support));
+        assert!(is_process_image(
+            "AH-UPDATE-HELPER.EXE",
+            FilePurpose::UpdateHelper
+        ));
+        assert!(!is_process_image(
+            "plugins/ah-plugin-github.dll",
+            FilePurpose::Plugin
+        ));
+    }
 
     #[test]
     fn classifies_only_exact_path_and_start_identity_as_same_installation() {
