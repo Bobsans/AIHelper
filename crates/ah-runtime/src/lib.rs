@@ -103,6 +103,9 @@ pub trait BuiltinPlugin: Send + Sync {
         self.metadata().required_tools
     }
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse;
+    fn invoke_observed(&self, request: &InvocationRequest) -> InvocationObservation {
+        InvocationObservation::without_outcome(self.invoke(request))
+    }
     fn command_catalog(&self) -> Option<CommandCatalog> {
         None
     }
@@ -123,6 +126,40 @@ pub trait BuiltinPlugin: Send + Sync {
     }
     fn cancel_typed(&self, _request_id: &str) -> bool {
         false
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunCheckOutcome {
+    pub success: bool,
+    pub timed_out: bool,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvocationOutcome {
+    RunCheck(RunCheckOutcome),
+}
+
+#[derive(Debug, Clone)]
+pub struct InvocationObservation {
+    pub response: InvocationResponse,
+    pub outcome: Option<InvocationOutcome>,
+}
+
+impl InvocationObservation {
+    pub fn new(response: InvocationResponse, outcome: InvocationOutcome) -> Self {
+        Self {
+            response,
+            outcome: Some(outcome),
+        }
+    }
+
+    pub fn without_outcome(response: InvocationResponse) -> Self {
+        Self {
+            response,
+            outcome: None,
+        }
     }
 }
 
@@ -369,6 +406,16 @@ impl PluginManager {
         argv: Vec<String>,
         globals: GlobalOptionsWire,
     ) -> Result<InvocationResponse, RuntimeError> {
+        self.invoke_observed(domain, argv, globals)
+            .map(|observation| observation.response)
+    }
+
+    pub fn invoke_observed(
+        &self,
+        domain: &str,
+        argv: Vec<String>,
+        globals: GlobalOptionsWire,
+    ) -> Result<InvocationObservation, RuntimeError> {
         let domain = domain_key(domain);
         let request = InvocationRequest {
             domain: domain.clone(),
@@ -380,7 +427,9 @@ impl PluginManager {
                 return Err(RuntimeError::DomainDisabled(domain.clone()));
             }
             preflight_required_tools(&request, &plugin.metadata.required_tools)?;
-            return plugin.invoke(&request);
+            return plugin
+                .invoke(&request)
+                .map(InvocationObservation::without_outcome);
         }
         if let Some(plugin) = self.builtin_plugins.get(&domain) {
             if self.is_domain_disabled(&domain) {
@@ -388,7 +437,7 @@ impl PluginManager {
             }
             let required_tools = plugin.required_tools(&request);
             preflight_required_tools(&request, &required_tools)?;
-            return Ok(plugin.invoke(&request));
+            return Ok(plugin.invoke_observed(&request));
         }
 
         Err(RuntimeError::DomainNotFound(domain))
@@ -1342,6 +1391,17 @@ mod tests {
             InvocationResponse::ok(Some("ok".to_owned()))
         }
 
+        fn invoke_observed(&self, request: &InvocationRequest) -> InvocationObservation {
+            InvocationObservation::new(
+                self.invoke(request),
+                InvocationOutcome::RunCheck(RunCheckOutcome {
+                    success: false,
+                    timed_out: false,
+                    exit_code: Some(7),
+                }),
+            )
+        }
+
         fn command_catalog(&self) -> Option<CommandCatalog> {
             Some(CommandCatalog::new(
                 "builtin-echo",
@@ -1457,6 +1517,36 @@ mod tests {
         assert_eq!(response.message.as_deref(), Some("ok"));
 
         fs::remove_dir_all(&dir).expect("temp plugin dir should be removed");
+    }
+
+    #[test]
+    fn builtin_observation_is_available_without_changing_legacy_response() {
+        let mut manager = PluginManager::new();
+        manager.register_builtin(Arc::new(EchoBuiltinPlugin));
+        let globals = GlobalOptionsWire {
+            json: false,
+            quiet: false,
+            limit: None,
+        };
+
+        let observation = manager
+            .invoke_observed("echo", Vec::new(), globals.clone())
+            .expect("builtin observation should be returned");
+        assert!(observation.response.success);
+        assert_eq!(
+            observation.outcome,
+            Some(InvocationOutcome::RunCheck(RunCheckOutcome {
+                success: false,
+                timed_out: false,
+                exit_code: Some(7),
+            }))
+        );
+
+        let response = manager
+            .invoke("echo", Vec::new(), globals)
+            .expect("legacy invocation should remain available");
+        assert!(response.success);
+        assert_eq!(response.message.as_deref(), Some("ok"));
     }
 
     #[test]

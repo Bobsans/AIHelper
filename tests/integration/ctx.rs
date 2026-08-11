@@ -1,6 +1,6 @@
 use std::fs;
 
-use assert_cmd::Command;
+use super::common::IsolatedAhCommand as Command;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use tempfile::TempDir;
@@ -83,6 +83,55 @@ fn ctx_symbols_json_reports_skipped_binary_and_large_files() {
     assert_eq!(payload["command"], "ctx.symbols");
     assert_eq!(payload["skipped_binary_files"], 1);
     assert_eq!(payload["skipped_large_files"], 1);
+}
+
+#[test]
+fn ctx_symbols_skips_invalid_utf8_after_prefix_sniff() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    fs::write(temp_dir.path().join("ok.rs"), "fn good() {}\n")
+        .expect("rust file should be written");
+    let mut invalid = vec![b' '; 8193];
+    invalid.extend_from_slice(b"fn hidden() {}\n");
+    invalid.push(0xff);
+    fs::write(temp_dir.path().join("invalid.rs"), invalid)
+        .expect("invalid UTF-8 file should be written");
+
+    let root = temp_dir.path().to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "ctx", "symbols", &root])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["skipped_binary_files"], 1);
+    assert_eq!(payload["file_count"], 1);
+    assert_eq!(payload["files"][0]["symbols"][0]["name"], "good");
+}
+
+#[test]
+fn ctx_pack_skips_invalid_utf8_after_prefix_sniff() {
+    let temp_dir = TempDir::new().expect("temporary dir should be created");
+    let invalid_path = temp_dir.path().join("invalid.rs");
+    let mut invalid = vec![b' '; 8193];
+    invalid.extend_from_slice(b"fn hidden() {}\n");
+    invalid.push(0xff);
+    fs::write(&invalid_path, invalid).expect("invalid UTF-8 file should be written");
+
+    let root = temp_dir.path().to_string_lossy().to_string();
+    let assert = Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--json", "ctx", "pack", &root])
+        .assert()
+        .success();
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
+    assert_eq!(payload["skipped_binary_files"], 1);
+    assert_eq!(payload["file_count"], 1);
+    assert_eq!(payload["items"][0]["line_count"], 0);
+    assert_eq!(payload["items"][0]["symbol_count"], 0);
 }
 
 #[test]

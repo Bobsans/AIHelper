@@ -32,6 +32,8 @@ standalone `ah --version` and `ah -V` fast-path requests. Records contain:
 - sanitized CLI argv or typed MCP parameters;
 - `success` or `error` status;
 - a structured diagnostic only for errors;
+- a safe `outcome` for completed `run.check` calls, containing only child
+  `success`, `timed_out`, and `exit_code`;
 - MCP tool and request IDs when applicable, plus `job_id` for detached targets.
 
 MCP execution records retain `queue_wait_ms` for schema compatibility, but the
@@ -42,8 +44,9 @@ time and can be slightly greater. Timed-out calls use
 fields.
 
 Startup, configuration, plugin discovery, MCP server, and transport problems use
-separate `system` records. Successful result data, stdout, and stderr are not
-stored.
+separate `system` records. Other successful result data, stdout, stderr, and
+child argv are not stored. A non-zero child exit keeps the outer command status
+at `success` and records `outcome.success: false`.
 
 ## Redaction
 

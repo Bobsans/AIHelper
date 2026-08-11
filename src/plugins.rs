@@ -774,12 +774,26 @@ impl BuiltinPlugin for RunBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
+        self.invoke_observed(request).response
+    }
+
+    fn invoke_observed(&self, request: &InvocationRequest) -> ah_runtime::InvocationObservation {
         let (parsed, options) =
             match parse_args::<RunPluginCli>("run", &request.argv, request.globals.clone()) {
                 ParseOutcome::Parsed(value, options) => (value, options),
-                ParseOutcome::Response(response) => return response,
+                ParseOutcome::Response(response) => {
+                    return ah_runtime::InvocationObservation::without_outcome(response);
+                }
             };
-        map_execute("run", commands::run::execute(parsed.args, &options))
+        match commands::run::execute_observed(parsed.args, &options) {
+            Ok(outcome) => ah_runtime::InvocationObservation::new(
+                InvocationResponse::ok(None),
+                ah_runtime::InvocationOutcome::RunCheck(outcome),
+            ),
+            Err(error) => {
+                ah_runtime::InvocationObservation::without_outcome(map_execute("run", Err(error)))
+            }
+        }
     }
 
     fn command_catalog(&self) -> Option<CommandCatalog> {

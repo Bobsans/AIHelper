@@ -10,7 +10,10 @@ use std::{
 };
 
 use ah_mcp::{EventSink, McpCommandEvent, McpCommandStatus};
-use ah_runtime::executor::{ExecutionTelemetry, ExecutionTimeoutPhase};
+use ah_runtime::{
+    InvocationOutcome,
+    executor::{ExecutionTelemetry, ExecutionTimeoutPhase},
+};
 use chrono::{DateTime, Days, NaiveDate, SecondsFormat, Utc};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
@@ -160,6 +163,17 @@ impl EventLogger {
         duration: Duration,
         error: Option<&AppError>,
     ) {
+        self.record_cli_command_with_outcome(command, argv, duration, None, error);
+    }
+
+    pub(crate) fn record_cli_command_with_outcome(
+        &self,
+        command: &str,
+        argv: Vec<String>,
+        duration: Duration,
+        outcome: Option<&InvocationOutcome>,
+        error: Option<&AppError>,
+    ) {
         let diagnostic = error.map(EventDiagnostic::from_app_error);
         let status = if diagnostic.is_some() {
             "error"
@@ -175,6 +189,9 @@ impl EventLogger {
             duration_ms(duration),
             diagnostic,
         );
+        if let Some(outcome) = outcome {
+            record["outcome"] = invocation_outcome_value(*outcome);
+        }
         self.write_best_effort(&mut record, RecordKind::Command);
     }
 
@@ -338,6 +355,9 @@ impl EventLogger {
         if let Some(job_id) = event.job_id {
             record["job_id"] = Value::String(sanitize_string(&job_id, self.unredacted));
         }
+        if let Some(outcome) = event.outcome {
+            record["outcome"] = invocation_outcome_value(outcome);
+        }
         if let Some(telemetry) = telemetry {
             record["queue_wait_ms"] = json!(telemetry.queue_wait_ms);
             record["execution_ms"] = json!(telemetry.execution_ms);
@@ -363,6 +383,16 @@ impl EventLogger {
             clock,
             last_cleanup_date: Mutex::new(None),
         }
+    }
+}
+
+fn invocation_outcome_value(outcome: InvocationOutcome) -> Value {
+    match outcome {
+        InvocationOutcome::RunCheck(outcome) => json!({
+            "success": outcome.success,
+            "timed_out": outcome.timed_out,
+            "exit_code": outcome.exit_code,
+        }),
     }
 }
 
@@ -1577,6 +1607,7 @@ mod tests {
                 status: McpCommandStatus::Success,
                 duration_ms: 1,
                 diagnostic: None,
+                outcome: None,
             },
             Some(ExecutionTelemetry {
                 queue_wait_ms: 9,
@@ -1706,6 +1737,7 @@ mod tests {
                 status: McpCommandStatus::Success,
                 duration_ms: 12,
                 diagnostic: None,
+                outcome: None,
             },
             Some(ExecutionTelemetry {
                 queue_wait_ms: 2,
@@ -1732,6 +1764,7 @@ mod tests {
                     1,
                     false,
                 )),
+                outcome: None,
             },
         );
 

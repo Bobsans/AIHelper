@@ -1293,6 +1293,23 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 output.scheduler.diagnostic_code = Some(error.code().to_owned());
                 output.scheduler.hresult = hresult;
                 output.scheduler.hresult_hex = hresult_hex;
+                if let Some(current) = current.as_ref() {
+                    match self.require_pointer_definition(current) {
+                        Ok(definition)
+                            if definition.user_sid == user_sid
+                                && current.task_path == expected_task_path =>
+                        {
+                            self.observe_runtime(
+                                &mut output,
+                                &definition,
+                                SchedulerRuntimeEvidence::unverified(SchedulerState::Error),
+                            );
+                        }
+                        Ok(_) | Err(_) => {
+                            output.drift.push(invalid_drift("definition.invalid"));
+                        }
+                    }
+                }
                 output.sort_drift();
                 return output;
             }
@@ -1427,7 +1444,11 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 }
                 Some(_) => {}
             }
-            self.observe_runtime(&mut output, definition, &observed);
+            self.observe_runtime(
+                &mut output,
+                definition,
+                SchedulerRuntimeEvidence::from_observed(&observed),
+            );
         }
         if !output.drift.iter().any(is_registration_drift) {
             output.registration.status = RegistrationStatus::Installed;
@@ -1445,7 +1466,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         &self,
         output: &mut StatusOutput,
         definition: &ServiceDefinition,
-        observed: &ObservedTask,
+        scheduler: SchedulerRuntimeEvidence,
     ) {
         let runtime = match self.store.read_runtime() {
             Document::Missing => None,
@@ -1471,7 +1492,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         output.runtime.status = reduce_runtime(
             runtime.as_ref(),
             &output.readiness,
-            SchedulerRuntimeEvidence::from_observed(observed),
+            scheduler,
             output.lifecycle.status,
             instance_occupied,
         );

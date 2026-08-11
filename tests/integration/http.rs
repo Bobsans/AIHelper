@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use assert_cmd::Command;
+use super::common::IsolatedAhCommand as Command;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 

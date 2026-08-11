@@ -9,6 +9,7 @@ use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
 };
+use ah_runtime::RunCheckOutcome;
 use serde_json::{Value, json};
 
 use crate::{cli::GlobalOptions, error::AppError};
@@ -58,10 +59,23 @@ mod adapters {
 mod domain;
 
 pub fn execute(args: RunArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    execute_observed(args, options).map(|_| ())
+}
+
+pub(crate) fn execute_observed(
+    args: RunArgs,
+    options: &GlobalOptions,
+) -> Result<RunCheckOutcome, AppError> {
     match args.command {
         RunCommand::Check(check_args) => {
             let result = domain::run_check(check_args)?;
-            adapters::output::emit_check_result(result, options)
+            let outcome = RunCheckOutcome {
+                success: result.success,
+                timed_out: result.timed_out,
+                exit_code: result.exit_code,
+            };
+            adapters::output::emit_check_result(result, options)?;
+            Ok(outcome)
         }
     }
 }

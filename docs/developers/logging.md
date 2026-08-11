@@ -33,13 +33,16 @@ and slow, failed, or panicking sinks remain isolated from command execution.
 
 Records use `schema_version: 1`. Command records use `command.completed`; startup
 and infrastructure records use `system`. Optional fields are omitted instead of
-serialized as `null`, and successful result data, stdout, and stderr are not
-stored.
+serialized as `null`. Successful result data, stdout, and stderr are not stored,
+except for the typed `run.check` outcome projection containing only `success`,
+`timed_out`, and nullable `exit_code`.
 
 Status describes the outer AIHelper invocation. A command or adapter error is an
 error completion. Data returned by a successful command does not redefine that
 status: for example, a successful `run.check` response containing
-`success: false` is still logged as a successful AIHelper invocation.
+`success: false` is still logged as a successful AIHelper invocation. The child
+result is represented by `outcome.success: false`; wrapper errors and cancellation
+have no outcome.
 
 ## Redaction and Bounds
 

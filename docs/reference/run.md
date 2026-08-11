@@ -25,6 +25,11 @@ Behavior:
 - reports `success`, `timed_out`, `exit_code`, and `duration_ms`
 - `ah` exits successfully even when the checked command fails; inspect `success=false`
 
+Invocation logs preserve this distinction: the outer record remains
+`status: "success"`, while an optional `outcome` stores only child `success`,
+`timed_out`, and `exit_code`. Child stdout, stderr, and argv are not copied into
+the outcome.
+
 On Windows 10, Windows Server 2016, and newer, native executables are assigned
 to a Job Object during process creation so timeout and cancellation cannot race
 with descendant startup. Batch scripts retain the same process-tree guarantee.

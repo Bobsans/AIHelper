@@ -20,7 +20,7 @@ use ah_plugin_api::{
     TypedInvocationResponse,
 };
 use ah_runtime::{
-    PluginManager, RegisteredCommand, RuntimeError,
+    InvocationOutcome, PluginManager, RegisteredCommand, RunCheckOutcome, RuntimeError,
     executor::{ExecutionTelemetry, Executor},
 };
 use axum::{
@@ -90,6 +90,7 @@ pub struct McpCommandEvent {
     pub status: McpCommandStatus,
     pub duration_ms: u64,
     pub diagnostic: Option<CommandError>,
+    pub outcome: Option<InvocationOutcome>,
 }
 
 pub trait EventSink: Send + Sync {
@@ -606,6 +607,8 @@ impl McpServer {
         {
             let (status, diagnostic) =
                 command_event_outcome(&outcome.result, canonical_command.as_deref());
+            let command_outcome =
+                command_event_run_check_outcome(&outcome.result, canonical_command.as_deref());
             dispatcher.dispatch(
                 McpCommandEvent {
                     command: canonical_command.unwrap_or_else(|| tool.clone()),
@@ -616,6 +619,7 @@ impl McpServer {
                     status,
                     duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                     diagnostic,
+                    outcome: command_outcome,
                 },
                 outcome.telemetry,
             );
@@ -1746,6 +1750,38 @@ fn command_event_outcome(
     }
 }
 
+fn command_event_run_check_outcome(
+    result: &Result<CallToolResult, rmcp::ErrorData>,
+    canonical_command: Option<&str>,
+) -> Option<InvocationOutcome> {
+    let result = result.as_ref().ok()?;
+    if result.is_error == Some(true) {
+        return None;
+    }
+    run_check_outcome(canonical_command?, result.structured_content.as_ref())
+}
+
+pub(crate) fn run_check_outcome(
+    canonical_command: &str,
+    data: Option<&Value>,
+) -> Option<InvocationOutcome> {
+    if canonical_command != "run.check" {
+        return None;
+    }
+    let data = data?;
+    let success = data.get("success")?.as_bool()?;
+    let timed_out = data.get("timed_out")?.as_bool()?;
+    let exit_code = match data.get("exit_code")? {
+        Value::Null => None,
+        value => Some(i32::try_from(value.as_i64()?).ok()?),
+    };
+    Some(InvocationOutcome::RunCheck(RunCheckOutcome {
+        success,
+        timed_out,
+        exit_code,
+    }))
+}
+
 fn adapter_command_error(
     canonical_command: Option<&str>,
     code: &'static str,
@@ -1974,7 +2010,7 @@ mod tests {
         TypedInvocationResponse, plugin_capabilities,
     };
     use ah_runtime::{
-        BuiltinPlugin, PluginManager, RuntimeError,
+        BuiltinPlugin, InvocationOutcome, PluginManager, RunCheckOutcome, RuntimeError,
         executor::{
             ExecutionFuture, ExecutionTelemetry, ExecutionTimeoutPhase, ObservedExecution,
             ObservedExecutionFuture,
@@ -1990,7 +2026,8 @@ mod tests {
         EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
         McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
         RISK_META_KEY, ShutdownReader, ShutdownTracker, peer_generation_matches,
-        refresh_catalog_after_job, spawn_best_effort_notification, wait_for_transport,
+        refresh_catalog_after_job, run_check_outcome, spawn_best_effort_notification,
+        wait_for_transport,
     };
 
     struct TypedPlugin;
@@ -2280,7 +2317,31 @@ mod tests {
             status: McpCommandStatus::Success,
             duration_ms: 1,
             diagnostic: None,
+            outcome: None,
         }
+    }
+
+    #[test]
+    fn run_check_outcome_extracts_only_allowlisted_fields() {
+        let data = json!({
+            "success": false,
+            "timed_out": false,
+            "exit_code": 7,
+            "stdout": "secret output",
+            "stderr": "secret error",
+            "argv": ["secret-command"]
+        });
+
+        assert_eq!(
+            run_check_outcome("run.check", Some(&data)),
+            Some(InvocationOutcome::RunCheck(RunCheckOutcome {
+                success: false,
+                timed_out: false,
+                exit_code: Some(7),
+            }))
+        );
+        assert_eq!(run_check_outcome("search.text", Some(&data)), None);
+        assert_eq!(run_check_outcome("run.check", Some(&json!({}))), None);
     }
 
     #[test]

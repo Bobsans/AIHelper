@@ -1,6 +1,58 @@
-use std::{fs, path::Path, process::Command as ProcessCommand};
+use std::{
+    ffi::OsStr,
+    fs,
+    ops::{Deref, DerefMut},
+    path::Path,
+    process::Command as ProcessCommand,
+};
 
+use assert_cmd::cargo::CargoError;
 use tempfile::TempDir;
+
+pub struct IsolatedAhCommand {
+    command: assert_cmd::Command,
+    config_dir: TempDir,
+}
+
+impl IsolatedAhCommand {
+    pub fn cargo_bin<S: AsRef<str>>(name: S) -> Result<Self, CargoError> {
+        let command = assert_cmd::Command::cargo_bin(name)?;
+        let config_dir = TempDir::new().map_err(CargoError::with_cause)?;
+        Ok(Self::with_config_dir(command, config_dir))
+    }
+
+    pub fn new<S: AsRef<OsStr>>(program: S) -> Self {
+        let command = assert_cmd::Command::new(program);
+        let config_dir = TempDir::new().expect("temporary config dir should be created");
+        Self::with_config_dir(command, config_dir)
+    }
+
+    fn with_config_dir(mut command: assert_cmd::Command, config_dir: TempDir) -> Self {
+        command.env("AH_CONFIG_DIR", config_dir.path());
+        Self {
+            command,
+            config_dir,
+        }
+    }
+
+    pub fn config_dir(&self) -> &Path {
+        self.config_dir.path()
+    }
+}
+
+impl Deref for IsolatedAhCommand {
+    type Target = assert_cmd::Command;
+
+    fn deref(&self) -> &Self::Target {
+        &self.command
+    }
+}
+
+impl DerefMut for IsolatedAhCommand {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.command
+    }
+}
 
 pub fn git_available() -> bool {
     ProcessCommand::new("git")
@@ -70,4 +122,14 @@ pub fn create_dir_symlink(link: &Path, target: &Path) -> bool {
     {
         std::os::windows::fs::symlink_dir(target, link).is_ok()
     }
+}
+
+#[test]
+fn isolated_ah_commands_use_distinct_owned_config_directories() {
+    let first = IsolatedAhCommand::cargo_bin("ah").expect("binary should compile");
+    let second = IsolatedAhCommand::cargo_bin("ah").expect("binary should compile");
+
+    assert_ne!(first.config_dir(), second.config_dir());
+    assert!(first.config_dir().exists());
+    assert!(second.config_dir().exists());
 }

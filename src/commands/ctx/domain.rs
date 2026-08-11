@@ -203,10 +203,17 @@ fn process_pack_entry(
             if !is_text_candidate(path, file_info.size_bytes) {
                 (0usize, Vec::new())
             } else {
-                let content = adapters::io::read_to_string(path)?;
-                let line_count = content.lines().count();
-                let symbols = extract_symbols(path, &content);
-                (line_count, symbols)
+                match adapters::io::read_text(path)? {
+                    adapters::io::TextRead::Text(content) => {
+                        let line_count = content.lines().count();
+                        let symbols = extract_symbols(path, &content);
+                        (line_count, symbols)
+                    }
+                    adapters::io::TextRead::Binary => {
+                        register_skip_reason(skip_stats, TextFileSkipReason::Binary);
+                        (0usize, Vec::new())
+                    }
+                }
             }
         }
         TextFileDecision::Skip(reason) => {
@@ -330,7 +337,14 @@ fn collect_symbols_for_file(
         return Ok(());
     }
 
-    let mut symbols = extract_symbols(path, &adapters::io::read_to_string(path)?);
+    let content = match adapters::io::read_text(path)? {
+        adapters::io::TextRead::Text(content) => content,
+        adapters::io::TextRead::Binary => {
+            register_skip_reason(skip_stats, TextFileSkipReason::Binary);
+            return Ok(());
+        }
+    };
+    let mut symbols = extract_symbols(path, &content);
     if symbols.len() > preset_settings.symbols_per_file_limit {
         symbols.truncate(preset_settings.symbols_per_file_limit);
     }

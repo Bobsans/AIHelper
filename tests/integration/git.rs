@@ -1,6 +1,6 @@
 use std::{fs, process::Command as ProcessCommand};
 
-use assert_cmd::Command;
+use super::common::IsolatedAhCommand as Command;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 
 use crate::common::{git_available, init_git_repo_with_one_commit};

@@ -494,6 +494,16 @@ fn status_reports_sorted_configuration_drift() {
 fn status_scheduler_error_does_not_change_durable_state() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
+    let (_, definition) = harness.installed_definition();
+    harness.write_ready_runtime(
+        &definition,
+        harness.ids.old_instance_id,
+        harness.ids.old_pid,
+    );
+    harness.runtime.set_sections([ready_section(
+        harness.ids.old_instance_id,
+        harness.ids.old_pid,
+    )]);
     let before = harness.durable_bytes();
     harness.fail_next_scheduler_operation(SchedulerFaultPoint::Inspect);
 
@@ -508,6 +518,31 @@ fn status_scheduler_error_does_not_change_durable_state() {
         status.scheduler.diagnostic_code.as_deref(),
         Some("MCP_SERVICE_SCHEDULER_FAILED")
     );
+    assert_eq!(status.readiness.status, ReadinessStatus::Ready);
+    assert_eq!(status.runtime.status, RuntimeStatus::Ready);
+    assert_eq!(harness.durable_bytes(), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn status_scheduler_error_does_not_probe_invalid_definition() {
+    let harness = LifecycleHarness::new();
+    harness.install_no_start();
+    let (pointer, _) = harness.installed_definition();
+    std::fs::write(&pointer.definition_path, b"invalid definition").unwrap();
+    let before = harness.durable_bytes();
+    harness.fail_next_scheduler_operation(SchedulerFaultPoint::Inspect);
+
+    let status = harness.service.status();
+
+    assert_eq!(
+        status.registration.status,
+        RegistrationStatus::SchedulerError
+    );
+    assert_eq!(status.readiness.status, ReadinessStatus::NotChecked);
+    assert_eq!(status.runtime.status, RuntimeStatus::Stopped);
+    assert_eq!(status.drift.len(), 1);
+    assert_eq!(status.drift[0].field, "definition.invalid");
     assert_eq!(harness.durable_bytes(), before);
 }
 

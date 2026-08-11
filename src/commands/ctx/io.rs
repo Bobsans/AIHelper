@@ -14,6 +14,12 @@ pub(crate) struct WalkEntry {
     pub(crate) is_file: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TextRead {
+    Text(String),
+    Binary,
+}
+
 pub(crate) fn inspect_text_file(
     path: &Path,
     policy: &TextFilePolicy,
@@ -21,8 +27,12 @@ pub(crate) fn inspect_text_file(
     safety::inspect_text_file(path, *policy)
 }
 
-pub(crate) fn read_to_string(path: &Path) -> Result<String, AppError> {
-    fs::read_to_string(path).map_err(|source| AppError::file_read(path.to_path_buf(), source))
+pub(crate) fn read_text(path: &Path) -> Result<TextRead, AppError> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(TextRead::Text(content)),
+        Err(source) if source.kind() == std::io::ErrorKind::InvalidData => Ok(TextRead::Binary),
+        Err(source) => Err(AppError::file_read(path.to_path_buf(), source)),
+    }
 }
 
 pub(crate) fn symlink_metadata(path: &Path) -> Result<fs::Metadata, AppError> {

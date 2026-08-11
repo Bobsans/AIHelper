@@ -175,6 +175,17 @@ fn logs_external_check_failure_as_success_and_redacts_cli_secrets() {
         .expect("run.check should be logged");
     assert_eq!(check["status"], "success");
     assert!(check.get("diagnostic").is_none());
+    assert_eq!(
+        check["outcome"],
+        serde_json::json!({
+            "success": false,
+            "timed_out": false,
+            "exit_code": 7
+        })
+    );
+    let serialized_check = serde_json::to_string(check).unwrap();
+    assert!(!serialized_check.contains("stdout"));
+    assert!(!serialized_check.contains("stderr"));
 
     let http = commands
         .iter()

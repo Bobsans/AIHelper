@@ -5,7 +5,7 @@ use std::{
 };
 
 use ah_runtime::{
-    PluginLoadReport, PluginManager, PluginSource,
+    InvocationOutcome, PluginLoadReport, PluginManager, PluginSource,
     executor::{Executor, ParallelExecutor},
 };
 
@@ -127,14 +127,15 @@ pub(crate) fn run() -> Result<(), AppError> {
         managed_runner,
     );
     if let Some(logger) = &logger {
-        logger.record_cli_command(
+        logger.record_cli_command_with_outcome(
             &command_name,
             logged_argv,
             started.elapsed(),
+            result.as_ref().ok().and_then(|outcome| outcome.as_ref()),
             result.as_ref().err(),
         );
     }
-    result
+    result.map(|_| ())
 }
 
 fn is_installed_smoke_fast_path(raw_args: &[OsString]) -> bool {
@@ -393,7 +394,7 @@ fn execution(
     mut settings: PluginSettings,
     logger: Option<Arc<EventLogger>>,
     managed_runner: Option<Arc<ManagedRunner>>,
-) -> Result<(), AppError> {
+) -> Result<Option<InvocationOutcome>, AppError> {
     match command {
         RuntimeCommand::McpServe {
             transport,
@@ -411,35 +412,40 @@ fn execution(
             options,
             logger,
             managed_runner,
-        ),
+        )
+        .map(|_| None),
         RuntimeCommand::PluginsList {
             state_filter,
             options,
-        } => crate::execute_plugins_list(&manager, state_filter, options),
+        } => crate::execute_plugins_list(&manager, state_filter, options).map(|_| None),
         RuntimeCommand::PluginsEnable { domain, options } => {
-            crate::execute_plugins_enable(&manager, &mut settings, &domain, options)
+            crate::execute_plugins_enable(&manager, &mut settings, &domain, options).map(|_| None)
         }
         RuntimeCommand::PluginsDisable { domain, options } => {
-            crate::execute_plugins_disable(&manager, &mut settings, &domain, options)
+            crate::execute_plugins_disable(&manager, &mut settings, &domain, options).map(|_| None)
         }
         RuntimeCommand::PluginsReset {
             domain,
             all,
             options,
-        } => crate::execute_plugins_reset(&manager, &mut settings, domain.as_deref(), all, options),
+        } => crate::execute_plugins_reset(&manager, &mut settings, domain.as_deref(), all, options)
+            .map(|_| None),
         RuntimeCommand::AiInfo { domain, options } => {
-            ai::execute_info(&manager, domain.as_deref(), options)
+            ai::execute_info(&manager, domain.as_deref(), options).map(|_| None)
         }
-        RuntimeCommand::Upgrade { request, options } => crate::updater::execute(request, options),
+        RuntimeCommand::Upgrade { request, options } => {
+            crate::updater::execute(request, options).map(|_| None)
+        }
         RuntimeCommand::Invoke {
             domain,
             argv,
             options,
         } => {
-            let response = manager
-                .invoke(&domain, argv, options.to_wire())
+            let observation = manager
+                .invoke_observed(&domain, argv, options.to_wire())
                 .map_err(crate::map_runtime_error)?;
-            crate::handle_response(response, options.output, options.quiet)
+            crate::handle_response(observation.response, options.output, options.quiet)?;
+            Ok(observation.outcome)
         }
     }
 }

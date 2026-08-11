@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+use super::common::IsolatedAhCommand as Command;
 use predicates::str::contains;
 
 #[test]

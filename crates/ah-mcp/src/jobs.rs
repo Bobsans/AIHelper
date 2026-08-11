@@ -15,7 +15,7 @@ use ah_runtime::{
 
 use crate::{
     events::EventDispatcher,
-    server::{McpCommandEvent, McpCommandStatus},
+    server::{McpCommandEvent, McpCommandStatus, run_check_outcome},
 };
 
 pub(crate) const DEFAULT_JOB_CAPACITY: usize = 128;
@@ -200,6 +200,7 @@ impl JobRegistry {
                     McpCommandStatus::Error
                 };
                 let diagnostic = response.error.clone();
+                let outcome = job_run_check_outcome(status, &response, &event.command);
                 (
                     event.dispatcher,
                     McpCommandEvent {
@@ -212,6 +213,7 @@ impl JobRegistry {
                         duration_ms: u64::try_from(event.started.elapsed().as_millis())
                             .unwrap_or(u64::MAX),
                         diagnostic,
+                        outcome,
                     },
                 )
             });
@@ -321,6 +323,17 @@ impl JobRegistry {
     }
 }
 
+fn job_run_check_outcome(
+    status: JobStatus,
+    response: &TypedInvocationResponse,
+    command: &str,
+) -> Option<ah_runtime::InvocationOutcome> {
+    if status != JobStatus::Succeeded || !response.success {
+        return None;
+    }
+    run_check_outcome(command, response.data.as_ref())
+}
+
 fn oldest_completed(records: &HashMap<String, JobRecord>) -> Option<String> {
     records
         .iter()
@@ -353,7 +366,11 @@ fn boot_nonce() -> u64 {
 mod tests {
     use std::time::Duration;
 
-    use super::{JobRegistry, JobRegistryError};
+    use ah_plugin_api::TypedInvocationResponse;
+    use ah_runtime::{InvocationOutcome, RunCheckOutcome};
+    use serde_json::json;
+
+    use super::{JobRegistry, JobRegistryError, JobStatus, job_run_check_outcome};
 
     #[test]
     fn capacity_rejects_when_every_record_is_active() {
@@ -381,6 +398,37 @@ mod tests {
             registry
                 .reserve("ah.two".to_owned(), "two".to_owned())
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn succeeded_run_check_job_emits_safe_outcome_only() {
+        let response = TypedInvocationResponse::success(
+            json!({
+                "success": false,
+                "timed_out": true,
+                "exit_code": null,
+                "stdout": "secret output",
+                "stderr": "secret error"
+            }),
+            None,
+        );
+
+        assert_eq!(
+            job_run_check_outcome(JobStatus::Succeeded, &response, "run.check"),
+            Some(InvocationOutcome::RunCheck(RunCheckOutcome {
+                success: false,
+                timed_out: true,
+                exit_code: None,
+            }))
+        );
+        assert_eq!(
+            job_run_check_outcome(JobStatus::TimedOut, &response, "run.check"),
+            None
+        );
+        assert_eq!(
+            job_run_check_outcome(JobStatus::Succeeded, &response, "search.text"),
+            None
         );
     }
 }

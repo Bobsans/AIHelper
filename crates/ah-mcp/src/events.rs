@@ -151,6 +151,7 @@ mod tests {
             status: McpCommandStatus::Success,
             duration_ms: 1,
             diagnostic: None,
+            outcome: None,
         }
     }
 
