@@ -83,11 +83,6 @@ fn try_acquire_windows(path: &Path) -> Result<Option<FileLease>, AppError> {
     use windows_sys::Win32::System::Threading::CreateMutexW;
     use windows_sys::core::PCWSTR;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|source| AppError::file_write(parent.to_path_buf(), source))?;
-    }
-
     // Convert path to a valid Windows mutex name (no backslashes, limited length)
     let mutex_name = format!(
         "Global\\AIHelper-MCP-{}",

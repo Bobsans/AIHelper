@@ -7,11 +7,24 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-11
+
+### Changed
+
+- Completed `run.check` invocation logs include an optional child outcome with
+  only `success`, `timed_out`, and `exit_code`; outer command status and the
+  released CLI, JSON/MCP, and plugin C ABI contracts remain unchanged.
+
 ### Fixed
 
 - Windows managed MCP launches use a thin windowless service launcher,
   eliminating transient console flashes and the duplicate full-size binary
   while preserving Task Scheduler process ownership.
+- Managed MCP status preserves scheduler failures while still reporting trusted
+  runtime and readiness evidence, and Task Scheduler readback uses the exact
+  rooted task identity.
+- `ctx pack` and `ctx symbols` skip files whose complete contents are not valid
+  UTF-8 even when the invalid byte appears after the initial binary sniff.
 
 ## [1.2.0] - 2026-08-06
 
@@ -301,7 +314,8 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/Bobsans/AIHelper/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Bobsans/AIHelper/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Bobsans/AIHelper/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Bobsans/AIHelper/compare/v0.6.3...v1.0.0

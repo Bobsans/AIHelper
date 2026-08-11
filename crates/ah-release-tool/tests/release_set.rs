@@ -28,7 +28,7 @@ fn creates_and_verifies_exact_nine_file_release_set() {
             assets_dir: input.path().to_path_buf(),
             output_dir: output.clone(),
             repository: "example/aihelper".to_owned(),
-            tag: "v1.2.0".to_owned(),
+            tag: release_tag(),
             minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
@@ -52,7 +52,10 @@ fn creates_and_verifies_exact_nine_file_release_set() {
         assert!(!signature.ends_with(b"\n"));
         let verified = verify_manifest(&manifest, &signature, &registry).unwrap();
         assert_eq!(verified.manifest().release.target, profile.target);
-        assert_eq!(verified.manifest().release.version, "1.2.0");
+        assert_eq!(
+            verified.manifest().release.version,
+            env!("CARGO_PKG_VERSION")
+        );
         assert_eq!(verified.manifest().minimum_updater_version, "1.0.0");
         assert_eq!(
             verified
@@ -76,8 +79,9 @@ fn creates_and_verifies_exact_nine_file_release_set() {
         assert_eq!(
             verified.manifest().archive.url,
             format!(
-                "https://github.com/example/aihelper/releases/download/v1.2.0/{}",
-                profile.asset_name
+                "https://github.com/example/aihelper/releases/download/{}/{}",
+                release_tag(),
+                profile.asset_name,
             )
         );
     }
@@ -98,7 +102,7 @@ fn leaves_no_output_on_metadata_or_archive_failure() {
             assets_dir: input.path().to_path_buf(),
             output_dir: output.clone(),
             repository: "unsafe/repository/extra".to_owned(),
-            tag: "v1.2.0".to_owned(),
+            tag: release_tag(),
             minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
@@ -114,7 +118,7 @@ fn leaves_no_output_on_metadata_or_archive_failure() {
             assets_dir: input.path().to_path_buf(),
             output_dir: output.clone(),
             repository: "example/aihelper".to_owned(),
-            tag: "v1.2.0".to_owned(),
+            tag: release_tag(),
             minimum_updater_version: "1.0.0".to_owned(),
         },
         &signing,
@@ -170,7 +174,7 @@ fn rejects_invalid_or_newer_minimum_updater_versions() {
                 assets_dir: input.path().to_path_buf(),
                 output_dir: output.clone(),
                 repository: "example/aihelper".to_owned(),
-                tag: "v1.2.0".to_owned(),
+                tag: release_tag(),
                 minimum_updater_version: minimum_updater_version.to_owned(),
             },
             &signing,
@@ -188,6 +192,10 @@ fn signing_material(seed: [u8; 32]) -> SigningMaterial {
         &URL_SAFE_NO_PAD.encode(signing.verifying_key().to_bytes()),
     )
     .unwrap()
+}
+
+fn release_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
 fn write_profile_archive(directory: &Path, profile: ReleaseProfile) {

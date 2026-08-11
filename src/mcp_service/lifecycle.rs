@@ -1510,15 +1510,6 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     fn observe_lifecycle(&self, output: &mut StatusOutput) {
-        if !self.store.paths().lifecycle_lock.exists() {
-            if matches!(
-                self.store.read_lifecycle(),
-                Document::Invalid(_) | Document::UnsupportedVersion(_)
-            ) {
-                output.drift.push(invalid_drift("lifecycle.invalid"));
-            }
-            return;
-        }
         match FileLease::try_acquire(&self.store.paths().lifecycle_lock) {
             Ok(Some(lease)) => {
                 drop(lease);
@@ -1708,9 +1699,6 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     fn instance_lease_is_occupied(&self) -> bool {
-        if !self.store.paths().instance_lock.exists() {
-            return false;
-        }
         match FileLease::try_acquire(&self.store.paths().instance_lock) {
             Ok(Some(lease)) => {
                 drop(lease);
