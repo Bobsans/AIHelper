@@ -12,9 +12,15 @@ fn upgrade_rollback_routes_before_configuration_and_plugins() {
         .failure();
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    let assertion = assertion.stderr(contains("UPDATER_INSTALLATION"));
+    let assertion = assertion
+        .stderr(contains(
+            "ah: self-update rollback requires a managed installation",
+        ))
+        .stderr(contains("UPDATER_INSTALLATION").not());
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
-    let assertion = assertion.stderr(contains("UPDATER_UNSUPPORTED_PLATFORM"));
+    let assertion = assertion
+        .stderr(contains("ah:"))
+        .stderr(contains("UPDATER_UNSUPPORTED_PLATFORM").not());
 
     assertion
         .stderr(contains("CONFIG_INVALID").not())

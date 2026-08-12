@@ -112,7 +112,7 @@ fn http_body_assertion_fails_when_response_is_truncated() {
     .assert()
     .failure()
     .stdout(contains("response body was truncated"))
-    .stderr(contains("HTTP_ASSERTION_FAILED"));
+    .stderr(contains("\"code\": \"HTTP_ASSERTION_FAILED\""));
 
     handle.join().expect("server thread should finish");
 }
@@ -206,7 +206,8 @@ cases:
         .failure()
         .stdout(contains("FAIL unhealthy"))
         .stdout(contains("\u{1b}").not())
-        .stderr(contains("HTTP_ASSERTION_FAILED"));
+        .stderr(contains("ah: 1 of 1 HTTP assertion case(s) failed"))
+        .stderr(contains("HTTP_ASSERTION_FAILED").not());
 
     handle.join().expect("server thread should finish");
 }

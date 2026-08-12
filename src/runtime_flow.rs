@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ah_plugin_api::CommandCatalog;
 use ah_runtime::{
     InvocationOutcome, PluginLoadReport, PluginManager, PluginSource,
     executor::{Executor, ParallelExecutor},
@@ -13,7 +14,7 @@ use crate::{
     ai,
     cli::{self, CliParseResult, RuntimeCommand},
     config::ConfigContext,
-    error::AppError,
+    error::{AppError, CommandSuggestion, FollowUpSuggestion, suggested_subcommand},
     event_log::{EventDiagnostic, EventLogger, SystemEventSeverity},
     mcp_service::{
         command::EarlyRoute,
@@ -441,13 +442,52 @@ fn execution(
             argv,
             options,
         } => {
+            let plugin_metadata = manager.list_enabled_plugins();
+            let command_catalog = manager.command_catalog_for_domain(&domain).ok().flatten();
             let observation = manager
                 .invoke_observed(&domain, argv, options.to_wire())
-                .map_err(crate::map_runtime_error)?;
-            crate::handle_response(observation.response, options.output, options.quiet)?;
+                .map_err(|error| match error {
+                    ah_runtime::RuntimeError::DomainNotFound(domain) => {
+                        let suggestion =
+                            crate::cli::suggest_top_level_command(&domain, &plugin_metadata);
+                        AppError::unknown_command(domain, suggestion)
+                    }
+                    other => crate::map_runtime_error(other),
+                })?;
+            crate::handle_response(observation.response, options.output, options.quiet).map_err(
+                |error| decorate_invocation_error(error, &domain, command_catalog.as_ref()),
+            )?;
             Ok(observation.outcome)
         }
     }
+}
+
+fn decorate_invocation_error(
+    error: AppError,
+    domain: &str,
+    catalog: Option<&CommandCatalog>,
+) -> AppError {
+    if error.code() != "INVALID_ARGUMENT" {
+        return error;
+    }
+    let detail = error.detail_message();
+    let Some(candidate) = suggested_subcommand(&detail) else {
+        return error;
+    };
+    let suggestion_description = catalog.and_then(|catalog| {
+        catalog
+            .commands
+            .iter()
+            .find(|command| command.id.rsplit('.').next() == Some(candidate))
+            .map(|command| command.title.clone())
+    });
+    let follow_up = (candidate == "version" && domain != "version").then(|| {
+        FollowUpSuggestion::new(
+            "To show the AIHelper version, run:",
+            CommandSuggestion::new("ah --version", None),
+        )
+    });
+    error.with_suggestion_context(suggestion_description, follow_up)
 }
 
 struct McpServeConfig {

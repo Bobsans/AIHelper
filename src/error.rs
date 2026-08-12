@@ -9,6 +9,17 @@ use crate::output::{TextFormatter, TextStyle};
 pub enum AppError {
     #[error("{message}")]
     External { code: String, message: String },
+    #[error("unknown command domain: {command}")]
+    UnknownCommand {
+        command: String,
+        suggestion: Option<CommandSuggestion>,
+    },
+    #[error("{source}")]
+    SuggestionContext {
+        source: Box<AppError>,
+        suggestion_description: Option<String>,
+        follow_up: Option<FollowUpSuggestion>,
+    },
     #[error("{diagnostic}")]
     Diagnostic { diagnostic: ErrorDiagnostic },
     #[error("invalid argument: {0}")]
@@ -69,6 +80,8 @@ impl AppError {
     pub fn code(&self) -> &str {
         match self {
             Self::External { code, .. } => code.as_str(),
+            Self::UnknownCommand { .. } => "DOMAIN_NOT_FOUND",
+            Self::SuggestionContext { source, .. } => source.code(),
             Self::Diagnostic { diagnostic } => diagnostic.code.as_str(),
             Self::InvalidArgument(message) => {
                 classify_invalid_argument(&normalize_message(message))
@@ -118,10 +131,11 @@ impl AppError {
 
         let rendered = self.rendered();
         let formatter = TextFormatter::stderr();
-        eprintln!("{}", render_error_line(&rendered, formatter));
-        if let Some(hint) = concise_hint(&rendered.code) {
-            eprintln!("{}", render_hint_line(hint, formatter));
-        }
+        let invocation = std::env::args().skip(1).collect::<Vec<_>>();
+        eprintln!(
+            "{}",
+            render_console_diagnostic(&self.console_diagnostic(&rendered, &invocation), formatter)
+        );
     }
 
     pub fn invalid_argument(message: impl Into<String>) -> Self {
@@ -132,6 +146,31 @@ impl AppError {
         Self::External {
             code: code.into(),
             message: message.into(),
+        }
+    }
+
+    pub fn unknown_command(
+        command: impl Into<String>,
+        suggestion: Option<CommandSuggestion>,
+    ) -> Self {
+        Self::UnknownCommand {
+            command: command.into(),
+            suggestion,
+        }
+    }
+
+    pub fn with_suggestion_context(
+        self,
+        suggestion_description: Option<String>,
+        follow_up: Option<FollowUpSuggestion>,
+    ) -> Self {
+        if suggestion_description.is_none() && follow_up.is_none() {
+            return self;
+        }
+        Self::SuggestionContext {
+            source: Box::new(self),
+            suggestion_description,
+            follow_up,
         }
     }
 
@@ -189,6 +228,8 @@ impl AppError {
     pub fn detail_message(&self) -> String {
         match self {
             Self::External { message, .. } => normalize_message(message),
+            Self::UnknownCommand { command, .. } => format!("unknown command domain: {command}"),
+            Self::SuggestionContext { source, .. } => source.detail_message(),
             Self::Diagnostic { diagnostic } => normalize_message(&diagnostic.cause),
             Self::InvalidArgument(message) => normalize_message(message),
             Self::ChangeDirectory { path, source } => {
@@ -234,6 +275,12 @@ impl AppError {
     fn rendered(&self) -> RenderedError {
         match self {
             Self::External { code, message } => render_external(code, message),
+            Self::UnknownCommand { command, .. } => RenderedError {
+                code: "DOMAIN_NOT_FOUND".to_owned(),
+                message: format!("unknown command domain: {command}"),
+                context: Vec::new(),
+            },
+            Self::SuggestionContext { source, .. } => source.rendered(),
             Self::Diagnostic { diagnostic } => RenderedError {
                 code: diagnostic.code.clone(),
                 message: normalize_message(&diagnostic.message),
@@ -376,6 +423,7 @@ impl AppError {
     pub fn diagnostic(&self) -> ErrorDiagnostic {
         match self {
             Self::Diagnostic { diagnostic } => diagnostic.clone(),
+            Self::SuggestionContext { source, .. } => source.diagnostic(),
             _ => {
                 let rendered = self.rendered();
                 ErrorDiagnostic::new(
@@ -387,6 +435,113 @@ impl AppError {
                     self.exit_code(),
                 )
             }
+        }
+    }
+
+    fn console_diagnostic(
+        &self,
+        rendered: &RenderedError,
+        invocation: &[String],
+    ) -> ConsoleDiagnostic {
+        if let Self::SuggestionContext {
+            source,
+            suggestion_description,
+            follow_up,
+        } = self
+        {
+            let source_rendered = source.rendered();
+            let mut diagnostic = source.console_diagnostic(&source_rendered, invocation);
+            if let Some(suggestion) = &mut diagnostic.suggestion {
+                suggestion.description = suggestion_description.clone();
+            }
+            diagnostic.follow_up = follow_up.clone();
+            return diagnostic;
+        }
+        if rendered.code == "INVALID_ARGUMENT" {
+            return console_diagnostic_from_invalid_argument(&self.detail_message(), invocation);
+        }
+        match self {
+            Self::UnknownCommand {
+                command,
+                suggestion,
+            } => ConsoleDiagnostic {
+                message: format!("'{command}' is not a command."),
+                suggestion: suggestion.clone(),
+                usage: vec!["ah <domain> <command> [options]".to_owned()],
+                help_command: Some("ah --help".to_owned()),
+                ..ConsoleDiagnostic::default()
+            },
+            Self::InvalidArgument(message) => {
+                console_diagnostic_from_invalid_argument(message, invocation)
+            }
+            Self::Diagnostic { diagnostic } => {
+                let message = normalize_message(&diagnostic.message);
+                let cause = normalize_message(&diagnostic.cause);
+                let (message, details) = if diagnostic.code == "REGEX_INVALID" {
+                    (
+                        format!(
+                            "invalid regular expression: {}",
+                            regex_error_summary(&cause)
+                                .or_else(|| regex_error_summary(&message))
+                                .unwrap_or_else(|| "invalid expression".to_owned())
+                        ),
+                        Vec::new(),
+                    )
+                } else {
+                    let details = (cause != message && !cause.is_empty())
+                        .then(|| format!("Reason: {cause}"))
+                        .into_iter()
+                        .collect();
+                    (message, details)
+                };
+                ConsoleDiagnostic {
+                    message,
+                    details,
+                    hints: human_hint(&diagnostic.code)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
+                    ..ConsoleDiagnostic::default()
+                }
+            }
+            _ => ConsoleDiagnostic {
+                message: human_error_message(self, rendered),
+                hints: human_hint(&rendered.code)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                ..ConsoleDiagnostic::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSuggestion {
+    pub command: String,
+    pub description: Option<String>,
+}
+
+impl CommandSuggestion {
+    pub fn new(command: impl Into<String>, description: Option<String>) -> Self {
+        Self {
+            command: command.into(),
+            description,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowUpSuggestion {
+    pub label: String,
+    pub suggestion: CommandSuggestion,
+}
+
+impl FollowUpSuggestion {
+    pub fn new(label: impl Into<String>, suggestion: CommandSuggestion) -> Self {
+        Self {
+            label: label.into(),
+            suggestion,
         }
     }
 }
@@ -402,6 +557,17 @@ struct RenderedError {
 struct RenderedContext {
     label: &'static str,
     value: String,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ConsoleDiagnostic {
+    message: String,
+    details: Vec<String>,
+    suggestion: Option<CommandSuggestion>,
+    follow_up: Option<FollowUpSuggestion>,
+    usage: Vec<String>,
+    help_command: Option<String>,
+    hints: Vec<String>,
 }
 
 fn render_invalid_argument(raw: &str) -> RenderedError {
@@ -498,31 +664,248 @@ fn concise_error_message(error: &RenderedError) -> String {
     }
 }
 
-fn concise_hint(code: &str) -> Option<&'static str> {
+fn human_error_message(error: &AppError, rendered: &RenderedError) -> String {
+    match rendered.code.as_str() {
+        "REGEX_INVALID" => format!(
+            "invalid regular expression: {}",
+            concise_error_message(rendered)
+        ),
+        "PATH_NOT_FOUND" | "PATH_INVALID_TYPE" | "TASK_NOT_FOUND" | "DOMAIN_DISABLED" => {
+            rendered.message.clone()
+        }
+        _ => error.detail_message(),
+    }
+}
+
+fn human_hint(code: &str) -> Option<&'static str> {
     match code {
         "PATH_NOT_FOUND" | "PATH_INVALID_TYPE" | "FILE_NOT_FOUND" | "DIRECTORY_NOT_FOUND" => {
-            Some("check path or --cwd")
+            Some("Check the path or set a different working directory with --cwd.")
         }
-        "REGEX_INVALID" => Some("fix regex or drop --regex"),
-        "SYMLINK_TRAVERSAL_BLOCKED" => Some("use --follow-symlinks"),
-        "TASK_NOT_FOUND" => Some("run ah task list"),
-        "DOMAIN_NOT_FOUND" => Some("run ah plugins list"),
-        "DOMAIN_DISABLED" => Some("enable domain or choose another"),
-        "DEPENDENCY_MISSING" => Some("install the required tool and ensure it is on PATH"),
+        "REGEX_INVALID" => Some("Fix the expression or remove --regex to search literally."),
+        "SYMLINK_TRAVERSAL_BLOCKED" => {
+            Some("Use --follow-symlinks if following this link is intentional.")
+        }
+        "TASK_NOT_FOUND" => Some("Run 'ah task list' to see saved tasks."),
+        "DOMAIN_NOT_FOUND" => Some("Run 'ah --help' to see available commands."),
+        "DOMAIN_DISABLED" => Some("Enable the plugin domain or choose another command."),
+        "DEPENDENCY_MISSING" => {
+            Some("Install the required tool and make sure it is available on PATH.")
+        }
         _ => None,
     }
 }
 
-fn render_error_line(error: &RenderedError, formatter: TextFormatter) -> String {
-    format!(
-        "{}: {}",
-        formatter.paint(TextStyle::Error, &error.code),
-        concise_error_message(error)
-    )
+fn console_diagnostic_from_invalid_argument(raw: &str, invocation: &[String]) -> ConsoleDiagnostic {
+    let message = normalize_message(raw);
+    let lines = message.lines().map(str::trim_end).collect::<Vec<_>>();
+    let usage_index = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with("Usage:"));
+    let suggestion_name = lines.iter().find_map(|line| parse_clap_suggestion(line));
+    let suggestion = suggestion_name
+        .map(|candidate| CommandSuggestion::new(suggested_invocation(invocation, candidate), None));
+
+    if let Some(index) = usage_index {
+        let usage = parse_usage_lines(&lines[index..]);
+        let before_usage = &lines[..index];
+        let mut content = before_usage
+            .iter()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.starts_with("tip:"))
+            .collect::<Vec<_>>();
+        let primary = if content.is_empty() {
+            "a command is required.".to_owned()
+        } else {
+            strip_clap_error_prefix(content.remove(0))
+        };
+        let details = content.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let help_command = usage.first().and_then(|line| help_command_from_usage(line));
+        return ConsoleDiagnostic {
+            message: primary,
+            details,
+            suggestion,
+            follow_up: None,
+            usage,
+            help_command,
+            hints: Vec::new(),
+        };
+    }
+
+    if let Some(scope) = message
+        .strip_prefix("missing ")
+        .and_then(|rest| rest.strip_suffix(" subcommand"))
+    {
+        return ConsoleDiagnostic {
+            message: format!("a subcommand is required for 'ah {scope}'."),
+            usage: vec![format!("ah {scope} <COMMAND>")],
+            help_command: Some(format!("ah {scope} --help")),
+            ..ConsoleDiagnostic::default()
+        };
+    }
+
+    let rendered = render_invalid_argument(&message);
+    ConsoleDiagnostic {
+        message: match rendered.code.as_str() {
+            "REGEX_INVALID" => {
+                format!(
+                    "invalid regular expression: {}",
+                    concise_error_message(&rendered)
+                )
+            }
+            _ => message,
+        },
+        hints: human_hint(&rendered.code)
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        ..ConsoleDiagnostic::default()
+    }
 }
 
-fn render_hint_line(hint: &str, formatter: TextFormatter) -> String {
-    format!("{} {hint}", formatter.paint(TextStyle::Warning, "hint:"))
+fn strip_clap_error_prefix(message: &str) -> String {
+    let message = message
+        .strip_prefix("error:")
+        .unwrap_or(message)
+        .trim()
+        .to_owned();
+    if message.ends_with(['.', ':', '?', '!']) {
+        message
+    } else {
+        format!("{message}.")
+    }
+}
+
+fn parse_clap_suggestion(line: &str) -> Option<&str> {
+    let line = line.trim();
+    let suggestion = line
+        .strip_prefix("tip: a similar subcommand exists:")?
+        .trim();
+    suggestion
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+}
+
+pub(crate) fn suggested_subcommand(message: &str) -> Option<&str> {
+    message.lines().find_map(parse_clap_suggestion)
+}
+
+fn suggested_invocation(invocation: &[String], candidate: &str) -> String {
+    let mut corrected = invocation.to_vec();
+    if let Some(index) = corrected
+        .iter()
+        .rposition(|argument| !argument.starts_with('-'))
+    {
+        corrected[index] = candidate.to_owned();
+    } else {
+        corrected.push(candidate.to_owned());
+    }
+    format!("ah {}", corrected.join(" "))
+}
+
+fn parse_usage_lines(lines: &[&str]) -> Vec<String> {
+    let mut usage = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let value = if index == 0 {
+            let Some(value) = trimmed.strip_prefix("Usage:") else {
+                break;
+            };
+            value.trim()
+        } else if line.starts_with(char::is_whitespace) && !trimmed.is_empty() {
+            trimmed
+        } else {
+            break;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        usage.push(prefix_ah(value));
+    }
+    usage
+}
+
+fn prefix_ah(usage: &str) -> String {
+    if usage == "ah" || usage.starts_with("ah ") {
+        usage.to_owned()
+    } else if let Some((program, suffix)) = usage.split_once(' ')
+        && PathBuf::from(program)
+            .file_stem()
+            .is_some_and(|stem| stem.eq_ignore_ascii_case("ah"))
+    {
+        format!("ah {suffix}")
+    } else {
+        format!("ah {usage}")
+    }
+}
+
+fn help_command_from_usage(usage: &str) -> Option<String> {
+    let scope = usage
+        .split_whitespace()
+        .take_while(|token| {
+            !token.starts_with('<')
+                && !token.starts_with('[')
+                && !token.starts_with('{')
+                && !token.starts_with('-')
+        })
+        .collect::<Vec<_>>();
+    if scope.is_empty() {
+        return None;
+    }
+    Some(format!("{} --help", scope.join(" ")))
+}
+
+fn render_console_diagnostic(diagnostic: &ConsoleDiagnostic, formatter: TextFormatter) -> String {
+    let mut output = format!(
+        "{} {}",
+        formatter.paint(TextStyle::Error, "ah:"),
+        diagnostic.message
+    );
+    for detail in &diagnostic.details {
+        output.push_str("\n  ");
+        output.push_str(detail);
+    }
+    if let Some(suggestion) = &diagnostic.suggestion {
+        output.push_str("\n\n");
+        output.push_str(&formatter.paint(TextStyle::Heading, "Did you mean:"));
+        output.push_str("\n  ");
+        output.push_str(&suggestion.command);
+        if let Some(description) = &suggestion.description {
+            output.push_str("    ");
+            output.push_str(description);
+        }
+    }
+    if !diagnostic.usage.is_empty() {
+        output.push_str("\n\n");
+        output.push_str(&formatter.paint(TextStyle::Heading, "Usage:"));
+        for usage in &diagnostic.usage {
+            output.push_str("\n  ");
+            output.push_str(usage);
+        }
+    }
+    if let Some(follow_up) = &diagnostic.follow_up {
+        output.push_str("\n\n");
+        output.push_str(&follow_up.label);
+        output.push_str("\n  ");
+        output.push_str(&follow_up.suggestion.command);
+        if let Some(description) = &follow_up.suggestion.description {
+            output.push_str("    ");
+            output.push_str(description);
+        }
+    }
+    if let Some(help_command) = &diagnostic.help_command {
+        output.push_str("\n\nRun '");
+        output.push_str(help_command);
+        output.push_str("' for more information.");
+    }
+    for hint in &diagnostic.hints {
+        output.push_str("\n\n");
+        output.push_str(&format!(
+            "{} {hint}",
+            formatter.paint(TextStyle::Warning, "Hint:")
+        ));
+    }
+    output
 }
 
 fn wants_json_error_output() -> bool {
@@ -649,38 +1032,82 @@ fn render_external(code: &str, message: &str) -> RenderedError {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppError, render_error_line, render_hint_line};
+    use super::{
+        AppError, CommandSuggestion, console_diagnostic_from_invalid_argument,
+        render_console_diagnostic,
+    };
     use crate::output::TextFormatter;
 
     #[test]
-    fn text_error_rendering_preserves_plain_contract() {
-        let rendered =
-            AppError::external("DOMAIN_DISABLED", "plugin domain is disabled: file").rendered();
+    fn unknown_command_rendering_is_actionable_without_internal_code() {
+        let error = AppError::unknown_command(
+            "version",
+            Some(CommandSuggestion::new(
+                "ah --version",
+                Some("Show the AIHelper version".to_owned()),
+            )),
+        );
+        let rendered = error.rendered();
+        let diagnostic = error.console_diagnostic(&rendered, &["version".to_owned()]);
         let formatter = TextFormatter::with_color(false);
 
         assert_eq!(
-            render_error_line(&rendered, formatter),
-            "DOMAIN_DISABLED: file"
-        );
-        assert_eq!(
-            render_hint_line("enable domain or choose another", formatter),
-            "hint: enable domain or choose another"
+            render_console_diagnostic(&diagnostic, formatter),
+            "ah: 'version' is not a command.\n\nDid you mean:\n  ah --version    Show the AIHelper version\n\nUsage:\n  ah <domain> <command> [options]\n\nRun 'ah --help' for more information."
         );
     }
 
     #[test]
-    fn text_error_rendering_styles_code_and_hint_label() {
-        let rendered =
-            AppError::external("DOMAIN_DISABLED", "plugin domain is disabled: file").rendered();
+    fn operational_error_rendering_styles_human_labels() {
+        let error = AppError::external("DOMAIN_DISABLED", "plugin domain is disabled: file");
+        let rendered = error.rendered();
+        let diagnostic = error.console_diagnostic(&rendered, &[]);
         let formatter = TextFormatter::with_color(true);
 
         assert_eq!(
-            render_error_line(&rendered, formatter),
-            "\u{1b}[1;31mDOMAIN_DISABLED\u{1b}[0m: file"
+            render_console_diagnostic(&diagnostic, formatter),
+            "\u{1b}[1;31mah:\u{1b}[0m plugin domain is disabled: file\n\n\u{1b}[33mHint:\u{1b}[0m Enable the plugin domain or choose another command."
         );
+    }
+
+    #[test]
+    fn clap_diagnostic_retains_suggestion_usage_and_scoped_help() {
+        let diagnostic = console_diagnostic_from_invalid_argument(
+            "error: unrecognized subcommand 'versoin'\n\n  tip: a similar subcommand exists: 'version'\n\nUsage: project <COMMAND>\n\nFor more information, try '--help'.",
+            &["project".to_owned(), "versoin".to_owned()],
+        );
+
+        assert_eq!(diagnostic.message, "unrecognized subcommand 'versoin'.");
         assert_eq!(
-            render_hint_line("enable domain or choose another", formatter),
-            "\u{1b}[33mhint:\u{1b}[0m enable domain or choose another"
+            diagnostic
+                .suggestion
+                .as_ref()
+                .map(|suggestion| suggestion.command.as_str()),
+            Some("ah project version")
+        );
+        assert_eq!(diagnostic.usage, ["ah project <COMMAND>"]);
+        assert_eq!(
+            diagnostic.help_command.as_deref(),
+            Some("ah project --help")
+        );
+    }
+
+    #[test]
+    fn clap_diagnostic_retains_missing_argument_name() {
+        let diagnostic = console_diagnostic_from_invalid_argument(
+            "error: the following required arguments were not provided:\n  <PATTERN>\n\nUsage: search text <PATTERN> [PATH]...\n\nFor more information, try '--help'.",
+            &["search".to_owned(), "text".to_owned()],
+        );
+
+        assert_eq!(
+            diagnostic.message,
+            "the following required arguments were not provided:"
+        );
+        assert_eq!(diagnostic.details, ["<PATTERN>"]);
+        assert_eq!(diagnostic.usage, ["ah search text <PATTERN> [PATH]..."]);
+        assert_eq!(
+            diagnostic.help_command.as_deref(),
+            Some("ah search text --help")
         );
     }
 }

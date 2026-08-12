@@ -6,6 +6,7 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 - Start from a recipe in `recipes/`.
 - Prefer narrow commands with explicit ranges and limits.
 - Use `--json` when the result must be parsed by another tool or step.
+- Text-mode errors are optimized for people and may include suggestions, usage, and help commands; use `--json` when branching on stable error codes.
 
 ## Recipe Index
 - [Prepare and publish a release](recipes/release.md)

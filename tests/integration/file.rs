@@ -165,8 +165,9 @@ fn file_line_commands_symlink_requires_follow_flag() {
             .args(["file", command, &link])
             .assert()
             .failure()
-            .stderr(contains("SYMLINK_TRAVERSAL_BLOCKED: symlink blocked"))
-            .stderr(contains("hint: use --follow-symlinks"));
+            .stderr(contains("ah: path is a symlink"))
+            .stderr(contains("Hint: Use --follow-symlinks"))
+            .stderr(contains("SYMLINK_TRAVERSAL_BLOCKED").not());
 
         Command::cargo_bin("ah")
             .expect("binary should compile")

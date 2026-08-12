@@ -745,7 +745,10 @@ fn execute_assert(
     if failed {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
-            format!("{} of {} case(s) failed", failed, output.summary.total),
+            format!(
+                "{} of {} HTTP assertion case(s) failed",
+                output.summary.failed, output.summary.total
+            ),
         ));
     }
     Ok(())

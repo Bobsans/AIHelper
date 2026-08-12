@@ -352,10 +352,7 @@ fn handle_response(
 
 fn map_runtime_error(error: RuntimeError) -> AppError {
     match error {
-        RuntimeError::DomainNotFound(domain) => AppError::external(
-            "DOMAIN_NOT_FOUND",
-            format!("unknown command domain: {domain}"),
-        ),
+        RuntimeError::DomainNotFound(domain) => AppError::unknown_command(domain, None),
         RuntimeError::DomainDisabled(domain) => AppError::external(
             "DOMAIN_DISABLED",
             format!("plugin domain is disabled: {domain}"),

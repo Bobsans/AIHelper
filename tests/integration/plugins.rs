@@ -93,7 +93,9 @@ fn disable_and_enable_domain_controls_invocation() {
         .args(["file", "head", &sample, "--lines", "1"])
         .assert()
         .failure()
-        .stderr(contains("DOMAIN_DISABLED: file"));
+        .stderr(contains("ah: plugin domain is disabled: file"))
+        .stderr(contains("Hint: Enable the plugin domain"))
+        .stderr(contains("DOMAIN_DISABLED").not());
 
     let mut enable_cmd = Command::cargo_bin("ah").expect("binary should compile");
     enable_cmd

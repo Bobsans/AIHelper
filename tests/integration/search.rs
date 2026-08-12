@@ -11,8 +11,11 @@ fn search_path_not_found_error_is_rendered_without_nested_wrappers() {
     cmd.args(["search", "text", "customFieldValues", "Fixdigital"])
         .assert()
         .failure()
-        .stderr(contains("PATH_NOT_FOUND: path does not exist: Fixdigital"))
-        .stderr(contains("hint: check path or --cwd"))
+        .stderr(contains("ah: path does not exist: Fixdigital"))
+        .stderr(contains(
+            "Hint: Check the path or set a different working directory with --cwd.",
+        ))
+        .stderr(predicates::str::contains("PATH_NOT_FOUND").not())
         .stderr(predicates::str::contains("invalid argument: [").not());
 }
 
@@ -22,8 +25,11 @@ fn search_invalid_regex_error_is_concise() {
     cmd.args(["search", "text", "(", "src", "--regex"])
         .assert()
         .failure()
-        .stderr(contains("REGEX_INVALID: unclosed group"))
-        .stderr(contains("hint: fix regex or drop --regex"))
+        .stderr(contains("ah: invalid regular expression: unclosed group"))
+        .stderr(contains(
+            "Hint: Fix the expression or remove --regex to search literally.",
+        ))
+        .stderr(predicates::str::contains("REGEX_INVALID").not())
         .stderr(predicates::str::contains("regex parse error").not());
 }
 

@@ -79,7 +79,11 @@ fn managed_serve_preflight_fails_before_ambient_configuration_load() {
         .expect("managed serve preflight should start");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("MCP_SERVICE_STATE_INVALID"), "{stderr}");
+    assert!(
+        stderr.contains("ah: managed definition path has no service base directory"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("MCP_SERVICE_STATE_INVALID"), "{stderr}");
     assert!(
         !stderr.contains("AH_CONFIG_DIR must not be empty"),
         "{stderr}"
@@ -1415,10 +1419,12 @@ fn mcp_invalid_startup_configuration_exits_nonzero() {
         .expect("invalid MCP configuration should exit");
 
     assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("INVALID_RANGE"),
-        "stderr should contain the deterministic configuration diagnostic"
+        stderr.contains("ah: --max-active must be >= 1"),
+        "stderr should explain the invalid configuration: {stderr}"
     );
+    assert!(!stderr.contains("INVALID_RANGE"), "{stderr}");
 }
 
 #[test]
@@ -1438,10 +1444,12 @@ fn http_port_conflict_exits_nonzero() {
         .expect("conflicting HTTP MCP server should exit");
 
     assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("MCP_SERVER_FAILED"),
-        "stderr should contain the deterministic bind diagnostic"
+        stderr.starts_with("ah: "),
+        "stderr should contain a human-readable bind diagnostic: {stderr}"
     );
+    assert!(!stderr.contains("MCP_SERVER_FAILED"), "{stderr}");
     let event = log_records(&config_dir)
         .into_iter()
         .find(|record| record["event"] == "system" && record["component"] == "mcp_transport")
@@ -1488,9 +1496,10 @@ fn http_shutdown_timeout_exits_nonzero() {
     assert_eq!(exit.code(), Some(1));
     let stderr = process.read_stderr();
     assert!(
-        stderr.contains("MCP_SHUTDOWN_TIMEOUT"),
-        "stderr should contain the shutdown timeout diagnostic: {stderr}"
+        stderr.contains("ah: MCP shutdown exceeded the configured 5000 ms grace period"),
+        "stderr should explain the shutdown timeout: {stderr}"
     );
+    assert!(!stderr.contains("MCP_SHUTDOWN_TIMEOUT"), "{stderr}");
     assert!(
         stderr.contains("5000 ms grace period"),
         "stderr should contain the deterministic grace period: {stderr}"

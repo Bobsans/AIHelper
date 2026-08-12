@@ -71,8 +71,9 @@ fn task_run_unknown_task_fails() {
         .args(["--cwd", &cwd, "task", "run", "missing"])
         .assert()
         .failure()
-        .stderr(contains("TASK_NOT_FOUND: task not found: missing"))
-        .stderr(contains("hint: run ah task list"));
+        .stderr(contains("ah: task not found: missing"))
+        .stderr(contains("Hint: Run 'ah task list' to see saved tasks."))
+        .stderr(contains("TASK_NOT_FOUND").not());
 }
 
 #[test]
@@ -124,7 +125,10 @@ fn task_run_timeout_returns_stable_error() {
         .args(["--cwd", &cwd, "task", "run", "slow", "--timeout-secs", "1"])
         .assert()
         .failure()
-        .stderr(contains("TASK_TIMEOUT"));
+        .stderr(contains(
+            "ah: task 'slow' did not complete within 1 seconds",
+        ))
+        .stderr(contains("TASK_TIMEOUT").not());
     assert!(started.elapsed() < Duration::from_secs(4));
 }
 
