@@ -86,7 +86,7 @@ pub fn restore_managed_mcp(
         return Ok(ManagedMcpRestoration::NotRequired);
     }
     let executable = main_executable(command.paths.installation_root(), manifest)?;
-    run_service_command(&executable, &["--json", "mcp", "service", "start"])?;
+    run_service_command(&executable, &["--json", "mcp", "service", "install"])?;
     let status = run_service_command(&executable, &["--json", "mcp", "service", "status"])?;
     validate_restored_status(
         &status,

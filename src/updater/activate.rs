@@ -327,7 +327,7 @@ fn launch_transaction(
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn copy_activation_helper(
+pub(crate) fn copy_activation_helper(
     candidate_root: &Path,
     candidate_manifest: &ReleaseManifest,
     state_root: &Path,
@@ -385,7 +385,7 @@ fn copy_activation_helper(
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn cleanup_activation_helpers(state_root: &Path) -> Result<(), UpdaterError> {
+pub(crate) fn cleanup_activation_helpers(state_root: &Path) -> Result<(), UpdaterError> {
     let entries = fs::read_dir(state_root)
         .map_err(|_| candidate_error("failed to enumerate activation helper copies"))?;
     let mut count = 0_usize;

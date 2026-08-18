@@ -150,7 +150,7 @@ fn is_updater_mcp_restore_fast_path(raw_args: &[OsString]) -> bool {
         && raw_args[1] == "--json"
         && raw_args[2] == "mcp"
         && raw_args[3] == "service"
-        && matches!(raw_args[4].to_str(), Some("start" | "status"))
+        && matches!(raw_args[4].to_str(), Some("install" | "start" | "status"))
 }
 
 fn is_managed_serve_request(raw_args: &[OsString]) -> bool {
@@ -689,7 +689,8 @@ mod tests {
     use ah_runtime::PluginManager;
 
     use super::{
-        is_version_fast_path, map_mcp_transport_error, resolve_invocation_command, shutdown_runtime,
+        is_updater_mcp_restore_fast_path, is_version_fast_path, map_mcp_transport_error,
+        resolve_invocation_command, shutdown_runtime,
     };
 
     #[test]
@@ -746,6 +747,17 @@ mod tests {
             OsString::from("file"),
             OsString::from("--version"),
         ]));
+    }
+
+    #[test]
+    fn updater_mcp_restore_fast_path_allows_reconcile_install() {
+        unsafe { std::env::set_var("AH_UPDATER_MCP_RESTORE", "1") };
+        let allowed = is_updater_mcp_restore_fast_path(
+            &["ah", "--json", "mcp", "service", "install"].map(OsString::from),
+        );
+        unsafe { std::env::remove_var("AH_UPDATER_MCP_RESTORE") };
+
+        assert!(allowed);
     }
 
     #[test]

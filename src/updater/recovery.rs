@@ -11,9 +11,7 @@ use ah_update_helper::transaction::{
     TransactionPaths, inspect_transaction, load_recovery_transaction, recover_transaction,
     remove_completed_transaction,
 };
-use ah_updater_core::{
-    FilePurpose, InstallationIdentityV1, ReleaseTrust, TransactionStateV1, UpdaterError,
-};
+use ah_updater_core::{InstallationIdentityV1, ReleaseTrust, TransactionStateV1, UpdaterError};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -189,22 +187,37 @@ fn recovery_helper_path(
     } else {
         transaction.old_manifest()
     };
-    let helpers = manifest
-        .files
-        .iter()
-        .filter(|file| file.purpose == FilePurpose::UpdateHelper)
-        .collect::<Vec<_>>();
-    let [helper] = helpers.as_slice() else {
-        return Err(recovery_error(
-            "transaction backup must contain exactly one update helper",
-        ));
-    };
     let root = if use_candidate {
         transaction.paths().candidate_files_root()
     } else {
         transaction.paths().backup_files_root()
     };
-    Ok(root.join(helper.path.split('/').collect::<PathBuf>()))
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        super::activate::cleanup_activation_helpers(transaction.paths().installation_state_root())
+            .map_err(map_updater_error)?;
+        return super::activate::copy_activation_helper(
+            &root,
+            manifest,
+            transaction.paths().installation_state_root(),
+            Uuid::new_v4(),
+        )
+        .map_err(map_updater_error);
+    }
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    {
+        let helpers = manifest
+            .files
+            .iter()
+            .filter(|file| file.purpose == ah_updater_core::FilePurpose::UpdateHelper)
+            .collect::<Vec<_>>();
+        let [helper] = helpers.as_slice() else {
+            return Err(recovery_error(
+                "transaction backup must contain exactly one update helper",
+            ));
+        };
+        Ok(root.join(helper.path.split('/').collect::<PathBuf>()))
+    }
 }
 
 fn discover_pending(
@@ -408,7 +421,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn launches_verified_backup_helper_and_cleans_recovered_transaction() {
+    fn launches_verified_private_helper_copy_and_cleans_recovered_transaction() {
         let fixture = Fixture::new();
         fixture.prepare();
         let mut interrupt = InterruptAfterFirstActivation;
@@ -432,13 +445,29 @@ mod tests {
 
         assert_eq!(outcome, EarlyRecoveryOutcome::Continue);
         assert_eq!(runner.launches.get(), 1);
-        let expected_helper = fixture
-            .paths
-            .backup_files_root()
-            .join("ah-update-helper.exe");
+        let helper = runner.helper.borrow();
+        let helper = helper.as_deref().unwrap();
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                helper.parent(),
+                Some(fixture.paths.installation_state_root())
+            );
+            assert!(
+                helper
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("activation-helper-")
+            );
+        }
+        #[cfg(not(windows))]
         assert_eq!(
-            runner.helper.borrow().as_deref(),
-            Some(expected_helper.as_path())
+            helper,
+            fixture
+                .paths
+                .backup_files_root()
+                .join("ah-update-helper.exe")
         );
         assert!(!fixture.paths.transaction_root().exists());
         assert_eq!(

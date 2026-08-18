@@ -7,6 +7,17 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-18
+
+### Fixed
+
+- Windows updater restoration now reconciles the managed MCP definition and
+  Task Scheduler registration before starting the service, preventing version
+  and restart-policy drift after activation or rollback.
+- Recovery launches a verified private helper copy outside the transaction
+  directory so Windows can remove completed transaction state without the
+  helper locking its own executable.
+
 ## [1.3.0] - 2026-08-18
 
 ### Added
@@ -339,7 +350,8 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Bobsans/AIHelper/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Bobsans/AIHelper/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Bobsans/AIHelper/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Bobsans/AIHelper/compare/v1.1.0...v1.2.0
