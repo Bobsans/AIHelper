@@ -3,14 +3,13 @@
 use std::{env, io, process::ExitCode};
 
 use ah_update_helper::activation_command::{
-    ManagedMcpRestoration, execute_activation, restore_managed_mcp,
+    ManagedMcpRestoration, execute_activation, restore_managed_mcp_and_finalize,
 };
 use ah_update_helper::handoff::HandoffLease;
 use ah_update_helper::recovery_command::{
     RecoveryExecution, execute_recovery, parse_activation_arguments, parse_recovery_arguments,
     parse_rollback_arguments,
 };
-use ah_update_helper::transaction::finalize_completed_transaction;
 use ah_updater_core::{UpdateHelperSelfCheckV1, production_release_trust};
 
 const USAGE: &str = "usage: ah-update-helper --self-check | <activate|recover|rollback> --installation-root <PATH> --installation-state-root <PATH> --transaction-root <PATH> --lifecycle-lock <PATH> --lifecycle-lock-handle <HANDLE> --handoff-event <NAME> <PARENT_PID>";
@@ -69,13 +68,9 @@ fn main() -> ExitCode {
         }
     };
     drop(handoff);
-    let restoration = restore_managed_mcp(&command, &trust);
-    let finalization = restoration
-        .as_ref()
-        .map_err(Clone::clone)
-        .and_then(|_| finalize_completed_transaction(&command.paths, &trust));
-    match (execution, restoration, finalization) {
-        (Ok(Some(state)), Ok(restoration), Ok(_)) => {
+    let restoration = restore_managed_mcp_and_finalize(&command, &trust);
+    match (execution, restoration) {
+        (Ok(Some(state)), Ok(restoration)) => {
             let response = serde_json::json!({
                 "schema_version": 1,
                 "state": state,
@@ -88,11 +83,11 @@ fn main() -> ExitCode {
             println!();
             ExitCode::SUCCESS
         }
-        (Err(error), _, _) | (Ok(_), Err(error), _) | (Ok(_), Ok(_), Err(error)) => {
+        (Err(error), _) | (Ok(_), Err(error)) => {
             eprintln!("{}", error.code());
             ExitCode::FAILURE
         }
-        (Ok(None), Ok(_), Ok(_)) => ExitCode::SUCCESS,
+        (Ok(None), Ok(_)) => ExitCode::SUCCESS,
     }
 }
 

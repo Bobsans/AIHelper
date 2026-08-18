@@ -7,6 +7,15 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-19
+
+### Fixed
+
+- Windows rollback now finalizes its verified transaction before asking an
+  older target binary to reconcile managed MCP, so rollback remains compatible
+  with releases that do not allow `mcp service install` through the updater
+  recovery fast path.
+
 ## [1.3.1] - 2026-08-18
 
 ### Fixed
@@ -350,7 +359,8 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Bobsans/AIHelper/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Bobsans/AIHelper/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Bobsans/AIHelper/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Bobsans/AIHelper/compare/v1.2.0...v1.2.1

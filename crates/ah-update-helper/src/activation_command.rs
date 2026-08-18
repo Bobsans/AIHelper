@@ -15,8 +15,8 @@ use crate::{
     process::quiesce_transaction_blockers,
     recovery_command::RecoveryCommand,
     transaction::{
-        activate_transaction, commit_transaction, inspect_transaction, load_prepared_transaction,
-        rollback_transaction,
+        activate_transaction, commit_transaction, finalize_completed_transaction,
+        inspect_transaction, load_prepared_transaction, rollback_transaction,
     },
 };
 
@@ -63,7 +63,7 @@ pub fn execute_activation(
     }
 }
 
-pub fn restore_managed_mcp(
+pub fn restore_managed_mcp_and_finalize(
     command: &RecoveryCommand,
     trust: &ReleaseTrust,
 ) -> Result<ManagedMcpRestoration, UpdaterError> {
@@ -82,18 +82,45 @@ pub fn restore_managed_mcp(
             ));
         }
     };
-    if !transaction.plan().managed_mcp_was_running {
-        return Ok(ManagedMcpRestoration::NotRequired);
-    }
+    let finalize_first = finalize_before_restore(state, transaction.plan().operation);
     let executable = main_executable(command.paths.installation_root(), manifest)?;
-    run_service_command(&executable, &["--json", "mcp", "service", "install"])?;
-    let status = run_service_command(&executable, &["--json", "mcp", "service", "status"])?;
-    validate_restored_status(
-        &status,
-        version,
-        transaction.plan().managed_mcp_previous_instance_id,
-    )?;
-    Ok(ManagedMcpRestoration::Restored)
+    let restore = |use_fast_path| {
+        if !transaction.plan().managed_mcp_was_running {
+            return Ok(ManagedMcpRestoration::NotRequired);
+        }
+        run_service_command(
+            &executable,
+            &["--json", "mcp", "service", "install"],
+            use_fast_path,
+        )?;
+        let status = run_service_command(
+            &executable,
+            &["--json", "mcp", "service", "status"],
+            use_fast_path,
+        )?;
+        validate_restored_status(
+            &status,
+            version,
+            transaction.plan().managed_mcp_previous_instance_id,
+        )?;
+        Ok(ManagedMcpRestoration::Restored)
+    };
+    if finalize_first {
+        finalize_completed_transaction(&command.paths, trust)?;
+        restore(false)
+    } else {
+        let restoration = restore(true)?;
+        finalize_completed_transaction(&command.paths, trust)?;
+        Ok(restoration)
+    }
+}
+
+fn finalize_before_restore(
+    state: TransactionStateV1,
+    operation: ah_updater_core::UpdateOperation,
+) -> bool {
+    state != TransactionStateV1::Committed
+        || operation == ah_updater_core::UpdateOperation::Rollback
 }
 
 fn rollback_after_failure(
@@ -177,7 +204,11 @@ fn main_executable(
     Ok(root.join(executable.path.split('/').collect::<PathBuf>()))
 }
 
-fn run_service_command(executable: &Path, arguments: &[&str]) -> Result<Vec<u8>, UpdaterError> {
+fn run_service_command(
+    executable: &Path,
+    arguments: &[&str],
+    use_fast_path: bool,
+) -> Result<Vec<u8>, UpdaterError> {
     let cwd = executable
         .parent()
         .ok_or_else(|| recovery("installed executable has no parent directory"))?;
@@ -192,7 +223,7 @@ fn run_service_command(executable: &Path, arguments: &[&str]) -> Result<Vec<u8>,
             },
             EnvironmentOverride {
                 name: OsStr::new(MCP_RESTORE_ENV),
-                value: Some(OsStr::new("1")),
+                value: use_fast_path.then_some(OsStr::new("1")),
             },
         ],
         CHILD_COMMAND_TIMEOUT,
@@ -250,6 +281,22 @@ fn recovery(detail: &'static str) -> UpdaterError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_target_restoration_finalizes_before_launch() {
+        assert!(finalize_before_restore(
+            TransactionStateV1::Committed,
+            ah_updater_core::UpdateOperation::Rollback,
+        ));
+        assert!(finalize_before_restore(
+            TransactionStateV1::RolledBack,
+            ah_updater_core::UpdateOperation::Upgrade,
+        ));
+        assert!(!finalize_before_restore(
+            TransactionStateV1::Committed,
+            ah_updater_core::UpdateOperation::Upgrade,
+        ));
+    }
 
     #[test]
     fn restored_status_requires_new_ready_instance_and_version() {
