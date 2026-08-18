@@ -1,7 +1,8 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use regex::Regex;
@@ -24,7 +25,7 @@ pub(crate) struct RequestConfig {
     pub(crate) url: String,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) query: Vec<(String, String)>,
-    pub(crate) timeout_secs: u64,
+    pub(crate) timeout: Duration,
     pub(crate) max_response_bytes: usize,
     pub(crate) auth: AuthConfig,
     pub(crate) body: Option<RequestBody>,
@@ -138,6 +139,8 @@ struct SpecCase {
     request: SpecRequest,
     #[serde(default)]
     expect: SpecExpect,
+    #[serde(default)]
+    extract: BTreeMap<String, SpecExtractRule>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -191,6 +194,26 @@ struct SpecJsonCheck {
     exists: Option<bool>,
     #[serde(rename = "match")]
     regex: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpecExtractRule {
+    json: Option<String>,
+    header: Option<String>,
+    text: Option<SpecTextExtract>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpecTextExtract {
+    regex: String,
+    #[serde(default = "default_extract_group")]
+    group: usize,
+}
+
+fn default_extract_group() -> usize {
+    1
 }
 
 #[derive(Debug, Serialize)]
@@ -247,7 +270,12 @@ pub(crate) fn run_request_command(
     let expectations = parse_request_expectations(&args.expect)?;
     let request = build_request_config(&args.method, &args.url, &args.request)?;
     let started = std::time::Instant::now();
-    let response = adapters::io::send_request(&request)?;
+    let response = send_with_retry(
+        &request,
+        args.request.retry,
+        args.request.retry_delay_ms,
+        args.request.deadline,
+    )?;
     let duration_ms = duration_millis(started.elapsed());
     let assertions = evaluate_assertions(&response, &expectations);
 
@@ -265,6 +293,71 @@ pub(crate) fn run_request_command(
         body: response.body,
         assertions,
     })
+}
+
+fn send_with_retry(
+    request: &RequestConfig,
+    retries: u64,
+    retry_delay_ms: u64,
+    deadline: Option<Instant>,
+) -> Result<ResponseSnapshot, AppError> {
+    let mut retries_remaining = retries;
+
+    loop {
+        let mut attempt = request.clone();
+        if let Some(remaining) = remaining_deadline(deadline)? {
+            attempt.timeout = attempt.timeout.min(remaining);
+        }
+
+        match adapters::io::send_request(&attempt) {
+            Ok(response) if response.status_code >= 500 && retries_remaining > 0 => {}
+            Ok(response) => return Ok(response),
+            Err(error) if is_retryable_request_error(&error) && retries_remaining > 0 => {}
+            Err(error) => return Err(error),
+        }
+
+        retries_remaining -= 1;
+        wait_for_retry(retry_delay_ms, deadline)?;
+    }
+}
+
+fn remaining_deadline(deadline: Option<Instant>) -> Result<Option<Duration>, AppError> {
+    let Some(deadline) = deadline else {
+        return Ok(None);
+    };
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .map(Some)
+        .ok_or_else(http_deadline_exceeded)
+}
+
+fn wait_for_retry(retry_delay_ms: u64, deadline: Option<Instant>) -> Result<(), AppError> {
+    let delay = Duration::from_millis(retry_delay_ms);
+    if delay.is_zero() {
+        return remaining_deadline(deadline).map(|_| ());
+    }
+    if let Some(remaining) = remaining_deadline(deadline)?
+        && delay >= remaining
+    {
+        return Err(http_deadline_exceeded());
+    }
+    thread::sleep(delay);
+    Ok(())
+}
+
+fn is_retryable_request_error(error: &AppError) -> bool {
+    matches!(
+        error.code(),
+        "HTTP_REQUEST_FAILED" | "HTTP_RESPONSE_READ_FAILED"
+    )
+}
+
+fn http_deadline_exceeded() -> AppError {
+    AppError::external(
+        "HTTP_TIMEOUT",
+        "HTTP execution deadline expired before the next attempt",
+    )
 }
 
 pub(crate) fn run_replay(
@@ -333,6 +426,9 @@ pub(crate) fn run_assert(
     if spec.cases.is_empty() {
         return Err(AppError::invalid_argument("spec has no cases"));
     }
+    for case in &spec.cases {
+        parse_extractors(&case.extract)?;
+    }
 
     let mut vars = spec.vars;
     for pair in &args.vars {
@@ -348,11 +444,21 @@ pub(crate) fn run_assert(
     for case in &spec.cases {
         let case_started = std::time::Instant::now();
         let prepared = build_case_request(case, &spec.defaults, &vars, &spec_dir)?;
-        let response = adapters::io::send_request(&prepared.request)?;
+        let response = send_with_retry(
+            &prepared.request,
+            args.retry,
+            args.retry_delay_ms,
+            args.deadline,
+        )?;
         let assertions = evaluate_assertions(&response, &prepared.expectations);
-        let case_passed = assertions.failed == 0;
+        let (extracted, mut extraction_failures) =
+            extract_response_values(&response, &prepared.extractors);
+        let mut failures = assertions.failures;
+        failures.append(&mut extraction_failures);
+        let case_passed = failures.is_empty();
         if case_passed {
             passed += 1;
+            vars.extend(extracted);
         } else {
             failed += 1;
         }
@@ -361,7 +467,7 @@ pub(crate) fn run_assert(
             passed: case_passed,
             status: Some(response.status_code),
             duration_ms: duration_millis(case_started.elapsed()),
-            failures: assertions.failures,
+            failures,
         });
         if args.fail_fast && !case_passed {
             break;
@@ -441,7 +547,7 @@ fn build_request_config(
         url: parsed_url.to_owned(),
         headers,
         query,
-        timeout_secs: args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1),
+        timeout: Duration::from_secs(args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1)),
         max_response_bytes,
         auth,
         body,
@@ -1118,6 +1224,13 @@ struct PreparedSpecCase {
     case_name: String,
     request: RequestConfig,
     expectations: RequestExpectations,
+    extractors: BTreeMap<String, Extractor>,
+}
+
+enum Extractor {
+    Json { path: String },
+    Header { name: String },
+    Text { regex: Regex, group: usize },
 }
 
 fn build_case_request(
@@ -1207,12 +1320,15 @@ fn build_case_request(
         query: Vec::new(),
         timeout_secs: Some(timeout_secs),
         max_response_bytes: Some(max_response_bytes),
+        retry: 0,
+        retry_delay_ms: 0,
         bearer,
         basic,
         json: None,
         json_file: None,
         body: None,
         body_file: None,
+        deadline: None,
     };
     let body = parse_spec_payload(&case.request, vars, spec_dir, &request_options)?;
 
@@ -1221,19 +1337,133 @@ fn build_case_request(
         url,
         headers,
         query,
-        timeout_secs,
+        timeout: Duration::from_secs(timeout_secs),
         max_response_bytes,
         auth,
         body,
     };
 
     let expectations = parse_spec_expectations(&case.expect, vars)?;
+    let extractors = parse_extractors(&case.extract)?;
 
     Ok(PreparedSpecCase {
         case_name: interpolate_string(&case.name, vars)?,
         request,
         expectations,
+        extractors,
     })
+}
+
+fn parse_extractors(
+    rules: &BTreeMap<String, SpecExtractRule>,
+) -> Result<BTreeMap<String, Extractor>, AppError> {
+    let mut extractors = BTreeMap::new();
+    for (variable, rule) in rules {
+        if variable.trim().is_empty() {
+            return Err(AppError::invalid_argument(
+                "extract variable name must not be empty",
+            ));
+        }
+        let selector_count = usize::from(rule.json.is_some())
+            + usize::from(rule.header.is_some())
+            + usize::from(rule.text.is_some());
+        if selector_count != 1 {
+            return Err(AppError::invalid_argument(format!(
+                "extract '{variable}' must define exactly one selector (json, header, text)"
+            )));
+        }
+        let extractor = if let Some(path) = &rule.json {
+            parse_json_path_tokens(path)?;
+            Extractor::Json { path: path.clone() }
+        } else if let Some(name) = &rule.header {
+            if name.trim().is_empty() {
+                return Err(AppError::invalid_argument(format!(
+                    "extract '{variable}' header must not be empty"
+                )));
+            }
+            Extractor::Header {
+                name: name.to_ascii_lowercase(),
+            }
+        } else {
+            let text = rule.text.as_ref().expect("selector count checked");
+            let regex = Regex::new(&text.regex).map_err(|error| {
+                AppError::invalid_argument(format!(
+                    "extract '{variable}' has invalid text regex: {error}"
+                ))
+            })?;
+            if text.group >= regex.captures_len() {
+                return Err(AppError::invalid_argument(format!(
+                    "extract '{variable}' group {} does not exist in text regex",
+                    text.group
+                )));
+            }
+            Extractor::Text {
+                regex,
+                group: text.group,
+            }
+        };
+        extractors.insert(variable.clone(), extractor);
+    }
+    Ok(extractors)
+}
+
+fn extract_response_values(
+    response: &ResponseSnapshot,
+    extractors: &BTreeMap<String, Extractor>,
+) -> (BTreeMap<String, String>, Vec<String>) {
+    let mut values = BTreeMap::new();
+    let mut failures = Vec::new();
+
+    for (variable, extractor) in extractors {
+        match extract_response_value(response, extractor) {
+            Ok(value) => {
+                values.insert(variable.clone(), value);
+            }
+            Err(source) => failures.push(format!("extract '{variable}' failed: {source}")),
+        }
+    }
+    if failures.is_empty() {
+        (values, failures)
+    } else {
+        (BTreeMap::new(), failures)
+    }
+}
+
+fn extract_response_value(
+    response: &ResponseSnapshot,
+    extractor: &Extractor,
+) -> Result<String, &'static str> {
+    match extractor {
+        Extractor::Json { path } => {
+            if response.body_truncated {
+                return Err("response body was truncated");
+            }
+            let root = response
+                .body_json
+                .as_ref()
+                .ok_or("response body is not valid JSON")?;
+            let value = resolve_json_path(root, path).ok_or("JSON path was not found")?;
+            match value {
+                Value::String(value) => Ok(value.clone()),
+                value => Ok(value.to_string()),
+            }
+        }
+        Extractor::Header { name } => response
+            .headers
+            .get(name)
+            .cloned()
+            .ok_or("response header was not found"),
+        Extractor::Text { regex, group } => {
+            if response.body_truncated {
+                return Err("response body was truncated");
+            }
+            regex
+                .captures(&response.body)
+                .and_then(|captures| captures.get(*group))
+                .map(|capture| capture.as_str().to_owned())
+                .ok_or("text regex did not match the requested group")
+        }
+    }
 }
 
 fn parse_spec_expectations(
@@ -1618,5 +1848,69 @@ mod tests {
         let rendered =
             interpolate_string("{{base}}/health", &vars).expect("template should render");
         assert_eq!(rendered, "http://localhost:8080/health");
+    }
+
+    #[test]
+    fn extraction_is_atomic_when_one_selector_fails() {
+        let response = ResponseSnapshot {
+            status_code: 200,
+            status_text: "OK".to_owned(),
+            headers: BTreeMap::new(),
+            body: r#"{"token":"secret"}"#.to_owned(),
+            body_json: Some(serde_json::json!({"token": "secret"})),
+            body_truncated: false,
+        };
+        let extractors = BTreeMap::from([
+            (
+                "token".to_owned(),
+                Extractor::Json {
+                    path: "token".to_owned(),
+                },
+            ),
+            (
+                "request_id".to_owned(),
+                Extractor::Header {
+                    name: "x-request-id".to_owned(),
+                },
+            ),
+        ]);
+
+        let (values, failures) = extract_response_values(&response, &extractors);
+
+        assert!(values.is_empty());
+        assert_eq!(failures.len(), 1);
+        assert!(!failures[0].contains("secret"));
+    }
+
+    #[test]
+    fn text_extraction_rejects_truncated_bodies() {
+        let response = ResponseSnapshot {
+            status_code: 200,
+            status_text: "OK".to_owned(),
+            headers: BTreeMap::new(),
+            body: "token=secret".to_owned(),
+            body_json: None,
+            body_truncated: true,
+        };
+        let extractor = Extractor::Text {
+            regex: Regex::new("token=(.+)").expect("regex compiles"),
+            group: 1,
+        };
+
+        assert_eq!(
+            extract_response_value(&response, &extractor),
+            Err("response body was truncated")
+        );
+    }
+
+    #[test]
+    fn retry_delay_respects_deadline_without_sleeping() {
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(1))
+            .expect("deadline should fit");
+
+        let error = wait_for_retry(1_000, Some(deadline)).expect_err("delay exceeds deadline");
+
+        assert_eq!(error.code(), "HTTP_TIMEOUT");
     }
 }

@@ -27,21 +27,20 @@ fn failed_runtime(exit_code: i32) -> RuntimeState {
 
 fn scheduler_evidence(
     state: SchedulerState,
-    last_result: Option<i32>,
+    _last_result: Option<i32>,
     canonical_restart_policy: bool,
 ) -> SchedulerRuntimeEvidence {
     SchedulerRuntimeEvidence {
         state,
-        last_result,
         canonical_restart_policy,
     }
 }
 
 #[test]
-fn runtime_reducer_requires_complete_restart_backoff_evidence() {
+fn runtime_reducer_requires_complete_launcher_backoff_evidence() {
     let readiness = not_ready_section();
     let failed = failed_runtime(1);
-    let backoff = scheduler_evidence(SchedulerState::Queued, Some(1), true);
+    let backoff = scheduler_evidence(SchedulerState::Running, Some(1), true);
 
     assert_eq!(
         reduce_runtime(
@@ -54,22 +53,16 @@ fn runtime_reducer_requires_complete_restart_backoff_evidence() {
         RuntimeStatus::RestartBackoff
     );
 
-    for incomplete in [
-        scheduler_evidence(SchedulerState::Queued, None, true),
-        scheduler_evidence(SchedulerState::Queued, Some(0), true),
-        scheduler_evidence(SchedulerState::Queued, Some(1), false),
-    ] {
-        assert_eq!(
-            reduce_runtime(
-                Some(&failed),
-                &readiness,
-                incomplete,
-                LifecycleStatus::Idle,
-                false,
-            ),
-            RuntimeStatus::Starting
-        );
-    }
+    assert_eq!(
+        reduce_runtime(
+            Some(&failed),
+            &readiness,
+            scheduler_evidence(SchedulerState::Running, Some(1), false),
+            LifecycleStatus::Idle,
+            false,
+        ),
+        RuntimeStatus::RunningNotReady
+    );
 
     let zero_exit = failed_runtime(0);
     assert_eq!(
@@ -80,7 +73,7 @@ fn runtime_reducer_requires_complete_restart_backoff_evidence() {
             LifecycleStatus::Idle,
             false,
         ),
-        RuntimeStatus::Starting
+        RuntimeStatus::RunningNotReady
     );
     assert_eq!(
         reduce_runtime(
@@ -90,7 +83,7 @@ fn runtime_reducer_requires_complete_restart_backoff_evidence() {
             LifecycleStatus::Busy,
             false,
         ),
-        RuntimeStatus::Starting
+        RuntimeStatus::RunningNotReady
     );
 
     let mut stopped = failed.clone();
@@ -108,6 +101,17 @@ fn runtime_reducer_requires_complete_restart_backoff_evidence() {
             LifecycleStatus::Idle,
             false,
         ),
+        RuntimeStatus::RunningNotReady
+    );
+
+    assert_eq!(
+        reduce_runtime(
+            Some(&failed),
+            &readiness,
+            scheduler_evidence(SchedulerState::Queued, Some(1), true),
+            LifecycleStatus::Idle,
+            false,
+        ),
         RuntimeStatus::Starting
     );
 }
@@ -115,7 +119,7 @@ fn runtime_reducer_requires_complete_restart_backoff_evidence() {
 #[test]
 fn runtime_reducer_preserves_live_evidence_precedence() {
     let failed = failed_runtime(1);
-    let backoff = scheduler_evidence(SchedulerState::Queued, Some(1), true);
+    let backoff = scheduler_evidence(SchedulerState::Running, Some(1), true);
     let ready = ready_section(failed.instance_id, failed.pid);
 
     assert_eq!(
@@ -129,16 +133,6 @@ fn runtime_reducer_preserves_live_evidence_precedence() {
             backoff,
             LifecycleStatus::Idle,
             true,
-        ),
-        RuntimeStatus::RunningNotReady
-    );
-    assert_eq!(
-        reduce_runtime(
-            Some(&failed),
-            &not_ready_section(),
-            scheduler_evidence(SchedulerState::Running, Some(1), true),
-            LifecycleStatus::Idle,
-            false,
         ),
         RuntimeStatus::RunningNotReady
     );

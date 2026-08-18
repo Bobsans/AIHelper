@@ -588,7 +588,7 @@ fn http_manual() -> PluginManual {
         notes: vec![
             "Spec format is YAML-first with JSON compatibility.".to_owned(),
             "Global --json maps assert/run report format to json.".to_owned(),
-            "Retries and cross-case extract variables are planned for v1.1.".to_owned(),
+            "Retries and atomic cross-case extract variables are supported.".to_owned(),
         ],
     }
 }

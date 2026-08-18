@@ -11,8 +11,8 @@ use super::{
 };
 
 pub const TASK_SOURCE: &str = "AIHelper.ManagedMcp";
-pub(crate) const MANAGED_RESTART_COUNT: i32 = 3;
-pub(crate) const MANAGED_RESTART_INTERVAL: &str = "PT1M";
+pub(crate) const MANAGED_RESTART_COUNT: i32 = 0;
+pub(crate) const MANAGED_RESTART_INTERVAL: &str = "";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesiredTaskSpec {
@@ -489,6 +489,8 @@ mod tests {
         assert_eq!(spec.multiple_instances, MultipleInstancesPolicy::IgnoreNew);
         assert_eq!(spec.restart_count, MANAGED_RESTART_COUNT);
         assert_eq!(spec.restart_interval, MANAGED_RESTART_INTERVAL);
+        assert_eq!(spec.restart_count, 0);
+        assert!(spec.restart_interval.is_empty());
         assert!(has_canonical_restart_policy(&spec));
         assert_eq!(spec.execution_time_limit, "PT0S");
         assert!(!spec.disallow_start_on_batteries);
@@ -507,7 +509,7 @@ mod tests {
     fn restart_policy_drift_is_detected_per_property() {
         let expected = desired();
         let mut count_drift = expected.clone();
-        count_drift.restart_count = 0;
+        count_drift.restart_count = 1;
         assert_eq!(
             semantic_drift(&expected, &count_drift)
                 .into_iter()
@@ -531,7 +533,7 @@ mod tests {
     fn semantic_drift_is_property_level_and_sorted() {
         let expected = desired();
         let mut actual = expected.clone();
-        actual.restart_count = 0;
+        actual.restart_count = 1;
         actual.restart_interval = "PT2M".to_owned();
         actual.arguments.push_str(" --extra");
         let drift = semantic_drift(&expected, &actual);

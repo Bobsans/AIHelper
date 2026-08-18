@@ -1889,7 +1889,6 @@ fn apply_scheduler_section(output: &mut StatusOutput, observed: &ObservedTask) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SchedulerRuntimeEvidence {
     state: SchedulerState,
-    last_result: Option<i32>,
     canonical_restart_policy: bool,
 }
 
@@ -1897,7 +1896,6 @@ impl SchedulerRuntimeEvidence {
     fn from_observed(observed: &ObservedTask) -> Self {
         Self {
             state: observed.scheduler_state,
-            last_result: observed.last_result,
             canonical_restart_policy: has_canonical_restart_policy(&observed.spec),
         }
     }
@@ -1905,7 +1903,6 @@ impl SchedulerRuntimeEvidence {
     fn unverified(state: SchedulerState) -> Self {
         Self {
             state,
-            last_result: None,
             canonical_restart_policy: false,
         }
     }
@@ -1927,6 +1924,21 @@ fn reduce_runtime(
     if readiness.status == ReadinessStatus::Ready {
         return RuntimeStatus::Ready;
     }
+    let fatal_runtime = runtime.is_some_and(|runtime| {
+        runtime.phase == RuntimePhase::Failed
+            && runtime
+                .last_exit
+                .as_ref()
+                .is_some_and(|exit| exit.kind != ExitKind::Clean && exit.exit_code != 0)
+    });
+    if scheduler.state == SchedulerState::Running
+        && lifecycle == LifecycleStatus::Idle
+        && scheduler.canonical_restart_policy
+        && fatal_runtime
+        && !instance_occupied
+    {
+        return RuntimeStatus::RestartBackoff;
+    }
     if instance_occupied || scheduler.state == SchedulerState::Running {
         return if runtime.is_some_and(|runtime| runtime.phase == RuntimePhase::Starting) {
             RuntimeStatus::Starting
@@ -1935,19 +1947,6 @@ fn reduce_runtime(
         };
     }
     if scheduler.state == SchedulerState::Queued {
-        if lifecycle == LifecycleStatus::Idle
-            && scheduler.canonical_restart_policy
-            && scheduler.last_result.is_some_and(|result| result != 0)
-            && runtime.is_some_and(|runtime| {
-                runtime.phase == RuntimePhase::Failed
-                    && runtime
-                        .last_exit
-                        .as_ref()
-                        .is_some_and(|exit| exit.kind != ExitKind::Clean && exit.exit_code != 0)
-            })
-        {
-            return RuntimeStatus::RestartBackoff;
-        }
         return RuntimeStatus::Starting;
     }
     if runtime.is_some_and(|runtime| runtime.phase == RuntimePhase::Failed) {

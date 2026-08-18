@@ -11,7 +11,7 @@ Designed to support both:
 Universal request command for any method.
 
 ```bash
-ah http request --method <METHOD> <url> [--header "K: V"] [--query "k=v"] [--timeout-secs N] [--max-response-bytes BYTES] [--bearer TOKEN] [--basic USER:PASS] [--json "<obj>"|--json-file <path>] [--body "<text>"|--body-file <path>] [--expect-status <code|range>] [--expect-header "K: V"] [--expect-body-contains "<text>"] [--expect-json "<PATH:OP[:VALUE]>"]
+ah http request --method <METHOD> <url> [--header "K: V"] [--query "k=v"] [--timeout-secs N] [--max-response-bytes BYTES] [--retry N] [--retry-delay-ms N] [--bearer TOKEN] [--basic USER:PASS] [--json "<obj>"|--json-file <path>] [--body "<text>"|--body-file <path>] [--expect-status <code|range>] [--expect-header "K: V"] [--expect-body-contains "<text>"] [--expect-json "<PATH:OP[:VALUE]>"]
 ```
 
 ## `ah http get|post|put|patch|delete`
@@ -29,6 +29,10 @@ ah http delete <url> [same flags as request]
 Behavior:
 - no duplicated transport logic; method commands map to `request`
 - assertion flags can be used in one-off calls
+- `--retry N` enables up to `N` additional attempts; the default is `0`
+- `--retry-delay-ms N` adds a fixed delay between attempts; the default is `0`
+- transport failures, timeouts, response read failures, and `5xx` are retryable; `4xx` and assertion failures are not
+- retries are opt-in and can repeat remote mutations for POST, PUT, PATCH, and DELETE after an ambiguous failure
 - response bodies are bounded while read; `--max-response-bytes` defaults to `8388608`
 - JSON output sets `body_truncated=true` and `truncated=true` when the body exceeds the limit
 - status and header assertions still run for truncated bodies; body and JSON assertions fail explicitly because the complete body is unavailable
@@ -53,11 +57,13 @@ Behavior:
 Run multi-case API checks from spec file.
 
 ```bash
-ah http assert <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]
+ah http assert <spec-path> [--var KEY=VALUE ...] [--retry N] [--retry-delay-ms N] [--fail-fast] [--report text|json|junit]
 ```
 
 Flags:
 - `--var KEY=VALUE`: override spec variables (repeatable)
+- `--retry N`: use up to `N` additional attempts for each case
+- `--retry-delay-ms N`: fixed delay between case attempts in milliseconds
 - `--fail-fast`: stop on first failing case
 - `--report text|json|junit`: output mode for assertion run
 
@@ -66,6 +72,7 @@ Behavior:
 - returns non-zero exit when at least one case fails
 - `--report junit` writes XML to stdout
 - interactive text reports color `PASS`, `FAIL`, and summary counters semantically
+- assertions and extraction evaluate only the final response after retries
 
 ## `ah http run`
 
@@ -125,6 +132,47 @@ cases:
 
 `max_response_bytes` can be set in `defaults` and overridden for an individual case under `request`.
 
+### Cross-case extraction
+
+A successful case can extract values for later `{{variable}}` interpolation:
+
+```yaml
+cases:
+  - name: create session
+    request:
+      method: POST
+      path: /sessions
+    expect:
+      status: 201
+    extract:
+      token:
+        json: data.token
+      request_id:
+        header: X-Request-Id
+      user_path:
+        text:
+          regex: '"next":"([^"]+)"'
+          group: 1
+  - name: use session
+    request:
+      path: '{{user_path}}'
+      headers:
+        authorization: 'Bearer {{token}}'
+        x-request-id: '{{request_id}}'
+```
+
+Each variable must declare exactly one selector:
+
+- `json`: JSON path; strings are stored without quotes and other values as compact JSON
+- `header`: case-insensitive response-header name
+- `text`: first regex match; `group` defaults to `1`, while `0` selects the full match
+
+Missing paths, headers, matches, or capture groups fail the current case. JSON
+and text extraction also fail for truncated response bodies. Values are
+published atomically only when every assertion and extractor in the case passes;
+successful values replace variables with the same name. Extracted values are
+never included in text, JSON, or JUnit reports because they may contain secrets.
+
 ## Assertion Model (`path + operator`)
 
 JSON assertions in v1 use `path + operator` checks:
@@ -150,15 +198,13 @@ expect:
       eq: admin
 ```
 
-## v1 Scope and v1.1 Notes
+## Implemented Scope
 
-Included in v1:
+Implemented:
 - one-off requests (`request`, method shortcuts, `replay`)
 - spec-based checks (`assert`, `run`)
 - variables from `vars` and `--var`
-
-Deferred to v1.1:
 - retry flags (`--retry`, `--retry-delay-ms`)
-- cross-case extracted variables (`extract`)
+- atomic cross-case extracted variables (`extract`)
 
-Status: implemented (bundled plugin).
+Status: the implemented scope is available as a bundled plugin.

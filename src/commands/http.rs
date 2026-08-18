@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, Reversibility,
@@ -79,10 +82,16 @@ pub struct AssertArgs {
     pub spec_path: PathBuf,
     #[arg(long = "var", value_name = "KEY=VALUE")]
     pub vars: Vec<String>,
+    #[arg(long, default_value_t = 0, value_name = "COUNT")]
+    pub retry: u64,
+    #[arg(long, default_value_t = 0, value_name = "MILLISECONDS")]
+    pub retry_delay_ms: u64,
     #[arg(long)]
     pub fail_fast: bool,
     #[arg(long, value_enum, value_name = "FORMAT")]
     pub report: Option<AssertReportArg>,
+    #[arg(skip)]
+    pub deadline: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
@@ -102,6 +111,10 @@ pub struct RequestOptionsArgs {
     pub timeout_secs: Option<u64>,
     #[arg(long, value_name = "BYTES")]
     pub max_response_bytes: Option<usize>,
+    #[arg(long, default_value_t = 0, value_name = "COUNT")]
+    pub retry: u64,
+    #[arg(long, default_value_t = 0, value_name = "MILLISECONDS")]
+    pub retry_delay_ms: u64,
     #[arg(long, value_name = "TOKEN")]
     pub bearer: Option<String>,
     #[arg(long, value_name = "USER:PASS")]
@@ -114,6 +127,8 @@ pub struct RequestOptionsArgs {
     pub body: Option<String>,
     #[arg(long, value_name = "PATH")]
     pub body_file: Option<PathBuf>,
+    #[arg(skip)]
+    pub deadline: Option<Instant>,
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -261,8 +276,11 @@ fn typed_assert(
     let args = AssertArgs {
         spec_path,
         vars: string_array(&request.arguments, "vars"),
+        retry: u64_or(&request.arguments, "retry", 0),
+        retry_delay_ms: u64_or(&request.arguments, "retry_delay_ms", 0),
         fail_fast: bool_or(&request.arguments, "fail_fast", false),
         report: None,
+        deadline: request_deadline(request),
     };
     let (output, _) = domain::run_assert(args, crate::output::OutputMode::Json, command_name)?;
     if output.summary.failed > 0 {
@@ -286,14 +304,17 @@ fn typed_request_options(request: &TypedInvocationRequest) -> Result<RequestOpti
     Ok(RequestOptionsArgs {
         headers: string_array(arguments, "headers"),
         query: string_array(arguments, "query"),
-        timeout_secs: Some(
-            u64_or(arguments, "timeout_secs", domain::DEFAULT_TIMEOUT_SECS)
-                .min(remaining_seconds(request)),
-        ),
+        timeout_secs: Some(u64_or(
+            arguments,
+            "timeout_secs",
+            domain::DEFAULT_TIMEOUT_SECS,
+        )),
         max_response_bytes: arguments
             .get("max_response_bytes")
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok()),
+        retry: u64_or(arguments, "retry", 0),
+        retry_delay_ms: u64_or(arguments, "retry_delay_ms", 0),
         bearer: optional_string(arguments, "bearer"),
         basic: optional_string(arguments, "basic"),
         json,
@@ -302,6 +323,7 @@ fn typed_request_options(request: &TypedInvocationRequest) -> Result<RequestOpti
         body: optional_string(arguments, "body"),
         body_file: optional_string(arguments, "body_file")
             .map(|path| resolve_context_path(&request.context.cwd, &path)),
+        deadline: request_deadline(request),
     })
 }
 
@@ -323,14 +345,8 @@ fn resolve_context_path(cwd: &str, path: &str) -> PathBuf {
     }
 }
 
-fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
-    request
-        .context
-        .remaining_timeout_ms
-        .saturating_add(999)
-        .checked_div(1_000)
-        .unwrap_or(1)
-        .max(1)
+fn request_deadline(request: &TypedInvocationRequest) -> Option<Instant> {
+    Instant::now().checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
 }
 
 fn retryable_http_error(code: &str) -> bool {
@@ -457,6 +473,18 @@ fn assert_descriptor(command: &str) -> CommandDescriptor {
                     "items": {"type": "string", "pattern": "^[^=]+=.*$"},
                     "description": "Template variables encoded as KEY=VALUE."
                 },
+                "retry": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Additional attempts per case for transport failures, timeouts, response read failures, and HTTP 5xx."
+                },
+                "retry_delay_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Fixed delay in milliseconds between retry attempts."
+                },
                 "fail_fast": {
                     "type": "boolean",
                     "default": false,
@@ -506,6 +534,17 @@ fn request_properties() -> Map<String, Value> {
             domain::DEFAULT_MAX_RESPONSE_BYTES as u64,
             "Maximum response body bytes.",
         ),
+    );
+    properties.insert(
+        "retry".to_owned(),
+        nonnegative_integer_with_default(
+            0,
+            "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+        ),
+    );
+    properties.insert(
+        "retry_delay_ms".to_owned(),
+        nonnegative_integer_with_default(0, "Fixed delay in milliseconds between retry attempts."),
     );
     properties.insert(
         "bearer".to_owned(),
@@ -580,6 +619,15 @@ fn positive_integer_with_default(default: u64, description: &str) -> Value {
     json!({
         "type": "integer",
         "minimum": 1,
+        "default": default,
+        "description": description
+    })
+}
+
+fn nonnegative_integer_with_default(default: u64, description: &str) -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 0,
         "default": default,
         "description": description
     })
@@ -752,4 +800,32 @@ fn execute_assert(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_http_schemas_expose_retry_options() {
+        let catalog = command_catalog();
+        for command_id in [
+            "http.request",
+            "http.get",
+            "http.replay",
+            "http.assert",
+            "http.run",
+        ] {
+            let command = catalog
+                .commands
+                .iter()
+                .find(|command| command.id == command_id)
+                .expect("command should exist");
+            assert_eq!(command.input_schema["properties"]["retry"]["minimum"], 0);
+            assert_eq!(
+                command.input_schema["properties"]["retry_delay_ms"]["minimum"],
+                0
+            );
+        }
+    }
 }

@@ -18,7 +18,7 @@ pub(crate) fn send_request(request: &RequestConfig) -> Result<ResponseSnapshot, 
     })?;
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(request.timeout_secs.max(1)))
+        .timeout(request.timeout.max(Duration::from_millis(1)))
         .build()
         .map_err(|error| {
             AppError::external(

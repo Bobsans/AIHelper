@@ -22,7 +22,9 @@ pub use helper::{
     UPDATE_HELPER_PROTOCOL_VERSION, UPDATE_HELPER_SELF_CHECK_SCHEMA_VERSION,
     UpdateHelperSelfCheckV1,
 };
-pub use installation::{INSTALLATION_IDENTITY_SCHEMA_VERSION, InstallationIdentityV1};
+pub use installation::{
+    INSTALLATION_IDENTITY_SCHEMA_VERSION, InstallationIdentityV1, lifecycle_mutex_name,
+};
 pub use production::production_release_trust;
 pub use release::{
     CheckStatus, DiscoveredReleaseV1, GitHubAssetDtoV1, GitHubReleaseDtoV1, ReleaseAssetV1,

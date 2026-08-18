@@ -160,9 +160,11 @@ Feature boundaries:
 
 ### External Acceptance
 
-- [ ] Production key is provisioned and the matching public key is embedded.
+- [x] Production key is provisioned and the matching public key is embedded.
+- [x] Production pipeline publishes real signed GitHub releases.
 - [ ] A real signed GitHub release is consumed by the released updater.
-- [ ] Claude Code, Codex, and OpenCode connect to one managed HTTP MCP instance.
+- [x] Codex connects to the managed HTTP MCP instance.
+- [x] Claude Code and OpenCode connect to the same managed HTTP MCP instance.
 - [ ] Persistent Task Scheduler lifecycle and restart matrix passes on supported
       Windows versions.
 - [ ] Update interruption and reboot matrix passes in Windows VMs.

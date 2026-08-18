@@ -237,20 +237,19 @@ The per-user task is stored at the Task Scheduler root as
 `AIHelper Managed MCP - <CURRENT_USER_SID>`. AIHelper uses the typed Task
 Scheduler COM API and refuses to overwrite a task without its exact ownership
 marker. Canonical settings include one current-user logon trigger, one Exec
-action, `IgnoreNew` multiple-instance policy, three restart attempts at a
-one-minute interval, no execution time limit, and battery operation enabled.
-Status compares properties semantically and reports property-level drift; it
-does not compare exported task XML.
+action, `IgnoreNew` multiple-instance policy, native Scheduler retries disabled,
+no execution time limit, and battery operation enabled. Status compares
+properties semantically and reports property-level drift; it does not compare
+exported task XML.
 
-The three attempts are retries after the initial launch. Task Scheduler owns
-their timing and limit; AIHelper does not run another retry loop. Fatal managed
-startup or runtime failures persist a nonzero exit, while clean control shutdown
-persists exit `0`. A `restart_backoff` runtime status is a conservative AIHelper
-inference that requires a queued task, a nonzero last Scheduler result, a
-durable nonzero managed failure, canonical restart settings, and no live
-readiness or instance lease. Task Scheduler does not expose the queue reason,
-remaining attempt count, or next retry timestamp, so status provides no retry
-countdown.
+The launcher performs at most three retries after the initial child launch,
+with one-minute spacing. Keeping retry ownership in the launcher avoids relying
+on Task Scheduler retry behavior and prevents duplicate retry loops. Fatal
+managed startup or runtime failures persist a nonzero exit, while clean control
+shutdown persists exit `0`. A `restart_backoff` runtime status requires the
+launcher task to remain running, a durable nonzero managed failure, canonical
+task settings, and no live readiness or instance lease. Status does not expose
+the current attempt, remaining attempt count, or next retry timestamp.
 
 Durable machine-local state is independent of `AH_CONFIG_DIR`:
 
@@ -265,9 +264,8 @@ Durable machine-local state is independent of `AH_CONFIG_DIR`:
 ```
 
 Definitions are immutable. The registered task is activation authority and
-`current.json` is a repairable index. Open Win32 handles with zero sharing
-enforce one lifecycle mutation and one managed server instance per user; lock
-files are never treated as stale merely because of their age.
+`current.json` is a repairable index. Named Win32 mutex handles enforce one
+lifecycle mutation and one managed server instance per user.
 
 Important managed-service diagnostics include:
 

@@ -1,9 +1,18 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{UpdaterError, UpdaterErrorCode};
 
 pub const INSTALLATION_IDENTITY_SCHEMA_VERSION: u32 = 1;
+
+pub fn lifecycle_mutex_name(path: &Path) -> String {
+    format!(
+        "Global\\AIHelper-MCP-{}",
+        path.to_string_lossy().replace(['\\', '/', ':'], "-")
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,6 +61,16 @@ fn installation(detail: &'static str) -> UpdaterError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_mutex_name_is_deterministic_for_windows_paths() {
+        assert_eq!(
+            lifecycle_mutex_name(std::path::Path::new(
+                r"C:\Users\Example\AppData\Local\AIHelper\managed-mcp\lifecycle.lock",
+            )),
+            "Global\\AIHelper-MCP-C--Users-Example-AppData-Local-AIHelper-managed-mcp-lifecycle.lock"
+        );
+    }
 
     #[test]
     fn identity_round_trips_with_strict_canonical_fields() {

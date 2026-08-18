@@ -116,10 +116,29 @@ impl SchedulerAdapter for WindowsTaskScheduler {
             let registered = get_task(folder, &expected.task_path, "get task for stop")?;
             require_safe_task(&registered, expected)?;
             let running = enumerate_running_tasks(&registered)?;
-            let selected = select_stop_target(&running, target)?;
-            unsafe { selected.Stop() }
-                .map_err(|error| scheduler_error("stop task instance", error))?;
-            Ok(SchedulerStopReceipt { stopped: true })
+            let instances = running
+                .iter()
+                .map(|(_, instance)| instance.clone())
+                .collect::<Vec<_>>();
+            let index = match classify_stop_target(&instances, target) {
+                StopTargetMatch::Exact(index) => index,
+                StopTargetMatch::Missing => {
+                    return Ok(SchedulerStopReceipt { stopped: false });
+                }
+                StopTargetMatch::Changed => {
+                    return Err(AppError::external(
+                        "MCP_SERVICE_TASK_CHANGED",
+                        "Task Scheduler instance identity changed before stop",
+                    ));
+                }
+            };
+            match unsafe { running[index].0.Stop() } {
+                Ok(()) => Ok(SchedulerStopReceipt { stopped: true }),
+                Err(error) if is_task_instance_gone(error.code().0) => {
+                    Ok(SchedulerStopReceipt { stopped: false })
+                }
+                Err(error) => Err(scheduler_error("stop task instance", error)),
+            }
         })
     }
 
@@ -230,8 +249,11 @@ fn enumerate_running_tasks(
             .map_err(|error| scheduler_error("read task instance ID", error))?
             .to_string();
         let instance_id = parse_scheduler_instance_id(&instance_id)?;
-        let state = unsafe { running.State() }
-            .map_err(|error| scheduler_error("read task instance state", error))?;
+        let state = match unsafe { running.State() } {
+            Ok(state) => state,
+            Err(error) if is_task_instance_gone(error.code().0) => continue,
+            Err(error) => return Err(scheduler_error("read task instance state", error)),
+        };
         let engine_pid = unsafe { running.EnginePID() }.ok().filter(|pid| *pid != 0);
         instances.push((
             running,
@@ -254,34 +276,52 @@ fn parse_scheduler_instance_id(value: &str) -> Result<uuid::Uuid, AppError> {
     })
 }
 
-fn select_stop_target(
-    instances: &[(IRunningTask, SchedulerInstance)],
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopTargetMatch {
+    Exact(usize),
+    Missing,
+    Changed,
+}
+
+fn classify_stop_target(
+    instances: &[SchedulerInstance],
     target: &SchedulerStopTarget,
-) -> Result<IRunningTask, AppError> {
-    let selected = instances.iter().find(|(_, instance)| match target {
-        SchedulerStopTarget::Running {
-            instance_id,
-            expected_pid,
-        } => {
-            instance.instance_id == *instance_id
-                && instance.state == SchedulerState::Running
-                && instance.engine_pid == Some(*expected_pid)
-        }
-        SchedulerStopTarget::Queued { instance_id } => {
-            instance.instance_id == *instance_id
-                && instance.state == SchedulerState::Queued
-                && instance.engine_pid.is_none()
-                && !instances.iter().any(|(_, candidate)| {
-                    candidate.state == SchedulerState::Running || candidate.engine_pid.is_some()
-                })
-        }
-    });
-    selected.map(|(running, _)| running.clone()).ok_or_else(|| {
-        AppError::external(
-            "MCP_SERVICE_TASK_CHANGED",
-            "Task Scheduler instance identity changed before stop",
-        )
-    })
+) -> StopTargetMatch {
+    let expected_instance_id = match target {
+        SchedulerStopTarget::Running { instance_id, .. }
+        | SchedulerStopTarget::Queued { instance_id } => *instance_id,
+    };
+    let selected = instances
+        .iter()
+        .enumerate()
+        .find(|(_, instance)| match target {
+            SchedulerStopTarget::Running {
+                instance_id,
+                expected_pid,
+            } => {
+                instance.instance_id == *instance_id
+                    && instance.state == SchedulerState::Running
+                    && instance.engine_pid == Some(*expected_pid)
+            }
+            SchedulerStopTarget::Queued { instance_id } => {
+                instance.instance_id == *instance_id
+                    && instance.state == SchedulerState::Queued
+                    && instance.engine_pid.is_none()
+                    && !instances.iter().any(|candidate| {
+                        candidate.state == SchedulerState::Running || candidate.engine_pid.is_some()
+                    })
+            }
+        });
+    if let Some((index, _)) = selected {
+        StopTargetMatch::Exact(index)
+    } else if instances
+        .iter()
+        .any(|instance| instance.instance_id == expected_instance_id)
+    {
+        StopTargetMatch::Changed
+    } else {
+        StopTargetMatch::Missing
+    }
 }
 
 fn with_root_folder<T>(
@@ -434,9 +474,11 @@ fn populate_definition(
         settings
             .SetRestartCount(desired.restart_count)
             .map_err(|error| scheduler_error("set RestartCount", error))?;
-        settings
-            .SetRestartInterval(&BSTR::from(desired.restart_interval.as_str()))
-            .map_err(|error| scheduler_error("set RestartInterval", error))?;
+        if !desired.restart_interval.is_empty() {
+            settings
+                .SetRestartInterval(&BSTR::from(desired.restart_interval.as_str()))
+                .map_err(|error| scheduler_error("set RestartInterval", error))?;
+        }
         settings
             .SetEnabled(VARIANT_BOOL::from(desired.enabled))
             .map_err(|error| scheduler_error("enable task definition", error))?;
@@ -696,6 +738,10 @@ fn is_task_missing(value: i32) -> bool {
     matches!(value as u32, 0x8007_0002 | 0x8007_0003 | 0x8004_130F)
 }
 
+fn is_task_instance_gone(value: i32) -> bool {
+    value as u32 == 0x8004_130B
+}
+
 fn scheduler_error(operation: &str, error: windows::core::Error) -> AppError {
     let value = error.code().0;
     AppError::external(
@@ -723,6 +769,46 @@ mod tests {
         assert!(is_task_missing(0x8007_0002u32 as i32));
         assert!(is_task_missing(0x8004_130Fu32 as i32));
         assert!(!is_task_missing(0x8007_0005u32 as i32));
+    }
+
+    #[test]
+    fn task_instance_gone_codes_are_classified_without_hiding_other_failures() {
+        assert!(is_task_instance_gone(0x8004_130Bu32 as i32));
+        assert!(!is_task_instance_gone(0x8004_130Fu32 as i32));
+        assert!(!is_task_instance_gone(0x8007_0005u32 as i32));
+    }
+
+    #[test]
+    fn stop_target_distinguishes_exact_changed_and_disappeared_instances() {
+        let expected = Uuid::new_v4();
+        let target = SchedulerStopTarget::Running {
+            instance_id: expected,
+            expected_pid: 42,
+        };
+        let instance = |instance_id, state, engine_pid| SchedulerInstance {
+            instance_id,
+            state,
+            engine_pid,
+        };
+
+        assert_eq!(
+            classify_stop_target(
+                &[instance(expected, SchedulerState::Running, Some(42))],
+                &target,
+            ),
+            StopTargetMatch::Exact(0)
+        );
+        assert_eq!(
+            classify_stop_target(&[instance(expected, SchedulerState::Queued, None)], &target,),
+            StopTargetMatch::Changed
+        );
+        assert_eq!(
+            classify_stop_target(
+                &[instance(Uuid::new_v4(), SchedulerState::Running, Some(7))],
+                &target,
+            ),
+            StopTargetMatch::Missing
+        );
     }
 
     #[test]
@@ -778,6 +864,8 @@ mod tests {
                 .map_err(|error| scheduler_error("read smoke action count", error))?;
             assert_eq!(restart_count, MANAGED_RESTART_COUNT);
             assert_eq!(restart_interval, MANAGED_RESTART_INTERVAL);
+            assert_eq!(restart_count, 0);
+            assert!(restart_interval.is_empty());
             assert_eq!(trigger_count, 1);
             assert_eq!(action_count, 1);
             Ok(())

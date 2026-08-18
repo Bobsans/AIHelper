@@ -22,6 +22,8 @@ mod windows_launcher {
         os::windows::ffi::OsStrExt,
         path::{Path, PathBuf},
         ptr::{null, null_mut},
+        thread,
+        time::Duration,
     };
 
     use windows_sys::Win32::{
@@ -43,6 +45,8 @@ mod windows_launcher {
     };
 
     const SUPERVISOR_PID_ENV: &str = "AH_MCP_SERVICE_SUPERVISOR_PID";
+    const RETRY_COUNT: usize = 3;
+    const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
     pub(super) fn run() -> io::Result<u32> {
         let executable = sibling_ah(&env::current_exe()?);
@@ -57,6 +61,27 @@ mod windows_launcher {
         }
 
         let arguments = env::args_os().skip(1).collect::<Vec<_>>();
+        run_with_retry(
+            || run_once(&executable, &arguments),
+            |delay| thread::sleep(delay),
+        )
+    }
+
+    fn run_with_retry(
+        mut attempt: impl FnMut() -> io::Result<u32>,
+        mut wait: impl FnMut(Duration),
+    ) -> io::Result<u32> {
+        for index in 0..=RETRY_COUNT {
+            match attempt() {
+                Ok(0) => return Ok(0),
+                result if index == RETRY_COUNT => return result,
+                Ok(_) | Err(_) => wait(RETRY_INTERVAL),
+            }
+        }
+        unreachable!("bounded retry loop always returns")
+    }
+
+    fn run_once(executable: &Path, arguments: &[OsString]) -> io::Result<u32> {
         let mut command_line = command_line(&executable, &arguments)?;
         let application = wide_null(executable.as_os_str())?;
         let job = create_job()?;
@@ -274,6 +299,63 @@ mod windows_launcher {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn retry_runner_stops_immediately_after_success() {
+            let mut attempts = 0;
+            let mut delays = Vec::new();
+
+            let exit = run_with_retry(
+                || {
+                    attempts += 1;
+                    Ok(0)
+                },
+                |delay| delays.push(delay),
+            )
+            .unwrap();
+
+            assert_eq!(exit, 0);
+            assert_eq!(attempts, 1);
+            assert!(delays.is_empty());
+        }
+
+        #[test]
+        fn retry_runner_allows_three_retries_after_the_initial_failure() {
+            let mut attempts = 0;
+            let mut delays = Vec::new();
+
+            let exit = run_with_retry(
+                || {
+                    attempts += 1;
+                    Ok(if attempts == 4 { 0 } else { 1 })
+                },
+                |delay| delays.push(delay),
+            )
+            .unwrap();
+
+            assert_eq!(exit, 0);
+            assert_eq!(attempts, 4);
+            assert_eq!(delays, vec![RETRY_INTERVAL; 3]);
+        }
+
+        #[test]
+        fn retry_runner_stops_after_the_fourth_failure() {
+            let mut attempts = 0;
+            let mut delays = Vec::new();
+
+            let exit = run_with_retry(
+                || {
+                    attempts += 1;
+                    Ok(1)
+                },
+                |delay| delays.push(delay),
+            )
+            .unwrap();
+
+            assert_eq!(exit, 1);
+            assert_eq!(attempts, 4);
+            assert_eq!(delays, vec![RETRY_INTERVAL; 3]);
+        }
 
         #[test]
         fn resolves_sibling_ah() {

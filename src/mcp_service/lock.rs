@@ -85,11 +85,7 @@ fn try_acquire_windows(path: &Path) -> Result<Option<FileLease>, AppError> {
     use windows_sys::Win32::System::Threading::CreateMutexW;
     use windows_sys::core::PCWSTR;
 
-    // Convert path to a valid Windows mutex name (no backslashes, limited length)
-    let mutex_name = format!(
-        "Global\\AIHelper-MCP-{}",
-        path.to_string_lossy().replace(['\\', '/', ':'], "-")
-    );
+    let mutex_name = ah_updater_core::lifecycle_mutex_name(path);
     let mutex_name_wide: Vec<u16> = mutex_name.encode_utf16().chain(Some(0)).collect();
 
     let handle =

@@ -138,7 +138,8 @@ fn rejects_noncanonical_or_mismatched_release_versions() {
     let output_parent = TempDir::new().unwrap();
     let signing = signing_material([11_u8; 32]);
 
-    for tag in ["1.2.0", "v1.02.0", "v1.3.0"] {
+    let mismatched_tag = format!("v{}", newer_version());
+    for tag in ["1.2.0", "v1.02.0", mismatched_tag.as_str()] {
         let output = output_parent.path().join(tag.replace('.', "-"));
         let error = sign_release_set(
             &ReleaseRequest {
@@ -165,7 +166,8 @@ fn rejects_invalid_or_newer_minimum_updater_versions() {
     let output_parent = TempDir::new().unwrap();
     let signing = signing_material([11_u8; 32]);
 
-    for minimum_updater_version in ["not-semver", "1.02.0", "1.3.0"] {
+    let newer_version = newer_version();
+    for minimum_updater_version in ["not-semver", "1.02.0", newer_version.as_str()] {
         let output = output_parent
             .path()
             .join(minimum_updater_version.replace('.', "-"));
@@ -196,6 +198,11 @@ fn signing_material(seed: [u8; 32]) -> SigningMaterial {
 
 fn release_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn newer_version() -> String {
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+    format!("{}.0.0", current.major + 1)
 }
 
 fn write_profile_archive(directory: &Path, profile: ReleaseProfile) {

@@ -7,6 +7,31 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-18
+
+### Added
+
+- `ah http request`, method shortcuts, `replay`, `assert`, and `run` add opt-in
+  fixed-delay retries through CLI and typed MCP for transport failures,
+  timeouts, response read failures, and HTTP `5xx` responses; client errors and
+  assertion failures are not retried.
+- HTTP assertion specs can atomically extract JSON values, response headers,
+  and regular-expression captures for later case interpolation without exposing
+  extracted values in text, JSON, or JUnit reports.
+
+### Changed
+
+- Interactive CLI errors now show human-readable messages, likely command
+  corrections with descriptions, valid usage, scoped help commands, and
+  operational recovery hints while preserving the released JSON error schema.
+
+### Fixed
+
+- Windows update activation, recovery, and rollback once again accept the
+  inherited named-mutex lifecycle lease used by the windowless MCP service.
+- The managed MCP launcher now owns its bounded one-minute retries, while stop
+  tolerates a Task Scheduler instance disappearing during state readback.
+
 ## [1.2.1] - 2026-08-11
 
 ### Changed
@@ -314,7 +339,8 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Bobsans/AIHelper/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Bobsans/AIHelper/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Bobsans/AIHelper/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Bobsans/AIHelper/compare/v1.0.0...v1.1.0

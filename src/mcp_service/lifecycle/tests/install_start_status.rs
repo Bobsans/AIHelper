@@ -424,7 +424,7 @@ fn status_reduces_stopped_ready_running_failed_and_identity_mismatch() {
 
 #[cfg(windows)]
 #[test]
-fn status_preserves_scheduler_and_runtime_evidence_during_inferred_backoff() {
+fn status_preserves_launcher_and_runtime_evidence_during_inferred_backoff() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
     let (_, definition) = harness.installed_definition();
@@ -437,7 +437,7 @@ fn status_preserves_scheduler_and_runtime_evidence_during_inferred_backoff() {
     });
     harness.set_runtime(&runtime);
     harness.scheduler.update_observed(|observed| {
-        observed.scheduler_state = SchedulerState::Queued;
+        observed.scheduler_state = SchedulerState::Running;
         observed.last_result = Some(1);
     });
 

@@ -54,6 +54,98 @@ fn http_get_supports_expectations() {
 }
 
 #[test]
+fn http_get_retries_server_errors() {
+    let responses = vec![
+        MockResponse {
+            expected_method: "GET",
+            expected_path: "/unstable",
+            status: 503,
+            headers: vec![("Content-Type", "text/plain")],
+            body: "unavailable".to_owned(),
+        },
+        MockResponse {
+            expected_method: "GET",
+            expected_path: "/unstable",
+            status: 200,
+            headers: vec![("Content-Type", "text/plain")],
+            body: "ready".to_owned(),
+        },
+    ];
+    let (base_url, handle) = spawn_mock_server(responses);
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "http",
+        "get",
+        &format!("{base_url}/unstable"),
+        "--retry",
+        "1",
+        "--expect-status",
+        "200",
+    ])
+    .assert()
+    .success()
+    .stdout(contains("ready"));
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn http_get_does_not_retry_client_errors() {
+    let responses = vec![MockResponse {
+        expected_method: "GET",
+        expected_path: "/missing",
+        status: 404,
+        headers: vec![("Content-Type", "text/plain")],
+        body: "missing".to_owned(),
+    }];
+    let (base_url, handle) = spawn_mock_server(responses);
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "http",
+        "get",
+        &format!("{base_url}/missing"),
+        "--retry",
+        "2",
+        "--expect-status",
+        "404",
+    ])
+    .assert()
+    .success();
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn http_get_does_not_retry_assertion_failures() {
+    let responses = vec![MockResponse {
+        expected_method: "GET",
+        expected_path: "/healthy",
+        status: 200,
+        headers: vec![("Content-Type", "text/plain")],
+        body: "ready".to_owned(),
+    }];
+    let (base_url, handle) = spawn_mock_server(responses);
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "http",
+        "get",
+        &format!("{base_url}/healthy"),
+        "--retry",
+        "2",
+        "--expect-body-contains",
+        "missing",
+    ])
+    .assert()
+    .failure()
+    .stderr(contains("request expectations failed"));
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
 fn http_get_bounds_oversized_response_body() {
     let responses = vec![MockResponse {
         expected_method: "GET",
@@ -165,6 +257,133 @@ cases:
     .stdout(contains("\"command\": \"http.assert\""))
     .stdout(contains("\"failed\": 0"))
     .stdout(contains("\u{1b}").not());
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn http_assert_extracts_json_headers_and_text_across_cases() {
+    let responses = vec![
+        MockResponse {
+            expected_method: "GET",
+            expected_path: "/session",
+            status: 200,
+            headers: vec![
+                ("Content-Type", "application/json"),
+                ("X-Request-Id", "req-7"),
+            ],
+            body: "{\"data\":{\"token\":\"secret-token\"},\"next\":\"/users/42\"}".to_owned(),
+        },
+        MockResponse {
+            expected_method: "GET",
+            expected_path: "/users/42?request=req-7",
+            status: 200,
+            headers: vec![("Content-Type", "application/json")],
+            body: "{\"authorized\":true}".to_owned(),
+        },
+    ];
+    let (base_url, handle) = spawn_mock_server(responses);
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let spec_path = temp_dir.path().join("extract.yaml");
+    std::fs::write(
+        &spec_path,
+        format!(
+            r#"
+version: 1
+defaults:
+  base_url: {base_url}
+cases:
+  - name: create session
+    request:
+      path: /session
+    expect:
+      status: 200
+    extract:
+      token:
+        json: data.token
+      request_id:
+        header: X-Request-Id
+      user_path:
+        text:
+          regex: '"next":"([^"]+)"'
+          group: 1
+  - name: use session
+    request:
+      path: '{{{{user_path}}}}'
+      query:
+        request: '{{{{request_id}}}}'
+      headers:
+        authorization: 'Bearer {{{{token}}}}'
+    expect:
+      status: 200
+"#
+        ),
+    )
+    .expect("spec file should be written");
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "http",
+        "assert",
+        &spec_path.to_string_lossy(),
+        "--report",
+        "json",
+    ])
+    .assert()
+    .success()
+    .stdout(contains("\"failed\": 0"))
+    .stdout(contains("secret-token").not());
+
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn http_assert_does_not_publish_partial_extraction() {
+    let responses = vec![MockResponse {
+        expected_method: "GET",
+        expected_path: "/session",
+        status: 200,
+        headers: vec![("Content-Type", "application/json")],
+        body: "{\"token\":\"secret-token\"}".to_owned(),
+    }];
+    let (base_url, handle) = spawn_mock_server(responses);
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let spec_path = temp_dir.path().join("atomic-extract.yaml");
+    std::fs::write(
+        &spec_path,
+        format!(
+            r#"
+version: 1
+defaults:
+  base_url: {base_url}
+cases:
+  - name: incomplete session
+    request:
+      path: /session
+    expect:
+      status: 200
+    extract:
+      token:
+        json: token
+      missing:
+        header: X-Missing
+"#
+        ),
+    )
+    .expect("spec file should be written");
+
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.args([
+        "http",
+        "assert",
+        &spec_path.to_string_lossy(),
+        "--report",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .stdout(contains("extract 'missing' failed"))
+    .stdout(contains("secret-token").not());
 
     handle.join().expect("server thread should finish");
 }
@@ -296,6 +515,7 @@ fn status_reason(status: u16) -> &'static str {
         403 => "Forbidden",
         404 => "Not Found",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "OK",
     }
 }

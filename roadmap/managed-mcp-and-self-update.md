@@ -3,9 +3,12 @@
 ## Статус
 
 Автоматизированная реализация локального HTTP MCP, управляемого Windows per-user
-lifecycle и Windows x64 self-updater завершена. Открыта только внешняя приёмка:
-подключение целевых MCP-клиентов, persistent Task Scheduler и updater/reboot
-Windows VM matrices, production key activation и реальный подписанный релиз.
+lifecycle и Windows x64 self-updater завершена. Production key активирован, а
+подписанные релизы v1.2.0 и v1.2.1 опубликованы production pipeline. Codex,
+Claude Code и OpenCode подключены к одному managed HTTP MCP instance. Открыта
+только внешняя приёмка: фактическое потребление подписанного релиза released
+updater, persistent Task Scheduler lifecycle/restart matrix и updater
+interruption/reboot Windows VM matrix.
 
 В чек-листах `[x]` означает реализовано и автоматически проверено. Пункты с
 пометкой `manual acceptance` или `external activation` остаются `[ ]` до
@@ -602,7 +605,9 @@ managed MCP уже был остановлен, восстанавливаетс
 
 Manual acceptance:
 
-- [ ] (manual acceptance) Проверить подключение Claude Code, Codex и OpenCode к
+- [x] (manual acceptance) Проверить подключение Codex к локальному HTTP MCP без
+      дополнительных headers.
+- [x] (manual acceptance) Проверить подключение Claude Code и OpenCode к тому же
       локальному HTTP MCP без дополнительных headers.
 
 Критерии завершения:
@@ -662,13 +667,15 @@ Manual acceptance:
 - [x] Добавить network- и mutation-free foundation `ah-updater-core`: versioned
       GitHub release DTO, Windows x64 compatibility policy, стабильные error
       codes и внедряемый public-key trust registry.
-- [ ] (external activation) Создать production Ed25519 release key, сохранить
+- [x] (external activation) Создать production Ed25519 release key, сохранить
       seed только в protected GitHub environment и встроить public key в
       AIHelper.
 - [x] Реализовать поиск последнего подходящего stable GitHub Release по SemVer.
 - [x] Реализовать mutation-free `ah upgrade --check` с проверкой signed manifest.
-- [ ] (external activation) Проверить pipeline и updater на реальном подписанном
-      GitHub Release.
+- [x] (external activation) Проверить production pipeline на реальных подписанных
+      GitHub Releases v1.2.0 и v1.2.1.
+- [ ] (manual acceptance) Проверить фактическое потребление реального подписанного
+      GitHub Release выпущенным updater.
 
 ### Этап 6: update-helper и durable transaction
 

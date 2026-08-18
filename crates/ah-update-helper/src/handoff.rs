@@ -40,14 +40,13 @@ impl Drop for HandoffLease {
 
 #[cfg(windows)]
 mod windows {
-    use std::{os::windows::ffi::OsStrExt as _, path::Path, ptr::null_mut};
+    use std::{os::windows::ffi::OsStrExt as _, path::Path};
 
+    use ah_updater_core::lifecycle_mutex_name;
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE},
-        Storage::FileSystem::{
-            FILE_NAME_OPENED, FILE_TYPE_DISK, GetFileType, GetFinalPathNameByHandleW,
-        },
-        System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent},
+        Foundation::{CloseHandle, CompareObjectHandles, HANDLE},
+        Storage::FileSystem::SYNCHRONIZE,
+        System::Threading::{EVENT_MODIFY_STATE, OpenEventW, OpenMutexW, SetEvent},
     };
 
     use super::{HandoffLease, handoff};
@@ -58,38 +57,27 @@ mod windows {
         event_name: &str,
     ) -> Result<HandoffLease, ah_updater_core::UpdaterError> {
         let handle = raw as HANDLE;
-        if handle.is_null() || unsafe { GetFileType(handle) } != FILE_TYPE_DISK {
+        if handle.is_null() {
             return Err(handoff("inherited lifecycle lock handle is invalid"));
         }
-        let actual = final_path(handle)?;
-        if normalize(&actual) != normalize(&expected_path.to_string_lossy()) {
+        let mutex_name = lifecycle_mutex_name(expected_path);
+        let wide_mutex = std::ffi::OsStr::new(&mutex_name)
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let expected = unsafe { OpenMutexW(SYNCHRONIZE, 0, wide_mutex.as_ptr()) };
+        if expected.is_null() {
+            return Err(handoff("failed to open expected lifecycle lock mutex"));
+        }
+        let matches = unsafe { CompareObjectHandles(handle, expected) } != 0;
+        unsafe { CloseHandle(expected) };
+        if !matches {
             return Err(handoff(
                 "inherited lifecycle lock handle does not match the expected path",
             ));
         }
         signal_event(event_name)?;
         Ok(HandoffLease { handle })
-    }
-
-    fn final_path(handle: HANDLE) -> Result<String, ah_updater_core::UpdaterError> {
-        let needed = unsafe { GetFinalPathNameByHandleW(handle, null_mut(), 0, FILE_NAME_OPENED) };
-        if needed == 0 || needed > 32_768 {
-            return Err(handoff("failed to resolve inherited lifecycle lock path"));
-        }
-        let mut buffer = vec![0_u16; needed as usize + 1];
-        let written = unsafe {
-            GetFinalPathNameByHandleW(
-                handle,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                FILE_NAME_OPENED,
-            )
-        };
-        if written == 0 || written as usize >= buffer.len() {
-            return Err(handoff("failed to read inherited lifecycle lock path"));
-        }
-        String::from_utf16(&buffer[..written as usize])
-            .map_err(|_| handoff("inherited lifecycle lock path is invalid UTF-16"))
     }
 
     fn signal_event(name: &str) -> Result<(), ah_updater_core::UpdaterError> {
@@ -108,16 +96,6 @@ mod windows {
         } else {
             Ok(())
         }
-    }
-
-    fn normalize(path: &str) -> String {
-        path.strip_prefix(r"\\?\UNC\")
-            .map(|path| format!(r"\\{path}"))
-            .or_else(|| path.strip_prefix(r"\\?\").map(str::to_owned))
-            .unwrap_or_else(|| path.to_owned())
-            .replace('/', r"\")
-            .trim_end_matches('\u{5c}')
-            .to_lowercase()
     }
 }
 
@@ -140,36 +118,24 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn claims_exact_disk_handle_and_acknowledges_event() {
+    fn claims_exact_named_mutex_handle_and_acknowledges_event() {
         use std::{os::windows::ffi::OsStrExt as _, ptr::null};
 
+        use ah_updater_core::lifecycle_mutex_name;
         use windows_sys::Win32::{
-            Foundation::{
-                CloseHandle, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
-            },
-            Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_ALWAYS},
-            System::Threading::{CreateEventW, WaitForSingleObject},
+            Foundation::{CloseHandle, WAIT_OBJECT_0},
+            System::Threading::{CreateEventW, CreateMutexW, WaitForSingleObject},
         };
 
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("lifecycle.lock");
-        let wide_path = path
-            .as_os_str()
+        let mutex_name = lifecycle_mutex_name(&path);
+        let wide_mutex = std::ffi::OsStr::new(&mutex_name)
             .encode_wide()
             .chain(Some(0))
             .collect::<Vec<_>>();
-        let handle = unsafe {
-            CreateFileW(
-                wide_path.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                0,
-                null(),
-                OPEN_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                std::ptr::null_mut(),
-            )
-        };
-        assert_ne!(handle, INVALID_HANDLE_VALUE);
+        let handle = unsafe { CreateMutexW(null(), 0, wide_mutex.as_ptr()) };
+        assert!(!handle.is_null());
         let event_name = format!("Local\\AIHelper.Update.Handoff.test-{}", std::process::id());
         let wide_event = std::ffi::OsStr::new(&event_name)
             .encode_wide()
@@ -181,32 +147,48 @@ mod tests {
         let lease = HandoffLease::claim(handle as usize, &path, &event_name).unwrap();
 
         assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_OBJECT_0);
-        let blocked = unsafe {
-            CreateFileW(
-                wide_path.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                0,
-                null(),
-                OPEN_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                std::ptr::null_mut(),
-            )
-        };
-        assert_eq!(blocked, INVALID_HANDLE_VALUE);
         drop(lease);
-        let reopened = unsafe {
-            CreateFileW(
-                wide_path.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                0,
-                null(),
-                OPEN_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                std::ptr::null_mut(),
-            )
+        unsafe { CloseHandle(event) };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_named_mutex_for_a_different_lifecycle_path() {
+        use std::{os::windows::ffi::OsStrExt as _, ptr::null};
+
+        use ah_updater_core::lifecycle_mutex_name;
+        use windows_sys::Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{CreateEventW, CreateMutexW},
         };
-        assert_ne!(reopened, INVALID_HANDLE_VALUE);
-        unsafe { CloseHandle(reopened) };
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let expected = temp.path().join("expected.lock");
+        let other = temp.path().join("other.lock");
+        let mutex_name = lifecycle_mutex_name(&other);
+        let wide_mutex = std::ffi::OsStr::new(&mutex_name)
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe { CreateMutexW(null(), 0, wide_mutex.as_ptr()) };
+        assert!(!handle.is_null());
+        let event_name = format!(
+            "Local\\AIHelper.Update.Handoff.mismatch-{}",
+            std::process::id()
+        );
+        let wide_event = std::ffi::OsStr::new(&event_name)
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let event = unsafe { CreateEventW(null(), 1, 0, wide_event.as_ptr()) };
+        assert!(!event.is_null());
+
+        let error = HandoffLease::claim(handle as usize, &expected, &event_name)
+            .err()
+            .expect("mismatched mutex must be rejected");
+
+        assert_eq!(error.code(), UpdaterErrorCode::Recovery);
+        unsafe { CloseHandle(handle) };
         unsafe { CloseHandle(event) };
     }
 }
