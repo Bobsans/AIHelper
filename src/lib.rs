@@ -18,10 +18,13 @@ pub mod safety;
 pub mod secrets;
 pub(crate) mod updater;
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use ah_plugin_api::{ErrorDiagnostic, InvocationResponse, RequiredTool};
-use ah_runtime::{PluginManager, PluginSource, RuntimeError};
+use ah_plugin_api::{ErrorDiagnostic, InvocationResponse, RequiredTool, ResolvedSecret};
+use ah_runtime::{PluginManager, PluginSource, RuntimeError, SecretResolver, SecretResolverError};
 use serde::Serialize;
 
 use crate::{
@@ -33,6 +36,37 @@ use crate::{
 
 pub fn run() -> Result<(), AppError> {
     runtime_flow::run()
+}
+
+struct RuntimeVaultKeyProvider;
+
+impl secrets::KeyProvider for RuntimeVaultKeyProvider {
+    fn load_or_create(&self) -> Result<[u8; 32], secrets::VaultError> {
+        secrets::resolve_key_provider()?.load_or_create()
+    }
+}
+
+fn runtime_vault(config: &config::ConfigContext) -> Arc<secrets::VaultStore> {
+    Arc::new(secrets::VaultStore::new(
+        config,
+        Box::new(RuntimeVaultKeyProvider),
+    ))
+}
+
+impl SecretResolver for secrets::VaultStore {
+    fn resolve(&self, id: &str) -> Result<ResolvedSecret, SecretResolverError> {
+        let secret =
+            secrets::VaultStore::resolve(self, id).map_err(|error| match error.code() {
+                "VAULT_SECRET_NOT_FOUND" | "VAULT_NOT_INITIALIZED" => SecretResolverError::NotFound,
+                "VAULT_KEY_UNAVAILABLE" => SecretResolverError::VaultKeyUnavailable,
+                _ => SecretResolverError::VaultLocked,
+            })?;
+        Ok(ResolvedSecret {
+            id: secret.metadata.id,
+            kind: secret.metadata.kind.to_string(),
+            values: secret.values,
+        })
+    }
 }
 
 fn execute_plugins_list(
@@ -432,6 +466,21 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
         ),
         RuntimeError::TypedInvocation(message) => {
             AppError::external("TYPED_INVOCATION_FAILED", message)
+        }
+        error @ RuntimeError::SecretRequired { .. } => {
+            AppError::external("SECRET_REQUIRED", error.to_string())
+        }
+        error @ RuntimeError::SecretNotFound { .. } => {
+            AppError::external("SECRET_NOT_FOUND", error.to_string())
+        }
+        error @ RuntimeError::SecretKindMismatch { .. } => {
+            AppError::external("SECRET_KIND_MISMATCH", error.to_string())
+        }
+        error @ RuntimeError::VaultLocked { .. } => {
+            AppError::external("VAULT_LOCKED", error.to_string())
+        }
+        error @ RuntimeError::VaultKeyUnavailable { .. } => {
+            AppError::external("VAULT_KEY_UNAVAILABLE", error.to_string())
         }
         RuntimeError::TypedResponseValidation { command, reason } => AppError::external(
             "OUTPUT_SCHEMA_VIOLATION",

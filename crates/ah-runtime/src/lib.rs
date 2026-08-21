@@ -1,5 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet},
+    borrow::Cow,
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::{CString, c_char},
     fs,
     path::{Path, PathBuf},
@@ -17,8 +18,8 @@ use ah_plugin_api::{
     AhPluginCommandCatalogJsonV1, AhPluginEntryV1, AhPluginInvokeCommandJsonV1,
     AhPluginManualJsonV1, AhPluginMetadataJsonV1, CommandCatalog, CommandDescriptor, CommandError,
     GlobalOptionsWire, InvocationRequest, InvocationResponse, PluginManual, PluginMetadata,
-    RequiredTool, TypedInvocationRequest, TypedInvocationResponse, c_ptr_to_string,
-    plugin_capabilities,
+    RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
+    c_ptr_to_string, plugin_capabilities,
 };
 use libloading::Library;
 use thiserror::Error;
@@ -69,6 +70,38 @@ pub enum RuntimeError {
     TypedCommandNotFound(String),
     #[error("typed command invocation failed: {0}")]
     TypedInvocation(String),
+    #[error("required credential slot '{slot}' is missing for '{command}'")]
+    SecretRequired { command: String, slot: String },
+    #[error("credential '{id}' for slot '{slot}' was not found for '{command}'")]
+    SecretNotFound {
+        command: String,
+        slot: String,
+        id: String,
+    },
+    #[error(
+        "credential '{id}' for slot '{slot}' has kind '{kind}', expected one of {accepted_kinds:?} for '{command}'"
+    )]
+    SecretKindMismatch {
+        command: String,
+        slot: String,
+        id: String,
+        kind: String,
+        accepted_kinds: Vec<String>,
+    },
+    #[error("vault is locked while resolving credential '{id}' for slot '{slot}' in '{command}'")]
+    VaultLocked {
+        command: String,
+        slot: String,
+        id: String,
+    },
+    #[error(
+        "vault key is unavailable while resolving credential '{id}' for slot '{slot}' in '{command}'"
+    )]
+    VaultKeyUnavailable {
+        command: String,
+        slot: String,
+        id: String,
+    },
     #[error("typed command response failed validation for '{command}': {reason}")]
     TypedResponseValidation { command: String, reason: String },
     #[error("typed execution request is invalid: {0}")]
@@ -127,6 +160,20 @@ pub trait BuiltinPlugin: Send + Sync {
     fn cancel_typed(&self, _request_id: &str) -> bool {
         false
     }
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum SecretResolverError {
+    #[error("secret was not found")]
+    NotFound,
+    #[error("vault is locked or contains invalid data")]
+    VaultLocked,
+    #[error("vault key is unavailable")]
+    VaultKeyUnavailable,
+}
+
+pub trait SecretResolver: Send + Sync {
+    fn resolve(&self, id: &str) -> Result<ResolvedSecret, SecretResolverError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +278,7 @@ pub struct PluginManager {
     typed_registry: RwLock<Option<Arc<TypedRegistry>>>,
     catalog_revision: AtomicU64,
     registry_build_count: AtomicU64,
+    secret_resolver: Option<Arc<dyn SecretResolver>>,
 }
 
 #[derive(Debug, Clone)]
@@ -277,7 +325,12 @@ impl PluginManager {
             typed_registry: RwLock::new(None),
             catalog_revision: AtomicU64::new(1),
             registry_build_count: AtomicU64::new(0),
+            secret_resolver: None,
         }
+    }
+
+    pub fn set_secret_resolver(&mut self, resolver: Arc<dyn SecretResolver>) {
+        self.secret_resolver = Some(resolver);
     }
 
     pub fn set_disabled_domains<I>(&self, domains: I)
@@ -619,6 +672,8 @@ impl PluginManager {
         if command.route != TypedCommandRoute::Host && self.is_domain_disabled(domain) {
             return Err(RuntimeError::DomainDisabled(domain.to_owned()));
         }
+        let request = self.prepare_typed_request(&command, request)?;
+        let request = request.as_ref();
 
         let response = match command.route {
             TypedCommandRoute::Host => {
@@ -628,11 +683,6 @@ impl PluginManager {
                     .ok_or_else(|| RuntimeError::TypedCommandNotFound(request.command.clone()))?;
                 let required_tools = plugin.required_tools_typed(request);
                 preflight_typed_required_tools(&request.command, domain, &required_tools)?;
-                typed::validate_arguments_with(
-                    &request.command,
-                    &command.input_validator,
-                    &request.arguments,
-                )?;
                 plugin.invoke_typed(request)
             }
             TypedCommandRoute::Builtin => {
@@ -642,11 +692,6 @@ impl PluginManager {
                     .ok_or_else(|| RuntimeError::TypedCommandNotFound(request.command.clone()))?;
                 let required_tools = plugin.required_tools_typed(request);
                 preflight_typed_required_tools(&request.command, domain, &required_tools)?;
-                typed::validate_arguments_with(
-                    &request.command,
-                    &command.input_validator,
-                    &request.arguments,
-                )?;
                 plugin.invoke_typed(request)
             }
             TypedCommandRoute::Dynamic => {
@@ -659,16 +704,114 @@ impl PluginManager {
                     domain,
                     &plugin.metadata.required_tools,
                 )?;
-                typed::validate_arguments_with(
-                    &request.command,
-                    &command.input_validator,
-                    &request.arguments,
-                )?;
                 plugin.invoke_typed(request)?
             }
         };
         typed::validate_response_with(&request.command, &command.output_validator, &response)?;
         Ok(response)
+    }
+
+    fn prepare_typed_request<'a>(
+        &self,
+        command: &RegisteredTypedCommand,
+        request: &'a TypedInvocationRequest,
+    ) -> Result<Cow<'a, TypedInvocationRequest>, RuntimeError> {
+        let slots = &command.registered.descriptor.secret_slots;
+        if slots.is_empty() {
+            typed::validate_arguments_with(
+                &request.command,
+                &command.input_validator,
+                &request.arguments,
+            )?;
+            return Ok(Cow::Borrowed(request));
+        }
+
+        let mut schema_arguments = request.arguments.clone();
+        if let Some(arguments) = schema_arguments.as_object_mut() {
+            arguments.remove("credentials");
+        }
+        typed::validate_arguments_with(
+            &request.command,
+            &command.input_validator,
+            &schema_arguments,
+        )?;
+
+        let arguments = request
+            .arguments
+            .as_object()
+            .expect("schema validated object");
+        let credentials = match arguments.get("credentials") {
+            None => None,
+            Some(serde_json::Value::Object(credentials)) => Some(credentials),
+            Some(_) => {
+                return Err(RuntimeError::TypedInvocation(format!(
+                    "credentials for '{}' must be a JSON object",
+                    request.command
+                )));
+            }
+        };
+        let Some(credentials) = credentials else {
+            require_secret_slots(&request.command, slots, None)?;
+            return Ok(Cow::Borrowed(request));
+        };
+
+        let declared = slots
+            .iter()
+            .map(|slot| slot.name.as_str())
+            .collect::<HashSet<_>>();
+        let mut undeclared = credentials
+            .keys()
+            .filter(|name| !declared.contains(name.as_str()))
+            .collect::<Vec<_>>();
+        undeclared.sort();
+        if let Some(slot) = undeclared.first() {
+            return Err(RuntimeError::TypedInvocation(format!(
+                "credentials for '{}' contain undeclared slot '{}'",
+                request.command, slot
+            )));
+        }
+        require_secret_slots(&request.command, slots, Some(credentials))?;
+
+        if credentials.is_empty() {
+            return Ok(Cow::Borrowed(request));
+        }
+        let resolver = self.secret_resolver.as_ref();
+        let mut resolved = BTreeMap::new();
+        for slot in slots {
+            let Some(id) = credentials.get(&slot.name) else {
+                continue;
+            };
+            let id = id.as_str().ok_or_else(|| {
+                RuntimeError::TypedInvocation(format!(
+                    "credential id for slot '{}' in '{}' must be a string",
+                    slot.name, request.command
+                ))
+            })?;
+            let secret = match resolver {
+                Some(resolver) => resolver.resolve(id).map_err(|error| {
+                    map_secret_resolver_error(error, &request.command, &slot.name, id)
+                })?,
+                None => {
+                    return Err(RuntimeError::VaultKeyUnavailable {
+                        command: request.command.clone(),
+                        slot: slot.name.clone(),
+                        id: id.to_owned(),
+                    });
+                }
+            };
+            if !slot.accepted_kinds.contains(&secret.kind) {
+                return Err(RuntimeError::SecretKindMismatch {
+                    command: request.command.clone(),
+                    slot: slot.name.clone(),
+                    id: id.to_owned(),
+                    kind: secret.kind,
+                    accepted_kinds: slot.accepted_kinds.clone(),
+                });
+            }
+            resolved.insert(slot.name.clone(), secret);
+        }
+
+        Ok(Cow::Owned(request.clone().with_resolved_secrets(resolved)))
     }
 
     pub fn cancel_typed(&self, command: &str, request_id: &str) -> bool {
@@ -1314,6 +1457,47 @@ fn preflight_typed_required_tools(
     Ok(())
 }
 
+fn require_secret_slots(
+    command: &str,
+    slots: &[SecretSlot],
+    credentials: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<(), RuntimeError> {
+    if let Some(slot) = slots.iter().find(|slot| {
+        slot.required && !credentials.is_some_and(|value| value.contains_key(&slot.name))
+    }) {
+        return Err(RuntimeError::SecretRequired {
+            command: command.to_owned(),
+            slot: slot.name.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn map_secret_resolver_error(
+    error: SecretResolverError,
+    command: &str,
+    slot: &str,
+    id: &str,
+) -> RuntimeError {
+    match error {
+        SecretResolverError::NotFound => RuntimeError::SecretNotFound {
+            command: command.to_owned(),
+            slot: slot.to_owned(),
+            id: id.to_owned(),
+        },
+        SecretResolverError::VaultLocked => RuntimeError::VaultLocked {
+            command: command.to_owned(),
+            slot: slot.to_owned(),
+            id: id.to_owned(),
+        },
+        SecretResolverError::VaultKeyUnavailable => RuntimeError::VaultKeyUnavailable {
+            command: command.to_owned(),
+            slot: slot.to_owned(),
+            id: id.to_owned(),
+        },
+    }
+}
+
 fn infer_operation(domain: &str, argv: &[String]) -> Option<String> {
     argv.first().map(|command| format!("{domain}.{command}"))
 }
@@ -1341,13 +1525,18 @@ fn write_disabled_domains(
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
+        ffi::CStr,
         fs,
         path::Path,
-        sync::Arc,
+        sync::{
+            Arc, Mutex, OnceLock,
+            atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        },
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use ah_plugin_api::GlobalOptionsWire;
+    use ah_plugin_api::{GlobalOptionsWire, ResolvedSecret, SecretSlot};
 
     use super::*;
 
@@ -1363,6 +1552,194 @@ mod tests {
     }
 
     struct EchoBuiltinPlugin;
+
+    struct FixedSecretResolver {
+        calls: AtomicUsize,
+    }
+
+    impl SecretResolver for FixedSecretResolver {
+        fn resolve(&self, id: &str) -> Result<ResolvedSecret, SecretResolverError> {
+            self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            Ok(ResolvedSecret {
+                id: id.to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([("password".to_owned(), "private-password".to_owned())]),
+            })
+        }
+    }
+
+    struct ErrorSecretResolver(SecretResolverError);
+
+    impl SecretResolver for ErrorSecretResolver {
+        fn resolve(&self, _id: &str) -> Result<ResolvedSecret, SecretResolverError> {
+            Err(self.0)
+        }
+    }
+
+    struct WrongKindSecretResolver;
+
+    impl SecretResolver for WrongKindSecretResolver {
+        fn resolve(&self, id: &str) -> Result<ResolvedSecret, SecretResolverError> {
+            Ok(ResolvedSecret {
+                id: id.to_owned(),
+                kind: "http-basic".to_owned(),
+                values: BTreeMap::from([("password".to_owned(), "redaction-sentinel".to_owned())]),
+            })
+        }
+    }
+
+    struct SecretProbePlugin {
+        received: Arc<Mutex<Option<TypedInvocationRequest>>>,
+        required: bool,
+    }
+
+    fn probe_descriptor(required: bool) -> CommandDescriptor {
+        let mut slot = SecretSlot::optional("database", ["postgres"], "Database credential");
+        slot.required = required;
+        CommandDescriptor::new(
+            "probe.run",
+            "Probe",
+            "Capture one typed request for runtime tests.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            ah_plugin_api::CommandEffects::new(
+                true,
+                false,
+                true,
+                false,
+                vec![ah_plugin_api::CommandEffect::ConfigurationRead],
+                ah_plugin_api::RiskLevel::Low,
+                "Captures an in-memory test request only.",
+                ah_plugin_api::Reversibility::Yes,
+            ),
+        )
+        .with_secret_slot(slot)
+    }
+
+    impl BuiltinPlugin for SecretProbePlugin {
+        fn metadata(&self) -> PluginMetadata {
+            let mut metadata = test_metadata("builtin-probe", "probe");
+            metadata.compatibility = ah_plugin_api::PluginCompatibility::current()
+                .with_capability(plugin_capabilities::TYPED_COMMANDS_V1);
+            metadata
+        }
+
+        fn manual(&self) -> PluginManual {
+            PluginManual {
+                plugin_name: "builtin-probe".to_owned(),
+                domain: "probe".to_owned(),
+                description: "probe test plugin".to_owned(),
+                commands: Vec::new(),
+                notes: Vec::new(),
+            }
+        }
+
+        fn invoke(&self, _request: &InvocationRequest) -> InvocationResponse {
+            InvocationResponse::ok(None)
+        }
+
+        fn command_catalog(&self) -> Option<CommandCatalog> {
+            Some(CommandCatalog::new(
+                "builtin-probe",
+                "probe",
+                vec![probe_descriptor(self.required)],
+            ))
+        }
+
+        fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+            *self.received.lock().unwrap() = Some(request.clone());
+            TypedInvocationResponse::success(serde_json::json!({}), None)
+        }
+    }
+
+    fn probe_manager(
+        required: bool,
+        resolver: Option<Arc<dyn SecretResolver>>,
+        host: bool,
+    ) -> (PluginManager, Arc<Mutex<Option<TypedInvocationRequest>>>) {
+        let received = Arc::new(Mutex::new(None));
+        let mut manager = PluginManager::new();
+        if let Some(resolver) = resolver {
+            manager.set_secret_resolver(resolver);
+        }
+        let plugin = Arc::new(SecretProbePlugin {
+            received: Arc::clone(&received),
+            required,
+        });
+        if host {
+            manager.register_host_builtin(plugin);
+        } else {
+            manager.register_builtin(plugin);
+        }
+        (manager, received)
+    }
+
+    static DYNAMIC_PROBE_REQUEST: OnceLock<Mutex<Option<TypedInvocationRequest>>> = OnceLock::new();
+
+    unsafe extern "C" fn dynamic_probe_invoke(request: *const c_char) -> *mut c_char {
+        let raw = unsafe { CStr::from_ptr(request) }.to_string_lossy();
+        let request = serde_json::from_str::<TypedInvocationRequest>(&raw).unwrap();
+        *DYNAMIC_PROBE_REQUEST
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap() = Some(request);
+        let response = TypedInvocationResponse::success(serde_json::json!({}), None);
+        CString::new(serde_json::to_string(&response).unwrap())
+            .unwrap()
+            .into_raw()
+    }
+
+    unsafe extern "C" fn dynamic_probe_free(value: *mut c_char) {
+        if !value.is_null() {
+            drop(unsafe { CString::from_raw(value) });
+        }
+    }
+
+    unsafe extern "C" fn dynamic_probe_cancel(_request_id: *const c_char) -> i32 {
+        0
+    }
+
+    #[cfg(unix)]
+    fn current_process_library() -> Library {
+        libloading::os::unix::Library::this().into()
+    }
+
+    #[cfg(windows)]
+    fn current_process_library() -> Library {
+        libloading::os::windows::Library::this().unwrap().into()
+    }
+
+    fn register_dynamic_probe(manager: &mut PluginManager) {
+        let mut metadata = test_metadata("dynamic-probe", "probe");
+        metadata.compatibility = ah_plugin_api::PluginCompatibility::current()
+            .with_capability(plugin_capabilities::TYPED_COMMANDS_V1);
+        manager.dynamic_plugins.insert(
+            "probe".to_owned(),
+            DynamicPlugin {
+                _library: current_process_library(),
+                metadata,
+                invoke_json: dynamic_probe_invoke,
+                manual_json: None,
+                command_catalog: Some(CommandCatalog::new(
+                    "dynamic-probe",
+                    "probe",
+                    vec![probe_descriptor(false)],
+                )),
+                invoke_command_json: Some(dynamic_probe_invoke),
+                cancel_command: Some(dynamic_probe_cancel),
+                free_c_string: dynamic_probe_free,
+            },
+        );
+        manager.invalidate_typed_registry();
+    }
 
     impl BuiltinPlugin for EchoBuiltinPlugin {
         fn metadata(&self) -> PluginMetadata {
@@ -1570,6 +1947,188 @@ mod tests {
             .expect("typed invocation should work");
         assert_eq!(response.data, Some(serde_json::json!({ "value": "hello" })));
         assert!(manager.cancel_typed("echo.value", "cancel-me"));
+    }
+
+    #[test]
+    fn resolver_keeps_public_id_and_injects_private_secret() {
+        let resolver = Arc::new(FixedSecretResolver {
+            calls: AtomicUsize::new(0),
+        });
+        let (manager, received) = probe_manager(false, Some(resolver.clone()), false);
+
+        manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "qa-lms"}}),
+                ah_plugin_api::ExecutionContextWire::new("resolver-test", ".", None, 1_000),
+            ))
+            .expect("credential should resolve before builtin dispatch");
+
+        let request = received.lock().unwrap().clone().unwrap();
+        assert_eq!(request.arguments["credentials"]["database"], "qa-lms");
+        assert_eq!(request.resolved_secrets["database"].id, "qa-lms");
+        assert_eq!(request.resolved_secrets["database"].kind, "postgres");
+        assert_eq!(
+            request.resolved_secrets["database"].values["password"],
+            "private-password"
+        );
+        assert_eq!(resolver.calls.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[test]
+    fn resolver_injects_before_host_dispatch() {
+        let resolver = Arc::new(FixedSecretResolver {
+            calls: AtomicUsize::new(0),
+        });
+        let (manager, received) = probe_manager(false, Some(resolver), true);
+
+        manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "qa-lms"}}),
+                ah_plugin_api::ExecutionContextWire::new("host-resolver-test", ".", None, 1_000),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            received.lock().unwrap().as_ref().unwrap().resolved_secrets["database"].id,
+            "qa-lms"
+        );
+    }
+
+    #[test]
+    fn resolver_injects_before_dynamic_plugin_dispatch() {
+        let resolver = Arc::new(FixedSecretResolver {
+            calls: AtomicUsize::new(0),
+        });
+        let mut manager = PluginManager::new();
+        manager.set_secret_resolver(resolver);
+        register_dynamic_probe(&mut manager);
+        *DYNAMIC_PROBE_REQUEST
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap() = None;
+
+        manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "qa-lms"}}),
+                ah_plugin_api::ExecutionContextWire::new("dynamic-wire", ".", None, 1_000),
+            ))
+            .unwrap();
+        let request = DYNAMIC_PROBE_REQUEST
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap();
+
+        assert_eq!(request.arguments["credentials"]["database"], "qa-lms");
+        assert_eq!(request.resolved_secrets["database"].kind, "postgres");
+    }
+
+    #[test]
+    fn resolver_is_not_touched_for_commands_without_slots() {
+        let resolver = Arc::new(FixedSecretResolver {
+            calls: AtomicUsize::new(0),
+        });
+        let mut manager = PluginManager::new();
+        manager.set_secret_resolver(resolver.clone());
+        manager.register_builtin(Arc::new(EchoBuiltinPlugin));
+
+        manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "echo.value",
+                serde_json::json!({"value": "hello"}),
+                ah_plugin_api::ExecutionContextWire::new("no-slots", ".", None, 1_000),
+            ))
+            .unwrap();
+
+        assert_eq!(resolver.calls.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[test]
+    fn resolver_returns_deterministic_redacted_errors() {
+        let (required_manager, _) = probe_manager(true, None, false);
+        let schema_error = required_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"unexpected": true}),
+                ah_plugin_api::ExecutionContextWire::new("schema-first", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(schema_error, RuntimeError::TypedInvocation(_)));
+
+        let undeclared = required_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"other": "qa-lms"}}),
+                ah_plugin_api::ExecutionContextWire::new("undeclared", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(undeclared.to_string().contains("undeclared slot 'other'"));
+
+        let required = required_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({}),
+                ah_plugin_api::ExecutionContextWire::new("required", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(required, RuntimeError::SecretRequired { .. }));
+
+        let missing_resolver: Arc<dyn SecretResolver> =
+            Arc::new(ErrorSecretResolver(SecretResolverError::NotFound));
+        let (missing_manager, _) = probe_manager(false, Some(missing_resolver), false);
+        let missing = missing_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "missing-id"}}),
+                ah_plugin_api::ExecutionContextWire::new("missing", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(missing, RuntimeError::SecretNotFound { .. }));
+
+        let wrong_kind_resolver: Arc<dyn SecretResolver> = Arc::new(WrongKindSecretResolver);
+        let (wrong_kind_manager, _) = probe_manager(false, Some(wrong_kind_resolver), false);
+        let wrong_kind = wrong_kind_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "api-basic"}}),
+                ah_plugin_api::ExecutionContextWire::new("wrong-kind", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            &wrong_kind,
+            RuntimeError::SecretKindMismatch { .. }
+        ));
+        assert!(!wrong_kind.to_string().contains("redaction-sentinel"));
+
+        let (unavailable_manager, _) = probe_manager(false, None, false);
+        let unavailable = unavailable_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "qa-lms"}}),
+                ah_plugin_api::ExecutionContextWire::new("unavailable", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            unavailable,
+            RuntimeError::VaultKeyUnavailable { .. }
+        ));
+
+        let locked_resolver: Arc<dyn SecretResolver> =
+            Arc::new(ErrorSecretResolver(SecretResolverError::VaultLocked));
+        let (locked_manager, _) = probe_manager(false, Some(locked_resolver), false);
+        let locked = locked_manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "probe.run",
+                serde_json::json!({"credentials": {"database": "qa-lms"}}),
+                ah_plugin_api::ExecutionContextWire::new("locked", ".", None, 1_000),
+            ))
+            .unwrap_err();
+        assert!(matches!(locked, RuntimeError::VaultLocked { .. }));
     }
 
     #[test]

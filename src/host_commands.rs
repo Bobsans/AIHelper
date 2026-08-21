@@ -173,6 +173,12 @@ impl BuiltinPlugin for SecretsHostPlugin {
                     Some(format!("Returned {count} secret(s).")),
                 )
             }
+            Err(error) if error.code() == "VAULT_NOT_INITIALIZED" => {
+                TypedInvocationResponse::success(
+                    json!({"secrets": []}),
+                    Some("Returned 0 secret(s).".to_owned()),
+                )
+            }
             Err(error) => app_error_response(
                 "secrets",
                 &request.command,
@@ -860,6 +866,20 @@ mod tests {
         (manager, vault)
     }
 
+    fn runtime_without_initialized_vault(
+        settings: Arc<Mutex<PluginSettings>>,
+        config_dir: &Path,
+    ) -> Arc<PluginManager> {
+        let vault = Arc::new(VaultStore::at(config_dir, Arc::new(FixedKey)));
+        Arc::new_cyclic(|weak| {
+            let mut manager = PluginManager::new();
+            for plugin in builtins(weak.clone(), Arc::clone(&settings), Arc::clone(&vault)) {
+                manager.register_host_builtin(plugin);
+            }
+            manager
+        })
+    }
+
     #[test]
     fn host_commands_are_typed_but_not_registered_plugins() {
         let temp = tempfile::tempdir().unwrap();
@@ -951,6 +971,22 @@ mod tests {
             }]})
         );
         assert!(!serde_json::to_string(&data).unwrap().contains(secret_value));
+    }
+
+    #[test]
+    fn secrets_list_returns_empty_without_initialized_vault() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings = Arc::new(Mutex::new(
+            PluginSettings::load_from_path(temp.path().join("plugins.json")).unwrap(),
+        ));
+        let manager = runtime_without_initialized_vault(settings, temp.path());
+
+        let response = manager
+            .invoke_typed(&request("secrets.list", json!({})))
+            .unwrap();
+
+        assert!(response.success);
+        assert_eq!(response.data, Some(json!({"secrets": []})));
     }
 
     #[test]

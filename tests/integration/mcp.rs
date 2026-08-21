@@ -493,6 +493,46 @@ fn stdio_secrets_list_tools_call_redacts_values() {
     server.stop();
 }
 
+#[test]
+fn stdio_secrets_list_works_without_initialized_vault() {
+    const MASTER_KEY: &str = "4444444444444444444444444444444444444444444444444444444444444444";
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let mut server = McpProcess::start_with_master_key(&config_dir, MASTER_KEY);
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "aihelper-test", "version": "1.0.0"}
+        }
+    }));
+    assert_eq!(server.response()["id"], 1);
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    }));
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.secrets.list",
+            "arguments": {}
+        }
+    }));
+
+    let response = server.response();
+    assert_eq!(response["id"], 2);
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        response["result"]["structuredContent"],
+        json!({"secrets": []})
+    );
+    server.stop();
+}
+
 struct HttpMcpProcess {
     child: GroupChild,
     url: String,

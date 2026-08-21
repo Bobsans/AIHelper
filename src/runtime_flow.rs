@@ -6,7 +6,7 @@ use std::{
 
 use ah_plugin_api::CommandCatalog;
 use ah_runtime::{
-    InvocationOutcome, PluginLoadReport, PluginManager, PluginSource,
+    InvocationOutcome, PluginLoadReport, PluginManager, PluginSource, SecretResolver,
     executor::{Executor, ParallelExecutor},
 };
 
@@ -125,6 +125,7 @@ pub(crate) fn run() -> Result<(), AppError> {
         command,
         runtime.config,
         runtime.manager,
+        runtime.vault,
         runtime.settings,
         logger.clone(),
         managed_runner,
@@ -179,6 +180,7 @@ struct RuntimeStartup {
     config: ConfigContext,
     settings: PluginSettings,
     manager: PluginManager,
+    vault: Arc<crate::secrets::VaultStore>,
 }
 
 enum RoutingOutcome {
@@ -219,7 +221,10 @@ fn startup(
                 serde_json::json!({"argv": logged_argv}),
             );
         })?;
+    let vault = crate::runtime_vault(&config);
     let mut manager = PluginManager::new();
+    let resolver: Arc<dyn SecretResolver> = vault.clone();
+    manager.set_secret_resolver(resolver);
     manager.reserve_dynamic_domains(["ai", "plugins", "mcp", "secrets", "upgrade"]);
     for plugin in plugins::builtins() {
         manager.register_builtin(plugin);
@@ -230,6 +235,7 @@ fn startup(
         config,
         settings,
         manager,
+        vault,
     })
 }
 
@@ -403,6 +409,7 @@ fn execution(
     command: RuntimeCommand,
     config: ConfigContext,
     manager: PluginManager,
+    vault: Arc<crate::secrets::VaultStore>,
     mut settings: PluginSettings,
     logger: Option<Arc<EventLogger>>,
     managed_runner: Option<Arc<ManagedRunner>>,
@@ -415,8 +422,8 @@ fn execution(
             default_timeout_ms,
             options,
         } => execute_mcp_serve(McpServeConfig {
-            config,
             manager,
+            vault,
             settings,
             transport,
             port,
@@ -506,8 +513,8 @@ fn decorate_invocation_error(
 }
 
 struct McpServeConfig {
-    config: ConfigContext,
     manager: PluginManager,
+    vault: Arc<crate::secrets::VaultStore>,
     settings: PluginSettings,
     transport: cli::McpTransport,
     port: u16,
@@ -573,18 +580,13 @@ fn execute_mcp_serve(config: McpServeConfig) -> Result<(), AppError> {
     let runner_after_serve = config.managed_runner.clone();
     let (result, shutdown_grace) = runtime.block_on(async move {
         let setup = async {
-            let vault = Arc::new(crate::secrets::VaultStore::new(
-                &config.config,
-                crate::secrets::resolve_key_provider()
-                    .map_err(|error| AppError::external(error.code(), error.to_string()))?,
-            ));
             let settings = Arc::new(std::sync::Mutex::new(config.settings));
             let manager = Arc::new_cyclic(|weak| {
                 let mut manager = config.manager;
                 for plugin in crate::host_commands::builtins(
                     weak.clone(),
                     Arc::clone(&settings),
-                    Arc::clone(&vault),
+                    Arc::clone(&config.vault),
                 ) {
                     manager.register_host_builtin(plugin);
                 }
