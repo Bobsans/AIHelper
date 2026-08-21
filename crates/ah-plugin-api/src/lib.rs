@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     ffi::{CStr, CString, OsStr, c_char},
     fmt::Display,
     io::{self, IsTerminal},
@@ -385,6 +386,36 @@ impl CommandExample {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecretSlot {
+    pub name: String,
+    pub accepted_kinds: Vec<String>,
+    pub required: bool,
+    pub description: String,
+}
+
+impl SecretSlot {
+    pub fn optional(
+        name: impl Into<String>,
+        accepted_kinds: impl IntoIterator<Item = impl Into<String>>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            accepted_kinds: accepted_kinds.into_iter().map(Into::into).collect(),
+            required: false,
+            description: description.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedSecret {
+    pub id: String,
+    pub kind: String,
+    pub values: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommandDescriptor {
     pub id: String,
@@ -395,6 +426,8 @@ pub struct CommandDescriptor {
     pub effects: CommandEffects,
     #[serde(default)]
     pub examples: Vec<CommandExample>,
+    #[serde(default)]
+    pub secret_slots: Vec<SecretSlot>,
 }
 
 impl CommandDescriptor {
@@ -414,11 +447,17 @@ impl CommandDescriptor {
             output_schema,
             effects,
             examples: Vec::new(),
+            secret_slots: Vec::new(),
         }
     }
 
     pub fn with_example(mut self, example: CommandExample) -> Self {
         self.examples.push(example);
+        self
+    }
+
+    pub fn with_secret_slot(mut self, slot: SecretSlot) -> Self {
+        self.secret_slots.push(slot);
         self
     }
 }
@@ -473,6 +512,8 @@ pub struct TypedInvocationRequest {
     pub command: String,
     pub arguments: serde_json::Value,
     pub context: ExecutionContextWire,
+    #[serde(default)]
+    pub resolved_secrets: BTreeMap<String, ResolvedSecret>,
 }
 
 impl TypedInvocationRequest {
@@ -485,7 +526,16 @@ impl TypedInvocationRequest {
             command: command.into(),
             arguments,
             context,
+            resolved_secrets: BTreeMap::new(),
         }
+    }
+
+    pub fn with_resolved_secrets(
+        mut self,
+        resolved_secrets: BTreeMap<String, ResolvedSecret>,
+    ) -> Self {
+        self.resolved_secrets = resolved_secrets;
+        self
     }
 }
 
@@ -1241,6 +1291,18 @@ mod tests {
             serde_json::to_value(CommandEffect::FilesystemRead).expect("effect should serialize"),
             serde_json::json!("filesystem_read")
         );
+    }
+
+    #[test]
+    fn secret_slot_serializes_in_command_descriptor() {
+        let descriptor = sample_descriptor().with_secret_slot(SecretSlot::optional(
+            "database",
+            ["postgres"],
+            "Database credential",
+        ));
+
+        let serialized = serde_json::to_value(descriptor).expect("descriptor should serialize");
+        assert_eq!(serialized["secret_slots"][0]["name"], "database");
     }
 
     #[test]

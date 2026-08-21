@@ -202,6 +202,33 @@ pub fn mcp_input_schema(descriptor: &CommandDescriptor) -> Result<serde_json::Va
             "additionalProperties": false
         }),
     );
+    if descriptor.secret_slots.is_empty() {
+        return Ok(schema);
+    }
+
+    let mut credential_properties = serde_json::Map::new();
+    let mut required_slots = Vec::new();
+    for slot in &descriptor.secret_slots {
+        credential_properties.insert(
+            slot.name.clone(),
+            serde_json::json!({
+                "type": "string",
+                "description": slot.description,
+            }),
+        );
+        if slot.required {
+            required_slots.push(serde_json::Value::String(slot.name.clone()));
+        }
+    }
+    let mut credentials_schema = serde_json::json!({
+        "type": "object",
+        "properties": credential_properties,
+        "additionalProperties": false,
+    });
+    if !required_slots.is_empty() {
+        credentials_schema["required"] = serde_json::Value::Array(required_slots);
+    }
+    properties.insert("credentials".to_owned(), credentials_schema);
     Ok(schema)
 }
 
@@ -292,6 +319,8 @@ fn validate_descriptor(
         );
     }
 
+    validate_secret_slots(normalized_domain, descriptor)?;
+
     validate_input_root_keywords(normalized_domain, descriptor)?;
     let input = validate_schema(
         normalized_domain,
@@ -315,6 +344,17 @@ fn validate_descriptor(
             normalized_domain,
             format!(
                 "command '{}' uses reserved input property 'context'",
+                descriptor.id
+            ),
+        );
+    }
+    if !descriptor.secret_slots.is_empty()
+        && properties.is_some_and(|value| value.contains_key("credentials"))
+    {
+        return invalid_catalog(
+            normalized_domain,
+            format!(
+                "command '{}' uses reserved input property 'credentials'",
                 descriptor.id
             ),
         );
@@ -369,6 +409,50 @@ fn validate_descriptor(
         input,
         output,
     })
+}
+
+fn validate_secret_slots(domain: &str, descriptor: &CommandDescriptor) -> Result<(), RuntimeError> {
+    let mut names = HashSet::new();
+    for slot in &descriptor.secret_slots {
+        if slot.name.is_empty()
+            || !slot
+                .name
+                .bytes()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'_' | b'-'))
+        {
+            return invalid_catalog(
+                domain,
+                format!(
+                    "command '{}' has invalid secret slot name '{}'",
+                    descriptor.id, slot.name
+                ),
+            );
+        }
+        if !names.insert(&slot.name) {
+            return invalid_catalog(
+                domain,
+                format!(
+                    "command '{}' has duplicate secret slot name '{}'",
+                    descriptor.id, slot.name
+                ),
+            );
+        }
+        if slot.accepted_kinds.is_empty()
+            || slot
+                .accepted_kinds
+                .iter()
+                .any(|kind| kind.trim().is_empty())
+        {
+            return invalid_catalog(
+                domain,
+                format!(
+                    "command '{}' secret slot '{}' has no accepted kinds",
+                    descriptor.id, slot.name
+                ),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate_input_root_keywords(
@@ -453,7 +537,7 @@ fn invalid_response<T>(command: &str, reason: impl Into<String>) -> Result<T, Ru
 mod tests {
     use ah_plugin_api::{
         AH_PLUGIN_ABI_VERSION, CommandEffect, CommandEffects, CommandError, CommandExample,
-        PluginCompatibility, Reversibility, RiskLevel, TypedInvocationResponse,
+        PluginCompatibility, Reversibility, RiskLevel, SecretSlot, TypedInvocationResponse,
     };
     use serde_json::json;
 
@@ -555,6 +639,48 @@ mod tests {
                 "context": {"cwd": ".", "limit": 10, "timeout_ms": 1_000}
             }))
             .expect("injected context should satisfy a closed root schema");
+    }
+
+    #[test]
+    fn secret_slot_adds_credentials_schema_only_when_declared() {
+        let without_slot = mcp_input_schema(&descriptor()).expect("schema should be augmented");
+        assert!(without_slot["properties"].get("credentials").is_none());
+
+        let with_slot = mcp_input_schema(&descriptor().with_secret_slot(
+            ah_plugin_api::SecretSlot::optional("database", ["postgres"], "Database credential"),
+        ))
+        .expect("schema should be augmented");
+        assert_eq!(
+            with_slot["properties"]["credentials"]["properties"]["database"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn catalog_rejects_invalid_secret_slots() {
+        let duplicate = descriptor()
+            .with_secret_slot(SecretSlot::optional("database", ["postgres"], "Database"))
+            .with_secret_slot(SecretSlot::optional("database", ["mysql"], "Database"));
+        let empty_kinds = descriptor().with_secret_slot(SecretSlot::optional(
+            "database",
+            std::iter::empty::<&str>(),
+            "Database",
+        ));
+        let invalid_name = descriptor().with_secret_slot(SecretSlot::optional(
+            "database.name",
+            ["postgres"],
+            "Database",
+        ));
+
+        for descriptor in [duplicate, empty_kinds, invalid_name] {
+            assert!(
+                validate_catalog(
+                    &metadata(),
+                    &CommandCatalog::new("test-plugin", "test", vec![descriptor]),
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
