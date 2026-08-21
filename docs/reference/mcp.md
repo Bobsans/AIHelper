@@ -322,7 +322,7 @@ value itself.
 
 The PostgreSQL `--password-env` option is retained for direct CLI compatibility.
 It is not an HTTP MCP credential channel; HTTP MCP callers use
-`credentials.database` so the server resolves the value internally.
+`credentials.basic` so the server resolves the value internally.
 
 The adapter also publishes four transport-independent job tools:
 

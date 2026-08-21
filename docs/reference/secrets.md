@@ -62,7 +62,7 @@ only the selected ID, for example `{"credentials":{"database":"billing"}}` or
 record IDs, and `/mcp` never accepts or returns secret values.
 
 For compatibility, PostgreSQL `--password-env` remains available to direct CLI
-commands. HTTP MCP callers must use `credentials.database`; a server process
+commands. HTTP MCP callers must use `credentials.basic`; a server process
 cannot safely inherit a per-call password environment variable.
 
 ## Storage and test isolation
