@@ -1,7 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 use std::{
-    env,
+    env, fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -95,10 +95,31 @@ struct ConnectionArgs {
     sslmode: Option<String>,
     #[arg(long, global = true, value_name = "ENV_VAR")]
     password_env: Option<String>,
+    #[arg(skip)]
+    resolved_password: Option<SecretValue>,
     #[arg(long, global = true, default_value_t = DEFAULT_CONNECT_TIMEOUT_SECS, value_name = "SECONDS")]
     connect_timeout_secs: u64,
     #[arg(long, global = true, value_name = "MILLISECONDS")]
     statement_timeout_ms: Option<u64>,
+}
+
+#[derive(Clone)]
+struct SecretValue(String);
+
+impl SecretValue {
+    fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -2768,7 +2789,9 @@ fn apply_connection_env(
     if let Some(sslmode) = &connection.sslmode {
         command.env("PGSSLMODE", sslmode);
     }
-    if let Some(password_env) = &connection.password_env {
+    if let Some(password) = &connection.resolved_password {
+        command.env("PGPASSWORD", password.expose());
+    } else if let Some(password_env) = &connection.password_env {
         let password = env::var(password_env).map_err(|_| {
             InvocationResponse::error(
                 "POSTGRES_PASSWORD_ENV_MISSING",
@@ -3388,6 +3411,8 @@ fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use clap::Parser;
 
     use super::*;
@@ -3618,5 +3643,39 @@ mod tests {
     #[test]
     fn sql_literal_escapes_quotes() {
         assert_eq!(sql_literal("bob's"), "'bob''s'");
+    }
+
+    #[test]
+    fn resolved_password_is_applied_only_as_pgpassword() {
+        let mut command = Command::new("psql");
+        let connection = ConnectionArgs {
+            host: None,
+            port: None,
+            database: None,
+            user: None,
+            service: None,
+            sslmode: None,
+            password_env: None,
+            resolved_password: Some(SecretValue::new("postgres-boundary-sentinel")),
+            connect_timeout_secs: 0,
+            statement_timeout_ms: None,
+        };
+
+        apply_connection_env(&mut command, &connection, false).expect("env should apply");
+
+        let envs = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            envs.get("PGPASSWORD").and_then(Option::as_deref),
+            Some("postgres-boundary-sentinel")
+        );
+        assert!(!format!("{connection:?}").contains("postgres-boundary-sentinel"));
     }
 }

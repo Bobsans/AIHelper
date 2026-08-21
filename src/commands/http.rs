@@ -1,11 +1,12 @@
 use std::{
+    fmt,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, Reversibility,
-    RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    RiskLevel, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
@@ -119,6 +120,8 @@ pub struct RequestOptionsArgs {
     pub bearer: Option<String>,
     #[arg(long, value_name = "USER:PASS")]
     pub basic: Option<String>,
+    #[arg(skip)]
+    pub(crate) resolved_basic: Option<BasicCredential>,
     #[arg(long, value_name = "JSON")]
     pub json: Option<String>,
     #[arg(long, value_name = "PATH")]
@@ -129,6 +132,31 @@ pub struct RequestOptionsArgs {
     pub body_file: Option<PathBuf>,
     #[arg(skip)]
     pub deadline: Option<Instant>,
+}
+
+#[derive(Clone)]
+pub(crate) struct BasicCredential {
+    username: String,
+    password: String,
+}
+
+impl BasicCredential {
+    pub(crate) fn new(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+            password: password.into(),
+        }
+    }
+
+    fn into_parts(self) -> (String, String) {
+        (self.username, self.password)
+    }
+}
+
+impl fmt::Debug for BasicCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -317,6 +345,7 @@ fn typed_request_options(request: &TypedInvocationRequest) -> Result<RequestOpti
         retry_delay_ms: u64_or(arguments, "retry_delay_ms", 0),
         bearer: optional_string(arguments, "bearer"),
         basic: optional_string(arguments, "basic"),
+        resolved_basic: resolved_basic_credential(request)?,
         json,
         json_file: optional_string(arguments, "json_file")
             .map(|path| resolve_context_path(&request.context.cwd, &path)),
@@ -325,6 +354,67 @@ fn typed_request_options(request: &TypedInvocationRequest) -> Result<RequestOpti
             .map(|path| resolve_context_path(&request.context.cwd, &path)),
         deadline: request_deadline(request),
     })
+}
+
+fn resolved_basic_credential(
+    request: &TypedInvocationRequest,
+) -> Result<Option<BasicCredential>, AppError> {
+    let credentials = request
+        .arguments
+        .get("credentials")
+        .and_then(Value::as_object);
+    if let Some(slot) = credentials.and_then(|items| items.keys().find(|key| *key != "basic")) {
+        return Err(AppError::invalid_argument(format!(
+            "unsupported HTTP credential slot '{slot}'"
+        )));
+    }
+    if let Some(slot) = request
+        .resolved_secrets
+        .keys()
+        .find(|slot| slot.as_str() != "basic")
+    {
+        return Err(AppError::invalid_argument(format!(
+            "unsupported resolved HTTP credential slot '{slot}'"
+        )));
+    }
+
+    let public_id = credentials
+        .and_then(|items| items.get("basic"))
+        .and_then(Value::as_str);
+    let resolved = request.resolved_secrets.get("basic");
+    let Some((public_id, resolved)) = public_id.zip(resolved) else {
+        return match (public_id, resolved) {
+            (None, None) => Ok(None),
+            _ => Err(AppError::external(
+                "SECRET_REQUIRED",
+                "HTTP Basic credential was not resolved",
+            )),
+        };
+    };
+    if resolved.id != public_id || resolved.kind != "http-basic" {
+        return Err(AppError::external(
+            "SECRET_KIND_MISMATCH",
+            "resolved HTTP Basic credential does not match the selected credential",
+        ));
+    }
+    let username = resolved.values.get("username").ok_or_else(|| {
+        AppError::external(
+            "SECRET_REQUIRED",
+            "resolved HTTP Basic credential has no username",
+        )
+    })?;
+    let password = resolved.values.get("password").ok_or_else(|| {
+        AppError::external(
+            "SECRET_REQUIRED",
+            "resolved HTTP Basic credential has no password",
+        )
+    })?;
+    if username.trim().is_empty() {
+        return Err(AppError::invalid_argument(
+            "resolved HTTP Basic username must not be empty",
+        ));
+    }
+    Ok(Some(BasicCredential::new(username, password)))
 }
 
 fn typed_expectations(arguments: &Value) -> RequestExpectArgs {
@@ -410,12 +500,13 @@ fn request_descriptor() -> CommandDescriptor {
             "Sends an arbitrary HTTP method and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
         ),
     )
+    .with_secret_slot(http_basic_slot())
 }
 
 fn shortcut_descriptor(command: &str, method: &str, read_only: bool) -> CommandDescriptor {
     let mut properties = request_properties();
     properties.insert("url".to_owned(), url_schema());
-    CommandDescriptor::new(
+    let descriptor = CommandDescriptor::new(
         format!("http.{command}"),
         format!("Send HTTP {method}"),
         format!("Send an HTTP {method} request with payload, authentication, and expectations."),
@@ -430,7 +521,12 @@ fn shortcut_descriptor(command: &str, method: &str, read_only: bool) -> CommandD
                 "Sends an HTTP {method} request and optional credentials or payload to an arbitrary URL; the remote service may mutate state."
             ))
         },
-    )
+    );
+    if matches!(command, "get" | "post") {
+        descriptor.with_secret_slot(http_basic_slot())
+    } else {
+        descriptor
+    }
 }
 
 fn replay_descriptor() -> CommandDescriptor {
@@ -449,6 +545,11 @@ fn replay_descriptor() -> CommandDescriptor {
             "Replays an arbitrary HTTP request encoded in curl syntax and may send embedded credentials or mutate a remote service.",
         ),
     )
+    .with_secret_slot(http_basic_slot())
+}
+
+fn http_basic_slot() -> SecretSlot {
+    SecretSlot::optional("basic", ["http-basic"], "HTTP Basic credential.")
 }
 
 fn assert_descriptor(command: &str) -> CommandDescriptor {
@@ -804,6 +905,10 @@ fn execute_assert(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use ah_plugin_api::{ExecutionContextWire, ResolvedSecret};
+
     use super::*;
 
     #[test]
@@ -827,5 +932,90 @@ mod tests {
                 0
             );
         }
+    }
+
+    #[test]
+    fn only_request_get_post_and_replay_declare_http_basic_slot() {
+        let catalog = command_catalog();
+
+        for command in &catalog.commands {
+            let expected = matches!(
+                command.id.as_str(),
+                "http.request" | "http.get" | "http.post" | "http.replay"
+            );
+            assert_eq!(
+                command.secret_slots.len(),
+                usize::from(expected),
+                "{}",
+                command.id
+            );
+            if expected {
+                assert_eq!(command.secret_slots[0].name, "basic");
+                assert_eq!(command.secret_slots[0].accepted_kinds, ["http-basic"]);
+                assert!(!command.secret_slots[0].required);
+            }
+        }
+    }
+
+    #[test]
+    fn typed_request_options_bind_matching_resolved_basic_auth() {
+        let request = TypedInvocationRequest::new(
+            "http.get",
+            json!({"url": "https://example.test", "credentials": {"basic": "api"}}),
+            ExecutionContextWire::new("http-secret", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "basic".to_owned(),
+            ResolvedSecret {
+                id: "api".to_owned(),
+                kind: "http-basic".to_owned(),
+                values: BTreeMap::from([
+                    ("username".to_owned(), "vault-user".to_owned()),
+                    ("password".to_owned(), "http-private-sentinel".to_owned()),
+                ]),
+            },
+        )]));
+
+        let options = typed_request_options(&request).expect("credential should bind");
+        let basic = options.resolved_basic.expect("resolved basic auth");
+        assert_eq!(basic.username, "vault-user");
+        assert_eq!(basic.password, "http-private-sentinel");
+    }
+
+    #[test]
+    fn typed_http_rejects_unresolved_and_wrong_slots_without_leaking_values() {
+        let unresolved = TypedInvocationRequest::new(
+            "http.get",
+            json!({"url": "https://example.test", "credentials": {"basic": "api"}}),
+            ExecutionContextWire::new("http-unresolved", ".", None, 1_000),
+        );
+        assert_eq!(
+            typed_request_options(&unresolved)
+                .expect_err("public id requires private resolution")
+                .code(),
+            "SECRET_REQUIRED"
+        );
+
+        let wrong_slot = TypedInvocationRequest::new(
+            "http.get",
+            json!({"url": "https://example.test", "credentials": {"basic": "api"}}),
+            ExecutionContextWire::new("http-wrong-slot", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "other".to_owned(),
+            ResolvedSecret {
+                id: "api".to_owned(),
+                kind: "http-basic".to_owned(),
+                values: BTreeMap::from([
+                    ("username".to_owned(), "leak-user".to_owned()),
+                    ("password".to_owned(), "http-leak-sentinel".to_owned()),
+                ]),
+            },
+        )]));
+        let response = invoke_typed(&wrong_slot);
+        let serialized = serde_json::to_string(&response).expect("response serializes");
+        assert!(!response.success);
+        assert!(!serialized.contains("leak-user"));
+        assert!(!serialized.contains("http-leak-sentinel"));
     }
 }

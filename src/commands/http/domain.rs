@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fmt,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -12,8 +13,8 @@ use serde_json::Value;
 use crate::{error::AppError, output::OutputMode};
 
 use super::{
-    AssertArgs, AssertReportArg, MethodShortcutArgs, ReplayArgs, RequestArgs, RequestExpectArgs,
-    RequestOptionsArgs, adapters,
+    AssertArgs, AssertReportArg, BasicCredential, MethodShortcutArgs, ReplayArgs, RequestArgs,
+    RequestExpectArgs, RequestOptionsArgs, adapters,
 };
 
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -31,11 +32,21 @@ pub(crate) struct RequestConfig {
     pub(crate) body: Option<RequestBody>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) enum AuthConfig {
     None,
     Bearer(String),
     Basic { username: String, password: String },
+}
+
+impl fmt::Debug for AuthConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => formatter.write_str("None"),
+            Self::Bearer(_) => formatter.write_str("Bearer([REDACTED])"),
+            Self::Basic { .. } => formatter.write_str("Basic([REDACTED])"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -530,7 +541,11 @@ fn build_request_config(
         query.push((name, value));
     }
 
-    let auth = parse_auth(args.bearer.as_deref(), args.basic.as_deref())?;
+    let auth = parse_auth(
+        args.bearer.as_deref(),
+        args.basic.as_deref(),
+        args.resolved_basic.clone(),
+    )?;
     let body = parse_payload(args, None)?;
 
     let max_response_bytes = args
@@ -957,22 +972,36 @@ impl StatusExpectation {
     }
 }
 
-fn parse_auth(bearer: Option<&str>, basic: Option<&str>) -> Result<AuthConfig, AppError> {
-    match (bearer, basic) {
-        (Some(_), Some(_)) => Err(AppError::invalid_argument(
+fn parse_auth(
+    bearer: Option<&str>,
+    basic: Option<&str>,
+    resolved_basic: Option<BasicCredential>,
+) -> Result<AuthConfig, AppError> {
+    match (bearer, basic, resolved_basic) {
+        (Some(_), Some(_), _) => Err(AppError::invalid_argument(
             "--bearer and --basic are mutually exclusive",
         )),
-        (Some(token), None) => {
+        (_, Some(_), Some(_)) => Err(AppError::invalid_argument(
+            "--basic and vault Basic credentials are mutually exclusive",
+        )),
+        (Some(_), None, Some(_)) => Err(AppError::invalid_argument(
+            "--bearer and vault Basic credentials are mutually exclusive",
+        )),
+        (Some(token), None, None) => {
             if token.trim().is_empty() {
                 return Err(AppError::invalid_argument("--bearer must not be empty"));
             }
             Ok(AuthConfig::Bearer(token.to_owned()))
         }
-        (None, Some(raw)) => {
+        (None, Some(raw), None) => {
             let (username, password) = parse_basic_auth(raw)?;
             Ok(AuthConfig::Basic { username, password })
         }
-        (None, None) => Ok(AuthConfig::None),
+        (None, None, Some(resolved)) => {
+            let (username, password) = resolved.into_parts();
+            Ok(AuthConfig::Basic { username, password })
+        }
+        (None, None, None) => Ok(AuthConfig::None),
     }
 }
 
@@ -1313,7 +1342,7 @@ fn build_case_request(
         .or(defaults.basic.as_ref())
         .map(|value| interpolate_string(value, vars))
         .transpose()?;
-    let auth = parse_auth(bearer.as_deref(), basic.as_deref())?;
+    let auth = parse_auth(bearer.as_deref(), basic.as_deref(), None)?;
 
     let request_options = RequestOptionsArgs {
         headers: Vec::new(),
@@ -1324,6 +1353,7 @@ fn build_case_request(
         retry_delay_ms: 0,
         bearer,
         basic,
+        resolved_basic: None,
         json: None,
         json_file: None,
         body: None,
@@ -1912,5 +1942,33 @@ mod tests {
         let error = wait_for_retry(1_000, Some(deadline)).expect_err("delay exceeds deadline");
 
         assert_eq!(error.code(), "HTTP_TIMEOUT");
+    }
+
+    #[test]
+    fn legacy_and_resolved_basic_auth_cannot_coexist() {
+        let resolved = BasicCredential::new("vault-user", "http-conflict-sentinel");
+
+        let error = parse_auth(None, Some("legacy:password"), Some(resolved))
+            .expect_err("legacy and vault basic must conflict");
+
+        assert_eq!(error.code(), "INVALID_ARGUMENT");
+        assert!(!format!("{error:?}").contains("http-conflict-sentinel"));
+    }
+
+    #[test]
+    fn resolved_basic_auth_builds_internal_credentials_with_redacted_debug() {
+        let auth = parse_auth(
+            None,
+            None,
+            Some(BasicCredential::new("vault-user", "http-boundary-sentinel")),
+        )
+        .expect("resolved Basic auth should parse");
+
+        let AuthConfig::Basic { username, password } = &auth else {
+            panic!("expected Basic auth")
+        };
+        assert_eq!(username, "vault-user");
+        assert_eq!(password, "http-boundary-sentinel");
+        assert!(!format!("{auth:?}").contains("http-boundary-sentinel"));
     }
 }

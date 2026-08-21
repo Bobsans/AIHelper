@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
-    GlobalOptionsWire, Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
+    TypedInvocationResponse,
 };
 use serde_json::{Map, Value, json};
 
@@ -61,7 +62,7 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandErr
         tool_path: optional_path(arguments, "tool_path", cwd),
         ensure_tool: bool_or(arguments, "ensure_tool", false),
     };
-    let connection = typed_connection(request);
+    let connection = typed_connection(request)?;
     let command = match request.command.as_str() {
         "postgres.tool.status" => PostgresCommand::Tool(ToolArgs {
             command: ToolCommand::Status,
@@ -160,10 +161,10 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandErr
     })
 }
 
-fn typed_connection(request: &TypedInvocationRequest) -> ConnectionArgs {
+fn typed_connection(request: &TypedInvocationRequest) -> Result<ConnectionArgs, CommandError> {
     let arguments = &request.arguments;
     let remaining_ms = request.context.remaining_timeout_ms.max(1);
-    ConnectionArgs {
+    Ok(ConnectionArgs {
         host: optional_string(arguments, "host"),
         port: arguments
             .get("port")
@@ -174,6 +175,7 @@ fn typed_connection(request: &TypedInvocationRequest) -> ConnectionArgs {
         service: optional_string(arguments, "service"),
         sslmode: optional_string(arguments, "sslmode"),
         password_env: optional_string(arguments, "password_env"),
+        resolved_password: resolved_database_password(request)?,
         connect_timeout_secs: u64_or(
             arguments,
             "connect_timeout_secs",
@@ -188,7 +190,74 @@ fn typed_connection(request: &TypedInvocationRequest) -> ConnectionArgs {
                 .max(1)
                 .min(remaining_ms),
         ),
+    })
+}
+
+fn resolved_database_password(
+    request: &TypedInvocationRequest,
+) -> Result<Option<SecretValue>, CommandError> {
+    let credentials = request
+        .arguments
+        .get("credentials")
+        .and_then(Value::as_object);
+    if let Some(slot) = credentials.and_then(|items| items.keys().find(|key| *key != "database")) {
+        return Err(command_error(
+            request,
+            "INVALID_ARGUMENT",
+            format!("Unsupported PostgreSQL credential slot '{slot}'"),
+            "only the database credential slot is supported",
+            false,
+        ));
     }
+    if let Some(slot) = request
+        .resolved_secrets
+        .keys()
+        .find(|slot| slot.as_str() != "database")
+    {
+        return Err(command_error(
+            request,
+            "INVALID_ARGUMENT",
+            format!("Unsupported resolved PostgreSQL credential slot '{slot}'"),
+            "only the database credential slot is supported",
+            false,
+        ));
+    }
+
+    let public_id = credentials
+        .and_then(|items| items.get("database"))
+        .and_then(Value::as_str);
+    let resolved = request.resolved_secrets.get("database");
+    let Some((public_id, resolved)) = public_id.zip(resolved) else {
+        return match (public_id, resolved) {
+            (None, None) => Ok(None),
+            _ => Err(command_error(
+                request,
+                "SECRET_REQUIRED",
+                "PostgreSQL database credential was not resolved",
+                "public credential selection and private resolution must both be present",
+                false,
+            )),
+        };
+    };
+    if resolved.id != public_id || resolved.kind != "postgres" {
+        return Err(command_error(
+            request,
+            "SECRET_KIND_MISMATCH",
+            "Resolved PostgreSQL database credential does not match the selected credential",
+            "credential identity or kind mismatch",
+            false,
+        ));
+    }
+    let password = resolved.values.get("password").ok_or_else(|| {
+        command_error(
+            request,
+            "SECRET_REQUIRED",
+            "Resolved PostgreSQL credential has no password",
+            "postgres credentials require a password value",
+            false,
+        )
+    })?;
+    Ok(Some(SecretValue::new(password)))
 }
 
 fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
@@ -658,6 +727,7 @@ fn query_descriptor() -> CommandDescriptor {
             Reversibility::Unknown,
         ),
     )
+    .with_secret_slot(postgres_secret_slot())
     .with_example(CommandExample::new(
         "Read the current time",
         json!({"sql": "select now() as current_time"}),
@@ -705,6 +775,7 @@ fn exec_descriptor() -> CommandDescriptor {
             Reversibility::Unknown,
         ),
     )
+    .with_secret_slot(postgres_secret_slot())
 }
 
 fn explain_descriptor() -> CommandDescriptor {
@@ -759,6 +830,7 @@ fn explain_descriptor() -> CommandDescriptor {
             Reversibility::Unknown,
         ),
     )
+    .with_secret_slot(postgres_secret_slot())
 }
 
 fn activity_descriptor() -> CommandDescriptor {
@@ -869,6 +941,11 @@ fn database_descriptor(
             Reversibility::Yes,
         ),
     )
+    .with_secret_slot(postgres_secret_slot())
+}
+
+fn postgres_secret_slot() -> SecretSlot {
+    SecretSlot::optional("database", ["postgres"], "PostgreSQL database credential.")
 }
 
 fn descriptor(
@@ -1245,7 +1322,9 @@ fn setting_row_schema() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use ah_plugin_api::ExecutionContextWire;
+    use std::collections::BTreeMap;
+
+    use ah_plugin_api::{ExecutionContextWire, ResolvedSecret};
 
     use super::*;
 
@@ -1317,5 +1396,85 @@ mod tests {
                 .unwrap()
                 .contains("password-protected")
         );
+    }
+
+    #[test]
+    fn database_commands_declare_only_the_postgres_secret_slot() {
+        let catalog = command_catalog();
+
+        for command in &catalog.commands {
+            if command.id.starts_with("postgres.tool.") {
+                assert!(command.secret_slots.is_empty(), "{}", command.id);
+            } else {
+                assert_eq!(command.secret_slots.len(), 1, "{}", command.id);
+                let slot = &command.secret_slots[0];
+                assert_eq!(slot.name, "database");
+                assert_eq!(slot.accepted_kinds, ["postgres"]);
+                assert!(!slot.required);
+            }
+        }
+    }
+
+    #[test]
+    fn typed_connection_uses_matching_resolved_database_password() {
+        let request = TypedInvocationRequest::new(
+            "postgres.ping",
+            json!({"credentials": {"database": "qa-db"}}),
+            ExecutionContextWire::new("postgres-secret", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "database".to_owned(),
+            ResolvedSecret {
+                id: "qa-db".to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([(
+                    "password".to_owned(),
+                    "postgres-private-sentinel".to_owned(),
+                )]),
+            },
+        )]));
+
+        let cli = typed_cli(&request).expect("resolved credential should bind");
+
+        assert_eq!(
+            cli.connection
+                .resolved_password
+                .as_ref()
+                .map(SecretValue::expose),
+            Some("postgres-private-sentinel")
+        );
+    }
+
+    #[test]
+    fn typed_connection_rejects_unresolved_or_wrong_database_slots_without_leaking_values() {
+        let unresolved = TypedInvocationRequest::new(
+            "postgres.ping",
+            json!({"credentials": {"database": "qa-db"}}),
+            ExecutionContextWire::new("postgres-unresolved", ".", None, 1_000),
+        );
+        let error = typed_cli(&unresolved).expect_err("public id requires private resolution");
+        assert_eq!(error.code, "SECRET_REQUIRED");
+
+        let wrong_slot = TypedInvocationRequest::new(
+            "postgres.ping",
+            json!({"credentials": {"database": "qa-db"}}),
+            ExecutionContextWire::new("postgres-wrong-slot", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "other".to_owned(),
+            ResolvedSecret {
+                id: "qa-db".to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([(
+                    "password".to_owned(),
+                    "postgres-leak-sentinel".to_owned(),
+                )]),
+            },
+        )]));
+        let response = TypedInvocationResponse::error(
+            typed_cli(&wrong_slot).expect_err("unsupported private slot must fail"),
+        );
+        let serialized = serde_json::to_string(&response).expect("response serializes");
+        assert!(!serialized.contains("postgres-leak-sentinel"));
     }
 }
