@@ -1018,4 +1018,68 @@ mod tests {
         assert!(!serialized.contains("leak-user"));
         assert!(!serialized.contains("http-leak-sentinel"));
     }
+
+    #[test]
+    fn typed_http_rejects_authorization_header_with_resolved_basic() {
+        let request = TypedInvocationRequest::new(
+            "http.get",
+            json!({
+                "url": "https://example.test",
+                "headers": ["aUtHoRiZaTiOn: Bearer raw-header-sentinel"],
+                "credentials": {"basic": "api"}
+            }),
+            ExecutionContextWire::new("http-auth-header", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "basic".to_owned(),
+            ResolvedSecret {
+                id: "api".to_owned(),
+                kind: "http-basic".to_owned(),
+                values: BTreeMap::from([
+                    ("username".to_owned(), "vault-user".to_owned()),
+                    (
+                        "password".to_owned(),
+                        "http-header-password-sentinel".to_owned(),
+                    ),
+                ]),
+            },
+        )]));
+
+        let response = invoke_typed(&request);
+        let error = response.error.expect("conflict should fail");
+        let serialized = serde_json::to_string(&error).expect("error serializes");
+        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert!(!serialized.contains("raw-header-sentinel"));
+        assert!(!serialized.contains("http-header-password-sentinel"));
+    }
+
+    #[test]
+    fn typed_replay_rejects_curl_authorization_header_with_resolved_basic() {
+        let request = TypedInvocationRequest::new(
+            "http.replay",
+            json!({
+                "curl": "curl https://example.test -H 'AUTHORIZATION: Bearer replay-header-sentinel'",
+                "credentials": {"basic": "api"}
+            }),
+            ExecutionContextWire::new("http-replay-auth-header", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "basic".to_owned(),
+            ResolvedSecret {
+                id: "api".to_owned(),
+                kind: "http-basic".to_owned(),
+                values: BTreeMap::from([
+                    ("username".to_owned(), "vault-user".to_owned()),
+                    ("password".to_owned(), "http-replay-password-sentinel".to_owned()),
+                ]),
+            },
+        )]));
+
+        let response = invoke_typed(&request);
+        let error = response.error.expect("replay conflict should fail");
+        let serialized = serde_json::to_string(&error).expect("error serializes");
+        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert!(!serialized.contains("replay-header-sentinel"));
+        assert!(!serialized.contains("http-replay-password-sentinel"));
+    }
 }

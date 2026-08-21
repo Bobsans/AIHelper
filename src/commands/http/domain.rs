@@ -534,6 +534,15 @@ fn build_request_config(
         let (name, value) = parse_header(raw, "--header")?;
         headers.push((name, value));
     }
+    if args.resolved_basic.is_some()
+        && headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+    {
+        return Err(AppError::invalid_argument(
+            "Authorization header and vault Basic credentials are mutually exclusive",
+        ));
+    }
 
     let mut query = Vec::new();
     for raw in &args.query {
