@@ -2,24 +2,32 @@ use std::sync::{Arc, Mutex, Weak};
 
 use ah_plugin_api::{
     AH_PLUGIN_ABI_VERSION, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
-    CommandError, InvocationRequest, InvocationResponse, PluginCompatibility, PluginManual,
-    PluginMetadata, Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    plugin_capabilities,
+    CommandError, CommandExample, InvocationRequest, InvocationResponse, PluginCompatibility,
+    PluginManual, PluginMetadata, Reversibility, RiskLevel, TypedInvocationRequest,
+    TypedInvocationResponse, plugin_capabilities,
 };
 use ah_runtime::{BuiltinPlugin, PluginManager};
 use serde_json::{Value, json};
 
-use crate::{ai, cli::PluginStateFilter, error::AppError, plugin_settings::PluginSettings};
+use crate::{
+    ai,
+    cli::PluginStateFilter,
+    error::AppError,
+    plugin_settings::PluginSettings,
+    secrets::{SecretKind, VaultStore},
+};
 
 pub(crate) fn builtins(
     manager: Weak<PluginManager>,
     settings: Arc<Mutex<PluginSettings>>,
+    vault: Arc<VaultStore>,
 ) -> Vec<Arc<dyn BuiltinPlugin>> {
     vec![
         Arc::new(AiHostPlugin {
             manager: manager.clone(),
         }),
         Arc::new(PluginsHostPlugin { manager, settings }),
+        Arc::new(SecretsHostPlugin { vault }),
     ]
 }
 
@@ -95,6 +103,83 @@ impl BuiltinPlugin for AiHostPlugin {
 struct PluginsHostPlugin {
     manager: Weak<PluginManager>,
     settings: Arc<Mutex<PluginSettings>>,
+}
+
+struct SecretsHostPlugin {
+    vault: Arc<VaultStore>,
+}
+
+impl BuiltinPlugin for SecretsHostPlugin {
+    fn metadata(&self) -> PluginMetadata {
+        host_metadata(
+            "host-secrets",
+            "secrets",
+            "AIHelper redacted secret discovery host commands",
+        )
+    }
+
+    fn manual(&self) -> PluginManual {
+        empty_manual(&self.metadata())
+    }
+
+    fn invoke(&self, _request: &InvocationRequest) -> InvocationResponse {
+        InvocationResponse::error(
+            "TYPED_COMMAND_REQUIRED",
+            "host command is available through the typed runtime",
+        )
+    }
+
+    fn command_catalog(&self) -> Option<CommandCatalog> {
+        Some(CommandCatalog::new(
+            "host-secrets",
+            "secrets",
+            vec![secrets_list_descriptor()],
+        ))
+    }
+
+    fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+        if request.command != "secrets.list" {
+            return TypedInvocationResponse::error(CommandError::new(
+                Some("secrets".to_owned()),
+                Some(request.command.clone()),
+                "TYPED_COMMAND_NOT_FOUND",
+                "Unknown secret host command",
+                "the command is not present in the host command catalog",
+                2,
+                false,
+            ));
+        }
+        let kind = match request.arguments.get("kind").and_then(Value::as_str) {
+            Some(value) => match value.parse::<SecretKind>() {
+                Ok(kind) => Some(kind),
+                Err(()) => {
+                    return app_error_response(
+                        "secrets",
+                        &request.command,
+                        AppError::invalid_argument(format!("unsupported secret kind: {value}")),
+                    );
+                }
+            },
+            None => None,
+        };
+        match self.vault.list_metadata() {
+            Ok(mut secrets) => {
+                if let Some(kind) = kind {
+                    secrets.retain(|secret| secret.kind == kind);
+                }
+                let count = secrets.len();
+                TypedInvocationResponse::success(
+                    json!({"secrets": secrets}),
+                    Some(format!("Returned {count} secret(s).")),
+                )
+            }
+            Err(error) => app_error_response(
+                "secrets",
+                &request.command,
+                AppError::external(error.code(), error.to_string()),
+            ),
+        }
+    }
 }
 
 impl BuiltinPlugin for PluginsHostPlugin {
@@ -359,6 +444,63 @@ fn plugins_list_descriptor() -> CommandDescriptor {
             Reversibility::Yes,
         ),
     )
+}
+
+fn secrets_list_descriptor() -> CommandDescriptor {
+    CommandDescriptor::new(
+        "secrets.list",
+        "List redacted secrets",
+        "List secret metadata without secret values or field-state information.",
+        json!({
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["postgres", "http-basic", "ssh-key"],
+                    "description": "Optional secret-kind filter."
+                }
+            },
+            "additionalProperties": false
+        }),
+        json!({
+            "type": "object",
+            "properties": {
+                "secrets": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["postgres", "http-basic", "ssh-key"]
+                            },
+                            "label": {"type": "string"},
+                            "description": {"type": ["string", "null"]}
+                        },
+                        "required": ["id", "kind", "label", "description"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["secrets"],
+            "additionalProperties": false
+        }),
+        CommandEffects::new(
+            true,
+            false,
+            true,
+            false,
+            vec![CommandEffect::ConfigurationRead],
+            RiskLevel::Low,
+            "Reads and decrypts the local vault, then returns redacted metadata only.",
+            Reversibility::Yes,
+        ),
+    )
+    .with_example(CommandExample::new(
+        "Filter PostgreSQL secrets",
+        json!({"kind": "postgres"}),
+    ))
 }
 
 fn plugins_enable_descriptor() -> CommandDescriptor {
@@ -663,14 +805,29 @@ fn app_error_response(domain: &str, command: &str, error: AppError) -> TypedInvo
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        path::Path,
+        sync::{Arc, Mutex},
+    };
 
     use ah_plugin_api::{ExecutionContextWire, TypedInvocationRequest};
     use ah_runtime::PluginManager;
     use serde_json::json;
 
     use super::builtins;
-    use crate::{plugin_settings::PluginSettings, plugins};
+    use crate::{
+        plugin_settings::PluginSettings,
+        plugins,
+        secrets::{KeyProvider, NewSecret, VaultError, VaultStore},
+    };
+
+    struct FixedKey;
+
+    impl KeyProvider for FixedKey {
+        fn load_or_create(&self) -> Result<[u8; 32], VaultError> {
+            Ok([29; 32])
+        }
+    }
 
     fn request(command: &str, arguments: serde_json::Value) -> TypedInvocationRequest {
         TypedInvocationRequest::new(
@@ -680,17 +837,27 @@ mod tests {
         )
     }
 
-    fn runtime(settings: Arc<Mutex<PluginSettings>>) -> Arc<PluginManager> {
-        Arc::new_cyclic(|weak| {
+    fn runtime(settings: Arc<Mutex<PluginSettings>>, config_dir: &Path) -> Arc<PluginManager> {
+        runtime_with_vault(settings, config_dir).0
+    }
+
+    fn runtime_with_vault(
+        settings: Arc<Mutex<PluginSettings>>,
+        config_dir: &Path,
+    ) -> (Arc<PluginManager>, Arc<VaultStore>) {
+        let vault = Arc::new(VaultStore::at(config_dir, Arc::new(FixedKey)));
+        vault.initialize().unwrap();
+        let manager = Arc::new_cyclic(|weak| {
             let mut manager = PluginManager::new();
             for plugin in plugins::builtins() {
                 manager.register_builtin(plugin);
             }
-            for plugin in builtins(weak.clone(), Arc::clone(&settings)) {
+            for plugin in builtins(weak.clone(), Arc::clone(&settings), Arc::clone(&vault)) {
                 manager.register_host_builtin(plugin);
             }
             manager
-        })
+        });
+        (manager, vault)
     }
 
     #[test]
@@ -699,7 +866,7 @@ mod tests {
         let settings = Arc::new(Mutex::new(
             PluginSettings::load_from_path(temp.path().join("plugins.json")).unwrap(),
         ));
-        let manager = runtime(settings);
+        let manager = runtime(settings, temp.path());
         let command_ids = manager
             .list_enabled_commands()
             .unwrap()
@@ -708,6 +875,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(command_ids.contains(&"ai.info".to_owned()));
         assert!(command_ids.contains(&"plugins.list".to_owned()));
+        assert!(command_ids.contains(&"secrets.list".to_owned()));
         assert!(command_ids.contains(&"ctx.pack".to_owned()));
         assert!(!command_ids.contains(&"mcp.serve".to_owned()));
         assert!(
@@ -715,7 +883,8 @@ mod tests {
                 .list_registered_plugins()
                 .iter()
                 .all(|plugin| plugin.metadata.domain != "ai"
-                    && plugin.metadata.domain != "plugins")
+                    && plugin.metadata.domain != "plugins"
+                    && plugin.metadata.domain != "secrets")
         );
     }
 
@@ -725,7 +894,7 @@ mod tests {
         let settings = Arc::new(Mutex::new(
             PluginSettings::load_from_path(temp.path().join("plugins.json")).unwrap(),
         ));
-        let manager = runtime(settings);
+        let manager = runtime(settings, temp.path());
         let response = manager
             .invoke_typed(&request("ai.info", json!({"domain": "ctx"})))
             .unwrap();
@@ -737,13 +906,61 @@ mod tests {
     }
 
     #[test]
+    fn secrets_list_is_registered_as_a_read_only_typed_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings = Arc::new(Mutex::new(
+            PluginSettings::load_from_path(temp.path().join("plugins.json")).unwrap(),
+        ));
+        let (manager, vault) = runtime_with_vault(settings, temp.path());
+        let secret_value = "typed-output-secret";
+        vault
+            .put(
+                NewSecret::postgres("billing", "Billing", secret_value)
+                    .with_description(Some("Production billing database".to_owned())),
+            )
+            .unwrap();
+
+        let command = manager
+            .list_enabled_commands()
+            .unwrap()
+            .into_iter()
+            .find(|command| command.descriptor.id == "secrets.list")
+            .expect("secrets.list should be registered");
+        assert!(command.descriptor.effects.read_only);
+        assert_eq!(
+            command.descriptor.effects.risk,
+            ah_plugin_api::RiskLevel::Low
+        );
+        assert_eq!(
+            command.descriptor.examples[0].arguments,
+            json!({"kind": "postgres"})
+        );
+
+        let response = manager
+            .invoke_typed(&request("secrets.list", json!({"kind": "postgres"})))
+            .unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(
+            data,
+            json!({"secrets": [{
+                "id": "billing",
+                "kind": "postgres",
+                "label": "Billing",
+                "description": "Production billing database"
+            }]})
+        );
+        assert!(!serde_json::to_string(&data).unwrap().contains(secret_value));
+    }
+
+    #[test]
     fn plugin_mutation_updates_live_catalog_and_persists_settings() {
         let temp = tempfile::tempdir().unwrap();
         let settings_path = temp.path().join("plugins.json");
         let settings = Arc::new(Mutex::new(
             PluginSettings::load_from_path(settings_path.clone()).unwrap(),
         ));
-        let manager = runtime(settings);
+        let manager = runtime(settings, temp.path());
 
         let disabled = manager
             .invoke_typed(&request("plugins.disable", json!({"domain": "ctx"})))
@@ -781,7 +998,7 @@ mod tests {
         let settings = Arc::new(Mutex::new(
             PluginSettings::load_from_path(blocked_parent.join("plugins.json")).unwrap(),
         ));
-        let manager = runtime(Arc::clone(&settings));
+        let manager = runtime(Arc::clone(&settings), temp.path());
 
         let response = manager
             .invoke_typed(&request("plugins.disable", json!({"domain": "ctx"})))
@@ -798,7 +1015,7 @@ mod tests {
         let settings = Arc::new(Mutex::new(
             PluginSettings::load_from_path(temp.path().join("plugins.json")).unwrap(),
         ));
-        let manager = runtime(settings);
+        let manager = runtime(settings, temp.path());
         let response = manager
             .invoke_typed(&request("plugins.list", json!({})))
             .unwrap();

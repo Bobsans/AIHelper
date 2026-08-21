@@ -6,4 +6,5 @@ pub mod http;
 pub mod project;
 pub mod run;
 pub mod search;
+pub mod secrets;
 pub mod task;

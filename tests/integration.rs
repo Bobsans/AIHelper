@@ -24,6 +24,8 @@ mod project;
 mod run;
 #[path = "integration/search.rs"]
 mod search;
+#[path = "integration/secrets.rs"]
+mod secrets;
 #[path = "integration/task.rs"]
 mod task;
 #[path = "integration/upgrade.rs"]

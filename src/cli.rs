@@ -13,6 +13,7 @@ use crate::{
 const HOST_COMMAND_AI: &str = "ai";
 const HOST_COMMAND_MCP: &str = "mcp";
 const HOST_COMMAND_PLUGINS: &str = "plugins";
+const HOST_COMMAND_SECRETS: &str = "secrets";
 const HOST_COMMAND_UPGRADE: &str = "upgrade";
 
 pub enum RuntimeCommand {
@@ -42,6 +43,10 @@ pub enum RuntimeCommand {
     },
     AiInfo {
         domain: Option<String>,
+        options: GlobalOptions,
+    },
+    Secrets {
+        request: crate::commands::secrets::SecretsCommand,
         options: GlobalOptions,
     },
     Upgrade {
@@ -263,6 +268,40 @@ pub fn parse_runtime_command(
                 _ => return Err(AppError::invalid_argument("unsupported plugins subcommand")),
             }
         }
+        Some((HOST_COMMAND_SECRETS, secrets_matches)) => {
+            let Some((subcommand, secret_matches)) = secrets_matches.subcommand() else {
+                return Err(AppError::invalid_argument("missing secrets subcommand"));
+            };
+            let request = match subcommand {
+                "init" => crate::commands::secrets::SecretsCommand::Init,
+                "list" => crate::commands::secrets::SecretsCommand::List {
+                    kind: secret_matches
+                        .get_one::<String>("kind")
+                        .map(|kind| parse_secret_kind(kind))
+                        .transpose()?,
+                },
+                "add" => crate::commands::secrets::SecretsCommand::Add {
+                    id: required_string(secret_matches, "id", "missing secret id")?,
+                    kind: parse_secret_kind(
+                        secret_matches
+                            .get_one::<String>("kind")
+                            .expect("required secret kind is present"),
+                    )?,
+                    label: secret_matches.get_one::<String>("label").cloned(),
+                    description: secret_matches.get_one::<String>("description").cloned(),
+                },
+                "edit" => crate::commands::secrets::SecretsCommand::Edit {
+                    id: required_string(secret_matches, "id", "missing secret id")?,
+                    label: secret_matches.get_one::<String>("label").cloned(),
+                    description: secret_matches.get_one::<String>("description").cloned(),
+                },
+                "remove" => crate::commands::secrets::SecretsCommand::Remove {
+                    id: required_string(secret_matches, "id", "missing secret id")?,
+                },
+                _ => return Err(AppError::invalid_argument("unsupported secrets subcommand")),
+            };
+            RuntimeCommand::Secrets { request, options }
+        }
         Some((HOST_COMMAND_UPGRADE, upgrade_matches)) => RuntimeCommand::Upgrade {
             request: crate::updater::command::request_from_matches(upgrade_matches)?,
             options,
@@ -347,6 +386,7 @@ pub(crate) fn suggest_top_level_command(
             (HOST_COMMAND_AI, "AI-agent focused command manual"),
             (HOST_COMMAND_MCP, "Model Context Protocol server"),
             (HOST_COMMAND_PLUGINS, "Plugin management commands"),
+            (HOST_COMMAND_SECRETS, "Encrypted secret vault management"),
             (
                 HOST_COMMAND_UPGRADE,
                 "Check for or install AIHelper updates",
@@ -452,6 +492,7 @@ fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
         .subcommand(build_ai_command())
         .subcommand(build_mcp_command())
         .subcommand(build_plugins_command())
+        .subcommand(build_secrets_command())
         .subcommand(crate::updater::command::build_help_command())
         .allow_external_subcommands(true);
 
@@ -459,6 +500,7 @@ fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
         if domain == HOST_COMMAND_AI
             || domain == HOST_COMMAND_MCP
             || domain == HOST_COMMAND_PLUGINS
+            || domain == HOST_COMMAND_SECRETS
             || domain == HOST_COMMAND_UPGRADE
         {
             continue;
@@ -575,6 +617,59 @@ fn build_plugins_command() -> Command {
         )
 }
 
+fn build_secrets_command() -> Command {
+    let metadata_args = || {
+        [
+            Arg::new("label")
+                .long("label")
+                .value_name("TEXT")
+                .help("Human-readable secret label"),
+            Arg::new("description")
+                .long("description")
+                .value_name("TEXT")
+                .help("Optional secret description"),
+        ]
+    };
+    Command::new(HOST_COMMAND_SECRETS)
+        .about("Encrypted secret vault management")
+        .subcommand(Command::new("init").about("Initialize the encrypted secret vault"))
+        .subcommand(
+            Command::new("list")
+                .about("List redacted secret metadata")
+                .arg(
+                    Arg::new("kind")
+                        .long("kind")
+                        .value_name("KIND")
+                        .value_parser(["postgres", "http-basic", "ssh-key"])
+                        .help("Filter by secret kind"),
+                ),
+        )
+        .subcommand(
+            Command::new("add")
+                .about("Add a secret using hidden prompts")
+                .arg(Arg::new("id").value_name("ID").required(true))
+                .arg(
+                    Arg::new("kind")
+                        .long("kind")
+                        .value_name("KIND")
+                        .value_parser(["postgres", "http-basic", "ssh-key"])
+                        .required(true),
+                )
+                .args(metadata_args()),
+        )
+        .subcommand(
+            Command::new("edit")
+                .about("Edit a secret using hidden prompts")
+                .arg(Arg::new("id").value_name("ID").required(true))
+                .args(metadata_args()),
+        )
+        .subcommand(
+            Command::new("remove")
+                .about("Remove a secret")
+                .arg(Arg::new("id").value_name("ID").required(true)),
+        )
+}
+
 fn build_domain_command(domain: &str, description: &str) -> Command {
     Command::new(domain.to_owned())
         .about(description.to_owned())
@@ -623,6 +718,23 @@ fn parse_plugin_state_filter(value: &str) -> Result<PluginStateFilter, AppError>
             "unsupported plugins --state value: {value}"
         ))),
     }
+}
+
+fn parse_secret_kind(value: &str) -> Result<crate::secrets::SecretKind, AppError> {
+    value
+        .parse()
+        .map_err(|()| AppError::invalid_argument(format!("unsupported secret kind: {value}")))
+}
+
+fn required_string(
+    matches: &ArgMatches,
+    name: &str,
+    error: &'static str,
+) -> Result<String, AppError> {
+    matches
+        .get_one::<String>(name)
+        .cloned()
+        .ok_or_else(|| AppError::invalid_argument(error))
 }
 
 fn collect_domain_argv(matches: &ArgMatches) -> Result<Vec<String>, AppError> {
@@ -860,6 +972,63 @@ mod tests {
             panic!("unexpected parse result")
         };
         assert_eq!(request, crate::updater::command::UpgradeRequest::Check);
+    }
+
+    #[test]
+    fn parser_routes_secrets_add_metadata_without_values() {
+        let parsed = parse_runtime_command(
+            vec![
+                OsString::from("ah"),
+                OsString::from("secrets"),
+                OsString::from("add"),
+                OsString::from("billing"),
+                OsString::from("--kind"),
+                OsString::from("postgres"),
+                OsString::from("--label"),
+                OsString::from("Billing"),
+                OsString::from("--description"),
+                OsString::from("Production billing database"),
+            ],
+            &[],
+        )
+        .unwrap();
+        let CliParseResult::Command(RuntimeCommand::Secrets { request, .. }) = parsed else {
+            panic!("unexpected parse result")
+        };
+        let crate::commands::secrets::SecretsCommand::Add {
+            id,
+            kind,
+            label,
+            description,
+        } = request
+        else {
+            panic!("unexpected secrets command")
+        };
+        assert_eq!(id, "billing");
+        assert_eq!(kind, crate::secrets::SecretKind::Postgres);
+        assert_eq!(label.as_deref(), Some("Billing"));
+        assert_eq!(description.as_deref(), Some("Production billing database"));
+    }
+
+    #[test]
+    fn parser_rejects_secrets_values_in_argv() {
+        let secret = "must-not-enter-runtime-command";
+        let error = parse_runtime_command(
+            vec![
+                OsString::from("ah"),
+                OsString::from("secrets"),
+                OsString::from("add"),
+                OsString::from("billing"),
+                OsString::from("--kind"),
+                OsString::from("postgres"),
+                OsString::from("--password"),
+                OsString::from(secret),
+            ],
+            &[],
+        )
+        .err()
+        .expect("secret argv values must be rejected");
+        assert!(!error.detail_message().contains(secret));
     }
 
     #[test]

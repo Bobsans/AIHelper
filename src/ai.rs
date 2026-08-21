@@ -321,6 +321,53 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
                 },
             ],
         },
+        HostCommandDoc {
+            name: "secrets.init".to_owned(),
+            summary: "Initialize the encrypted local secret vault.".to_owned(),
+            usage: "secrets init".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Initialize the vault before adding secrets".to_owned(),
+                command: "ah secrets init".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "secrets.list".to_owned(),
+            summary: "List redacted secret metadata. Agents should discover secret IDs through the typed/MCP secrets.list command and may filter by kind."
+                .to_owned(),
+            usage: "secrets list [--kind <postgres|http-basic|ssh-key>]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Discover PostgreSQL secret IDs without reading values".to_owned(),
+                command: "ah secrets list --kind postgres --json".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "secrets.add".to_owned(),
+            summary: "Add a secret through hidden terminal prompts; values are never accepted through argv."
+                .to_owned(),
+            usage: "secrets add <id> --kind <postgres|http-basic|ssh-key> [--label TEXT] [--description TEXT]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Add PostgreSQL credentials using a hidden password prompt".to_owned(),
+                command: "ah secrets add billing --kind postgres --label Billing".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "secrets.edit".to_owned(),
+            summary: "Edit secret metadata and values through hidden terminal prompts.".to_owned(),
+            usage: "secrets edit <id> [--label TEXT] [--description TEXT]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Edit a secret without exposing values in argv".to_owned(),
+                command: "ah secrets edit billing --label Billing".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "secrets.remove".to_owned(),
+            summary: "Remove one secret from the encrypted vault.".to_owned(),
+            usage: "secrets remove <id>".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Remove a stored secret".to_owned(),
+                command: "ah secrets remove billing".to_owned(),
+            }],
+        },
     ]
 }
 

@@ -78,7 +78,7 @@ impl VaultStore {
         Self::at(&context.paths().config_dir, Arc::from(key_provider))
     }
 
-    fn at(config_dir: &Path, key_provider: Arc<dyn KeyProvider>) -> Self {
+    pub fn at(config_dir: &Path, key_provider: Arc<dyn KeyProvider>) -> Self {
         Self {
             path: config_dir.join(VAULT_FILE),
             lock_path: config_dir.join(VAULT_LOCK_FILE),
@@ -104,11 +104,31 @@ impl VaultStore {
         let metadata = SecretMetadata {
             id: secret.id.clone(),
             label: secret.label.clone(),
+            description: secret.description.clone(),
             kind: secret.kind,
         };
         self.mutate(false, |mut document| {
             if document.secrets.contains_key(&secret.id) {
                 return Err(VaultError::duplicate());
+            }
+            document
+                .secrets
+                .insert(secret.id.clone(), StoredSecret::from(secret));
+            Ok((document, metadata))
+        })
+    }
+
+    pub fn replace(&self, secret: NewSecret) -> Result<SecretMetadata, VaultError> {
+        validate(&secret)?;
+        let metadata = SecretMetadata {
+            id: secret.id.clone(),
+            label: secret.label.clone(),
+            description: secret.description.clone(),
+            kind: secret.kind,
+        };
+        self.mutate(false, |mut document| {
+            if !document.secrets.contains_key(&secret.id) {
+                return Err(VaultError::not_found());
             }
             document
                 .secrets
@@ -526,7 +546,12 @@ mod tests {
 
         assert_eq!(
             serde_json::to_value(metadata).unwrap(),
-            serde_json::json!({"id": "service", "label": "Service", "kind": "http-basic"})
+            serde_json::json!({
+                "id": "service",
+                "label": "Service",
+                "description": null,
+                "kind": "http-basic"
+            })
         );
     }
 }

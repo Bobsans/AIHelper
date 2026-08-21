@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -10,9 +10,39 @@ pub enum SecretKind {
     SshKey,
 }
 
+impl SecretKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+            Self::HttpBasic => "http-basic",
+            Self::SshKey => "ssh-key",
+        }
+    }
+}
+
+impl fmt::Display for SecretKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SecretKind {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "postgres" => Ok(Self::Postgres),
+            "http-basic" => Ok(Self::HttpBasic),
+            "ssh-key" => Ok(Self::SshKey),
+            _ => Err(()),
+        }
+    }
+}
+
 pub struct NewSecret {
     pub id: String,
     pub label: String,
+    pub description: Option<String>,
     pub kind: SecretKind,
     pub values: BTreeMap<String, String>,
 }
@@ -27,9 +57,15 @@ impl NewSecret {
         Self {
             id: id.into(),
             label: label.into(),
+            description: None,
             kind,
             values,
         }
+    }
+
+    pub fn with_description(mut self, description: Option<String>) -> Self {
+        self.description = description;
+        self
     }
 
     pub fn postgres(
@@ -80,6 +116,8 @@ impl NewSecret {
 pub struct SecretMetadata {
     pub id: String,
     pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub kind: SecretKind,
 }
 
@@ -92,6 +130,8 @@ pub struct ResolvedSecret {
 pub(crate) struct StoredSecret {
     pub id: String,
     pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub kind: SecretKind,
     pub values: BTreeMap<String, String>,
 }
@@ -101,6 +141,7 @@ impl From<NewSecret> for StoredSecret {
         Self {
             id: secret.id,
             label: secret.label,
+            description: secret.description,
             kind: secret.kind,
             values: secret.values,
         }
@@ -112,6 +153,7 @@ impl StoredSecret {
         SecretMetadata {
             id: self.id.clone(),
             label: self.label.clone(),
+            description: self.description.clone(),
             kind: self.kind,
         }
     }

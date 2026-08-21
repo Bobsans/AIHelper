@@ -122,6 +122,7 @@ pub(crate) fn run() -> Result<(), AppError> {
     let command_name = command_log_name(&command, &runtime.manager);
     let result = execution(
         command,
+        runtime.config,
         runtime.manager,
         runtime.settings,
         logger.clone(),
@@ -218,7 +219,7 @@ fn startup(
             );
         })?;
     let mut manager = PluginManager::new();
-    manager.reserve_dynamic_domains(["ai", "plugins", "mcp", "upgrade"]);
+    manager.reserve_dynamic_domains(["ai", "plugins", "mcp", "secrets", "upgrade"]);
     for plugin in plugins::builtins() {
         manager.register_builtin(plugin);
     }
@@ -345,6 +346,14 @@ fn command_log_name(command: &RuntimeCommand, manager: &PluginManager) -> String
         RuntimeCommand::PluginsDisable { .. } => "plugins.disable".to_owned(),
         RuntimeCommand::PluginsReset { .. } => "plugins.reset".to_owned(),
         RuntimeCommand::AiInfo { .. } => "ai.info".to_owned(),
+        RuntimeCommand::Secrets { request, .. } => match request {
+            crate::commands::secrets::SecretsCommand::Init => "secrets.init",
+            crate::commands::secrets::SecretsCommand::List { .. } => "secrets.list",
+            crate::commands::secrets::SecretsCommand::Add { .. } => "secrets.add",
+            crate::commands::secrets::SecretsCommand::Edit { .. } => "secrets.edit",
+            crate::commands::secrets::SecretsCommand::Remove { .. } => "secrets.remove",
+        }
+        .to_owned(),
         RuntimeCommand::Upgrade { .. } => "upgrade.check".to_owned(),
         RuntimeCommand::Invoke { domain, argv, .. } => {
             resolve_invocation_command(manager, domain, argv)
@@ -391,6 +400,7 @@ fn plugin_source_name(source: PluginSource) -> &'static str {
 
 fn execution(
     command: RuntimeCommand,
+    config: ConfigContext,
     manager: PluginManager,
     mut settings: PluginSettings,
     logger: Option<Arc<EventLogger>>,
@@ -404,6 +414,7 @@ fn execution(
             default_timeout_ms,
             options,
         } => execute_mcp_serve(McpServeConfig {
+            config,
             manager,
             settings,
             transport,
@@ -433,6 +444,9 @@ fn execution(
             .map(|_| None),
         RuntimeCommand::AiInfo { domain, options } => {
             ai::execute_info(&manager, domain.as_deref(), options).map(|_| None)
+        }
+        RuntimeCommand::Secrets { request, options } => {
+            crate::commands::secrets::execute(&config, request, options).map(|_| None)
         }
         RuntimeCommand::Upgrade { request, options } => {
             crate::updater::execute(request, options).map(|_| None)
@@ -491,6 +505,7 @@ fn decorate_invocation_error(
 }
 
 struct McpServeConfig {
+    config: ConfigContext,
     manager: PluginManager,
     settings: PluginSettings,
     transport: cli::McpTransport,
@@ -557,10 +572,19 @@ fn execute_mcp_serve(config: McpServeConfig) -> Result<(), AppError> {
     let runner_after_serve = config.managed_runner.clone();
     let (result, shutdown_grace) = runtime.block_on(async move {
         let setup = async {
+            let vault = Arc::new(crate::secrets::VaultStore::new(
+                &config.config,
+                crate::secrets::resolve_key_provider()
+                    .map_err(|error| AppError::external(error.code(), error.to_string()))?,
+            ));
             let settings = Arc::new(std::sync::Mutex::new(config.settings));
             let manager = Arc::new_cyclic(|weak| {
                 let mut manager = config.manager;
-                for plugin in crate::host_commands::builtins(weak.clone(), Arc::clone(&settings)) {
+                for plugin in crate::host_commands::builtins(
+                    weak.clone(),
+                    Arc::clone(&settings),
+                    Arc::clone(&vault),
+                ) {
                     manager.register_host_builtin(plugin);
                 }
                 manager
