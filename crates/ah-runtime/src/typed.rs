@@ -373,6 +373,25 @@ fn validate_descriptor(
             ),
         );
     }
+    if !descriptor.secret_slots.is_empty()
+        && descriptor
+            .input_schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|required| {
+                required
+                    .iter()
+                    .any(|item| item.as_str() == Some("credentials"))
+            })
+    {
+        return invalid_catalog(
+            normalized_domain,
+            format!(
+                "command '{}' uses reserved required input property 'credentials'",
+                descriptor.id
+            ),
+        );
+    }
 
     for example in &descriptor.examples {
         if !example.arguments.is_object() {
@@ -681,6 +700,27 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn catalog_rejects_required_credentials_when_secret_slots_are_declared() {
+        let mut descriptor = descriptor().with_secret_slot(SecretSlot::optional(
+            "database",
+            ["postgres"],
+            "Database",
+        ));
+        descriptor.input_schema["required"] = json!(["value", "credentials"]);
+
+        let error = validate_catalog(
+            &metadata(),
+            &CommandCatalog::new("test-plugin", "test", vec![descriptor]),
+        )
+        .expect_err("reserved credentials requirement should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("reserved required input property 'credentials'")
+        );
     }
 
     #[test]
