@@ -344,16 +344,22 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
             name: "secrets.add".to_owned(),
             summary: "Add a secret through hidden terminal prompts; values are never accepted through argv."
                 .to_owned(),
-            usage: "secrets add <id> --kind <postgres|http-basic|ssh-key> [--label TEXT] [--description TEXT]".to_owned(),
-            examples: vec![HostCommandExample {
-                description: "Add PostgreSQL credentials using a hidden password prompt".to_owned(),
-                command: "ah secrets add billing --kind postgres --label Billing".to_owned(),
-            }],
+            usage: "secrets add <id> --kind <postgres|http-basic|ssh-key> [--label TEXT] [--description TEXT] [--open]".to_owned(),
+            examples: vec![
+                HostCommandExample {
+                    description: "Add PostgreSQL credentials using a hidden password prompt".to_owned(),
+                    command: "ah secrets add billing --kind postgres --label Billing".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Open a protected form on the local HTTP MCP server".to_owned(),
+                    command: "ah secrets add billing --kind postgres --open".to_owned(),
+                },
+            ],
         },
         HostCommandDoc {
             name: "secrets.edit".to_owned(),
             summary: "Edit secret metadata and values through hidden terminal prompts.".to_owned(),
-            usage: "secrets edit <id> [--label TEXT] [--description TEXT]".to_owned(),
+            usage: "secrets edit <id> [--label TEXT] [--description TEXT] [--open]".to_owned(),
             examples: vec![HostCommandExample {
                 description: "Edit a secret without exposing values in argv".to_owned(),
                 command: "ah secrets edit billing --label Billing".to_owned(),

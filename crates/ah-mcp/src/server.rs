@@ -2,7 +2,7 @@
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     future::{Future, IntoFuture},
     net::Ipv4Addr,
     path::Path,
@@ -24,13 +24,16 @@ use ah_runtime::{
     executor::{ExecutionTelemetry, Executor},
 };
 use axum::{
-    Json, Router,
-    extract::{State, rejection::JsonRejection},
-    http::{
-        HeaderMap, StatusCode,
-        header::{HOST, ORIGIN},
+    Form, Json, Router,
+    extract::{
+        Query, State,
+        rejection::{FormRejection, JsonRejection, QueryRejection},
     },
-    response::{IntoResponse, Response},
+    http::{
+        HeaderMap, HeaderValue, StatusCode,
+        header::{CACHE_CONTROL, HOST, ORIGIN, REFERRER_POLICY},
+    },
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use rmcp::transport::streamable_http_server::{
@@ -78,6 +81,68 @@ const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 pub enum McpCommandStatus {
     Success,
     Error,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecretSetupRequest {
+    Create {
+        id: String,
+        kind: String,
+        label: Option<String>,
+        description: Option<String>,
+    },
+    Edit {
+        id: String,
+        label: Option<String>,
+        description: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecretSetupField {
+    pub name: &'static str,
+    pub label: &'static str,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecretSetupForm {
+    pub id: String,
+    pub kind: String,
+    pub fields: Vec<SecretSetupField>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecretSetupMetadata {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SecretSetupError {
+    pub code: &'static str,
+    pub message: &'static str,
+}
+
+impl SecretSetupError {
+    pub const fn new(code: &'static str, message: &'static str) -> Self {
+        Self { code, message }
+    }
+}
+
+pub trait SecretSetupService: Send + Sync {
+    fn issue(&self, request: SecretSetupRequest) -> Result<String, SecretSetupError>;
+
+    fn form(&self, capability: &str) -> Result<SecretSetupForm, SecretSetupError>;
+
+    fn submit(
+        &self,
+        capability: &str,
+        values: BTreeMap<String, String>,
+    ) -> Result<SecretSetupMetadata, SecretSetupError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -187,6 +252,7 @@ struct McpShared {
     catalog_generation: AtomicU64,
     next_execution_id: AtomicU64,
     event_dispatcher: Option<Arc<EventDispatcher>>,
+    secret_setup: Option<Arc<dyn SecretSetupService>>,
     jobs: Arc<JobRegistry>,
     peers: Mutex<HashMap<u64, RegisteredPeer>>,
     next_session_id: AtomicU64,
@@ -235,6 +301,7 @@ impl McpServer {
                 catalog_generation: AtomicU64::new(1),
                 next_execution_id: AtomicU64::new(1),
                 event_dispatcher: None,
+                secret_setup: None,
                 jobs: JobRegistry::standard(),
                 peers: Mutex::new(HashMap::new()),
                 next_session_id: AtomicU64::new(2),
@@ -250,6 +317,13 @@ impl McpServer {
         Arc::get_mut(&mut self.shared)
             .expect("event sink must be configured before MCP sessions are cloned")
             .event_dispatcher = Some(EventDispatcher::standard(event_sink));
+        self
+    }
+
+    pub fn with_secret_setup(mut self, secret_setup: Arc<dyn SecretSetupService>) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("secret setup must be configured before MCP sessions are cloned")
+            .secret_setup = Some(secret_setup);
         self
     }
 
@@ -835,6 +909,7 @@ struct HttpLifecycleState {
     authority: String,
     origin: String,
     lifecycle: Arc<HttpLifecycleController>,
+    secret_setup: Option<Arc<dyn SecretSetupService>>,
 }
 
 impl HttpLifecycleState {
@@ -845,6 +920,7 @@ impl HttpLifecycleState {
         authority: String,
         origin: String,
         lifecycle: Arc<HttpLifecycleController>,
+        secret_setup: Option<Arc<dyn SecretSetupService>>,
     ) -> Self {
         Self {
             readiness: ReadinessResponse {
@@ -856,6 +932,7 @@ impl HttpLifecycleState {
             authority,
             origin,
             lifecycle,
+            secret_setup,
         }
     }
 }
@@ -1116,6 +1193,7 @@ where
         authority.clone(),
         origin.clone(),
         Arc::clone(&lifecycle_controller),
+        server.shared.secret_setup.clone(),
     );
     let config = StreamableHttpServerConfig::default()
         .with_stateful_mode(true)
@@ -1132,6 +1210,11 @@ where
     let router = Router::new()
         .route("/health/ready", get(readiness))
         .route("/control/shutdown", post(control_shutdown))
+        .route("/secrets/setup/capability", post(secret_setup_capability))
+        .route(
+            "/secrets/setup",
+            get(secret_setup_form).post(secret_setup_submit),
+        )
         .nest_service("/mcp", service)
         .with_state(lifecycle)
         .layer(RequestBodyLimitLayer::new(1024 * 1024));
@@ -1205,6 +1288,175 @@ async fn readiness(
 ) -> Result<Json<ReadinessResponse>, StatusCode> {
     validate_local_headers(&headers, &state)?;
     Ok(Json(state.readiness))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetupCapabilityQuery {
+    capability: String,
+}
+
+#[derive(Serialize)]
+struct SetupCapabilityResponse {
+    setup_url: String,
+}
+
+async fn secret_setup_capability(
+    State(state): State<HttpLifecycleState>,
+    headers: HeaderMap,
+    request: Result<Json<SecretSetupRequest>, JsonRejection>,
+) -> Response {
+    if validate_local_headers(&headers, &state).is_err() {
+        return control_error(
+            StatusCode::FORBIDDEN,
+            "LOCAL_REQUEST_REJECTED",
+            "request does not match the local HTTP policy",
+        );
+    }
+    let Some(service) = state.secret_setup else {
+        return control_error(
+            StatusCode::NOT_FOUND,
+            "VAULT_SETUP_UNAVAILABLE",
+            "secret setup is unavailable",
+        );
+    };
+    let Ok(Json(request)) = request else {
+        return control_error(
+            StatusCode::BAD_REQUEST,
+            "VAULT_SETUP_REQUEST_INVALID",
+            "secret setup request is invalid",
+        );
+    };
+    match service.issue(request) {
+        Ok(capability) => no_store(
+            Json(SetupCapabilityResponse {
+                setup_url: format!(
+                    "http://{}/secrets/setup?capability={capability}",
+                    state.authority
+                ),
+            })
+            .into_response(),
+        ),
+        Err(error) => setup_error(error),
+    }
+}
+
+async fn secret_setup_form(
+    State(state): State<HttpLifecycleState>,
+    headers: HeaderMap,
+    query: Result<Query<SetupCapabilityQuery>, QueryRejection>,
+) -> Response {
+    if validate_local_headers(&headers, &state).is_err() {
+        return control_error(
+            StatusCode::FORBIDDEN,
+            "LOCAL_REQUEST_REJECTED",
+            "request does not match the local HTTP policy",
+        );
+    }
+    let Some(service) = state.secret_setup else {
+        return control_error(
+            StatusCode::NOT_FOUND,
+            "VAULT_SETUP_UNAVAILABLE",
+            "secret setup is unavailable",
+        );
+    };
+    let Ok(Query(query)) = query else {
+        return setup_error(SecretSetupError::new(
+            "VAULT_SETUP_CAPABILITY_INVALID",
+            "secret setup capability is invalid, expired, or already used",
+        ));
+    };
+    match service.form(&query.capability) {
+        Ok(form) => no_store(Html(render_secret_setup_form(&form)).into_response()),
+        Err(error) => setup_error(error),
+    }
+}
+
+async fn secret_setup_submit(
+    State(state): State<HttpLifecycleState>,
+    headers: HeaderMap,
+    query: Result<Query<SetupCapabilityQuery>, QueryRejection>,
+    form: Result<Form<BTreeMap<String, String>>, FormRejection>,
+) -> Response {
+    if validate_local_headers(&headers, &state).is_err() {
+        return control_error(
+            StatusCode::FORBIDDEN,
+            "LOCAL_REQUEST_REJECTED",
+            "request does not match the local HTTP policy",
+        );
+    }
+    let Some(service) = state.secret_setup else {
+        return control_error(
+            StatusCode::NOT_FOUND,
+            "VAULT_SETUP_UNAVAILABLE",
+            "secret setup is unavailable",
+        );
+    };
+    let Ok(Query(query)) = query else {
+        return setup_error(SecretSetupError::new(
+            "VAULT_SETUP_CAPABILITY_INVALID",
+            "secret setup capability is invalid, expired, or already used",
+        ));
+    };
+    let Ok(Form(values)) = form else {
+        return control_error(
+            StatusCode::BAD_REQUEST,
+            "VAULT_SETUP_SUBMISSION_INVALID",
+            "secret setup form is invalid",
+        );
+    };
+    match service.submit(&query.capability, values) {
+        Ok(metadata) => no_store(Json(metadata).into_response()),
+        Err(error) => setup_error(error),
+    }
+}
+
+fn setup_error(error: SecretSetupError) -> Response {
+    let status = if error.code == "VAULT_SETUP_CAPABILITY_INVALID" {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    control_error(status, error.code, error.message)
+}
+
+fn no_store(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    response
+}
+
+fn render_secret_setup_form(form: &SecretSetupForm) -> String {
+    let fields = form
+        .fields
+        .iter()
+        .map(|field| {
+            let required = if field.optional { "" } else { " required" };
+            format!(
+                "<label>{}<input type=\"password\" name=\"{}\" autocomplete=\"new-password\"{required}></label>",
+                html_escape(field.label),
+                html_escape(field.name),
+            )
+        })
+        .collect::<String>();
+    format!(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\"><title>AIHelper secret setup</title><h1>Set up {}</h1><p>{}</p><form method=\"post\">{fields}<button type=\"submit\">Save</button></form></html>",
+        html_escape(&form.id),
+        html_escape(&form.kind),
+    )
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 async fn control_shutdown(
@@ -1522,9 +1774,31 @@ fn command_to_tool(command: &RegisteredCommand) -> Result<Tool, McpAdapterError>
         .collect::<Vec<_>>()
         .join("\n");
     let example_section = (!examples.is_empty()).then(|| format!("\n\nExamples:\n{examples}"));
+    let credential_section = (!descriptor.secret_slots.is_empty()).then(|| {
+        let slots = descriptor
+            .secret_slots
+            .iter()
+            .map(|slot| {
+                let kinds = slot.accepted_kinds.join(", ");
+                let filters = slot
+                    .accepted_kinds
+                    .iter()
+                    .map(|kind| format!("kind={kind}"))
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                format!(
+                    "{} accepts {kinds}. If the ID is unknown, call secrets.list with {filters}.",
+                    slot.name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("\n\nCredential slots: {slots}")
+    });
     let description = format!(
-        "{}\n\nFor project-relative paths, include context.cwd. HTTP job targets always require an absolute context.cwd.{}\n\nImpact: {}\nRisk: {risk_label}.",
+        "{}{}\n\nFor project-relative paths, include context.cwd. HTTP job targets always require an absolute context.cwd.{}\n\nImpact: {}\nRisk: {risk_label}.",
         descriptor.description,
+        credential_section.unwrap_or_default(),
         example_section.unwrap_or_default(),
         descriptor.effects.impact
     );
@@ -2271,6 +2545,7 @@ mod tests {
             "127.0.0.1:8787".to_owned(),
             "http://127.0.0.1:8787".to_owned(),
             controller,
+            None,
         );
         assert_eq!(lifecycle.readiness.instance_id, instance_id);
         assert_eq!(lifecycle.readiness.pid, pid);
@@ -2708,6 +2983,20 @@ mod tests {
             job_start.meta.as_ref().unwrap().0[RISK_META_KEY]["level"],
             "critical"
         );
+    }
+
+    #[tokio::test]
+    async fn generated_tool_description_names_slot_kinds_and_discovery_tool() {
+        let (server, _, _) = credential_server();
+        let tools = server.tools().unwrap();
+        let description = tools
+            .iter()
+            .find(|tool| tool.name == "ah.test.secret")
+            .and_then(|tool| tool.description.as_deref())
+            .expect("credential tool must have a description");
+
+        assert!(description.contains("Credential slots: database accepts postgres."));
+        assert!(description.contains("call secrets.list with kind=postgres"));
     }
 
     #[test]

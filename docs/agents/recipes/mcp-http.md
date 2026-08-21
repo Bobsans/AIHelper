@@ -101,6 +101,21 @@ ah mcp serve --transport http --port 8787 --max-active 32
 
 Connect clients to `http://127.0.0.1:8787/mcp`.
 
+To create or replace a vault record without exposing values to MCP, keep this
+HTTP process running and use:
+
+```text
+ah secrets add billing --kind postgres --open
+ah secrets edit billing --open
+```
+
+The CLI opens a protected form on the same loopback process. Its random 256-bit
+capability expires after ten minutes and is consumed only by a successful POST;
+GET, POST, expiry, and reuse failures return the stable setup diagnostic. The
+server does not log the capability query or form body and returns only `id`,
+`kind`, `label`, and nullable `description`. For a non-default port, set
+`AH_MCP_HTTP_URL=http://127.0.0.1:PORT` for the `ah secrets ... --open` command.
+
 Check the exact running process without creating an MCP session:
 
 ```text
@@ -183,6 +198,16 @@ Sessions share the plugin catalog, execution capacity, jobs, and retained
 results. A job started by one client can be inspected or cancelled by another
 client that knows its `job_id`. JSON-RPC request IDs and direct cancellation stay
 isolated per session.
+
+Before calling a tool with credential slots, read its generated description for
+accepted kinds. When the ID is unknown, call `ah.secrets.list` with the stated
+kind filter, then pass only the selected ID in `credentials.database` or
+`credentials.basic`. Do not cache IDs from `tools/list`: live IDs are
+intentionally absent. `/mcp` never accepts or returns secret values.
+
+`postgres --password-env` remains a direct CLI compatibility path. It is not a
+solution for HTTP MCP; use `credentials.database` so the long-running server
+resolves the vault value internally.
 
 The listener is loopback-only and validates Host and Origin, but it has no
 authentication. Treat access by any local process running as the same user as

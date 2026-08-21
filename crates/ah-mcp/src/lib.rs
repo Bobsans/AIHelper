@@ -6,6 +6,8 @@ mod server;
 
 pub use server::{
     EventSink, McpAdapterError, McpCommandEvent, McpCommandStatus, McpServeOutcome, McpServer,
-    McpServerConfig, serve_http, serve_http_bounded, serve_http_bounded_with_identity_and_listener,
-    serve_http_bounded_with_version, serve_stdio, serve_stdio_bounded,
+    McpServerConfig, SecretSetupError, SecretSetupField, SecretSetupForm, SecretSetupMetadata,
+    SecretSetupRequest, SecretSetupService, serve_http, serve_http_bounded,
+    serve_http_bounded_with_identity_and_listener, serve_http_bounded_with_version, serve_stdio,
+    serve_stdio_bounded,
 };

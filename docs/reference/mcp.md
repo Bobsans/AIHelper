@@ -51,6 +51,13 @@ The endpoint is:
 http://127.0.0.1:8787/mcp
 ```
 
+The same loopback server hosts protected secret setup at `/secrets/setup`.
+`ah secrets add|edit --open` first mints a ten-minute, single-use 256-bit
+capability through the local server and then opens the form. GET and POST both
+require the capability; only a successful POST consumes it, and the response is
+redacted metadata. Capability query values and form bodies are not written to
+AIHelper logs. See [`ah secrets`](secrets.md).
+
 Readiness is available without creating an MCP session:
 
 ```text
@@ -301,6 +308,18 @@ ah.<domain>.<command>
 Examples include `ah.file.read`, `ah.search.text`, `ah.run.check`, and
 `ah.plugins.disable`. `ah.mcp.serve` is intentionally not published because it
 would recursively start another server.
+
+When a descriptor declares credential slots, the generated tool description
+lists each slot's accepted secret kinds. If an ID is unknown, follow that
+description and call `ah.secrets.list` with its `kind` filter. `tools/list`
+contains descriptor guidance only, never live vault record IDs. Calls pass IDs
+under `credentials` (for example `credentials.database` for PostgreSQL or
+`credentials.basic` for HTTP Basic); `/mcp` never accepts or returns the secret
+value itself.
+
+The PostgreSQL `--password-env` option is retained for direct CLI compatibility.
+It is not an HTTP MCP credential channel; HTTP MCP callers use
+`credentials.database` so the server resolves the value internally.
 
 The adapter also publishes four transport-independent job tools:
 

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use ah_mcp::SecretSetupRequest;
 use dialoguer::Password;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cli::GlobalOptions,
@@ -24,11 +25,13 @@ pub enum SecretsCommand {
         kind: SecretKind,
         label: Option<String>,
         description: Option<String>,
+        open: bool,
     },
     Edit {
         id: String,
         label: Option<String>,
         description: Option<String>,
+        open: bool,
     },
     Remove {
         id: String,
@@ -47,11 +50,19 @@ struct SecretsListOutput<'a> {
     secrets: &'a [SecretMetadata],
 }
 
+#[derive(Deserialize)]
+struct SetupCapabilityResponse {
+    setup_url: String,
+}
+
 pub(crate) fn execute(
     config: &ConfigContext,
     request: SecretsCommand,
     options: GlobalOptions,
 ) -> Result<(), AppError> {
+    if let Some(request) = browser_setup_request(&request) {
+        return open_browser_setup(request, options);
+    }
     let store = VaultStore::new(config, resolve_key_provider().map_err(vault_error)?);
     let values = prompt_values(&store, &request)?;
     let output = apply(&store, request, values)?;
@@ -66,6 +77,119 @@ pub(crate) fn execute(
         }
     );
     Ok(())
+}
+
+fn browser_setup_request(request: &SecretsCommand) -> Option<SecretSetupRequest> {
+    match request {
+        SecretsCommand::Add {
+            id,
+            kind,
+            label,
+            description,
+            open: true,
+        } => Some(SecretSetupRequest::Create {
+            id: id.clone(),
+            kind: kind.to_string(),
+            label: label.clone(),
+            description: description.clone(),
+        }),
+        SecretsCommand::Edit {
+            id,
+            label,
+            description,
+            open: true,
+        } => Some(SecretSetupRequest::Edit {
+            id: id.clone(),
+            label: label.clone(),
+            description: description.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn open_browser_setup(request: SecretSetupRequest, options: GlobalOptions) -> Result<(), AppError> {
+    let base_url =
+        std::env::var("AH_MCP_HTTP_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".to_owned());
+    let parsed = reqwest::Url::parse(&base_url).map_err(|_| invalid_setup_url())?;
+    if parsed.scheme() != "http"
+        || parsed.host_str() != Some("127.0.0.1")
+        || parsed.port().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(invalid_setup_url());
+    }
+    let response = reqwest::blocking::Client::new()
+        .post(format!(
+            "{}/secrets/setup/capability",
+            base_url.trim_end_matches('/')
+        ))
+        .json(&request)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|_| {
+            AppError::external(
+                "VAULT_SETUP_UNAVAILABLE",
+                "failed to create browser setup capability",
+            )
+        })?
+        .json::<SetupCapabilityResponse>()
+        .map_err(|_| {
+            AppError::external(
+                "VAULT_SETUP_UNAVAILABLE",
+                "browser setup response was invalid",
+            )
+        })?;
+    open_browser(&response.setup_url)?;
+    if !options.quiet {
+        println!(
+            "{}",
+            match options.output {
+                OutputMode::Text => "secret setup opened in browser".to_owned(),
+                OutputMode::Json =>
+                    serde_json::to_string_pretty(&serde_json::json!({"opened": true}),)?,
+            }
+        );
+    }
+    Ok(())
+}
+
+fn invalid_setup_url() -> AppError {
+    AppError::external(
+        "VAULT_SETUP_URL_INVALID",
+        "AH_MCP_HTTP_URL must be an http://127.0.0.1:PORT origin",
+    )
+}
+
+fn open_browser(url: &str) -> Result<(), AppError> {
+    #[cfg(target_os = "windows")]
+    let child = std::process::Command::new("rundll32")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let child = std::process::Command::new("open")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let child = std::process::Command::new("xdg-open")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    child
+        .map(|_| ())
+        .map_err(|_| AppError::external("VAULT_SETUP_OPEN_FAILED", "failed to open browser setup"))
 }
 
 fn apply(
@@ -90,6 +214,7 @@ fn apply(
             kind,
             label,
             description,
+            open: _,
         } => {
             let values = values.ok_or_else(missing_prompt_values)?;
             let secret = NewSecret::new(id.clone(), label.unwrap_or(id), kind, values)
@@ -102,6 +227,7 @@ fn apply(
             id,
             label,
             description,
+            open: _,
         } => {
             let existing = store.resolve(&id).map_err(vault_error)?;
             let values = values.ok_or_else(missing_prompt_values)?;
@@ -242,6 +368,7 @@ mod tests {
                 kind: SecretKind::Postgres,
                 label: Some("Billing".to_owned()),
                 description: Some("Production billing database".to_owned()),
+                open: false,
             },
             Some(BTreeMap::from([(
                 "password".to_owned(),
@@ -255,6 +382,7 @@ mod tests {
                 id: "billing".to_owned(),
                 label: None,
                 description: None,
+                open: false,
             },
             Some(BTreeMap::from([(
                 "password".to_owned(),

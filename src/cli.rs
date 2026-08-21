@@ -290,11 +290,13 @@ pub fn parse_runtime_command(
                     )?,
                     label: secret_matches.get_one::<String>("label").cloned(),
                     description: secret_matches.get_one::<String>("description").cloned(),
+                    open: secret_matches.get_flag("open"),
                 },
                 "edit" => crate::commands::secrets::SecretsCommand::Edit {
                     id: required_string(secret_matches, "id", "missing secret id")?,
                     label: secret_matches.get_one::<String>("label").cloned(),
                     description: secret_matches.get_one::<String>("description").cloned(),
+                    open: secret_matches.get_flag("open"),
                 },
                 "remove" => crate::commands::secrets::SecretsCommand::Remove {
                     id: required_string(secret_matches, "id", "missing secret id")?,
@@ -732,12 +734,24 @@ fn build_secrets_command() -> Command {
                         .value_parser(["postgres", "http-basic", "ssh-key"])
                         .required(true),
                 )
+                .arg(
+                    Arg::new("open")
+                        .long("open")
+                        .action(ArgAction::SetTrue)
+                        .help("Open a protected browser setup form"),
+                )
                 .args(metadata_args()),
         )
         .subcommand(
             Command::new("edit")
                 .about("Edit a secret using hidden prompts")
                 .arg(Arg::new("id").value_name("ID").required(true))
+                .arg(
+                    Arg::new("open")
+                        .long("open")
+                        .action(ArgAction::SetTrue)
+                        .help("Open a protected browser setup form"),
+                )
                 .args(metadata_args()),
         )
         .subcommand(
@@ -1089,6 +1103,7 @@ mod tests {
                 OsString::from("Billing"),
                 OsString::from("--description"),
                 OsString::from("Production billing database"),
+                OsString::from("--open"),
             ],
             &[],
         )
@@ -1101,6 +1116,7 @@ mod tests {
             kind,
             label,
             description,
+            open,
         } = request
         else {
             panic!("unexpected secrets command")
@@ -1109,6 +1125,7 @@ mod tests {
         assert_eq!(kind, crate::secrets::SecretKind::Postgres);
         assert_eq!(label.as_deref(), Some("Billing"));
         assert_eq!(description.as_deref(), Some("Production billing database"));
+        assert!(open);
     }
 
     #[test]

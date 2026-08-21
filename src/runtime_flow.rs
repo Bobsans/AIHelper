@@ -610,6 +610,10 @@ fn execute_mcp_serve(config: McpServeConfig) -> Result<(), AppError> {
                 .map_err(|error| {
                     record_mcp_system_error(config.logger.as_deref(), "mcp_server", error)
                 })?;
+            let secret_setup: Arc<dyn ah_mcp::SecretSetupService> = Arc::new(
+                crate::secrets::VaultSetupService::new(Arc::clone(&config.vault)),
+            );
+            server = server.with_secret_setup(secret_setup);
             if let Some(logger) = config.logger.clone() {
                 let event_sink: Arc<dyn ah_mcp::EventSink> = logger;
                 server = server.with_event_sink(event_sink);

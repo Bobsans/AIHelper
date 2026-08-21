@@ -470,6 +470,18 @@ fn stdio_secrets_list_tools_call_redacts_values() {
     server.send(json!({
         "jsonrpc": "2.0",
         "id": 2,
+        "method": "tools/list",
+        "params": {}
+    }));
+    let tools = server.response();
+    let tools_text = tools.to_string();
+    assert!(tools_text.contains("Credential slots:"));
+    assert!(tools_text.contains("secrets.list with kind=http-basic"));
+    assert!(!tools_text.contains("billing"));
+    assert!(!tools_text.contains(secret_value));
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 3,
         "method": "tools/call",
         "params": {
             "name": "ah.secrets.list",
@@ -478,7 +490,7 @@ fn stdio_secrets_list_tools_call_redacts_values() {
     }));
     let response = server.response();
 
-    assert_eq!(response["id"], 2);
+    assert_eq!(response["id"], 3);
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(
         response["result"]["structuredContent"],
@@ -543,6 +555,14 @@ struct HttpMcpProcess {
 
 impl HttpMcpProcess {
     fn start(config_dir: &TempDir) -> Self {
+        Self::start_with_options(config_dir, None)
+    }
+
+    fn start_with_master_key(config_dir: &TempDir, master_key: &str) -> Self {
+        Self::start_with_options(config_dir, Some(master_key))
+    }
+
+    fn start_with_options(config_dir: &TempDir, master_key: Option<&str>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("ephemeral port should bind");
         let port = listener
             .local_addr()
@@ -566,6 +586,11 @@ impl HttpMcpProcess {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+        if let Some(master_key) = master_key {
+            command
+                .env("APPDATA", "")
+                .env("AH_VAULT_MASTER_KEY", master_key);
+        }
         let child = command.group_spawn().expect("HTTP MCP server should start");
         let origin = format!("http://127.0.0.1:{port}");
         Self {
@@ -636,6 +661,77 @@ fn read_readiness(process: &HttpMcpProcess) -> (reqwest::header::HeaderMap, Valu
             Err(error) => panic!("HTTP MCP server did not become ready: {error}"),
         }
     }
+}
+
+#[test]
+fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
+    const MASTER_KEY: &str = "4444444444444444444444444444444444444444444444444444444444444444";
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let store = VaultStore::at(
+        config_dir.path(),
+        Arc::new(ExplicitMasterKey::parse(MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    let mut process = HttpMcpProcess::start_with_master_key(&config_dir, MASTER_KEY);
+    let (_, readiness) = read_readiness(&process);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("HTTP client should build");
+
+    let issued = client
+        .post(format!("{}/secrets/setup/capability", process.origin))
+        .json(&json!({"action": "create", "id": "browser-db", "kind": "postgres"}))
+        .send()
+        .expect("setup capability request should complete");
+    assert!(issued.status().is_success());
+    let setup_url = issued.json::<Value>().unwrap()["setup_url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let token = setup_url.split("capability=").nth(1).unwrap().to_owned();
+
+    let form = client.get(&setup_url).send().unwrap();
+    assert!(form.status().is_success());
+    let form = form.text().unwrap();
+    assert!(form.contains("name=\"password\""));
+    assert!(!form.contains(&token));
+
+    let secret = "browser-form-secret";
+    let submitted = client
+        .post(&setup_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("password={secret}"))
+        .send()
+        .unwrap();
+    assert!(submitted.status().is_success());
+    let body = submitted.text().unwrap();
+    assert!(body.contains("browser-db"));
+    assert!(!body.contains(secret));
+    assert!(!body.contains(&token));
+
+    let reused = client
+        .post(&setup_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("password={secret}"))
+        .send()
+        .unwrap();
+    assert_eq!(reused.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(
+        reused.json::<Value>().unwrap()["error"]["code"],
+        "VAULT_SETUP_CAPABILITY_INVALID"
+    );
+
+    let shutdown = client
+        .post(&process.shutdown_url)
+        .json(&json!({"instance_id": readiness["instance_id"]}))
+        .send()
+        .unwrap();
+    assert_eq!(shutdown.status(), reqwest::StatusCode::ACCEPTED);
+    assert!(process.wait_for_exit(Duration::from_secs(8)).success());
+    let stderr = process.read_stderr();
+    assert!(!stderr.contains(secret));
+    assert!(!stderr.contains(&token));
 }
 
 struct HttpMcpClient {

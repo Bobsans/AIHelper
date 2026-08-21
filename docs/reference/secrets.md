@@ -5,8 +5,8 @@ Manage the encrypted local secret vault.
 ```bash
 ah secrets init
 ah secrets list [--kind <postgres|http-basic|ssh-key>]
-ah secrets add <id> --kind <postgres|http-basic|ssh-key> [--label TEXT] [--description TEXT]
-ah secrets edit <id> [--label TEXT] [--description TEXT]
+ah secrets add <id> --kind <postgres|http-basic|ssh-key> [--label TEXT] [--description TEXT] [--open]
+ah secrets edit <id> [--label TEXT] [--description TEXT] [--open]
 ah secrets remove <id>
 ```
 
@@ -22,9 +22,42 @@ Use global `--json` for machine-readable output. List and mutation output contai
 
 During `edit`, submit an empty field to retain its stored value.
 
+## Protected browser setup
+
+Start the local HTTP MCP server, then add or edit with `--open`:
+
+```text
+ah mcp serve --transport http --port 8787
+ah secrets add billing --kind postgres --open
+ah secrets edit billing --open
+```
+
+`--open` asks the loopback server to mint a random 256-bit capability and opens
+the returned form in the default browser. The capability expires after ten
+minutes, is accepted only by the matching create/edit form, and is consumed only
+after a successful POST. The page never reads or pre-fills an existing value;
+an empty edit field retains its stored value. Responses contain only redacted
+metadata.
+
+The default server origin is `http://127.0.0.1:8787`. For a custom loopback
+port, set `AH_MCP_HTTP_URL` to an exact `http://127.0.0.1:PORT` origin before
+running `ah secrets ... --open`. AIHelper rejects remote, TLS, path, query, and
+fragment values. Capability tokens and form bodies are excluded from AIHelper
+logs, and the CLI reports only whether the browser was opened.
+
 ## Agent discovery
 
 Agents should call the read-only, low-risk MCP tool `ah.secrets.list`, optionally with `{"kind":"postgres"}`, to discover IDs. The tool returns redacted metadata only. Secret resolution is not exposed by this command.
+
+Tools with credential slots name every accepted kind in their generated
+description and direct agents to the matching `secrets.list` kind filter. Pass
+only the selected ID, for example `{"credentials":{"database":"billing"}}` or
+`{"credentials":{"basic":"internal-api"}}`. `tools/list` never embeds live
+record IDs, and `/mcp` never accepts or returns secret values.
+
+For compatibility, PostgreSQL `--password-env` remains available to direct CLI
+commands. HTTP MCP callers must use `credentials.database`; a server process
+cannot safely inherit a per-call password environment variable.
 
 ## Storage and test isolation
 
@@ -39,3 +72,5 @@ Stable error codes include:
 - `VAULT_SECRET_EXISTS`
 - `VAULT_SECRET_NOT_FOUND`
 - `VAULT_IO`
+- `VAULT_SETUP_CAPABILITY_INVALID`
+- `VAULT_SETUP_UNAVAILABLE`
