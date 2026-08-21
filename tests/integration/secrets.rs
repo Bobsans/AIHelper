@@ -55,6 +55,15 @@ fn secrets_init_and_list_use_isolated_vault() {
             "postgres",
             secret_value,
         ],
+        vec![
+            "secrets",
+            "--json",
+            "add",
+            "forbidden-json",
+            "--kind",
+            "postgres",
+            secret_value,
+        ],
         vec!["secrets", "edit", "billing", secret_value],
     ] {
         Command::cargo_bin("ah")

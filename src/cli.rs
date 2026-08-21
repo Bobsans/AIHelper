@@ -337,12 +337,9 @@ pub fn parse_runtime_command(
 
 pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString> {
     let mut sanitized = raw_args.to_vec();
-    let Some(action_index) = sanitized.windows(2).position(|pair| {
-        pair[0] == HOST_COMMAND_SECRETS && matches!(pair[1].to_str(), Some("add" | "edit"))
-    }) else {
+    let Some(action_index) = secret_action_index(&sanitized) else {
         return sanitized;
     };
-    let action_index = action_index + 1;
     let add = sanitized[action_index] == "add";
     let mut id_seen = false;
     let mut preserve_next = false;
@@ -389,6 +386,29 @@ pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString>
         }
     }
     sanitized
+}
+
+fn secret_action_index(raw_args: &[OsString]) -> Option<usize> {
+    let mut index = 1;
+    while index < raw_args.len() {
+        if let Some(next) = host_option_end(raw_args, index) {
+            index = next;
+            continue;
+        }
+        break;
+    }
+    if raw_args.get(index)? != HOST_COMMAND_SECRETS {
+        return None;
+    }
+    index += 1;
+    while index < raw_args.len() {
+        if let Some(next) = host_option_end(raw_args, index) {
+            index = next;
+            continue;
+        }
+        return matches!(raw_args[index].to_str(), Some("add" | "edit")).then_some(index);
+    }
+    None
 }
 
 fn decorate_cli_parse_error(error: AppError, command: &Command, raw_args: &[OsString]) -> AppError {
@@ -955,6 +975,30 @@ fn extract_last_cwd(raw_args: &[OsString]) -> Result<Option<PathBuf>, AppError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_redaction_skips_global_options_while_locating_action() {
+        let raw_args = [
+            "ah",
+            "--cwd",
+            "workspace",
+            "secrets",
+            "--limit",
+            "10",
+            "add",
+            "billing",
+            "--kind",
+            "postgres",
+            "hunter2",
+        ]
+        .map(OsString::from);
+
+        let sanitized = redact_secret_command_argv(&raw_args);
+
+        assert_eq!(sanitized.last(), Some(&OsString::from("[REDACTED]")));
+        assert_eq!(sanitized[2], "workspace");
+        assert_eq!(sanitized[5], "10");
+    }
 
     #[test]
     fn help_includes_dynamic_plugin_domain() {
