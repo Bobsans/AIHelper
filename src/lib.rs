@@ -15,6 +15,7 @@ pub mod plugin_settings;
 pub mod plugins;
 mod runtime_flow;
 pub mod safety;
+pub mod secrets;
 pub(crate) mod updater;
 
 use std::path::{Path, PathBuf};

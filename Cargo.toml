@@ -22,11 +22,13 @@ members = [
 resolver = "2"
 
 [dependencies]
+aes-gcm = { version = "0.10.3", features = ["aes"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5.39", features = ["derive", "string"] }
 fs2 = "0.4.3"
 globset = "0.4.16"
 ignore = "0.4.27"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 libc = "0.2.185"
 regex = "1.12.2"
 semver = "1"
