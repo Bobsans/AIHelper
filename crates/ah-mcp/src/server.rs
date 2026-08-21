@@ -516,12 +516,14 @@ impl McpServer {
             }
         };
         let mut arguments = request.arguments.unwrap_or_default();
+        let require_explicit_cwd =
+            requires_explicit_cwd(&command.descriptor, &arguments, self.require_explicit_cwd);
         let context = match extract_context(
             &mut arguments,
             &request_id,
             &self.shared.config,
             &command.descriptor,
-            self.require_explicit_cwd,
+            require_explicit_cwd,
         ) {
             Ok(context) => context,
             Err(error) => {
@@ -1513,9 +1515,18 @@ fn command_to_tool(command: &RegisteredCommand) -> Result<Tool, McpAdapterError>
     meta.insert(RISK_META_KEY.to_owned(), Value::Object(risk_meta));
 
     let risk_label = risk.as_str().unwrap_or("unknown");
+    let examples = descriptor
+        .examples
+        .iter()
+        .map(|example| format!("- {}: {}", example.description, example.arguments))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let example_section = (!examples.is_empty()).then(|| format!("\n\nExamples:\n{examples}"));
     let description = format!(
-        "{}\n\nImpact: {}\nRisk: {risk_label}.",
-        descriptor.description, descriptor.effects.impact
+        "{}\n\nFor project-relative paths, include context.cwd. HTTP job targets always require an absolute context.cwd.{}\n\nImpact: {}\nRisk: {risk_label}.",
+        descriptor.description,
+        example_section.unwrap_or_default(),
+        descriptor.effects.impact
     );
     let mut tool = Tool::new(
         format!("{TOOL_PREFIX}{}", descriptor.id),
@@ -1625,6 +1636,39 @@ fn extract_context(
     Ok(ExecutionContextWire::new(
         request_id, cwd, limit, timeout_ms,
     ))
+}
+
+fn requires_explicit_cwd(
+    descriptor: &CommandDescriptor,
+    arguments: &JsonObject,
+    http_transport: bool,
+) -> bool {
+    if !http_transport {
+        return false;
+    }
+
+    match descriptor.id.as_str() {
+        "ai.info" | "plugins.list" | "plugins.enable" | "plugins.disable" | "plugins.reset" => {
+            false
+        }
+        command if command.starts_with("ollama.") => false,
+        command if command.starts_with("postgres.") => {
+            has_relative_path(arguments, "tool_path")
+                || (command == "postgres.tool.use" && has_relative_path(arguments, "path"))
+        }
+        "http.assert" | "http.run" => true,
+        command if command.starts_with("http.") => {
+            has_relative_path(arguments, "json_file") || has_relative_path(arguments, "body_file")
+        }
+        _ => true,
+    }
+}
+
+fn has_relative_path(arguments: &JsonObject, field: &str) -> bool {
+    arguments
+        .get(field)
+        .and_then(Value::as_str)
+        .is_some_and(|path| !Path::new(path).is_absolute())
 }
 
 fn positive_usize(
@@ -2009,9 +2053,9 @@ mod tests {
 
     use ah_plugin_api::{
         AH_PLUGIN_ABI_VERSION, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
-        ExecutionContextWire, InvocationRequest, InvocationResponse, PluginCompatibility,
-        PluginManual, PluginMetadata, Reversibility, RiskLevel, TypedInvocationRequest,
-        TypedInvocationResponse, plugin_capabilities,
+        CommandExample, ExecutionContextWire, InvocationRequest, InvocationResponse,
+        PluginCompatibility, PluginManual, PluginMetadata, Reversibility, RiskLevel,
+        TypedInvocationRequest, TypedInvocationResponse, plugin_capabilities,
     };
     use ah_runtime::{
         BuiltinPlugin, InvocationOutcome, PluginManager, RunCheckOutcome, RuntimeError,
@@ -2021,7 +2065,7 @@ mod tests {
         },
     };
     use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject, NumberOrString};
-    use serde_json::{Value, json};
+    use serde_json::{Map, Value, json};
     use tokio::io::AsyncReadExt;
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
@@ -2029,12 +2073,43 @@ mod tests {
     use super::{
         EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
         McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
-        RISK_META_KEY, ShutdownReader, ShutdownTracker, peer_generation_matches,
-        refresh_catalog_after_job, run_check_outcome, spawn_best_effort_notification,
-        wait_for_transport,
+        RISK_META_KEY, ShutdownReader, ShutdownTracker, extract_context, peer_generation_matches,
+        refresh_catalog_after_job, requires_explicit_cwd, run_check_outcome,
+        spawn_best_effort_notification, wait_for_transport,
     };
 
     struct TypedPlugin;
+
+    fn descriptor(id: &str) -> CommandDescriptor {
+        CommandDescriptor::new(
+            id,
+            "Echo",
+            "Echo a typed value.",
+            json!({
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": false
+            }),
+            json!({
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": false
+            }),
+            CommandEffects::new(
+                false,
+                false,
+                true,
+                false,
+                vec![CommandEffect::ExternalWrite],
+                RiskLevel::Medium,
+                "Writes to an in-memory test recorder.",
+                Reversibility::Yes,
+            ),
+        )
+        .with_example(CommandExample::new("Echo hello", json!({"value": "hello"})))
+    }
 
     impl BuiltinPlugin for TypedPlugin {
         fn metadata(&self) -> PluginMetadata {
@@ -2067,33 +2142,7 @@ mod tests {
             Some(CommandCatalog::new(
                 "typed-test",
                 "test",
-                vec![CommandDescriptor::new(
-                    "test.echo",
-                    "Echo",
-                    "Echo a typed value.",
-                    json!({
-                        "type": "object",
-                        "properties": {"value": {"type": "string"}},
-                        "required": ["value"],
-                        "additionalProperties": false
-                    }),
-                    json!({
-                        "type": "object",
-                        "properties": {"value": {"type": "string"}},
-                        "required": ["value"],
-                        "additionalProperties": false
-                    }),
-                    CommandEffects::new(
-                        false,
-                        false,
-                        true,
-                        false,
-                        vec![CommandEffect::ExternalWrite],
-                        RiskLevel::Medium,
-                        "Writes to an in-memory test recorder.",
-                        Reversibility::Yes,
-                    ),
-                )],
+                vec![descriptor("test.echo")],
             ))
         }
     }
@@ -2534,6 +2583,18 @@ mod tests {
             "medium"
         );
         assert!(tool.description.as_ref().unwrap().contains("Impact:"));
+        assert!(
+            tool.description
+                .as_ref()
+                .unwrap()
+                .contains("Examples:\n- Echo hello: {\"value\":\"hello\"}")
+        );
+        assert!(
+            tool.input_schema["properties"]["context"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("project-relative paths")
+        );
         let job_start = tools
             .iter()
             .find(|tool| tool.name == JOB_START_TOOL)
@@ -2854,6 +2915,37 @@ mod tests {
             assert_eq!(request.context.limit, Some(10));
             assert_eq!(request.context.remaining_timeout_ms, 300);
         });
+    }
+
+    #[test]
+    fn http_context_uses_defaults_for_stateless_commands() {
+        for command in ["ai.info", "postgres.ping", "http.get"] {
+            let arguments = Map::new();
+            let context = extract_context(
+                &mut arguments.clone(),
+                "mcp:n:stateless",
+                &McpServerConfig::new("default-cwd", Some(10), 300).unwrap(),
+                &descriptor(command),
+                requires_explicit_cwd(&descriptor(command), &arguments, true),
+            )
+            .unwrap();
+            assert_eq!(context.cwd, "default-cwd", "{command}");
+        }
+    }
+
+    #[test]
+    fn http_context_requires_cwd_for_file_backed_commands() {
+        let arguments = Map::new();
+        let error = extract_context(
+            &mut arguments.clone(),
+            "mcp:n:http-assert",
+            &McpServerConfig::new("default-cwd", Some(10), 300).unwrap(),
+            &descriptor("http.assert"),
+            requires_explicit_cwd(&descriptor("http.assert"), &arguments, true),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "INVALID_CONTEXT");
     }
 
     #[test]

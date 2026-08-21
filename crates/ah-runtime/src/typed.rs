@@ -181,12 +181,12 @@ pub fn mcp_input_schema(descriptor: &CommandDescriptor) -> Result<serde_json::Va
         "context".to_owned(),
         serde_json::json!({
             "type": "object",
-            "description": "Optional execution context for this call.",
+            "description": "Optional execution context. Provide cwd for project-relative paths; HTTP job targets always require an absolute cwd.",
             "properties": {
                 "cwd": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Base directory for relative paths and child processes."
+                    "description": "Base directory for relative paths and child processes. Use an absolute path for HTTP calls that require cwd."
                 },
                 "limit": {
                     "type": "integer",

@@ -112,9 +112,10 @@ plugin catalog, execution capacity, job registry, and retained results are
 process-wide. Protocol request IDs and cancellation mappings remain
 session-local.
 
-HTTP execution has stricter context rules: every direct command and every
-`ah.job.start` target must provide a non-empty absolute `context.cwd`. The daemon
-startup directory is never an HTTP fallback.
+HTTP commands that resolve project-relative paths, and every `ah.job.start`
+target, must provide a non-empty absolute `context.cwd`. Stateless commands
+fall back to the server default: `ai.*`, `plugins.*`, `ollama.*`, PostgreSQL
+commands without a relative tool path, and HTTP requests without file inputs.
 
 The server binds only to `127.0.0.1`, validates `Host`, rejects nonlocal
 `Origin`, and does not enable CORS. It has no authentication or TLS. Loopback is

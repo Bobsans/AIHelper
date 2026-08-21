@@ -940,7 +940,9 @@ fn database_input(mut properties: Map<String, Value>, required: Vec<&str>) -> Va
     );
     properties.insert(
         "password_env".to_owned(),
-        optional_text_schema("Environment variable whose value is passed to psql as PGPASSWORD."),
+        optional_text_schema(
+            "For password-protected servers, name an existing environment variable whose value is passed to psql as PGPASSWORD. Never pass the password itself.",
+        ),
     );
     properties.insert(
         "connect_timeout_secs".to_owned(),
@@ -1304,5 +1306,16 @@ mod tests {
         assert_eq!(descriptor.input_schema["properties"]["yes"]["const"], true);
         assert!(descriptor.effects.destructive);
         assert_eq!(descriptor.effects.risk, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn connection_schema_explains_password_environment_usage() {
+        let descriptor = query_descriptor();
+        assert!(
+            descriptor.input_schema["properties"]["password_env"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("password-protected")
+        );
     }
 }

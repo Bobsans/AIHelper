@@ -165,9 +165,9 @@ OpenCode configuration:
 }
 ```
 
-Every direct command and every `ah.job.start` target must include an absolute
-`context.cwd`. This is mandatory because different sessions can work in
-different repositories:
+Commands that resolve project-relative paths, and every `ah.job.start` target,
+must include an absolute `context.cwd`. Stateless commands may use the server
+default, but callers should provide `cwd` whenever a relative path is involved:
 
 ```json
 {
