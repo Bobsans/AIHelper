@@ -119,6 +119,7 @@ pub fn parse_runtime_command(
     mut raw_args: Vec<OsString>,
     plugins: &[PluginMetadata],
 ) -> Result<CliParseResult, AppError> {
+    raw_args = redact_secret_command_argv(&raw_args);
     let run_check_argv = prepare_run_check_passthrough(&mut raw_args)?;
     let diagnostic_args = raw_args.clone();
     let mut command = build_cli_command(plugins);
@@ -332,6 +333,62 @@ pub fn parse_runtime_command(
     };
 
     Ok(CliParseResult::Command(runtime_command))
+}
+
+pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString> {
+    let mut sanitized = raw_args.to_vec();
+    let Some(action_index) = sanitized.windows(2).position(|pair| {
+        pair[0] == HOST_COMMAND_SECRETS && matches!(pair[1].to_str(), Some("add" | "edit"))
+    }) else {
+        return sanitized;
+    };
+    let action_index = action_index + 1;
+    let add = sanitized[action_index] == "add";
+    let mut id_seen = false;
+    let mut preserve_next = false;
+    let mut redact_next = false;
+    let mut positional_only = false;
+
+    for argument in sanitized.iter_mut().skip(action_index + 1) {
+        let value = argument.to_string_lossy();
+        if preserve_next {
+            preserve_next = false;
+            continue;
+        }
+        if redact_next && !value.starts_with('-') {
+            *argument = OsString::from("[REDACTED]");
+            redact_next = false;
+            continue;
+        }
+        redact_next = false;
+
+        if !positional_only && value == "--" {
+            positional_only = true;
+            continue;
+        }
+        if !positional_only && value.starts_with('-') {
+            let body = value.trim_start_matches('-');
+            let (name, assigned) = body
+                .split_once('=')
+                .map_or((body, false), |(name, _)| (name, true));
+            let known_value =
+                matches!(name, "label" | "description" | "cwd" | "limit") || add && name == "kind";
+            if known_value {
+                preserve_next = !assigned;
+            } else if assigned {
+                *argument = OsString::from(format!("--{name}=[REDACTED]"));
+            } else if !matches!(name, "json" | "quiet" | "help") {
+                redact_next = true;
+            }
+            continue;
+        }
+        if id_seen {
+            *argument = OsString::from("[REDACTED]");
+        } else {
+            id_seen = true;
+        }
+    }
+    sanitized
 }
 
 fn decorate_cli_parse_error(error: AppError, command: &Command, raw_args: &[OsString]) -> AppError {

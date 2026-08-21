@@ -20,3 +20,4 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 - [Pack context for AI prompt](recipes/ctx-pack.md)
 - [Summarize git changes](recipes/git-changes.md)
 - [Reuse command recipes](recipes/task-recipes.md)
+- [Manage and discover secret references](recipes/secrets.md)

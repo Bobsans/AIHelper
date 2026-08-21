@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 
 use aihelper::secrets::{ExplicitMasterKey, NewSecret, VaultStore};
 use assert_cmd::Command;
@@ -13,6 +13,7 @@ fn secrets_init_and_list_use_isolated_vault() {
     Command::cargo_bin("ah")
         .expect("ah binary should build")
         .env("AH_CONFIG_DIR", config_dir.path())
+        .env("APPDATA", "")
         .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
         .args(["secrets", "init"])
         .assert()
@@ -33,6 +34,7 @@ fn secrets_init_and_list_use_isolated_vault() {
     Command::cargo_bin("ah")
         .expect("ah binary should build")
         .env("AH_CONFIG_DIR", config_dir.path())
+        .env("APPDATA", "")
         .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
         .args(["--json", "secrets", "list", "--kind", "postgres"])
         .assert()
@@ -44,27 +46,41 @@ fn secrets_init_and_list_use_isolated_vault() {
         ))
         .stdout(predicate::str::contains(secret_value).not());
 
-    Command::cargo_bin("ah")
-        .expect("ah binary should build")
-        .env("AH_CONFIG_DIR", config_dir.path())
-        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
-        .args([
+    for args in [
+        vec![
             "secrets",
             "add",
             "forbidden",
             "--kind",
             "postgres",
-            "--password",
             secret_value,
-        ])
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(secret_value).not())
-        .stderr(predicate::str::contains(secret_value).not());
+        ],
+        vec!["secrets", "edit", "billing", secret_value],
+    ] {
+        Command::cargo_bin("ah")
+            .expect("ah binary should build")
+            .env("AH_CONFIG_DIR", config_dir.path())
+            .env("APPDATA", "")
+            .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+            .args(args)
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains(secret_value).not())
+            .stderr(predicate::str::contains(secret_value).not());
+    }
+
+    let logs = fs::read_dir(config_dir.path().join("logs"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| fs::read_to_string(entry.path()).unwrap())
+        .collect::<String>();
+    assert!(logs.contains("[REDACTED]"));
+    assert!(!logs.contains(secret_value));
 
     Command::cargo_bin("ah")
         .expect("ah binary should build")
         .env("AH_CONFIG_DIR", config_dir.path())
+        .env("APPDATA", "")
         .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
         .args(["--json", "ai", "info"])
         .assert()

@@ -16,7 +16,7 @@ Flags:
 
 Output includes:
 - global CLI flags
-- host commands (`ai info`, `plugins list`, `plugins enable`, `plugins disable`, `plugins reset`)
+- host commands (`ai info`, plugin management, and secret-vault management/discovery)
 - per-plugin command descriptions
 - per-command examples intended for AI agents
 
@@ -28,4 +28,5 @@ colors explicitly.
 Notes:
 - plugin examples are stored in plugin source code and validated by tests
 - dynamic plugins may optionally provide manual via `ah_plugin_manual_json_v1`
+- agents discover redacted secret IDs through typed/MCP `secrets.list`; secret values never appear in `ah ai info`
 - warning labels emitted by host and domain commands use the shared text formatter

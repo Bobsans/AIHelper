@@ -4,11 +4,15 @@ use std::{
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{ChildStdin, Command as ProcessCommand, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver},
+    },
     thread,
     time::{Duration, Instant},
 };
 
+use aihelper::secrets::{ExplicitMasterKey, NewSecret, VaultStore};
 use command_group::{CommandGroup, GroupChild};
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -289,6 +293,18 @@ impl McpProcess {
     }
 
     fn start_with_args(config_dir: &TempDir, extra_args: &[&str]) -> Self {
+        Self::start_with_options(config_dir, extra_args, None)
+    }
+
+    fn start_with_master_key(config_dir: &TempDir, master_key: &str) -> Self {
+        Self::start_with_options(config_dir, &[], Some(master_key))
+    }
+
+    fn start_with_options(
+        config_dir: &TempDir,
+        extra_args: &[&str],
+        master_key: Option<&str>,
+    ) -> Self {
         let mut command = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"));
         command
             .env("AH_CONFIG_DIR", config_dir.path())
@@ -297,6 +313,11 @@ impl McpProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(master_key) = master_key {
+            command
+                .env("APPDATA", "")
+                .env("AH_VAULT_MASTER_KEY", master_key);
+        }
         let mut child = command.group_spawn().expect("MCP server should start");
         let stdin = child
             .inner()
@@ -411,6 +432,65 @@ impl Drop for McpProcess {
     fn drop(&mut self) {
         self.shutdown(false);
     }
+}
+
+#[test]
+fn stdio_secrets_list_tools_call_redacts_values() {
+    const MASTER_KEY: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let secret_value = "mcp-tools-call-secret";
+    let store = VaultStore::at(
+        config_dir.path(),
+        Arc::new(ExplicitMasterKey::parse(MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(
+            NewSecret::postgres("billing", "Billing", secret_value)
+                .with_description(Some("Production billing database".to_owned())),
+        )
+        .unwrap();
+    let mut server = McpProcess::start_with_master_key(&config_dir, MASTER_KEY);
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "aihelper-test", "version": "1.0.0"}
+        }
+    }));
+    assert_eq!(server.response()["id"], 1);
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    }));
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.secrets.list",
+            "arguments": {"kind": "postgres"}
+        }
+    }));
+    let response = server.response();
+
+    assert_eq!(response["id"], 2);
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        response["result"]["structuredContent"],
+        json!({"secrets": [{
+            "id": "billing",
+            "kind": "postgres",
+            "label": "Billing",
+            "description": "Production billing database"
+        }]})
+    );
+    assert!(!response.to_string().contains(secret_value));
+    server.stop();
 }
 
 struct HttpMcpProcess {

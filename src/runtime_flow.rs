@@ -49,7 +49,8 @@ pub(crate) fn run() -> Result<(), AppError> {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    let logged_argv = raw_args
+    let logged_raw_args = cli::redact_secret_command_argv(&raw_args);
+    let logged_argv = logged_raw_args
         .iter()
         .skip(1)
         .map(|value| value.to_string_lossy().into_owned())

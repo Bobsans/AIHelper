@@ -24,6 +24,7 @@ Operational reference:
 - [task](task.md)
 - [http (bundled plugin)](http.md)
 - [plugins](plugins.md)
+- [secrets](secrets.md)
 - [github (dynamic plugin)](github.md)
 - [gitlab (dynamic plugin)](gitlab.md)
 - [ollama (dynamic plugin)](ollama.md)
