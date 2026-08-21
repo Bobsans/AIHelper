@@ -716,27 +716,33 @@ impl PluginManager {
         command: &RegisteredTypedCommand,
         request: &'a TypedInvocationRequest,
     ) -> Result<Cow<'a, TypedInvocationRequest>, RuntimeError> {
+        let request = if request.resolved_secrets.is_empty() {
+            Cow::Borrowed(request)
+        } else {
+            Cow::Owned(request.clone().with_resolved_secrets(BTreeMap::new()))
+        };
+        let public_request = request.as_ref();
         let slots = &command.registered.descriptor.secret_slots;
         if slots.is_empty() {
             typed::validate_arguments_with(
-                &request.command,
+                &public_request.command,
                 &command.input_validator,
-                &request.arguments,
+                &public_request.arguments,
             )?;
-            return Ok(Cow::Borrowed(request));
+            return Ok(request);
         }
 
-        let mut schema_arguments = request.arguments.clone();
+        let mut schema_arguments = public_request.arguments.clone();
         if let Some(arguments) = schema_arguments.as_object_mut() {
             arguments.remove("credentials");
         }
         typed::validate_arguments_with(
-            &request.command,
+            &public_request.command,
             &command.input_validator,
             &schema_arguments,
         )?;
 
-        let arguments = request
+        let arguments = public_request
             .arguments
             .as_object()
             .expect("schema validated object");
@@ -746,13 +752,13 @@ impl PluginManager {
             Some(_) => {
                 return Err(RuntimeError::TypedInvocation(format!(
                     "credentials for '{}' must be a JSON object",
-                    request.command
+                    public_request.command
                 )));
             }
         };
         let Some(credentials) = credentials else {
-            require_secret_slots(&request.command, slots, None)?;
-            return Ok(Cow::Borrowed(request));
+            require_secret_slots(&public_request.command, slots, None)?;
+            return Ok(request);
         };
 
         let declared = slots
@@ -767,13 +773,13 @@ impl PluginManager {
         if let Some(slot) = undeclared.first() {
             return Err(RuntimeError::TypedInvocation(format!(
                 "credentials for '{}' contain undeclared slot '{}'",
-                request.command, slot
+                public_request.command, slot
             )));
         }
-        require_secret_slots(&request.command, slots, Some(credentials))?;
+        require_secret_slots(&public_request.command, slots, Some(credentials))?;
 
         if credentials.is_empty() {
-            return Ok(Cow::Borrowed(request));
+            return Ok(request);
         }
         let resolver = self.secret_resolver.as_ref();
         let mut resolved = BTreeMap::new();
@@ -784,16 +790,16 @@ impl PluginManager {
             let id = id.as_str().ok_or_else(|| {
                 RuntimeError::TypedInvocation(format!(
                     "credential id for slot '{}' in '{}' must be a string",
-                    slot.name, request.command
+                    slot.name, public_request.command
                 ))
             })?;
             let secret = match resolver {
                 Some(resolver) => resolver.resolve(id).map_err(|error| {
-                    map_secret_resolver_error(error, &request.command, &slot.name, id)
+                    map_secret_resolver_error(error, &public_request.command, &slot.name, id)
                 })?,
                 None => {
                     return Err(RuntimeError::VaultKeyUnavailable {
-                        command: request.command.clone(),
+                        command: public_request.command.clone(),
                         slot: slot.name.clone(),
                         id: id.to_owned(),
                     });
@@ -801,7 +807,7 @@ impl PluginManager {
             };
             if !slot.accepted_kinds.contains(&secret.kind) {
                 return Err(RuntimeError::SecretKindMismatch {
-                    command: request.command.clone(),
+                    command: public_request.command.clone(),
                     slot: slot.name.clone(),
                     id: id.to_owned(),
                     kind: secret.kind,
@@ -811,7 +817,9 @@ impl PluginManager {
             resolved.insert(slot.name.clone(), secret);
         }
 
-        Ok(Cow::Owned(request.clone().with_resolved_secrets(resolved)))
+        Ok(Cow::Owned(
+            request.into_owned().with_resolved_secrets(resolved),
+        ))
     }
 
     pub fn cancel_typed(&self, command: &str, request_id: &str) -> bool {
@@ -1591,12 +1599,13 @@ mod tests {
     struct SecretProbePlugin {
         received: Arc<Mutex<Option<TypedInvocationRequest>>>,
         required: bool,
+        include_slot: bool,
     }
 
-    fn probe_descriptor(required: bool) -> CommandDescriptor {
+    fn probe_descriptor(required: bool, include_slot: bool) -> CommandDescriptor {
         let mut slot = SecretSlot::optional("database", ["postgres"], "Database credential");
         slot.required = required;
-        CommandDescriptor::new(
+        let descriptor = CommandDescriptor::new(
             "probe.run",
             "Probe",
             "Capture one typed request for runtime tests.",
@@ -1620,8 +1629,12 @@ mod tests {
                 "Captures an in-memory test request only.",
                 ah_plugin_api::Reversibility::Yes,
             ),
-        )
-        .with_secret_slot(slot)
+        );
+        if include_slot {
+            descriptor.with_secret_slot(slot)
+        } else {
+            descriptor
+        }
     }
 
     impl BuiltinPlugin for SecretProbePlugin {
@@ -1650,7 +1663,7 @@ mod tests {
             Some(CommandCatalog::new(
                 "builtin-probe",
                 "probe",
-                vec![probe_descriptor(self.required)],
+                vec![probe_descriptor(self.required, self.include_slot)],
             ))
         }
 
@@ -1673,6 +1686,7 @@ mod tests {
         let plugin = Arc::new(SecretProbePlugin {
             received: Arc::clone(&received),
             required,
+            include_slot: true,
         });
         if host {
             manager.register_host_builtin(plugin);
@@ -1731,7 +1745,7 @@ mod tests {
                 command_catalog: Some(CommandCatalog::new(
                     "dynamic-probe",
                     "probe",
-                    vec![probe_descriptor(false)],
+                    vec![probe_descriptor(false, true)],
                 )),
                 invoke_command_json: Some(dynamic_probe_invoke),
                 cancel_command: Some(dynamic_probe_cancel),
@@ -2046,6 +2060,130 @@ mod tests {
             .unwrap();
 
         assert_eq!(resolver.calls.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[test]
+    fn caller_supplied_resolved_secrets_are_discarded_before_dispatch() {
+        let injected = ResolvedSecret {
+            id: "caller-controlled".to_owned(),
+            kind: "postgres".to_owned(),
+            values: BTreeMap::from([("password".to_owned(), "caller-private-value".to_owned())]),
+        };
+
+        let no_slot_received = Arc::new(Mutex::new(None));
+        let mut no_slot_manager = PluginManager::new();
+        no_slot_manager.register_builtin(Arc::new(SecretProbePlugin {
+            received: Arc::clone(&no_slot_received),
+            required: false,
+            include_slot: false,
+        }));
+        no_slot_manager
+            .invoke_typed(
+                &TypedInvocationRequest::new(
+                    "probe.run",
+                    serde_json::json!({}),
+                    ah_plugin_api::ExecutionContextWire::new("no-slot-injection", ".", None, 1_000),
+                )
+                .with_resolved_secrets(BTreeMap::from([("database".to_owned(), injected.clone())])),
+            )
+            .unwrap();
+        assert!(
+            no_slot_received
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .resolved_secrets
+                .is_empty()
+        );
+
+        let (empty_credentials_manager, empty_credentials_received) =
+            probe_manager(false, None, false);
+        empty_credentials_manager
+            .invoke_typed(
+                &TypedInvocationRequest::new(
+                    "probe.run",
+                    serde_json::json!({"credentials": {}}),
+                    ah_plugin_api::ExecutionContextWire::new(
+                        "empty-credentials-injection",
+                        ".",
+                        None,
+                        1_000,
+                    ),
+                )
+                .with_resolved_secrets(BTreeMap::from([("database".to_owned(), injected)])),
+            )
+            .unwrap();
+        assert!(
+            empty_credentials_received
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .resolved_secrets
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn caller_supplied_resolved_secrets_cannot_bypass_id_or_kind_validation() {
+        let injected = BTreeMap::from([(
+            "database".to_owned(),
+            ResolvedSecret {
+                id: "caller-controlled".to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([(
+                    "password".to_owned(),
+                    "caller-private-value".to_owned(),
+                )]),
+            },
+        )]);
+
+        let missing_resolver: Arc<dyn SecretResolver> =
+            Arc::new(ErrorSecretResolver(SecretResolverError::NotFound));
+        let (missing_manager, missing_received) =
+            probe_manager(false, Some(missing_resolver), false);
+        let missing = missing_manager
+            .invoke_typed(
+                &TypedInvocationRequest::new(
+                    "probe.run",
+                    serde_json::json!({"credentials": {"database": "missing-id"}}),
+                    ah_plugin_api::ExecutionContextWire::new(
+                        "injected-missing-id",
+                        ".",
+                        None,
+                        1_000,
+                    ),
+                )
+                .with_resolved_secrets(injected.clone()),
+            )
+            .unwrap_err();
+        assert!(matches!(missing, RuntimeError::SecretNotFound { .. }));
+        assert!(missing_received.lock().unwrap().is_none());
+
+        let wrong_kind_resolver: Arc<dyn SecretResolver> = Arc::new(WrongKindSecretResolver);
+        let (wrong_kind_manager, wrong_kind_received) =
+            probe_manager(false, Some(wrong_kind_resolver), false);
+        let wrong_kind = wrong_kind_manager
+            .invoke_typed(
+                &TypedInvocationRequest::new(
+                    "probe.run",
+                    serde_json::json!({"credentials": {"database": "wrong-kind-id"}}),
+                    ah_plugin_api::ExecutionContextWire::new(
+                        "injected-wrong-kind",
+                        ".",
+                        None,
+                        1_000,
+                    ),
+                )
+                .with_resolved_secrets(injected),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            wrong_kind,
+            RuntimeError::SecretKindMismatch { .. }
+        ));
+        assert!(wrong_kind_received.lock().unwrap().is_none());
     }
 
     #[test]

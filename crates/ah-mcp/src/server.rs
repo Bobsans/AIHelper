@@ -413,7 +413,7 @@ impl McpServer {
             Ok(context) => context,
             Err(error) => return Ok(command_error_result(error)),
         };
-        if let Err(error) = ah_runtime::typed::validate_arguments(
+        if let Err(error) = ah_runtime::typed::validate_mcp_arguments(
             &command.descriptor,
             &Value::Object(target_arguments.clone()),
         ) {
@@ -2048,6 +2048,7 @@ fn reserved_job_namespace_error(command: &str) -> Option<McpAdapterError> {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         future::{pending, ready},
         sync::{
             Arc, Barrier, Mutex,
@@ -2059,14 +2060,16 @@ mod tests {
     use ah_plugin_api::{
         AH_PLUGIN_ABI_VERSION, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
         CommandExample, ExecutionContextWire, InvocationRequest, InvocationResponse,
-        PluginCompatibility, PluginManual, PluginMetadata, Reversibility, RiskLevel,
-        TypedInvocationRequest, TypedInvocationResponse, plugin_capabilities,
+        PluginCompatibility, PluginManual, PluginMetadata, ResolvedSecret, Reversibility,
+        RiskLevel, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
+        plugin_capabilities,
     };
     use ah_runtime::{
         BuiltinPlugin, InvocationOutcome, PluginManager, RunCheckOutcome, RuntimeError,
+        SecretResolver, SecretResolverError,
         executor::{
             ExecutionFuture, ExecutionTelemetry, ExecutionTimeoutPhase, ObservedExecution,
-            ObservedExecutionFuture,
+            ObservedExecutionFuture, ParallelExecutor,
         },
     };
     use rmcp::model::{CallToolRequestParams, ErrorCode, JsonObject, NumberOrString};
@@ -2084,6 +2087,12 @@ mod tests {
     };
 
     struct TypedPlugin;
+
+    struct CredentialTypedPlugin {
+        received: Arc<Mutex<Vec<TypedInvocationRequest>>>,
+    }
+
+    struct CredentialResolver;
 
     fn descriptor(id: &str) -> CommandDescriptor {
         CommandDescriptor::new(
@@ -2149,6 +2158,63 @@ mod tests {
                 "test",
                 vec![descriptor("test.echo")],
             ))
+        }
+    }
+
+    impl SecretResolver for CredentialResolver {
+        fn resolve(&self, id: &str) -> Result<ResolvedSecret, SecretResolverError> {
+            Ok(ResolvedSecret {
+                id: id.to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([("password".to_owned(), "private-password".to_owned())]),
+            })
+        }
+    }
+
+    impl BuiltinPlugin for CredentialTypedPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                plugin_name: "credential-test".to_owned(),
+                domain: "test".to_owned(),
+                description: "credential test plugin".to_owned(),
+                abi_version: AH_PLUGIN_ABI_VERSION,
+                required_tools: Vec::new(),
+                compatibility: PluginCompatibility::current()
+                    .with_capability(plugin_capabilities::TYPED_COMMANDS_V1),
+            }
+        }
+
+        fn manual(&self) -> PluginManual {
+            PluginManual {
+                plugin_name: "credential-test".to_owned(),
+                domain: "test".to_owned(),
+                description: "credential test plugin".to_owned(),
+                commands: Vec::new(),
+                notes: Vec::new(),
+            }
+        }
+
+        fn invoke(&self, _request: &InvocationRequest) -> InvocationResponse {
+            InvocationResponse::ok(None)
+        }
+
+        fn command_catalog(&self) -> Option<CommandCatalog> {
+            Some(CommandCatalog::new(
+                "credential-test",
+                "test",
+                vec![
+                    descriptor("test.secret").with_secret_slot(SecretSlot::optional(
+                        "database",
+                        ["postgres"],
+                        "Database credential",
+                    )),
+                ],
+            ))
+        }
+
+        fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {
+            self.received.lock().unwrap().push(request.clone());
+            TypedInvocationResponse::success(json!({"value": request.arguments["value"]}), None)
         }
     }
 
@@ -2347,6 +2413,32 @@ mod tests {
         let sink = Arc::new(RecordingEventSink::default());
         let event_sink: Arc<dyn EventSink> = sink.clone();
         (server(executor).with_event_sink(event_sink), sink)
+    }
+
+    fn credential_server() -> (
+        McpServer,
+        Arc<Mutex<Vec<TypedInvocationRequest>>>,
+        Arc<RecordingEventSink>,
+    ) {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PluginManager::new();
+        manager.set_secret_resolver(Arc::new(CredentialResolver));
+        manager.register_builtin(Arc::new(CredentialTypedPlugin {
+            received: Arc::clone(&received),
+        }));
+        let manager = Arc::new(manager);
+        let executor: Arc<dyn Executor> =
+            Arc::new(ParallelExecutor::new(Arc::clone(&manager), 2).unwrap());
+        let sink = Arc::new(RecordingEventSink::default());
+        let event_sink: Arc<dyn EventSink> = sink.clone();
+        let server = McpServer::new(
+            manager,
+            executor,
+            McpServerConfig::new("default-cwd", Some(10), 1_000).unwrap(),
+        )
+        .unwrap()
+        .with_event_sink(event_sink);
+        (server, received, sink)
     }
 
     async fn wait_for_recorded_events(sink: &RecordingEventSink, expected: usize) {
@@ -2869,6 +2961,108 @@ mod tests {
                 diagnostic
                     .cause
                     .contains("unknown MCP tool 'ah.test.missing'")
+            );
+        });
+    }
+
+    #[test]
+    fn immediate_mcp_credential_invocation_resolves_and_redacts_structured_event() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (server, received, sink) = credential_server();
+            let request = CallToolRequestParams::new("ah.test.secret").with_arguments(arguments(
+                json!({"value": "immediate", "credentials": {"database": "qa-lms"}}),
+            ));
+            let protocol_request_id =
+                NumberOrString::String("credential-immediate".to_owned().into());
+
+            let result = server
+                .call_tool_completed(request, &protocol_request_id, None)
+                .await
+                .unwrap();
+
+            assert_eq!(result.is_error, Some(false));
+            let requests = received.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].arguments["credentials"]["database"], "qa-lms");
+            assert_eq!(
+                requests[0].resolved_secrets["database"].values["password"],
+                "private-password"
+            );
+            drop(requests);
+
+            wait_for_recorded_events(&sink, 1).await;
+            let events = sink.events.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(
+                events[0].parameters,
+                json!({"value": "immediate", "credentials": {"database": "qa-lms"}})
+            );
+            assert!(
+                !events[0]
+                    .parameters
+                    .to_string()
+                    .contains("private-password")
+            );
+        });
+    }
+
+    #[test]
+    fn detached_mcp_credential_invocation_resolves_when_job_executes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (server, received, sink) = credential_server();
+            let request =
+                CallToolRequestParams::new(JOB_START_TOOL).with_arguments(arguments(json!({
+                    "tool": "ah.test.secret",
+                    "arguments": {
+                        "value": "detached",
+                        "credentials": {"database": "qa-lms"}
+                    }
+                })));
+            let protocol_request_id =
+                NumberOrString::String("credential-detached".to_owned().into());
+
+            let result = server
+                .call_tool_completed(request, &protocol_request_id, None)
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(false));
+
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if !received.lock().unwrap().is_empty() {
+                        return;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("detached credential invocation should execute");
+            let requests = received.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].arguments["credentials"]["database"], "qa-lms");
+            assert_eq!(requests[0].resolved_secrets["database"].id, "qa-lms");
+            assert_eq!(
+                requests[0].resolved_secrets["database"].values["password"],
+                "private-password"
+            );
+            drop(requests);
+
+            wait_for_recorded_events(&sink, 2).await;
+            let events = sink.events.lock().unwrap();
+            let target_event = events
+                .iter()
+                .find(|event| event.command == "test.secret")
+                .expect("detached target event should be recorded");
+            assert_eq!(
+                target_event.parameters,
+                json!({"value": "detached", "credentials": {"database": "qa-lms"}})
+            );
+            assert!(
+                events
+                    .iter()
+                    .all(|event| !event.parameters.to_string().contains("private-password"))
             );
         });
     }

@@ -89,6 +89,20 @@ pub fn validate_arguments(
     validate_arguments_with(&descriptor.id, &validator, arguments)
 }
 
+pub fn validate_mcp_arguments(
+    descriptor: &CommandDescriptor,
+    arguments: &serde_json::Value,
+) -> Result<(), RuntimeError> {
+    let schema = mcp_input_schema(descriptor)?;
+    let validator = jsonschema::validator_for(&schema).map_err(|error| {
+        RuntimeError::TypedInvocation(format!(
+            "MCP input schema for '{}' is invalid: {error}",
+            descriptor.id
+        ))
+    })?;
+    validate_arguments_with(&descriptor.id, &validator, arguments)
+}
+
 pub(crate) fn validate_arguments_with(
     command: &str,
     validator: &jsonschema::Validator,
