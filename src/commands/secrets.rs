@@ -110,23 +110,23 @@ fn browser_setup_request(request: &SecretsCommand) -> Option<SecretSetupRequest>
 fn open_browser_setup(request: SecretSetupRequest, options: GlobalOptions) -> Result<(), AppError> {
     let base_url =
         std::env::var("AH_MCP_HTTP_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".to_owned());
-    let parsed = reqwest::Url::parse(&base_url).map_err(|_| invalid_setup_url())?;
-    if parsed.scheme() != "http"
-        || parsed.host_str() != Some("127.0.0.1")
-        || parsed.port().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || !matches!(parsed.path(), "" | "/")
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
+    let origin = reqwest::Url::parse(&base_url).map_err(|_| invalid_setup_url())?;
+    if origin.scheme() != "http"
+        || origin.host_str() != Some("127.0.0.1")
+        || origin.port().is_none()
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || !matches!(origin.path(), "" | "/")
+        || origin.query().is_some()
+        || origin.fragment().is_some()
     {
         return Err(invalid_setup_url());
     }
+    let capability_endpoint = origin
+        .join("/secrets/setup/capability")
+        .map_err(|_| invalid_setup_url())?;
     let response = reqwest::blocking::Client::new()
-        .post(format!(
-            "{}/secrets/setup/capability",
-            base_url.trim_end_matches('/')
-        ))
+        .post(capability_endpoint)
         .json(&request)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
@@ -143,24 +143,56 @@ fn open_browser_setup(request: SecretSetupRequest, options: GlobalOptions) -> Re
                 "browser setup response was invalid",
             )
         })?;
-    open_browser(&response.setup_url)?;
+    let setup_url = validate_setup_url(&origin, &response.setup_url)?;
+    let _ = open_browser(setup_url.as_str());
     if !options.quiet {
         println!(
             "{}",
-            match options.output {
-                OutputMode::Text => "secret setup opened in browser".to_owned(),
-                OutputMode::Json =>
-                    serde_json::to_string_pretty(&serde_json::json!({"opened": true}),)?,
-            }
+            render_setup_output(setup_url.as_str(), options.output)?
         );
     }
     Ok(())
+}
+
+fn validate_setup_url(origin: &reqwest::Url, setup_url: &str) -> Result<reqwest::Url, AppError> {
+    let setup_url = reqwest::Url::parse(setup_url).map_err(|_| invalid_returned_setup_url())?;
+    if setup_url.scheme() != origin.scheme()
+        || setup_url.host_str() != origin.host_str()
+        || setup_url.port() != origin.port()
+        || !setup_url.username().is_empty()
+        || setup_url.password().is_some()
+        || setup_url.path() != "/secrets/setup"
+        || setup_url.fragment().is_some()
+    {
+        return Err(invalid_returned_setup_url());
+    }
+    let mut query = setup_url.query_pairs();
+    match (query.next(), query.next()) {
+        (Some((key, value)), None) if key == "capability" && !value.is_empty() => Ok(setup_url),
+        _ => Err(invalid_returned_setup_url()),
+    }
+}
+
+fn render_setup_output(setup_url: &str, mode: OutputMode) -> Result<String, AppError> {
+    match mode {
+        OutputMode::Text => Ok(setup_url.to_owned()),
+        OutputMode::Json => Ok(serde_json::to_string_pretty(
+            &serde_json::json!({"setup_url": setup_url}),
+        )?),
+    }
 }
 
 fn invalid_setup_url() -> AppError {
     AppError::external(
         "VAULT_SETUP_URL_INVALID",
         "AH_MCP_HTTP_URL must be an http://127.0.0.1:PORT origin",
+    )
+}
+
+fn invalid_returned_setup_url() -> AppError {
+    AppError::external(
+        "VAULT_SETUP_URL_INVALID",
+        "browser setup response did not contain a trusted setup URL",
     )
 }
 
@@ -341,9 +373,14 @@ fn vault_error(error: VaultError) -> AppError {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use crate::secrets::{KeyProvider, SecretKind, VaultError, VaultStore};
+    use crate::{
+        output::OutputMode,
+        secrets::{KeyProvider, SecretKind, VaultError, VaultStore},
+    };
 
-    use super::{SecretsCommand, apply, render_json, render_text};
+    use super::{
+        SecretsCommand, apply, render_json, render_setup_output, render_text, validate_setup_url,
+    };
 
     struct FixedKey;
 
@@ -351,6 +388,51 @@ mod tests {
         fn load_or_create(&self) -> Result<[u8; 32], VaultError> {
             Ok([23; 32])
         }
+    }
+
+    #[test]
+    fn setup_url_requires_the_configured_origin_and_exact_capability_shape() {
+        let origin = reqwest::Url::parse("http://127.0.0.1:8787").unwrap();
+        let valid = "http://127.0.0.1:8787/secrets/setup?capability=one-time-token";
+        assert_eq!(validate_setup_url(&origin, valid).unwrap().as_str(), valid);
+
+        for invalid in [
+            "https://127.0.0.1:8787/secrets/setup?capability=token",
+            "http://127.0.0.1:8788/secrets/setup?capability=token",
+            "http://localhost:8787/secrets/setup?capability=token",
+            "http://user@127.0.0.1:8787/secrets/setup?capability=token",
+            "http://127.0.0.1:8787/not-setup?capability=token",
+            "http://127.0.0.1:8787/secrets/setup?capability=token&extra=value",
+            "http://127.0.0.1:8787/secrets/setup?capability=one&capability=two",
+            "http://127.0.0.1:8787/secrets/setup?other=token",
+            "http://127.0.0.1:8787/secrets/setup?capability=",
+            "http://127.0.0.1:8787/secrets/setup?capability=token#fragment",
+        ] {
+            assert!(validate_setup_url(&origin, invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn rejected_setup_url_does_not_expose_its_capability() {
+        let origin = reqwest::Url::parse("http://127.0.0.1:8787").unwrap();
+        let secret = "do-not-log-this-capability";
+        let error = validate_setup_url(
+            &origin,
+            &format!("http://127.0.0.1:8787/secrets/setup?capability={secret}&extra=rejected"),
+        )
+        .unwrap_err();
+
+        assert!(!error.to_string().contains(secret));
+    }
+
+    #[test]
+    fn setup_output_prints_the_url_for_headless_use() {
+        let url = "http://127.0.0.1:8787/secrets/setup?capability=one-time-token";
+
+        assert_eq!(render_setup_output(url, OutputMode::Text).unwrap(), url);
+        let json: serde_json::Value =
+            serde_json::from_str(&render_setup_output(url, OutputMode::Json).unwrap()).unwrap();
+        assert_eq!(json, serde_json::json!({"setup_url": url}));
     }
 
     #[test]

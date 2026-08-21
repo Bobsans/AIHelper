@@ -45,6 +45,8 @@ struct Capability {
     expires_at: Instant,
 }
 
+const MAX_SETUP_CAPABILITIES: usize = 128;
+
 #[derive(Default)]
 pub struct SecretSetupCapabilities {
     entries: Mutex<HashMap<String, Capability>>,
@@ -56,6 +58,16 @@ impl SecretSetupCapabilities {
             .entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = Instant::now();
+        entries.retain(|_, capability| capability.expires_at > now);
+        if entries.len() >= MAX_SETUP_CAPABILITIES
+            && let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, capability)| capability.expires_at)
+                .map(|(token, _)| token.clone())
+        {
+            entries.remove(&oldest);
+        }
         loop {
             let mut bytes = [0_u8; 32];
             OsRng.fill_bytes(&mut bytes);
@@ -68,7 +80,7 @@ impl SecretSetupCapabilities {
                     token.clone(),
                     Capability {
                         target,
-                        expires_at: Instant::now() + lifetime,
+                        expires_at: now + lifetime,
                     },
                 );
                 return token;
@@ -383,6 +395,41 @@ mod tests {
         assert_eq!(
             capabilities.consume(&expired).unwrap_err().code(),
             "VAULT_SETUP_CAPABILITY_INVALID"
+        );
+    }
+
+    #[test]
+    fn issuing_capabilities_purges_expired_entries_and_bounds_active_entries() {
+        let capabilities = SecretSetupCapabilities::default();
+        let target = SecretSetupTarget::Create {
+            id: "qa-lms".to_owned(),
+            kind: SecretKind::Postgres,
+            label: None,
+            description: None,
+        };
+
+        capabilities.issue(target.clone(), Duration::ZERO);
+        thread::sleep(Duration::from_millis(1));
+        capabilities.issue(target.clone(), Duration::from_secs(600));
+        assert_eq!(
+            capabilities
+                .entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            1
+        );
+
+        for _ in 0..200 {
+            capabilities.issue(target.clone(), Duration::from_secs(600));
+        }
+        assert!(
+            capabilities
+                .entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len()
+                <= 128
         );
     }
 

@@ -109,11 +109,15 @@ ah secrets add billing --kind postgres --open
 ah secrets edit billing --open
 ```
 
-The CLI opens a protected form on the same loopback process. Its random 256-bit
-capability expires after ten minutes and is consumed only by a successful POST;
-GET, POST, expiry, and reuse failures return the stable setup diagnostic. The
-server does not log the capability query or form body and returns only `id`,
-`kind`, `label`, and nullable `description`. For a non-default port, set
+The CLI prints a protected setup URL on the same loopback process and makes a
+best-effort attempt to open it. In a headless session, copy the printed URL into
+a browser that can reach that origin. The CLI rejects a returned URL unless it
+uses the configured origin, exact `/secrets/setup` path, and exactly one
+non-empty `capability` query parameter. The random 256-bit capability expires
+after ten minutes and is consumed only by a successful POST; GET, POST, expiry,
+and reuse failures return the stable setup diagnostic. The server does not log
+the capability query or form body and returns only `id`, `kind`, `label`, and
+nullable `description`. Treat the printed URL as sensitive. For a non-default port, set
 `AH_MCP_HTTP_URL=http://127.0.0.1:PORT` for the `ah secrets ... --open` command.
 
 Check the exact running process without creating an MCP session:

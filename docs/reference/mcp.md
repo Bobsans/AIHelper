@@ -53,7 +53,10 @@ http://127.0.0.1:8787/mcp
 
 The same loopback server hosts protected secret setup at `/secrets/setup`.
 `ah secrets add|edit --open` first mints a ten-minute, single-use 256-bit
-capability through the local server and then opens the form. GET and POST both
+capability through the local server, prints the setup URL, and then attempts to
+open the form. Automatic browser opening is optional, so the printed URL also
+works on headless hosts. The CLI accepts only a returned URL on the configured
+origin with the exact `/secrets/setup?capability=...` shape. GET and POST both
 require the capability; only a successful POST consumes it, and the response is
 redacted metadata. Capability query values and form bodies are not written to
 AIHelper logs. See [`ah secrets`](secrets.md).

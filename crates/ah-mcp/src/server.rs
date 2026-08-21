@@ -1436,11 +1436,19 @@ fn render_secret_setup_form(form: &SecretSetupForm) -> String {
         .iter()
         .map(|field| {
             let required = if field.optional { "" } else { " required" };
-            format!(
-                "<label>{}<input type=\"password\" name=\"{}\" autocomplete=\"new-password\"{required}></label>",
-                html_escape(field.label),
-                html_escape(field.name),
-            )
+            if field.name == "private_key" {
+                format!(
+                    "<label>{}<textarea name=\"{}\" autocomplete=\"off\" spellcheck=\"false\"{required}></textarea></label>",
+                    html_escape(field.label),
+                    html_escape(field.name),
+                )
+            } else {
+                format!(
+                    "<label>{}<input type=\"password\" name=\"{}\" autocomplete=\"new-password\"{required}></label>",
+                    html_escape(field.label),
+                    html_escape(field.name),
+                )
+            }
         })
         .collect::<String>();
     format!(
@@ -2355,10 +2363,35 @@ mod tests {
     use super::{
         EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
         McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
-        RISK_META_KEY, ShutdownReader, ShutdownTracker, extract_context, peer_generation_matches,
-        refresh_catalog_after_job, requires_explicit_cwd, run_check_outcome,
+        RISK_META_KEY, SecretSetupField, SecretSetupForm, ShutdownReader, ShutdownTracker,
+        extract_context, peer_generation_matches, refresh_catalog_after_job,
+        render_secret_setup_form, requires_explicit_cwd, run_check_outcome,
         spawn_best_effort_notification, wait_for_transport,
     };
+
+    #[test]
+    fn private_key_setup_field_uses_a_multiline_textarea() {
+        let html = render_secret_setup_form(&SecretSetupForm {
+            id: "deployment-key".to_owned(),
+            kind: "ssh-key".to_owned(),
+            fields: vec![
+                SecretSetupField {
+                    name: "private_key",
+                    label: "SSH private key",
+                    optional: false,
+                },
+                SecretSetupField {
+                    name: "passphrase",
+                    label: "SSH key passphrase",
+                    optional: true,
+                },
+            ],
+        });
+
+        assert!(html.contains("<textarea name=\"private_key\""));
+        assert!(!html.contains("type=\"password\" name=\"private_key\""));
+        assert!(html.contains("<input type=\"password\" name=\"passphrase\""));
+    }
 
     struct TypedPlugin;
 

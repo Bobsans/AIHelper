@@ -32,18 +32,24 @@ ah secrets add billing --kind postgres --open
 ah secrets edit billing --open
 ```
 
-`--open` asks the loopback server to mint a random 256-bit capability and opens
-the returned form in the default browser. The capability expires after ten
+`--open` asks the loopback server to mint a random 256-bit capability, prints
+the returned setup URL, and makes a best-effort attempt to open it in the
+default browser. Copy the printed URL into a browser when running headless or
+when automatic opening is unavailable. The capability expires after ten
 minutes, is accepted only by the matching create/edit form, and is consumed only
 after a successful POST. The page never reads or pre-fills an existing value;
-an empty edit field retains its stored value. Responses contain only redacted
-metadata.
+an empty edit field retains its stored value. SSH private keys use a multiline
+textarea; all other fields remain password inputs. Responses contain only
+redacted metadata.
 
 The default server origin is `http://127.0.0.1:8787`. For a custom loopback
 port, set `AH_MCP_HTTP_URL` to an exact `http://127.0.0.1:PORT` origin before
 running `ah secrets ... --open`. AIHelper rejects remote, TLS, path, query, and
-fragment values. Capability tokens and form bodies are excluded from AIHelper
-logs, and the CLI reports only whether the browser was opened.
+fragment values. It also rejects any returned setup URL that does not have the
+same origin, the exact `/secrets/setup` path, and exactly one non-empty
+`capability` query parameter. Capability tokens and form bodies are excluded
+from AIHelper logs. Treat the printed setup URL as sensitive because it contains
+the one-time capability.
 
 ## Agent discovery
 

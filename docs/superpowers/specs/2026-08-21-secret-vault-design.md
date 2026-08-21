@@ -75,10 +75,15 @@ kind registry defines required fields:
 | `ssh-key` | `private_key`, optional `passphrase` |
 
 `--open` creates a single-use setup capability valid for ten minutes and
-prints a URL served by the existing HTTP MCP process. The browser page only
-creates or edits a specified secret; it never reads an existing value. The
-capability is consumed on success or expiry. It is absent from MCP discovery,
-and the secret POST body is excluded from request logging.
+prints a URL served by the existing HTTP MCP process. Opening the default
+browser is best-effort so the printed URL remains usable on a headless host.
+The CLI accepts only the configured HTTP MCP origin, exact `/secrets/setup`
+path, and one non-empty `capability` query parameter. The browser page only
+creates or edits a specified secret; it never reads an existing value. SSH
+private keys use a multiline textarea while all other secret fields use
+password inputs. The capability is consumed on success or expiry. It is absent
+from MCP discovery, and the capability and secret POST body are excluded from
+request logging; the printed URL itself must be treated as sensitive.
 
 MCP exposes only `secrets.list` as a read-only tool. It returns `id`, `kind`,
 `label`, and `description`, optionally filtered by kind. It never indicates

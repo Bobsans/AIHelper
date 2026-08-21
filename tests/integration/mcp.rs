@@ -722,6 +722,42 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
         "VAULT_SETUP_CAPABILITY_INVALID"
     );
 
+    let ssh_issued = client
+        .post(format!("{}/secrets/setup/capability", process.origin))
+        .json(&json!({"action": "create", "id": "deployment-key", "kind": "ssh-key"}))
+        .send()
+        .expect("SSH setup capability request should complete");
+    assert!(ssh_issued.status().is_success());
+    let ssh_setup_url = ssh_issued.json::<Value>().unwrap()["setup_url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let ssh_token = ssh_setup_url
+        .split("capability=")
+        .nth(1)
+        .unwrap()
+        .to_owned();
+    let ssh_form = client.get(&ssh_setup_url).send().unwrap().text().unwrap();
+    assert!(ssh_form.contains("<textarea name=\"private_key\""));
+    assert!(ssh_form.contains("<input type=\"password\" name=\"passphrase\""));
+
+    let private_key =
+        "-----BEGIN PRIVATE KEY-----\nmultiline-key-material\n-----END PRIVATE KEY-----";
+    let ssh_submitted = client
+        .post(&ssh_setup_url)
+        .form(&[("private_key", private_key), ("passphrase", "")])
+        .send()
+        .unwrap();
+    assert!(ssh_submitted.status().is_success());
+    let ssh_body = ssh_submitted.text().unwrap();
+    assert!(ssh_body.contains("deployment-key"));
+    assert!(!ssh_body.contains(private_key));
+    assert!(!ssh_body.contains(&ssh_token));
+    assert_eq!(
+        store.resolve("deployment-key").unwrap().values["private_key"],
+        private_key
+    );
+
     let shutdown = client
         .post(&process.shutdown_url)
         .json(&json!({"instance_id": readiness["instance_id"]}))
@@ -732,6 +768,8 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
     let stderr = process.read_stderr();
     assert!(!stderr.contains(secret));
     assert!(!stderr.contains(&token));
+    assert!(!stderr.contains(private_key));
+    assert!(!stderr.contains(&ssh_token));
 }
 
 struct HttpMcpClient {
