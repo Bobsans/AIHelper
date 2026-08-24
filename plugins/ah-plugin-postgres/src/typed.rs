@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use ah_plugin_api::{
-    CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
-    GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse,
+    CliTypedInvocation, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
+    CommandError, CommandExample, GlobalOptionsWire, InvocationResponse, Reversibility, RiskLevel,
+    SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
 };
 use serde_json::{Map, Value, json};
 
@@ -53,6 +53,140 @@ pub(super) fn invoke(request: &TypedInvocationRequest) -> TypedInvocationRespons
 
 pub(super) fn cancel(_request_id: &str) -> bool {
     false
+}
+
+pub(super) fn cli_to_typed(cli: PostgresCli) -> Result<CliTypedInvocation, InvocationResponse> {
+    let mut arguments = Map::new();
+    insert_path(&mut arguments, "tool_path", cli.tool.tool_path.as_ref());
+    arguments.insert("ensure_tool".to_owned(), json!(cli.tool.ensure_tool));
+    insert_option(&mut arguments, "host", cli.connection.host.as_ref());
+    insert_option(&mut arguments, "port", cli.connection.port.as_ref());
+    insert_option(&mut arguments, "database", cli.connection.database.as_ref());
+    insert_option(&mut arguments, "user", cli.connection.user.as_ref());
+    insert_option(&mut arguments, "service", cli.connection.service.as_ref());
+    insert_option(&mut arguments, "sslmode", cli.connection.sslmode.as_ref());
+    insert_option(
+        &mut arguments,
+        "password_env",
+        cli.connection.password_env.as_ref(),
+    );
+    arguments.insert(
+        "connect_timeout_secs".to_owned(),
+        json!(cli.connection.connect_timeout_secs),
+    );
+    insert_option(
+        &mut arguments,
+        "statement_timeout_ms",
+        cli.connection.statement_timeout_ms.as_ref(),
+    );
+
+    let command = match cli.command {
+        PostgresCommand::Tool(_) => {
+            return Err(InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                "--credential is supported only for operational PostgreSQL commands",
+            ));
+        }
+        PostgresCommand::Ping => "postgres.ping",
+        PostgresCommand::Info => "postgres.info",
+        PostgresCommand::Databases => "postgres.databases",
+        PostgresCommand::Schemas(args) => {
+            arguments.insert("include_system".to_owned(), json!(args.include_system));
+            "postgres.schemas"
+        }
+        PostgresCommand::Tables(args) => {
+            relation_arguments(&mut arguments, args);
+            "postgres.tables"
+        }
+        PostgresCommand::Views(args) => {
+            relation_arguments(&mut arguments, args);
+            "postgres.views"
+        }
+        PostgresCommand::Describe(args) => {
+            arguments.insert("object".to_owned(), json!(args.object));
+            "postgres.describe"
+        }
+        PostgresCommand::Indexes(args) => {
+            insert_option(&mut arguments, "schema", args.schema.as_ref());
+            insert_option(&mut arguments, "table", args.table.as_ref());
+            "postgres.indexes"
+        }
+        PostgresCommand::Extensions(args) => {
+            arguments.insert("available".to_owned(), json!(args.available));
+            "postgres.extensions"
+        }
+        PostgresCommand::Query(args) => {
+            sql_arguments(&mut arguments, args.sql.as_ref(), args.file.as_ref());
+            "postgres.query"
+        }
+        PostgresCommand::Exec(args) => {
+            sql_arguments(&mut arguments, args.sql.as_ref(), args.file.as_ref());
+            arguments.insert(
+                "single_transaction".to_owned(),
+                json!(args.single_transaction),
+            );
+            arguments.insert("yes".to_owned(), json!(args.yes));
+            "postgres.exec"
+        }
+        PostgresCommand::Explain(args) => {
+            sql_arguments(&mut arguments, args.sql.as_ref(), args.file.as_ref());
+            arguments.insert("analyze".to_owned(), json!(args.analyze));
+            arguments.insert("buffers".to_owned(), json!(args.buffers));
+            arguments.insert("yes".to_owned(), json!(args.yes));
+            "postgres.explain"
+        }
+        PostgresCommand::Activity(args) => {
+            arguments.insert("active".to_owned(), json!(args.active));
+            arguments.insert("idle_in_tx".to_owned(), json!(args.idle_in_tx));
+            "postgres.activity"
+        }
+        PostgresCommand::Locks(args) => {
+            arguments.insert("blocking".to_owned(), json!(args.blocking));
+            "postgres.locks"
+        }
+        PostgresCommand::Size(args) => {
+            insert_option(&mut arguments, "schema", args.schema.as_ref());
+            insert_option(&mut arguments, "table", args.table.as_ref());
+            "postgres.size"
+        }
+        PostgresCommand::Settings(args) => {
+            arguments.insert("changed".to_owned(), json!(args.changed));
+            "postgres.settings"
+        }
+    };
+    Ok(CliTypedInvocation {
+        command: command.to_owned(),
+        arguments: Value::Object(arguments),
+    })
+}
+
+fn relation_arguments(arguments: &mut Map<String, Value>, args: RelationListArgs) {
+    insert_option(arguments, "schema", args.schema.as_ref());
+    arguments.insert("include_system".to_owned(), json!(args.include_system));
+}
+
+fn sql_arguments(arguments: &mut Map<String, Value>, sql: Option<&String>, file: Option<&PathBuf>) {
+    insert_option(arguments, "sql", sql);
+    insert_path(arguments, "file", file);
+}
+
+fn insert_option<T: serde::Serialize>(
+    arguments: &mut Map<String, Value>,
+    name: &str,
+    value: Option<&T>,
+) {
+    if let Some(value) = value {
+        arguments.insert(name.to_owned(), json!(value));
+    }
+}
+
+fn insert_path(arguments: &mut Map<String, Value>, name: &str, value: Option<&PathBuf>) {
+    if let Some(value) = value {
+        arguments.insert(
+            name.to_owned(),
+            Value::String(value.to_string_lossy().into_owned()),
+        );
+    }
 }
 
 fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandError> {
@@ -163,7 +297,16 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandErr
 
 fn typed_connection(request: &TypedInvocationRequest) -> Result<ConnectionArgs, CommandError> {
     let arguments = &request.arguments;
+    let unbounded = request.context.remaining_timeout_ms == u64::MAX;
     let remaining_ms = request.context.remaining_timeout_ms.max(1);
+    let requested_connect_timeout = u64_or(
+        arguments,
+        "connect_timeout_secs",
+        DEFAULT_CONNECT_TIMEOUT_SECS,
+    );
+    let statement_timeout_ms = arguments
+        .get("statement_timeout_ms")
+        .and_then(Value::as_u64);
     Ok(ConnectionArgs {
         host: optional_string(arguments, "host"),
         port: arguments
@@ -176,20 +319,21 @@ fn typed_connection(request: &TypedInvocationRequest) -> Result<ConnectionArgs, 
         sslmode: optional_string(arguments, "sslmode"),
         password_env: optional_string(arguments, "password_env"),
         resolved_password: resolved_database_password(request)?,
-        connect_timeout_secs: u64_or(
-            arguments,
-            "connect_timeout_secs",
-            DEFAULT_CONNECT_TIMEOUT_SECS,
-        )
-        .min(remaining_seconds(request)),
-        statement_timeout_ms: Some(
-            arguments
-                .get("statement_timeout_ms")
-                .and_then(Value::as_u64)
-                .unwrap_or(remaining_ms)
-                .max(1)
-                .min(remaining_ms),
-        ),
+        connect_timeout_secs: if unbounded {
+            requested_connect_timeout
+        } else {
+            requested_connect_timeout.min(remaining_seconds(request))
+        },
+        statement_timeout_ms: if unbounded {
+            statement_timeout_ms
+        } else {
+            Some(
+                statement_timeout_ms
+                    .unwrap_or(remaining_ms)
+                    .max(1)
+                    .min(remaining_ms),
+            )
+        },
     })
 }
 
@@ -227,6 +371,15 @@ fn resolved_database_password(
         .and_then(|items| items.get("database"))
         .and_then(Value::as_str);
     let resolved = request.resolved_secrets.get("database");
+    if public_id.is_some() && optional_string(&request.arguments, "password_env").is_some() {
+        return Err(command_error(
+            request,
+            "INVALID_ARGUMENT",
+            "PostgreSQL database credential conflicts with password_env",
+            "select either a vault credential or password_env",
+            false,
+        ));
+    }
     let Some((public_id, resolved)) = public_id.zip(resolved) else {
         return match (public_id, resolved) {
             (None, None) => Ok(None),
@@ -313,7 +466,9 @@ fn invocation_response(
     };
     match serde_json::from_str::<Value>(&raw) {
         Ok(data) if data.is_object() => {
-            TypedInvocationResponse::success(data, Some(format!("Completed {}.", request.command)))
+            let text = typed_text(&request.command, &data)
+                .unwrap_or_else(|| format!("Completed {}.\n", request.command));
+            TypedInvocationResponse::success(data, Some(text))
         }
         Ok(_) => TypedInvocationResponse::error(command_error(
             request,
@@ -329,6 +484,66 @@ fn invocation_response(
             error.to_string(),
             false,
         )),
+    }
+}
+
+fn typed_text(command: &str, data: &Value) -> Option<String> {
+    let formatter = TextFormatter::stdout();
+    let rows = |data: &Value| {
+        data.get("rows")
+            .cloned()
+            .unwrap_or(Value::Array(Vec::new()))
+    };
+    match command {
+        "postgres.ping" => serde_json::from_value::<InfoRow>(data.clone())
+            .ok()
+            .map(|row| render_ping_text(&row, formatter)),
+        "postgres.info" => serde_json::from_value::<InfoRow>(data.clone())
+            .ok()
+            .map(|row| render_info_text(&row, formatter)),
+        "postgres.databases" => serde_json::from_value::<Vec<DatabaseRow>>(rows(data))
+            .ok()
+            .map(|rows| render_database_rows(&rows, formatter)),
+        "postgres.schemas" => serde_json::from_value::<Vec<SchemaRow>>(rows(data))
+            .ok()
+            .map(|rows| render_schema_rows(&rows, formatter)),
+        "postgres.tables" | "postgres.views" => {
+            serde_json::from_value::<Vec<RelationRow>>(rows(data))
+                .ok()
+                .map(|rows| render_relation_rows(&rows, formatter))
+        }
+        "postgres.describe" => serde_json::from_value::<DescribeOutput>(data.clone())
+            .ok()
+            .map(|output| render_describe_text(&output, formatter)),
+        "postgres.indexes" => serde_json::from_value::<Vec<IndexRow>>(rows(data))
+            .ok()
+            .map(|rows| render_index_rows(&rows, formatter)),
+        "postgres.extensions" => serde_json::from_value::<Vec<ExtensionRow>>(rows(data))
+            .ok()
+            .map(|rows| render_extension_rows(&rows, formatter)),
+        "postgres.activity" => serde_json::from_value::<Vec<ActivityRow>>(rows(data))
+            .ok()
+            .map(|rows| render_activity_rows(&rows, formatter)),
+        "postgres.locks" => serde_json::from_value::<Vec<LockRow>>(rows(data))
+            .ok()
+            .map(|rows| render_lock_rows(&rows, formatter)),
+        "postgres.size" => serde_json::from_value::<Vec<SizeRow>>(rows(data))
+            .ok()
+            .map(|rows| render_size_rows(&rows, formatter)),
+        "postgres.settings" => serde_json::from_value::<Vec<SettingRow>>(rows(data))
+            .ok()
+            .map(|rows| render_setting_rows(&rows, formatter)),
+        "postgres.query" => data
+            .get("rows")
+            .and_then(|rows| serde_json::to_string_pretty(rows).ok()),
+        "postgres.exec" => data
+            .get("stdout")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        "postgres.explain" => data
+            .get("plan")
+            .and_then(|plan| serde_json::to_string_pretty(plan).ok()),
+        _ => None,
     }
 }
 
@@ -1380,6 +1595,30 @@ mod tests {
     }
 
     #[test]
+    fn cli_converter_reuses_clap_and_emits_only_public_query_arguments() {
+        let cli = parse_args(&[
+            "query".to_owned(),
+            "--database".to_owned(),
+            "app".to_owned(),
+            "--sql".to_owned(),
+            "select 1".to_owned(),
+        ])
+        .expect("legacy argv should parse");
+
+        let invocation = cli_to_typed(cli).expect("operational command should convert");
+
+        assert_eq!(invocation.command, "postgres.query");
+        assert_eq!(invocation.arguments["database"], "app");
+        assert_eq!(invocation.arguments["sql"], "select 1");
+        assert!(invocation.arguments.get("credentials").is_none());
+        assert!(
+            !serde_json::to_string(&invocation)
+                .unwrap()
+                .contains("resolved_password")
+        );
+    }
+
+    #[test]
     fn exec_requires_explicit_confirmation_in_schema() {
         let descriptor = exec_descriptor();
         assert_eq!(descriptor.input_schema["properties"]["yes"]["const"], true);
@@ -1443,6 +1682,34 @@ mod tests {
                 .map(SecretValue::expose),
             Some("postgres-private-sentinel")
         );
+    }
+
+    #[test]
+    fn typed_connection_rejects_password_env_with_database_credential() {
+        let request = TypedInvocationRequest::new(
+            "postgres.ping",
+            json!({
+                "password_env": "LEGACY_DATABASE_PASSWORD",
+                "credentials": {"database": "qa-db"}
+            }),
+            ExecutionContextWire::new("postgres-secret-conflict", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "database".to_owned(),
+            ResolvedSecret {
+                id: "qa-db".to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([(
+                    "password".to_owned(),
+                    "postgres-conflict-sentinel".to_owned(),
+                )]),
+            },
+        )]));
+
+        let error = typed_cli(&request).expect_err("password sources must conflict");
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert!(!serialized.contains("postgres-conflict-sentinel"));
     }
 
     #[test]

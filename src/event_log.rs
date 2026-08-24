@@ -174,13 +174,23 @@ impl EventLogger {
         outcome: Option<&InvocationOutcome>,
         error: Option<&AppError>,
     ) {
-        let diagnostic = error.map(EventDiagnostic::from_app_error);
+        let credentialed = argv
+            .iter()
+            .any(|argument| argument == "--credential" || argument.starts_with("--credential="));
+        let diagnostic = error.map(|error| {
+            let mut diagnostic = EventDiagnostic::from_app_error(error);
+            if credentialed {
+                diagnostic.message = "credentialed invocation failed".to_owned();
+                diagnostic.cause = Some(REDACTED.to_owned());
+            }
+            diagnostic
+        });
         let status = if diagnostic.is_some() {
             "error"
         } else {
             "success"
         };
-        let parameters = sanitize_cli_argv(argv, self.unredacted);
+        let parameters = sanitize_cli_argv(argv, self.unredacted && !credentialed);
         let mut record = self.command_record(
             "cli",
             command,
@@ -458,6 +468,7 @@ fn sanitize_system_context(context: Value, unredacted: bool) -> Value {
 fn sanitize_cli_argv(argv: Vec<String>, unredacted: bool) -> Value {
     let mut sanitized = Vec::with_capacity(argv.len().min(MAX_COLLECTION_ENTRIES));
     let mut redact_next = false;
+    let mut always_redact_next = false;
     let truncated = argv.len() > MAX_COLLECTION_ENTRIES;
     let limit = if truncated {
         MAX_COLLECTION_ENTRIES - 1
@@ -466,19 +477,22 @@ fn sanitize_cli_argv(argv: Vec<String>, unredacted: bool) -> Value {
     };
 
     for argument in argv.into_iter().take(limit) {
-        if redact_next && !unredacted {
+        if redact_next && (!unredacted || always_redact_next) {
             if flag_name(&argument).is_some_and(is_sensitive_cli_flag) {
                 sanitized.push(Value::String(bounded_string(&argument)));
+                always_redact_next =
+                    is_always_redacted_cli_flag(flag_name(&argument).unwrap_or_default());
                 continue;
             }
             sanitized.push(Value::String(REDACTED.to_owned()));
             redact_next = false;
+            always_redact_next = false;
             continue;
         }
 
         let bounded = bounded_string(&argument);
         if let Some((prefix, name, value)) = split_flag_assignment(&bounded) {
-            if is_sensitive_cli_flag(name) && !unredacted {
+            if is_sensitive_cli_flag(name) && (!unredacted || is_always_redacted_cli_flag(name)) {
                 sanitized.push(Value::String(bounded_string(&format!(
                     "{prefix}{name}={REDACTED}"
                 ))));
@@ -493,9 +507,10 @@ fn sanitize_cli_argv(argv: Vec<String>, unredacted: bool) -> Value {
 
         if let Some(name) = flag_name(&bounded)
             && is_sensitive_cli_flag(name)
-            && !unredacted
+            && (!unredacted || is_always_redacted_cli_flag(name))
         {
             redact_next = true;
+            always_redact_next = is_always_redacted_cli_flag(name);
             sanitized.push(Value::String(bounded));
             continue;
         }
@@ -1022,6 +1037,10 @@ fn is_sensitive_cli_flag(name: &str) -> bool {
     is_sensitive_name(name) || matches!(name.to_ascii_lowercase().as_str(), "u" | "user")
 }
 
+fn is_always_redacted_cli_flag(name: &str) -> bool {
+    name.eq_ignore_ascii_case("credential")
+}
+
 fn name_tokens(name: &str) -> Vec<String> {
     let characters = name.chars().collect::<Vec<_>>();
     let mut tokens = Vec::new();
@@ -1275,6 +1294,7 @@ mod tests {
         RecordKind, SystemEventSeverity, is_sensitive_name, log_filename, minimal_record,
         sanitize_cli_argv, sanitize_value,
     };
+    use crate::error::AppError;
 
     struct FixedClock(DateTime<Utc>);
 
@@ -1519,6 +1539,45 @@ mod tests {
         assert!(value.starts_with("password="));
         assert!(value.ends_with("...[truncated]"));
         assert!(value.len() <= MAX_STRING_BYTES);
+    }
+
+    #[test]
+    fn credential_ids_stay_redacted_in_unredacted_mode() {
+        assert_eq!(
+            sanitize_cli_argv(
+                vec![
+                    "--credential".to_owned(),
+                    "basic=private-id".to_owned(),
+                    "--credential=database=other-id".to_owned(),
+                ],
+                true,
+            ),
+            json!(["--credential", "[REDACTED]", "--credential=[REDACTED]"])
+        );
+    }
+
+    #[test]
+    fn credentialed_invocation_redacts_argv_and_error_secrets_in_unredacted_mode() {
+        let temp = TempDir::new().unwrap();
+        let error = AppError::external("SECRET_NOT_FOUND", "private-id unexpected-secret-sentinel");
+        logger(&temp, true).record_cli_command(
+            "http.get",
+            vec![
+                "http".to_owned(),
+                "get".to_owned(),
+                "--credential".to_owned(),
+                "basic=private-id".to_owned(),
+                "--basic".to_owned(),
+                "legacy:unexpected-secret-sentinel".to_owned(),
+            ],
+            Duration::ZERO,
+            Some(&error),
+        );
+
+        let serialized = serde_json::to_string(&records(&temp)).unwrap();
+        assert!(!serialized.contains("private-id"));
+        assert!(!serialized.contains("unexpected-secret-sentinel"));
+        assert!(serialized.contains("credentialed invocation failed"));
     }
 
     #[test]

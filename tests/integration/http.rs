@@ -1,11 +1,15 @@
 use std::{
+    fs,
     io::{Read, Write},
     net::TcpListener,
+    sync::Arc,
     thread,
     time::Duration,
 };
 
 use super::common::IsolatedAhCommand as Command;
+use aihelper::secrets::{ExplicitMasterKey, NewSecret, VaultStore};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
@@ -16,6 +20,97 @@ struct MockResponse {
     status: u16,
     headers: Vec<(&'static str, &'static str)>,
     body: String,
+}
+
+const TEST_MASTER_KEY: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+#[test]
+fn http_get_uses_vault_basic_credential_without_exposing_it() {
+    let username = "vault-user";
+    let password = "http-cli-secret-sentinel";
+    let credential_id = "http-cli-private-id";
+    let expected_authorization = format!(
+        "Basic {}",
+        STANDARD.encode(format!("{username}:{password}"))
+    );
+    let (url, handle) = spawn_authorized_server(expected_authorization);
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let store = VaultStore::at(
+        cmd.config_dir(),
+        Arc::new(ExplicitMasterKey::parse(TEST_MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(NewSecret::http_basic(
+            credential_id,
+            "HTTP CLI",
+            username,
+            password,
+        ))
+        .unwrap();
+
+    let assert = cmd
+        .env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .env("AH_LOG_UNREDACTED", "1")
+        .args([
+            "http",
+            "get",
+            &url,
+            "--credential",
+            &format!("basic={credential_id}"),
+            "--expect-status",
+            "200",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("vault-auth-ok"));
+    assert!(!String::from_utf8_lossy(&assert.get_output().stdout).contains(password));
+    assert!(!String::from_utf8_lossy(&assert.get_output().stderr).contains(password));
+    handle.join().expect("server thread should finish");
+
+    let logs = fs::read_dir(cmd.config_dir().join("logs"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| fs::read_to_string(entry.path()).unwrap())
+        .collect::<String>();
+    assert!(!logs.contains(credential_id));
+    assert!(!logs.contains(password));
+}
+
+#[test]
+fn http_credentials_reject_malformed_and_duplicate_slots_without_echoing_ids() {
+    let mut malformed = Command::cargo_bin("ah").unwrap();
+    malformed
+        .env("APPDATA", "")
+        .args([
+            "http",
+            "get",
+            "http://127.0.0.1:1",
+            "--credential",
+            "private-id",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--credential must use SLOT=ID"))
+        .stderr(predicates::str::contains("private-id").not());
+
+    let mut duplicate = Command::cargo_bin("ah").unwrap();
+    duplicate
+        .env("APPDATA", "")
+        .args([
+            "http",
+            "get",
+            "http://127.0.0.1:1",
+            "--credential",
+            "basic=first-private-id",
+            "--credential=basic=second-private-id",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("duplicate credential slot 'basic'"))
+        .stderr(predicates::str::contains("first-private-id").not())
+        .stderr(predicates::str::contains("second-private-id").not());
 }
 
 #[test]
@@ -483,6 +578,38 @@ fn spawn_mock_server(responses: Vec<MockResponse>) -> (String, thread::JoinHandl
     });
 
     (base_url, handle)
+}
+
+fn spawn_authorized_server(expected_authorization: String) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+    let address = listener
+        .local_addr()
+        .expect("listener should expose local address");
+    let url = format!("http://{address}/vault-auth");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("request should be accepted");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("read timeout should be set");
+        let request = read_http_request(&mut stream);
+        assert!(
+            request.lines().any(|line| {
+                line.split_once(':').is_some_and(|(name, value)| {
+                    name.eq_ignore_ascii_case("authorization")
+                        && value.trim() == expected_authorization
+                })
+            }),
+            "request must contain the resolved Basic authorization header"
+        );
+        let body = "vault-auth-ok";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("response should be written");
+    });
+    (url, handle)
 }
 
 fn read_http_request(stream: &mut std::net::TcpStream) -> String {

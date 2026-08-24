@@ -18,6 +18,8 @@ mod logging;
 mod mcp;
 #[path = "integration/plugins.rs"]
 mod plugins;
+#[path = "integration/postgres.rs"]
+mod postgres;
 #[path = "integration/project.rs"]
 mod project;
 #[path = "integration/run.rs"]

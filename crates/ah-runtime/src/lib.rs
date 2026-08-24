@@ -12,14 +12,15 @@ use std::{
 
 use ah_plugin_api::{
     AH_PLUGIN_ABI_VERSION, AH_PLUGIN_API_MAJOR_VERSION, AH_PLUGIN_API_MINOR_VERSION,
-    AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL, AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL,
-    AH_PLUGIN_ENTRY_V1_SYMBOL, AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL,
-    AH_PLUGIN_MANUAL_JSON_V1_SYMBOL, AH_PLUGIN_METADATA_JSON_V1_SYMBOL, AhPluginCancelCommandV1,
+    AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL, AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL,
+    AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL, AH_PLUGIN_ENTRY_V1_SYMBOL,
+    AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL, AH_PLUGIN_MANUAL_JSON_V1_SYMBOL,
+    AH_PLUGIN_METADATA_JSON_V1_SYMBOL, AhPluginArgvToTypedJsonV1, AhPluginCancelCommandV1,
     AhPluginCommandCatalogJsonV1, AhPluginEntryV1, AhPluginInvokeCommandJsonV1,
-    AhPluginManualJsonV1, AhPluginMetadataJsonV1, CommandCatalog, CommandDescriptor, CommandError,
-    GlobalOptionsWire, InvocationRequest, InvocationResponse, PluginManual, PluginMetadata,
-    RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
-    c_ptr_to_string, plugin_capabilities,
+    AhPluginManualJsonV1, AhPluginMetadataJsonV1, CliTypedConversion, CommandCatalog,
+    CommandDescriptor, CommandError, GlobalOptionsWire, InvocationRequest, InvocationResponse,
+    PluginManual, PluginMetadata, RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest,
+    TypedInvocationResponse, c_ptr_to_string, plugin_capabilities,
 };
 use libloading::Library;
 use thiserror::Error;
@@ -140,6 +141,9 @@ pub trait BuiltinPlugin: Send + Sync {
         InvocationObservation::without_outcome(self.invoke(request))
     }
     fn command_catalog(&self) -> Option<CommandCatalog> {
+        None
+    }
+    fn argv_to_typed(&self, _request: &InvocationRequest) -> Option<CliTypedConversion> {
         None
     }
     fn required_tools_typed(&self, _request: &TypedInvocationRequest) -> Vec<RequiredTool> {
@@ -493,6 +497,31 @@ impl PluginManager {
             return Ok(plugin.invoke_observed(&request));
         }
 
+        Err(RuntimeError::DomainNotFound(domain))
+    }
+
+    /// Lets a plugin reuse its exact CLI parser to produce public typed input.
+    pub fn argv_to_typed(
+        &self,
+        domain: &str,
+        argv: Vec<String>,
+        globals: GlobalOptionsWire,
+    ) -> Result<Option<CliTypedConversion>, RuntimeError> {
+        let domain = domain_key(domain);
+        if self.is_domain_disabled(&domain) {
+            return Err(RuntimeError::DomainDisabled(domain));
+        }
+        let request = InvocationRequest {
+            domain: domain.clone(),
+            argv,
+            globals,
+        };
+        if let Some(plugin) = self.dynamic_plugins.get(&domain) {
+            return plugin.argv_to_typed(&request);
+        }
+        if let Some(plugin) = self.builtin_plugins.get(&domain) {
+            return Ok(plugin.argv_to_typed(&request));
+        }
         Err(RuntimeError::DomainNotFound(domain))
     }
 
@@ -1027,6 +1056,7 @@ struct DynamicPlugin {
     command_catalog: Option<CommandCatalog>,
     invoke_command_json: Option<AhPluginInvokeCommandJsonV1>,
     cancel_command: Option<AhPluginCancelCommandV1>,
+    argv_to_typed_json: Option<AhPluginArgvToTypedJsonV1>,
     free_c_string: unsafe extern "C" fn(*mut c_char),
 }
 
@@ -1099,6 +1129,11 @@ impl DynamicPlugin {
             unsafe { library.get::<AhPluginCancelCommandV1>(AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL) }
                 .ok()
                 .map(|symbol| *symbol);
+        let argv_to_typed_json = unsafe {
+            library.get::<AhPluginArgvToTypedJsonV1>(AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL)
+        }
+        .ok()
+        .map(|symbol| *symbol);
         let typed_symbols = TypedSymbolAvailability {
             catalog: command_catalog_json.is_some(),
             invoke: invoke_command_json.is_some(),
@@ -1188,6 +1223,7 @@ impl DynamicPlugin {
             command_catalog,
             invoke_command_json,
             cancel_command,
+            argv_to_typed_json,
             free_c_string: api.free_c_string,
         })
     }
@@ -1246,6 +1282,36 @@ impl DynamicPlugin {
         }
         .map_err(RuntimeError::ResponseParse)?;
         serde_json::from_str::<TypedInvocationResponse>(&response_raw)
+            .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
+    }
+
+    fn argv_to_typed(
+        &self,
+        request: &InvocationRequest,
+    ) -> Result<Option<CliTypedConversion>, RuntimeError> {
+        let Some(convert) = self.argv_to_typed_json else {
+            return Ok(None);
+        };
+        let request_json = serde_json::to_string(request).map_err(|error| {
+            RuntimeError::TypedInvocation(format!("CLI request serialization failed: {error}"))
+        })?;
+        let c_request = CString::new(request_json).map_err(|error| {
+            RuntimeError::TypedInvocation(format!("invalid CLI request cstring: {error}"))
+        })?;
+        let response_ptr = unsafe { convert(c_request.as_ptr()) };
+        if response_ptr.is_null() {
+            return Err(RuntimeError::TypedInvocation(
+                "plugin returned null CLI conversion response".to_owned(),
+            ));
+        }
+        let response_raw = unsafe {
+            let decoded = c_ptr_to_string(response_ptr);
+            (self.free_c_string)(response_ptr);
+            decoded
+        }
+        .map_err(RuntimeError::ResponseParse)?;
+        serde_json::from_str::<CliTypedConversion>(&response_raw)
+            .map(Some)
             .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
     }
 
@@ -1749,10 +1815,31 @@ mod tests {
                 )),
                 invoke_command_json: Some(dynamic_probe_invoke),
                 cancel_command: Some(dynamic_probe_cancel),
+                argv_to_typed_json: None,
                 free_c_string: dynamic_probe_free,
             },
         );
         manager.invalidate_typed_registry();
+    }
+
+    #[test]
+    fn dynamic_plugin_without_argv_converter_remains_compatible() {
+        let mut manager = PluginManager::new();
+        register_dynamic_probe(&mut manager);
+
+        let conversion = manager
+            .argv_to_typed(
+                "probe",
+                vec!["run".to_owned()],
+                GlobalOptionsWire {
+                    json: false,
+                    quiet: false,
+                    limit: None,
+                },
+            )
+            .unwrap();
+
+        assert!(conversion.is_none());
     }
 
     impl BuiltinPlugin for EchoBuiltinPlugin {

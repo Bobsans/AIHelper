@@ -55,6 +55,44 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     typed_cancel_fn: typed::cancel,
 );
 
+/// Optional additive ABI: parse legacy argv with this plugin's clap model and
+/// return only public typed arguments. The host resolves credentials afterward.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ah_plugin_argv_to_typed_json_v1(
+    request_json: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let conversion = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let raw = unsafe { ah_plugin_api::c_ptr_to_string(request_json) }
+            .map_err(|error| InvocationResponse::error("INVALID_ARGUMENT", error))?;
+        let request = serde_json::from_str::<ah_plugin_api::InvocationRequest>(&raw)
+            .map_err(|error| InvocationResponse::error("INVALID_ARGUMENT", error.to_string()))?;
+        if request.domain != DOMAIN {
+            return Err(InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                "PostgreSQL CLI conversion received the wrong domain",
+            ));
+        }
+        let normalized = ah_plugin_api::normalize_invocation_argv(&request.argv, request.globals)?;
+        let cli = parse_args(&normalized.argv)?;
+        typed::cli_to_typed(cli)
+    }));
+    let conversion = match conversion {
+        Ok(Ok(invocation)) => ah_plugin_api::CliTypedConversion {
+            invocation: Some(invocation),
+            response: None,
+        },
+        Ok(Err(response)) => ah_plugin_api::CliTypedConversion::response(response),
+        Err(_) => ah_plugin_api::CliTypedConversion::response(InvocationResponse::error(
+            "PLUGIN_PANIC",
+            "PostgreSQL CLI conversion panicked",
+        )),
+    };
+    match serde_json::to_string(&conversion) {
+        Ok(value) => ah_plugin_api::to_c_string_ptr(&value).cast_mut(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "postgres", about = "PostgreSQL database workflow helpers")]
 struct PostgresCli {
@@ -484,7 +522,7 @@ struct DescribeRelationRow {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct DescribeOutput {
-    command: &'static str,
+    command: String,
     relation: DescribeRelationRow,
     columns: Vec<ColumnRow>,
     indexes: Vec<IndexRow>,
@@ -1929,7 +1967,7 @@ fn execute_describe(
             Err(error) => return error,
         };
     let output = DescribeOutput {
-        command: "postgres.describe",
+        command: "postgres.describe".to_owned(),
         relation,
         columns,
         indexes,
@@ -3509,7 +3547,7 @@ mod tests {
     #[test]
     fn describe_renderer_preserves_sql_definitions_as_raw_text() {
         let output = DescribeOutput {
-            command: "postgres.describe",
+            command: "postgres.describe".to_owned(),
             relation: DescribeRelationRow {
                 schema: "public".to_owned(),
                 name: "users".to_owned(),

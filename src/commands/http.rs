@@ -5,8 +5,9 @@ use std::{
 };
 
 use ah_plugin_api::{
-    CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, Reversibility,
-    RiskLevel, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
+    CliTypedInvocation, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
+    CommandError, InvocationResponse, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
+    TypedInvocationResponse,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
@@ -196,6 +197,15 @@ pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> 
     }
 }
 
+pub(crate) fn emit_typed_cli_data(data: Value, options: &GlobalOptions) -> Result<(), AppError> {
+    let mut output = serde_json::from_value::<domain::HttpRequestOutput>(data)?;
+    output.status_text = reqwest::StatusCode::from_u16(output.status)
+        .ok()
+        .and_then(|status| status.canonical_reason().map(str::to_owned))
+        .unwrap_or_default();
+    adapters::output::emit_request(output, options)
+}
+
 pub(crate) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new(
         "builtin-http",
@@ -212,6 +222,101 @@ pub(crate) fn command_catalog() -> CommandCatalog {
             assert_descriptor("run"),
         ],
     )
+}
+
+/// Converts only credential-capable HTTP CLI commands using the concrete clap model.
+pub(crate) fn cli_to_typed(args: HttpArgs) -> Result<CliTypedInvocation, InvocationResponse> {
+    let (command, mut arguments) = match args.command {
+        HttpCommand::Request(args) => {
+            let mut values = request_arguments(args.request, args.expect)?;
+            values.insert("method".to_owned(), Value::String(args.method));
+            values.insert("url".to_owned(), Value::String(args.url));
+            ("http.request", values)
+        }
+        HttpCommand::Get(args) => shortcut_arguments("http.get", args)?,
+        HttpCommand::Post(args) => shortcut_arguments("http.post", args)?,
+        HttpCommand::Replay(args) => {
+            let mut values = request_arguments(args.request, args.expect)?;
+            values.insert("curl".to_owned(), Value::String(args.curl));
+            ("http.replay", values)
+        }
+        _ => {
+            return Err(InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                "--credential is supported for http request, get, post, and replay",
+            )
+            .with_error_domain("http"));
+        }
+    };
+    Ok(CliTypedInvocation {
+        command: command.to_owned(),
+        arguments: Value::Object(std::mem::take(&mut arguments)),
+    })
+}
+
+fn shortcut_arguments(
+    command: &'static str,
+    args: MethodShortcutArgs,
+) -> Result<(&'static str, Map<String, Value>), InvocationResponse> {
+    let mut values = request_arguments(args.request, args.expect)?;
+    values.insert("url".to_owned(), Value::String(args.url));
+    Ok((command, values))
+}
+
+fn request_arguments(
+    request: RequestOptionsArgs,
+    expect: RequestExpectArgs,
+) -> Result<Map<String, Value>, InvocationResponse> {
+    let mut values = Map::new();
+    values.insert("headers".to_owned(), json!(request.headers));
+    values.insert("query".to_owned(), json!(request.query));
+    insert_option(&mut values, "timeout_secs", request.timeout_secs);
+    insert_option(
+        &mut values,
+        "max_response_bytes",
+        request.max_response_bytes,
+    );
+    values.insert("retry".to_owned(), json!(request.retry));
+    values.insert("retry_delay_ms".to_owned(), json!(request.retry_delay_ms));
+    insert_option(&mut values, "bearer", request.bearer);
+    insert_option(&mut values, "basic", request.basic);
+    if let Some(raw) = request.json {
+        let parsed = serde_json::from_str::<Value>(&raw).map_err(|error| {
+            InvocationResponse::error("INVALID_ARGUMENT", format!("invalid --json value: {error}"))
+                .with_error_domain("http")
+        })?;
+        values.insert("json".to_owned(), parsed);
+    }
+    insert_path(&mut values, "json_file", request.json_file);
+    insert_option(&mut values, "body", request.body);
+    insert_path(&mut values, "body_file", request.body_file);
+    insert_option(&mut values, "expect_status", expect.expect_status);
+    values.insert("expect_headers".to_owned(), json!(expect.expect_headers));
+    values.insert(
+        "expect_body_contains".to_owned(),
+        json!(expect.expect_body_contains),
+    );
+    values.insert("expect_json".to_owned(), json!(expect.expect_json));
+    Ok(values)
+}
+
+fn insert_option<T: serde::Serialize>(
+    values: &mut Map<String, Value>,
+    key: &str,
+    value: Option<T>,
+) {
+    if let Some(value) = value {
+        values.insert(key.to_owned(), json!(value));
+    }
+}
+
+fn insert_path(values: &mut Map<String, Value>, key: &str, value: Option<PathBuf>) {
+    if let Some(value) = value {
+        values.insert(
+            key.to_owned(),
+            Value::String(value.to_string_lossy().into_owned()),
+        );
+    }
 }
 
 pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationResponse {

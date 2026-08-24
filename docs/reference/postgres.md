@@ -4,7 +4,7 @@ Dynamic plugin domain for PostgreSQL database workflows.
 
 This domain is provided by external plugin `ah-plugin-postgres` and is loaded from `plugins` directory next to `ah`.
 
-The plugin uses `psql` non-interactively with `-X`, `ON_ERROR_STOP=1`, and `--no-password`. Pass passwords through `--password-env`, `.pgpass`, or libpq service files; do not pass secrets in command arguments.
+The plugin uses `psql` non-interactively with `-X`, `ON_ERROR_STOP=1`, and `--no-password`. Pass passwords through a vault credential, `--password-env`, `.pgpass`, or libpq service files; do not pass secrets in command arguments.
 
 Interactive structured output uses semantic colors for tool availability,
 versions, paths, database objects, activity states, locks, sizes, and describe
@@ -46,10 +46,27 @@ Most operational commands accept:
 --service NAME
 --sslmode disable|allow|prefer|require|verify-ca|verify-full
 --password-env ENV_VAR
+--credential database=ID
 --connect-timeout-secs SECONDS
 --statement-timeout-ms MILLISECONDS
 --ensure-tool
 ```
+
+`--credential database=ID` is available on every operational command (all
+commands except `tool ...`). `ID` selects a `postgres` entry from the local
+encrypted vault:
+
+```bash
+ah postgres ping --database app --user agent --credential database=app-db
+ah postgres query --database app --credential database=app-db --sql "select 1"
+```
+
+The dynamic plugin parses its normal CLI arguments into public typed input. The
+host then resolves the password and invokes the typed executor; plaintext is not
+placed in AIHelper argv, plugin argv, or invocation logs. The existing child
+`psql` process receives it through `PGPASSWORD` only. A vault credential conflicts
+with `--password-env`; malformed mappings and duplicate `database` slots are
+rejected.
 
 ## Inspection
 

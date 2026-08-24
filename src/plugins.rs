@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ah_plugin_api::{
-    CommandCatalog, GlobalOptionsWire, InvocationRequest, InvocationResponse, ManualCommand,
-    ManualExample, PluginCompatibility, PluginManual, PluginMetadata, RequiredTool,
+    CliTypedConversion, CommandCatalog, GlobalOptionsWire, InvocationRequest, InvocationResponse,
+    ManualCommand, ManualExample, PluginCompatibility, PluginManual, PluginMetadata, RequiredTool,
     TypedInvocationRequest, TypedInvocationResponse, normalize_invocation_argv,
     plugin_capabilities,
 };
@@ -829,6 +829,21 @@ impl BuiltinPlugin for HttpBuiltinPlugin {
 
     fn command_catalog(&self) -> Option<CommandCatalog> {
         Some(commands::http::command_catalog())
+    }
+
+    fn argv_to_typed(&self, request: &InvocationRequest) -> Option<CliTypedConversion> {
+        Some(
+            match parse_args::<HttpPluginCli>("http", &request.argv, request.globals.clone()) {
+                ParseOutcome::Parsed(value, _) => match commands::http::cli_to_typed(value.args) {
+                    Ok(invocation) => CliTypedConversion {
+                        invocation: Some(invocation),
+                        response: None,
+                    },
+                    Err(response) => CliTypedConversion::response(response),
+                },
+                ParseOutcome::Response(response) => CliTypedConversion::response(response),
+            },
+        )
     }
 
     fn invoke_typed(&self, request: &TypedInvocationRequest) -> TypedInvocationResponse {

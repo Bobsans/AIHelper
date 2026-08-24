@@ -19,6 +19,7 @@ pub const AH_PLUGIN_MANUAL_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_manual_json_v1\0"
 pub const AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_command_catalog_json_v1\0";
 pub const AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_invoke_command_json_v1\0";
 pub const AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL: &[u8] = b"ah_plugin_cancel_command_v1\0";
+pub const AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_argv_to_typed_json_v1\0";
 
 pub fn noninteractive_command<S: AsRef<OsStr>>(program: S) -> Command {
     let mut command = Command::new(program);
@@ -112,6 +113,38 @@ pub struct InvocationRequest {
     pub domain: String,
     pub argv: Vec<String>,
     pub globals: GlobalOptionsWire,
+}
+
+/// Public, secret-free typed invocation produced by a plugin's own CLI parser.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CliTypedInvocation {
+    pub command: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliTypedConversion {
+    pub invocation: Option<CliTypedInvocation>,
+    pub response: Option<InvocationResponse>,
+}
+
+impl CliTypedConversion {
+    pub fn converted(command: impl Into<String>, arguments: serde_json::Value) -> Self {
+        Self {
+            invocation: Some(CliTypedInvocation {
+                command: command.into(),
+                arguments,
+            }),
+            response: None,
+        }
+    }
+
+    pub fn response(response: InvocationResponse) -> Self {
+        Self {
+            invocation: None,
+            response: Some(response),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -770,6 +803,8 @@ pub type AhPluginCommandCatalogJsonV1 = unsafe extern "C" fn() -> *mut c_char;
 pub type AhPluginInvokeCommandJsonV1 =
     unsafe extern "C" fn(request_json: *const c_char) -> *mut c_char;
 pub type AhPluginCancelCommandV1 = unsafe extern "C" fn(request_id: *const c_char) -> i32;
+pub type AhPluginArgvToTypedJsonV1 =
+    unsafe extern "C" fn(request_json: *const c_char) -> *mut c_char;
 
 pub fn to_c_string_ptr(value: &str) -> *const c_char {
     let sanitized = value.replace('\0', "\\0");

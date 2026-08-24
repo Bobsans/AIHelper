@@ -11,7 +11,7 @@ Designed to support both:
 Universal request command for any method.
 
 ```bash
-ah http request --method <METHOD> <url> [--header "K: V"] [--query "k=v"] [--timeout-secs N] [--max-response-bytes BYTES] [--retry N] [--retry-delay-ms N] [--bearer TOKEN] [--basic USER:PASS] [--json "<obj>"|--json-file <path>] [--body "<text>"|--body-file <path>] [--expect-status <code|range>] [--expect-header "K: V"] [--expect-body-contains "<text>"] [--expect-json "<PATH:OP[:VALUE]>"]
+ah http request --method <METHOD> <url> [--credential basic=ID] [--header "K: V"] [--query "k=v"] [--timeout-secs N] [--max-response-bytes BYTES] [--retry N] [--retry-delay-ms N] [--bearer TOKEN] [--basic USER:PASS] [--json "<obj>"|--json-file <path>] [--body "<text>"|--body-file <path>] [--expect-status <code|range>] [--expect-header "K: V"] [--expect-body-contains "<text>"] [--expect-json "<PATH:OP[:VALUE]>"]
 ```
 
 ## `ah http get|post|put|patch|delete`
@@ -38,6 +38,20 @@ Behavior:
 - status and header assertions still run for truncated bodies; body and JSON assertions fail explicitly because the complete body is unavailable
 - interactive fallback status lines use status-class colors (`2xx`, `3xx`, `4xx`, `5xx`)
 - response body content is never recolored
+
+Vault-backed Basic authentication is available for `request`, `get`, `post`,
+and `replay`:
+
+```bash
+ah http get https://api.example.test/private --credential basic=service-api
+```
+
+`service-api` is the ID of an `http-basic` entry created with `ah secrets add`.
+The host resolves the entry only after CLI validation; the username and password
+are never copied into plugin argv or invocation logs. Do not combine the mapping
+with `--basic`, `--bearer`, an `Authorization` header, or embedded curl auth.
+Malformed mappings, duplicate `basic` slots, and credential-kind mismatches fail
+before the request is sent.
 
 ## `ah http replay`
 

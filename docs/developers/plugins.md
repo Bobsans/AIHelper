@@ -29,6 +29,8 @@ Dynamic plugins must expose symbol:
   - `ah_plugin_command_catalog_json_v1`
   - `ah_plugin_invoke_command_json_v1`
   - `ah_plugin_cancel_command_v1`
+- optional CLI-to-typed adapter:
+  - `ah_plugin_argv_to_typed_json_v1`
 
 Entry returns pointer to:
 
@@ -49,6 +51,14 @@ Optional symbol behavior:
 - if absent, plugin is still valid and loaded normally
 
 The host validates `abi_version` against `AH_PLUGIN_ABI_VERSION`.
+
+`ah_plugin_argv_to_typed_json_v1` is an additive sidecar. It accepts the normal
+`InvocationRequest`, runs the plugin-owned argument parser, and returns a
+secret-free `CliTypedInvocation` (stable command id plus public JSON arguments).
+The host may then attach credential IDs, resolve them through its configured
+`SecretResolver`, and call the existing typed executor. Plugins without this
+symbol retain their legacy invocation behavior and remain load-compatible.
+Never resolve a vault entry or return plaintext from this adapter.
 
 Typed plugins must advertise `typed_commands_v1` in compatibility metadata.
 The catalog declares one `CommandDescriptor` per operation with object-root

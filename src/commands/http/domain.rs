@@ -95,7 +95,7 @@ pub(crate) struct ResponseSnapshot {
     pub(crate) body_truncated: bool,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct AssertionSummary {
     pub(crate) total: usize,
     pub(crate) passed: usize,
@@ -103,13 +103,13 @@ pub(crate) struct AssertionSummary {
     pub(crate) failures: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct HttpRequestOutput {
     pub(crate) command: String,
     pub(crate) method: String,
     pub(crate) url: String,
     pub(crate) status: u16,
-    #[serde(skip)]
+    #[serde(skip, default)]
     pub(crate) status_text: String,
     pub(crate) ok: bool,
     pub(crate) duration_ms: u64,

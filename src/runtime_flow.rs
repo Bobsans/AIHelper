@@ -1,10 +1,14 @@
 use std::{
+    collections::{BTreeMap, btree_map::Entry},
     ffi::{OsStr, OsString},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use ah_plugin_api::CommandCatalog;
+use ah_plugin_api::{
+    CommandCatalog, ErrorDiagnostic as PluginErrorDiagnostic, ExecutionContextWire,
+    TypedInvocationRequest, TypedInvocationResponse,
+};
 use ah_runtime::{
     InvocationOutcome, PluginLoadReport, PluginManager, PluginSource, SecretResolver,
     executor::{Executor, ParallelExecutor},
@@ -466,8 +470,16 @@ fn execution(
         } => {
             let plugin_metadata = manager.list_enabled_plugins();
             let command_catalog = manager.command_catalog_for_domain(&domain).ok().flatten();
+            let credential_args = extract_credential_args(argv)?;
+            if !credential_args.credentials.is_empty() {
+                execute_credentialed_invocation(&manager, &domain, credential_args, options)
+                    .map_err(|error| {
+                        decorate_invocation_error(error, &domain, command_catalog.as_ref())
+                    })?;
+                return Ok(None);
+            }
             let observation = manager
-                .invoke_observed(&domain, argv, options.to_wire())
+                .invoke_observed(&domain, credential_args.argv, options.to_wire())
                 .map_err(|error| match error {
                     ah_runtime::RuntimeError::DomainNotFound(domain) => {
                         let suggestion =
@@ -482,6 +494,151 @@ fn execution(
             Ok(observation.outcome)
         }
     }
+}
+
+struct CredentialArgs {
+    argv: Vec<String>,
+    credentials: BTreeMap<String, String>,
+}
+
+fn extract_credential_args(argv: Vec<String>) -> Result<CredentialArgs, AppError> {
+    let mut clean = Vec::with_capacity(argv.len());
+    let mut credentials = BTreeMap::new();
+    let mut index = 0;
+    while index < argv.len() {
+        let (mapping, consumed) = if argv[index] == "--credential" {
+            (argv.get(index + 1).map(String::as_str), 2)
+        } else if let Some(mapping) = argv[index].strip_prefix("--credential=") {
+            (Some(mapping), 1)
+        } else {
+            clean.push(argv[index].clone());
+            index += 1;
+            continue;
+        };
+        let mapping = mapping
+            .ok_or_else(|| AppError::invalid_argument("--credential requires a SLOT=ID value"))?;
+        let Some((slot, id)) = mapping.split_once('=') else {
+            return Err(AppError::invalid_argument("--credential must use SLOT=ID"));
+        };
+        if slot.trim().is_empty() || id.trim().is_empty() || id.contains('=') {
+            return Err(AppError::invalid_argument(
+                "--credential must use non-empty SLOT=ID",
+            ));
+        }
+        match credentials.entry(slot.to_owned()) {
+            Entry::Vacant(entry) => {
+                entry.insert(id.to_owned());
+            }
+            Entry::Occupied(_) => {
+                return Err(AppError::invalid_argument(format!(
+                    "duplicate credential slot '{slot}'"
+                )));
+            }
+        }
+        index += consumed;
+    }
+    Ok(CredentialArgs {
+        argv: clean,
+        credentials,
+    })
+}
+
+fn execute_credentialed_invocation(
+    manager: &PluginManager,
+    domain: &str,
+    credential_args: CredentialArgs,
+    options: cli::GlobalOptions,
+) -> Result<(), AppError> {
+    if !matches!(domain, "http" | "postgres") {
+        return Err(AppError::invalid_argument(
+            "--credential is supported only for http and postgres commands",
+        ));
+    }
+    let conversion = manager
+        .argv_to_typed(domain, credential_args.argv, options.to_wire())
+        .map_err(crate::map_runtime_error)?
+        .ok_or_else(|| {
+            AppError::invalid_argument(format!(
+                "plugin domain '{domain}' does not support --credential"
+            ))
+        })?;
+    if let Some(response) = conversion.response {
+        return crate::handle_response(response, options.output, options.quiet);
+    }
+    let mut invocation = conversion.invocation.ok_or_else(|| {
+        AppError::external(
+            "PLUGIN_RESPONSE_INVALID",
+            "plugin returned an empty CLI conversion response",
+        )
+    })?;
+    let arguments = invocation.arguments.as_object_mut().ok_or_else(|| {
+        AppError::external(
+            "PLUGIN_RESPONSE_INVALID",
+            "plugin CLI conversion arguments must be an object",
+        )
+    })?;
+    arguments.insert(
+        "credentials".to_owned(),
+        serde_json::json!(credential_args.credentials),
+    );
+    let cwd = std::env::current_dir()
+        .map_err(|source| AppError::cwd(std::path::PathBuf::from("."), source))?;
+    let request = TypedInvocationRequest::new(
+        invocation.command,
+        invocation.arguments,
+        ExecutionContextWire::new(
+            uuid::Uuid::new_v4().to_string(),
+            cwd.to_string_lossy(),
+            options.limit,
+            u64::MAX,
+        ),
+    );
+    let response = manager
+        .invoke_typed(&request)
+        .map_err(crate::map_runtime_error)?;
+    handle_typed_cli_response(domain, response, options)
+}
+
+fn handle_typed_cli_response(
+    domain: &str,
+    response: TypedInvocationResponse,
+    options: cli::GlobalOptions,
+) -> Result<(), AppError> {
+    if !response.success {
+        let error = response.error.ok_or_else(|| {
+            AppError::external("PLUGIN_RESPONSE_INVALID", "typed command returned no error")
+        })?;
+        return Err(AppError::from_diagnostic(PluginErrorDiagnostic::new(
+            error.domain,
+            error.operation,
+            error.code,
+            error.message,
+            error.cause,
+            error.exit_code_hint,
+        )));
+    }
+    if options.quiet {
+        return Ok(());
+    }
+    for notice in response.notices {
+        emit_warning(notice.message);
+    }
+    let data = response.data.unwrap_or(serde_json::Value::Null);
+    if domain == "http" {
+        return crate::commands::http::emit_typed_cli_data(data, &options);
+    }
+    match options.output {
+        crate::output::OutputMode::Json => println!("{}", serde_json::to_string_pretty(&data)?),
+        crate::output::OutputMode::Text => {
+            if let Some(text) = response.text {
+                print!("{text}");
+                if !text.ends_with('\n') {
+                    println!();
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn decorate_invocation_error(

@@ -24,6 +24,18 @@ Agents discover references through the read-only typed/MCP command:
 
 The result contains only `id`, `kind`, `label`, and `description`. Keep the selected ID as a reference; this discovery command does not resolve or expose secret values.
 
+Use the reference directly from supported CLI commands without placing plaintext
+credentials in argv:
+
+```bash
+ah postgres ping --database billing --credential database=billing
+ah http get https://api.example.test/private --credential basic=service-api
+```
+
+The slot names are command contracts: PostgreSQL uses `database`; HTTP
+`request|get|post|replay` use `basic`. Do not combine a vault mapping with the
+corresponding legacy plaintext or environment-backed authentication option.
+
 Remove an obsolete reference explicitly:
 
 ```bash
