@@ -180,6 +180,16 @@ pub fn mcp_input_schema(descriptor: &CommandDescriptor) -> Result<serde_json::Va
                 domain: command_domain(&descriptor.id),
                 reason: format!("command '{}' input schema must be an object", descriptor.id),
             })?;
+    let is_http_command = descriptor.id.starts_with("http.");
+    if is_http_command {
+        schema_object.insert(
+            "description".to_owned(),
+            serde_json::Value::String(
+                "Use a declared credentials slot for authentication; inline credentials are not accepted over MCP."
+                    .to_owned(),
+            ),
+        );
+    }
     let properties = schema_object
         .entry("properties")
         .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
@@ -216,6 +226,10 @@ pub fn mcp_input_schema(descriptor: &CommandDescriptor) -> Result<serde_json::Va
             "additionalProperties": false
         }),
     );
+    if is_http_command {
+        properties.remove("bearer");
+        properties.remove("basic");
+    }
     if descriptor.secret_slots.is_empty() {
         return Ok(schema);
     }
@@ -686,6 +700,25 @@ mod tests {
         assert_eq!(
             with_slot["properties"]["credentials"]["properties"]["database"]["type"],
             "string"
+        );
+    }
+
+    #[test]
+    fn http_mcp_schema_hides_plaintext_auth_fields() {
+        let mut descriptor = descriptor();
+        descriptor.id = "http.get".to_owned();
+        descriptor.input_schema["properties"]["bearer"] = json!({"type": "string"});
+        descriptor.input_schema["properties"]["basic"] = json!({"type": "string"});
+
+        let schema = mcp_input_schema(&descriptor).expect("schema should be augmented");
+
+        assert!(schema["properties"].get("bearer").is_none());
+        assert!(schema["properties"].get("basic").is_none());
+        assert!(
+            schema["description"]
+                .as_str()
+                .unwrap()
+                .contains("inline credentials are not accepted")
         );
     }
 

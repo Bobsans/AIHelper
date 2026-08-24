@@ -293,17 +293,22 @@ impl McpProcess {
     }
 
     fn start_with_args(config_dir: &TempDir, extra_args: &[&str]) -> Self {
-        Self::start_with_options(config_dir, extra_args, None)
+        Self::start_with_options(config_dir, extra_args, None, false)
     }
 
     fn start_with_master_key(config_dir: &TempDir, master_key: &str) -> Self {
-        Self::start_with_options(config_dir, &[], Some(master_key))
+        Self::start_with_options(config_dir, &[], Some(master_key), false)
+    }
+
+    fn start_unredacted(config_dir: &TempDir) -> Self {
+        Self::start_with_options(config_dir, &[], None, true)
     }
 
     fn start_with_options(
         config_dir: &TempDir,
         extra_args: &[&str],
         master_key: Option<&str>,
+        unredacted_logs: bool,
     ) -> Self {
         let mut command = ProcessCommand::new(assert_cmd::cargo::cargo_bin("ah"));
         command
@@ -317,6 +322,9 @@ impl McpProcess {
             command
                 .env("APPDATA", "")
                 .env("AH_VAULT_MASTER_KEY", master_key);
+        }
+        if unredacted_logs {
+            command.env("AH_LOG_UNREDACTED", "1");
         }
         let mut child = command.group_spawn().expect("MCP server should start");
         let stdin = child
@@ -431,6 +439,111 @@ impl McpProcess {
 impl Drop for McpProcess {
     fn drop(&mut self) {
         self.shutdown(false);
+    }
+}
+
+#[test]
+fn stdio_mcp_rejects_plaintext_http_auth_without_persisting_it() {
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let mut server = McpProcess::start_unredacted(&config_dir);
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "auth-boundary-test", "version": "1.0.0"}
+        }
+    }));
+    assert_eq!(server.response_for(1)["id"], 1);
+    server.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+    }));
+    let tools = server.response_for(2);
+    let http_get = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "ah.http.get")
+        .expect("HTTP GET tool should be listed");
+    assert!(
+        http_get["inputSchema"]["properties"]
+            .get("bearer")
+            .is_none()
+    );
+    assert!(http_get["inputSchema"]["properties"].get("basic").is_none());
+
+    let calls = [
+        (
+            3,
+            "ah.http.get",
+            json!({"url": "https://example.test", "bearer": "mcp-bearer-sentinel"}),
+        ),
+        (
+            4,
+            "ah.http.get",
+            json!({"url": "https://example.test", "basic": "user:mcp-basic-sentinel"}),
+        ),
+        (
+            5,
+            "ah.http.get",
+            json!({"url": "https://example.test", "headers": ["aUtHoRiZaTiOn: Bearer mcp-header-sentinel"]}),
+        ),
+        (
+            6,
+            "ah.http.replay",
+            json!({"curl": "curl https://example.test --user user:mcp-curl-sentinel"}),
+        ),
+    ];
+    for (id, name, arguments) in calls {
+        server.send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        }));
+        let response = server.response_for(id);
+        assert_eq!(response["result"]["isError"], true, "{response}");
+        assert!(!response.to_string().contains("sentinel"));
+    }
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {
+            "name": "ah.job.start",
+            "arguments": {
+                "tool": "ah.http.replay",
+                "arguments": {
+                    "curl": "curl https://example.test -H 'Authorization: Bearer mcp-job-sentinel'"
+                }
+            }
+        }
+    }));
+    let detached = server.response_for(7);
+    assert_eq!(detached["result"]["isError"], true, "{detached}");
+    assert!(!detached.to_string().contains("mcp-job-sentinel"));
+    server.stop();
+
+    let logs = log_records(&config_dir)
+        .into_iter()
+        .map(|record| record.to_string())
+        .collect::<String>();
+    for sentinel in [
+        "mcp-bearer-sentinel",
+        "mcp-basic-sentinel",
+        "mcp-header-sentinel",
+        "mcp-curl-sentinel",
+        "mcp-job-sentinel",
+    ] {
+        assert!(!logs.contains(sentinel), "log leaked {sentinel}: {logs}");
     }
 }
 

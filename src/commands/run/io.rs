@@ -215,6 +215,7 @@ fn spawn_child(
         command
             .args(args)
             .envs(environment.iter().map(|entry| (entry.name, entry.value)))
+            .env_remove(ah_plugin_api::AH_VAULT_MASTER_KEY_ENV)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

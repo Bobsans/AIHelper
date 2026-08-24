@@ -53,6 +53,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "shell-words",
  "thiserror",
  "tokio",
  "tokio-util",

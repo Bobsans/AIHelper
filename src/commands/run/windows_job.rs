@@ -250,22 +250,27 @@ fn spawn_prepared(
 }
 
 fn environment_block(overrides: &[EnvironmentOverride<'_>]) -> io::Result<Option<Vec<u16>>> {
-    if overrides.is_empty() {
-        return Ok(None);
-    }
-
     validate_environment_overrides(overrides)?;
     let mut entries = env::vars_os()
         .filter(|(name, _)| {
-            !overrides.iter().any(|entry| {
-                name.to_string_lossy()
-                    .eq_ignore_ascii_case(&entry.name.to_string_lossy())
-            })
+            !name
+                .to_string_lossy()
+                .eq_ignore_ascii_case(ah_plugin_api::AH_VAULT_MASTER_KEY_ENV)
+                && !overrides.iter().any(|entry| {
+                    name.to_string_lossy()
+                        .eq_ignore_ascii_case(&entry.name.to_string_lossy())
+                })
         })
         .collect::<Vec<_>>();
     entries.extend(
         overrides
             .iter()
+            .filter(|entry| {
+                !entry
+                    .name
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(ah_plugin_api::AH_VAULT_MASTER_KEY_ENV)
+            })
             .map(|entry| (entry.name.to_os_string(), entry.value.to_os_string())),
     );
     entries.sort_by(|left, right| {
@@ -689,5 +694,21 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(matches, vec!["AH_CONFIG_DIR=isolated"]);
         assert!(block.ends_with(&[0, 0]));
+    }
+
+    #[test]
+    fn environment_block_drops_vault_master_key_override() {
+        let block = environment_block(&[EnvironmentOverride {
+            name: OsStr::new("ah_vault_master_key"),
+            value: OsStr::new("sentinel"),
+        }])
+        .unwrap()
+        .unwrap();
+        let decoded = String::from_utf16_lossy(&block);
+        assert!(
+            !decoded
+                .to_ascii_uppercase()
+                .contains("AH_VAULT_MASTER_KEY=")
+        );
     }
 }

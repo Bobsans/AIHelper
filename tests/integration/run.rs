@@ -20,6 +20,20 @@ fn run_check_reports_successful_command() {
 }
 
 #[test]
+fn run_check_child_cannot_inherit_vault_master_key() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let mut args = vec!["run", "check"];
+    args.extend(platform_missing_vault_key_command());
+    cmd.env(
+        "AH_VAULT_MASTER_KEY",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .args(args)
+    .assert()
+    .success();
+}
+
+#[test]
 fn run_check_text_output_preserves_plain_contract() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
     let mut args = vec!["run", "check"];
@@ -308,6 +322,20 @@ fn platform_exit_command(success: bool) -> Vec<&'static str> {
 #[cfg(not(windows))]
 fn platform_exit_command(success: bool) -> Vec<&'static str> {
     vec!["sh", "-c", if success { "exit 0" } else { "exit 7" }]
+}
+
+#[cfg(windows)]
+fn platform_missing_vault_key_command() -> Vec<&'static str> {
+    vec![
+        "cmd.exe",
+        "/C",
+        "if defined AH_VAULT_MASTER_KEY (exit 9) else (exit 0)",
+    ]
+}
+
+#[cfg(not(windows))]
+fn platform_missing_vault_key_command() -> Vec<&'static str> {
+    vec!["sh", "-c", "test -z \"$AH_VAULT_MASTER_KEY\""]
 }
 
 #[cfg(windows)]

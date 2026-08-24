@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     ffi::{CStr, CString, OsStr, c_char},
-    fmt::Display,
+    fmt::{self, Display},
     io::{self, IsTerminal},
     panic::{AssertUnwindSafe, catch_unwind},
     process::Command,
@@ -20,9 +20,11 @@ pub const AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_command_
 pub const AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_invoke_command_json_v1\0";
 pub const AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL: &[u8] = b"ah_plugin_cancel_command_v1\0";
 pub const AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_argv_to_typed_json_v1\0";
+pub const AH_VAULT_MASTER_KEY_ENV: &str = "AH_VAULT_MASTER_KEY";
 
 pub fn noninteractive_command<S: AsRef<OsStr>>(program: S) -> Command {
     let mut command = Command::new(program);
+    command.env_remove(AH_VAULT_MASTER_KEY_ENV);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -442,11 +444,22 @@ impl SecretSlot {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResolvedSecret {
     pub id: String,
     pub kind: String,
     pub values: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for ResolvedSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolvedSecret")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("values", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -540,13 +553,25 @@ impl ExecutionContextWire {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct TypedInvocationRequest {
     pub command: String,
     pub arguments: serde_json::Value,
     pub context: ExecutionContextWire,
     #[serde(default)]
     pub resolved_secrets: BTreeMap<String, ResolvedSecret>,
+}
+
+impl fmt::Debug for TypedInvocationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TypedInvocationRequest")
+            .field("command", &self.command)
+            .field("arguments", &"[REDACTED]")
+            .field("context", &self.context)
+            .field("resolved_secrets", &self.resolved_secrets)
+            .finish()
+    }
 }
 
 impl TypedInvocationRequest {
@@ -1213,6 +1238,36 @@ pub fn null_response_ptr() -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_typed_debug_never_exposes_values_or_arguments() {
+        let sentinel = "typed-debug-private-sentinel";
+        let request = TypedInvocationRequest::new(
+            "http.get",
+            serde_json::json!({"bearer": sentinel}),
+            ExecutionContextWire::new("debug", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "basic".to_owned(),
+            ResolvedSecret {
+                id: "api".to_owned(),
+                kind: "http-basic".to_owned(),
+                values: BTreeMap::from([("password".to_owned(), sentinel.to_owned())]),
+            },
+        )]));
+
+        let rendered = format!("{request:?}");
+        assert!(!rendered.contains(sentinel));
+        assert!(rendered.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn noninteractive_children_remove_vault_master_key() {
+        let command = noninteractive_command("unused");
+        assert!(command.get_envs().any(|(name, value)| {
+            name == OsStr::new(AH_VAULT_MASTER_KEY_ENV) && value.is_none()
+        }));
+    }
 
     #[cfg(windows)]
     #[test]

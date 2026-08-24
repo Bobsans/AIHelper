@@ -76,6 +76,7 @@ const JOB_RESULT_TOOL: &str = "ah.job.result";
 const JOB_CANCEL_TOOL: &str = "ah.job.cancel";
 const PEER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+const REDACTED_MCP_VALUE: &str = "[REDACTED]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpCommandStatus {
@@ -487,6 +488,9 @@ impl McpServer {
             Ok(context) => context,
             Err(error) => return Ok(command_error_result(error)),
         };
+        if let Err(error) = validate_mcp_plaintext_auth(&command.descriptor.id, &target_arguments) {
+            return Ok(command_error_result(error));
+        }
         if let Err(error) = ah_runtime::typed::validate_mcp_arguments(
             &command.descriptor,
             &Value::Object(target_arguments.clone()),
@@ -604,6 +608,9 @@ impl McpServer {
                 return ToolCallOutcome::unobserved(Ok(command_error_result(error)));
             }
         };
+        if let Err(error) = validate_mcp_plaintext_auth(&command.descriptor.id, &arguments) {
+            return ToolCallOutcome::unobserved(Ok(command_error_result(error)));
+        }
         let request =
             TypedInvocationRequest::new(command.descriptor.id, Value::Object(arguments), context);
         let observed = self.shared.executor.execute_observed(request).await;
@@ -1677,7 +1684,121 @@ fn job_tool(
 fn event_parameters(arguments: &JsonObject) -> Value {
     let mut parameters = arguments.clone();
     parameters.remove("context");
+    redact_mcp_plaintext_auth(&mut parameters);
     Value::Object(parameters)
+}
+
+fn validate_mcp_plaintext_auth(command: &str, arguments: &JsonObject) -> Result<(), CommandError> {
+    if !command.starts_with("http.") {
+        return Ok(());
+    }
+    if arguments.contains_key("bearer") || arguments.contains_key("basic") {
+        return Err(mcp_plaintext_auth_error());
+    }
+    if arguments
+        .get("headers")
+        .and_then(Value::as_array)
+        .is_some_and(|headers| {
+            headers
+                .iter()
+                .filter_map(Value::as_str)
+                .any(is_authorization_header)
+        })
+    {
+        return Err(mcp_plaintext_auth_error());
+    }
+    if arguments
+        .get("curl")
+        .and_then(Value::as_str)
+        .is_some_and(curl_contains_auth)
+    {
+        return Err(mcp_plaintext_auth_error());
+    }
+    Ok(())
+}
+
+fn mcp_plaintext_auth_error() -> CommandError {
+    CommandError::new(
+        Some("http".to_owned()),
+        None,
+        "INVALID_ARGUMENT",
+        "Inline HTTP credentials are not accepted over MCP",
+        "Store the credential in the AH vault and pass its id through credentials.basic",
+        2,
+        false,
+    )
+}
+
+fn is_authorization_header(value: &str) -> bool {
+    value
+        .split_once(':')
+        .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("authorization"))
+}
+
+fn curl_contains_auth(value: &str) -> bool {
+    let tokens = match shell_words::split(value) {
+        Ok(tokens) => tokens,
+        Err(_) => {
+            let normalized = value.to_ascii_lowercase();
+            return normalized.contains("--user")
+                || normalized.contains("authorization:")
+                || normalized.split_whitespace().any(|token| token == "-u");
+        }
+    };
+    let mut tokens = tokens.iter();
+    while let Some(token) = tokens.next() {
+        if matches!(token.as_str(), "-u" | "--user")
+            || token.starts_with("--user=")
+            || token
+                .strip_prefix("-u")
+                .is_some_and(|value| !value.is_empty())
+        {
+            return true;
+        }
+        if matches!(token.as_str(), "-H" | "--header") {
+            if tokens
+                .next()
+                .is_some_and(|value| is_authorization_header(value))
+            {
+                return true;
+            }
+        } else if token
+            .strip_prefix("--header=")
+            .is_some_and(is_authorization_header)
+            || token
+                .strip_prefix("-H")
+                .is_some_and(|value| !value.is_empty() && is_authorization_header(value))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn redact_mcp_plaintext_auth(arguments: &mut JsonObject) {
+    for name in ["bearer", "basic"] {
+        if arguments.contains_key(name) {
+            arguments.insert(
+                name.to_owned(),
+                Value::String(REDACTED_MCP_VALUE.to_owned()),
+            );
+        }
+    }
+    if let Some(Value::Array(headers)) = arguments.get_mut("headers") {
+        for header in headers {
+            if header.as_str().is_some_and(is_authorization_header) {
+                *header = Value::String(format!("Authorization: {REDACTED_MCP_VALUE}"));
+            }
+        }
+    }
+    if let Some(Value::String(curl)) = arguments.get_mut("curl")
+        && curl_contains_auth(curl)
+    {
+        *curl = REDACTED_MCP_VALUE.to_owned();
+    }
+    if let Some(Value::Object(nested)) = arguments.get_mut("arguments") {
+        redact_mcp_plaintext_auth(nested);
+    }
 }
 
 fn take_job_id(arguments: &mut JsonObject) -> Result<String, CommandError> {
@@ -2363,10 +2484,11 @@ mod tests {
     use super::{
         EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
         McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
-        RISK_META_KEY, SecretSetupField, SecretSetupForm, ShutdownReader, ShutdownTracker,
-        extract_context, peer_generation_matches, refresh_catalog_after_job,
-        render_secret_setup_form, requires_explicit_cwd, run_check_outcome,
-        spawn_best_effort_notification, wait_for_transport,
+        REDACTED_MCP_VALUE, RISK_META_KEY, SecretSetupField, SecretSetupForm, ShutdownReader,
+        ShutdownTracker, event_parameters, extract_context, peer_generation_matches,
+        refresh_catalog_after_job, render_secret_setup_form, requires_explicit_cwd,
+        run_check_outcome, spawn_best_effort_notification, validate_mcp_plaintext_auth,
+        wait_for_transport,
     };
 
     #[test]
@@ -3285,6 +3407,49 @@ mod tests {
                     .contains("unknown MCP tool 'ah.test.missing'")
             );
         });
+    }
+
+    #[test]
+    fn mcp_http_plaintext_auth_validation_covers_all_supported_forms() {
+        for value in [
+            json!({"url": "https://example.test", "bearer": "bearer-sentinel"}),
+            json!({"url": "https://example.test", "basic": "user:basic-sentinel"}),
+            json!({"url": "https://example.test", "headers": ["aUtHoRiZaTiOn: Bearer header-sentinel"]}),
+            json!({"curl": "curl https://example.test --user user:curl-user-sentinel"}),
+            json!({"curl": "curl https://example.test --header='Authorization: Bearer curl-header-sentinel'"}),
+            json!({"curl": "curl https://example.test -H'Authorization: Bearer compact-header-sentinel'"}),
+            json!({"curl": "curl https://example.test -uuser:compact-user-sentinel"}),
+        ] {
+            let error = validate_mcp_plaintext_auth("http.replay", &arguments(value))
+                .expect_err("plaintext auth must be rejected");
+            let rendered = serde_json::to_string(&error).unwrap();
+            assert!(!rendered.contains("sentinel"));
+        }
+        validate_mcp_plaintext_auth(
+            "http.get",
+            &arguments(json!({
+                "url": "https://example.test",
+                "credentials": {"basic": "api-basic"}
+            })),
+        )
+        .expect("vault credential ids remain allowed");
+    }
+
+    #[test]
+    fn rejected_mcp_auth_is_redacted_from_immediate_and_job_events() {
+        for value in [
+            json!({"bearer": "immediate-event-sentinel"}),
+            json!({
+                "tool": "ah.http.replay",
+                "arguments": {
+                    "curl": "curl https://example.test -H 'Authorization: Bearer job-event-sentinel'"
+                }
+            }),
+        ] {
+            let rendered = event_parameters(&arguments(value)).to_string();
+            assert!(!rendered.contains("event-sentinel"));
+            assert!(rendered.contains(REDACTED_MCP_VALUE));
+        }
     }
 
     #[test]

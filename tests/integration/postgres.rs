@@ -86,6 +86,9 @@ fn write_fake_psql(directory: &TempDir, password: &str) -> PathBuf {
         println!("psql (PostgreSQL) 18.4");
         return;
     }}
+    if std::env::var_os("AH_VAULT_MASTER_KEY").is_some() {{
+        std::process::exit(10);
+    }}
     if std::env::var("PGPASSWORD").as_deref() != Ok("{password}") {{
         std::process::exit(9);
     }}

@@ -1,6 +1,17 @@
 use aes_gcm::aead::{OsRng, rand_core::RngCore};
+use std::sync::OnceLock;
 
 use super::VaultError;
+
+const MASTER_KEY_ENV: &str = ah_plugin_api::AH_VAULT_MASTER_KEY_ENV;
+static STARTUP_MASTER_KEY: OnceLock<StartupMasterKey> = OnceLock::new();
+
+#[derive(Clone, Copy)]
+enum StartupMasterKey {
+    Absent,
+    Available([u8; 32]),
+    Invalid,
+}
 
 pub trait KeyProvider: Send + Sync {
     fn load_or_create(&self) -> Result<[u8; 32], VaultError>;
@@ -59,10 +70,35 @@ impl KeyProvider for SystemKeyring {
 }
 
 pub fn resolve_key_provider() -> Result<Box<dyn KeyProvider>, VaultError> {
-    if let Ok(value) = std::env::var("AH_VAULT_MASTER_KEY") {
-        return Ok(Box::new(ExplicitMasterKey::parse(value)?));
+    match STARTUP_MASTER_KEY.get().copied() {
+        Some(StartupMasterKey::Available(key)) => return Ok(Box::new(ExplicitMasterKey(key))),
+        Some(StartupMasterKey::Invalid) => return Err(VaultError::key_unavailable()),
+        Some(StartupMasterKey::Absent) | None => {}
     }
     Ok(Box::new(SystemKeyring::new("aihelper", "vault-v1")))
+}
+
+/// Captures the optional fallback key before AIHelper starts any worker threads.
+pub fn capture_startup_master_key() -> Result<(), VaultError> {
+    let value = std::env::var_os(MASTER_KEY_ENV);
+    if value.is_some() {
+        // SAFETY: the `ah` binary calls this at the first line of single-threaded startup.
+        unsafe { std::env::remove_var(MASTER_KEY_ENV) };
+    }
+    let key = match value {
+        Some(value) => match value
+            .into_string()
+            .ok()
+            .and_then(|value| ExplicitMasterKey::parse(value).ok())
+        {
+            Some(provider) => StartupMasterKey::Available(provider.0),
+            None => StartupMasterKey::Invalid,
+        },
+        None => StartupMasterKey::Absent,
+    };
+    STARTUP_MASTER_KEY
+        .set(key)
+        .map_err(|_| VaultError::key_unavailable())
 }
 
 #[cfg(test)]

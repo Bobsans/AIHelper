@@ -198,7 +198,7 @@ fn invalid_returned_setup_url() -> AppError {
 
 fn open_browser(url: &str) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
-    let child = std::process::Command::new("rundll32")
+    let child = ah_plugin_api::noninteractive_command("rundll32")
         .arg("url.dll,FileProtocolHandler")
         .arg(url)
         .stdin(std::process::Stdio::null())
@@ -206,14 +206,14 @@ fn open_browser(url: &str) -> Result<(), AppError> {
         .stderr(std::process::Stdio::null())
         .spawn();
     #[cfg(target_os = "macos")]
-    let child = std::process::Command::new("open")
+    let child = ah_plugin_api::noninteractive_command("open")
         .arg(url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let child = std::process::Command::new("xdg-open")
+    let child = ah_plugin_api::noninteractive_command("xdg-open")
         .arg(url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

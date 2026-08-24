@@ -1181,7 +1181,7 @@ mod tests {
         let data = response.data.unwrap();
         assert_eq!(data["tag"], "v-test");
         assert_eq!(data["annotated"], true);
-        let output = std::process::Command::new("git")
+        let output = ah_plugin_api::noninteractive_command("git")
             .current_dir(temp.path())
             .args(["tag", "--list", "v-test"])
             .output()
@@ -1466,14 +1466,14 @@ mod tests {
     }
 
     fn git_is_available() -> bool {
-        std::process::Command::new("git")
+        ah_plugin_api::noninteractive_command("git")
             .arg("--version")
             .output()
             .is_ok_and(|output| output.status.success())
     }
 
     fn run_git(cwd: &std::path::Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
+        let status = ah_plugin_api::noninteractive_command("git")
             .current_dir(cwd)
             .args(args)
             .status()
