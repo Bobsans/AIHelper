@@ -1708,6 +1708,13 @@ fn validate_mcp_plaintext_auth(command: &str, arguments: &JsonObject) -> Result<
         return Err(mcp_plaintext_auth_error());
     }
     if arguments
+        .get("url")
+        .and_then(Value::as_str)
+        .is_some_and(url_contains_userinfo)
+    {
+        return Err(mcp_plaintext_auth_error());
+    }
+    if arguments
         .get("curl")
         .and_then(Value::as_str)
         .is_some_and(curl_contains_auth)
@@ -1742,7 +1749,8 @@ fn curl_contains_auth(value: &str) -> bool {
             let normalized = value.to_ascii_lowercase();
             return normalized.contains("--user")
                 || normalized.contains("authorization:")
-                || normalized.split_whitespace().any(|token| token == "-u");
+                || normalized.split_whitespace().any(|token| token == "-u")
+                || value.split_whitespace().any(url_contains_userinfo);
         }
     };
     let mut tokens = tokens.iter();
@@ -1752,6 +1760,7 @@ fn curl_contains_auth(value: &str) -> bool {
             || token
                 .strip_prefix("-u")
                 .is_some_and(|value| !value.is_empty())
+            || url_contains_userinfo(token)
         {
             return true;
         }
@@ -1775,6 +1784,16 @@ fn curl_contains_auth(value: &str) -> bool {
     false
 }
 
+fn url_contains_userinfo(value: &str) -> bool {
+    let Some((_, remainder)) = value.split_once("://") else {
+        return false;
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
+    authority
+        .rsplit_once('@')
+        .is_some_and(|(userinfo, host)| !userinfo.is_empty() && !host.is_empty())
+}
+
 fn redact_mcp_plaintext_auth(arguments: &mut JsonObject) {
     for name in ["bearer", "basic"] {
         if arguments.contains_key(name) {
@@ -1790,6 +1809,11 @@ fn redact_mcp_plaintext_auth(arguments: &mut JsonObject) {
                 *header = Value::String(format!("Authorization: {REDACTED_MCP_VALUE}"));
             }
         }
+    }
+    if let Some(Value::String(url)) = arguments.get_mut("url")
+        && url_contains_userinfo(url)
+    {
+        *url = REDACTED_MCP_VALUE.to_owned();
     }
     if let Some(Value::String(curl)) = arguments.get_mut("curl")
         && curl_contains_auth(curl)
@@ -3415,10 +3439,13 @@ mod tests {
             json!({"url": "https://example.test", "bearer": "bearer-sentinel"}),
             json!({"url": "https://example.test", "basic": "user:basic-sentinel"}),
             json!({"url": "https://example.test", "headers": ["aUtHoRiZaTiOn: Bearer header-sentinel"]}),
+            json!({"url": "https://user:url-field-sentinel@example.test"}),
             json!({"curl": "curl https://example.test --user user:curl-user-sentinel"}),
             json!({"curl": "curl https://example.test --header='Authorization: Bearer curl-header-sentinel'"}),
             json!({"curl": "curl https://example.test -H'Authorization: Bearer compact-header-sentinel'"}),
             json!({"curl": "curl https://example.test -uuser:compact-user-sentinel"}),
+            json!({"curl": "curl https://user:url-userinfo-sentinel@example.test"}),
+            json!({"curl": "curl --url=https://user:url-option-sentinel@example.test"}),
         ] {
             let error = validate_mcp_plaintext_auth("http.replay", &arguments(value))
                 .expect_err("plaintext auth must be rejected");
@@ -3439,10 +3466,17 @@ mod tests {
     fn rejected_mcp_auth_is_redacted_from_immediate_and_job_events() {
         for value in [
             json!({"bearer": "immediate-event-sentinel"}),
+            json!({"url": "https://user:url-field-event-sentinel@example.test"}),
             json!({
                 "tool": "ah.http.replay",
                 "arguments": {
                     "curl": "curl https://example.test -H 'Authorization: Bearer job-event-sentinel'"
+                }
+            }),
+            json!({
+                "tool": "ah.http.replay",
+                "arguments": {
+                    "curl": "curl https://user:url-event-sentinel@example.test"
                 }
             }),
         ] {

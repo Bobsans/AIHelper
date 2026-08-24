@@ -35,12 +35,9 @@ use crate::{
 };
 
 pub fn run() -> Result<(), AppError> {
-    runtime_flow::run()
-}
-
-pub fn initialize_vault_master_key() -> Result<(), AppError> {
     secrets::capture_startup_master_key()
-        .map_err(|error| AppError::external(error.code(), error.to_string()))
+        .map_err(|error| AppError::external(error.code(), error.to_string()))?;
+    runtime_flow::run()
 }
 
 struct RuntimeVaultKeyProvider;
