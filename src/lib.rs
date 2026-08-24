@@ -470,18 +470,31 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
         error @ RuntimeError::SecretRequired { .. } => {
             AppError::external("SECRET_REQUIRED", error.to_string())
         }
-        error @ RuntimeError::SecretNotFound { .. } => {
-            AppError::external("SECRET_NOT_FOUND", error.to_string())
-        }
-        error @ RuntimeError::SecretKindMismatch { .. } => {
-            AppError::external("SECRET_KIND_MISMATCH", error.to_string())
-        }
-        error @ RuntimeError::VaultLocked { .. } => {
-            AppError::external("VAULT_LOCKED", error.to_string())
-        }
-        error @ RuntimeError::VaultKeyUnavailable { .. } => {
-            AppError::external("VAULT_KEY_UNAVAILABLE", error.to_string())
-        }
+        RuntimeError::SecretNotFound { command, slot, .. } => AppError::external(
+            "SECRET_NOT_FOUND",
+            format!("credential for slot '{slot}' was not found for '{command}'"),
+        ),
+        RuntimeError::SecretKindMismatch {
+            command,
+            slot,
+            accepted_kinds,
+            ..
+        } => AppError::external(
+            "SECRET_KIND_MISMATCH",
+            format!(
+                "credential for slot '{slot}' has an incompatible kind; expected one of {accepted_kinds:?} for '{command}'"
+            ),
+        ),
+        RuntimeError::VaultLocked { command, slot, .. } => AppError::external(
+            "VAULT_LOCKED",
+            format!("vault is locked while resolving credential for slot '{slot}' in '{command}'"),
+        ),
+        RuntimeError::VaultKeyUnavailable { command, slot, .. } => AppError::external(
+            "VAULT_KEY_UNAVAILABLE",
+            format!(
+                "vault key is unavailable while resolving credential for slot '{slot}' in '{command}'"
+            ),
+        ),
         RuntimeError::TypedResponseValidation { command, reason } => AppError::external(
             "OUTPUT_SCHEMA_VIOLATION",
             format!("typed command response failed validation for '{command}': {reason}"),
@@ -571,8 +584,59 @@ fn load_dynamic_plugins_from_dirs(
 
 #[cfg(test)]
 mod tests {
-    use super::{PluginListEntry, render_plugins_table};
+    use ah_runtime::RuntimeError;
+
+    use super::{PluginListEntry, map_runtime_error, render_plugins_table};
     use crate::output::TextFormatter;
+
+    #[test]
+    fn runtime_secret_errors_keep_codes_and_redact_credential_ids() {
+        let credential_id = "runtime-private-credential-id";
+        let unexpected_kind = "runtime-unexpected-private-kind";
+        let errors = [
+            (
+                RuntimeError::SecretNotFound {
+                    command: "http.get".to_owned(),
+                    slot: "basic".to_owned(),
+                    id: credential_id.to_owned(),
+                },
+                "SECRET_NOT_FOUND",
+            ),
+            (
+                RuntimeError::SecretKindMismatch {
+                    command: "http.get".to_owned(),
+                    slot: "basic".to_owned(),
+                    id: credential_id.to_owned(),
+                    kind: unexpected_kind.to_owned(),
+                    accepted_kinds: vec!["http-basic".to_owned()],
+                },
+                "SECRET_KIND_MISMATCH",
+            ),
+            (
+                RuntimeError::VaultLocked {
+                    command: "http.get".to_owned(),
+                    slot: "basic".to_owned(),
+                    id: credential_id.to_owned(),
+                },
+                "VAULT_LOCKED",
+            ),
+            (
+                RuntimeError::VaultKeyUnavailable {
+                    command: "http.get".to_owned(),
+                    slot: "basic".to_owned(),
+                    id: credential_id.to_owned(),
+                },
+                "VAULT_KEY_UNAVAILABLE",
+            ),
+        ];
+
+        for (runtime_error, expected_code) in errors {
+            let error = map_runtime_error(runtime_error);
+            assert_eq!(error.code(), expected_code);
+            assert!(!error.detail_message().contains(credential_id));
+            assert!(!error.detail_message().contains(unexpected_kind));
+        }
+    }
 
     #[test]
     fn plugins_table_aligns_plain_text_columns() {

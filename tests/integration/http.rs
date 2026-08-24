@@ -79,6 +79,135 @@ fn http_get_uses_vault_basic_credential_without_exposing_it() {
 }
 
 #[test]
+fn http_missing_vault_credential_keeps_error_code_without_exposing_id() {
+    let credential_id = "http-missing-private-id";
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let store = VaultStore::at(
+        cmd.config_dir(),
+        Arc::new(ExplicitMasterKey::parse(TEST_MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+
+    cmd.env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .args([
+            "--json",
+            "http",
+            "get",
+            "http://127.0.0.1:1",
+            "--credential",
+            &format!("basic={credential_id}"),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("SECRET_NOT_FOUND"))
+        .stderr(contains(credential_id).not())
+        .stdout(contains(credential_id).not());
+}
+
+#[test]
+fn credentialed_http_assertion_failure_renders_json_response_before_error() {
+    let username = "vault-user";
+    let password = "http-cli-assertion-secret";
+    let credential_id = "http-cli-assertion-id";
+    let expected_authorization = format!(
+        "Basic {}",
+        STANDARD.encode(format!("{username}:{password}"))
+    );
+    let (url, handle) = spawn_authorized_server(expected_authorization);
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let store = VaultStore::at(
+        cmd.config_dir(),
+        Arc::new(ExplicitMasterKey::parse(TEST_MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(NewSecret::http_basic(
+            credential_id,
+            "HTTP CLI assertion",
+            username,
+            password,
+        ))
+        .unwrap();
+
+    cmd.env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .args([
+            "--json",
+            "http",
+            "get",
+            &url,
+            "--credential",
+            &format!("basic={credential_id}"),
+            "--expect-status",
+            "201",
+        ])
+        .assert()
+        .failure()
+        .stdout(contains("\"status\": 200"))
+        .stdout(contains("\"content-length\": \"13\""))
+        .stdout(contains("\"body\": \"vault-auth-ok\""))
+        .stdout(contains(credential_id).not())
+        .stdout(contains(password).not())
+        .stderr(contains("\"code\": \"HTTP_ASSERTION_FAILED\""))
+        .stderr(contains(credential_id).not())
+        .stderr(contains(password).not());
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn credentialed_http_replay_assertion_failure_renders_json_response_before_error() {
+    let username = "vault-replay-user";
+    let password = "http-cli-replay-secret";
+    let credential_id = "http-cli-replay-id";
+    let expected_authorization = format!(
+        "Basic {}",
+        STANDARD.encode(format!("{username}:{password}"))
+    );
+    let (url, handle) = spawn_authorized_server(expected_authorization);
+    let curl = format!("curl {url}");
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let store = VaultStore::at(
+        cmd.config_dir(),
+        Arc::new(ExplicitMasterKey::parse(TEST_MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(NewSecret::http_basic(
+            credential_id,
+            "HTTP CLI replay",
+            username,
+            password,
+        ))
+        .unwrap();
+
+    cmd.env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .args([
+            "--json",
+            "http",
+            "replay",
+            "--curl",
+            &curl,
+            "--credential",
+            &format!("basic={credential_id}"),
+            "--expect-status",
+            "201",
+        ])
+        .assert()
+        .failure()
+        .stdout(contains("\"status\": 200"))
+        .stdout(contains("\"content-length\": \"13\""))
+        .stdout(contains("\"body\": \"vault-auth-ok\""))
+        .stdout(contains(credential_id).not())
+        .stdout(contains(password).not())
+        .stderr(contains("\"code\": \"HTTP_ASSERTION_FAILED\""))
+        .stderr(contains(credential_id).not())
+        .stderr(contains(password).not());
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
 fn http_credentials_reject_malformed_and_duplicate_slots_without_echoing_ids() {
     let mut malformed = Command::cargo_bin("ah").unwrap();
     malformed

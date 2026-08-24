@@ -199,11 +199,19 @@ pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> 
 
 pub(crate) fn emit_typed_cli_data(data: Value, options: &GlobalOptions) -> Result<(), AppError> {
     let mut output = serde_json::from_value::<domain::HttpRequestOutput>(data)?;
+    let failed = !output.ok;
     output.status_text = reqwest::StatusCode::from_u16(output.status)
         .ok()
         .and_then(|status| status.canonical_reason().map(str::to_owned))
         .unwrap_or_default();
-    adapters::output::emit_request(output, options)
+    adapters::output::emit_request(output, options)?;
+    if failed {
+        return Err(AppError::external(
+            "HTTP_ASSERTION_FAILED",
+            "request expectations failed",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {
@@ -365,7 +373,7 @@ fn typed_request(
         expect: typed_expectations(&request.arguments),
     };
     let output = domain::run_request_command(args, command_name)?;
-    if !output.ok {
+    if !output.ok && !is_direct_cli_request(request) {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
             format!(
@@ -385,7 +393,7 @@ fn typed_replay(request: &TypedInvocationRequest) -> Result<Value, AppError> {
         expect: typed_expectations(&request.arguments),
     };
     let output = domain::run_replay(args, "replay")?;
-    if !output.ok {
+    if !output.ok && !is_direct_cli_request(request) {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
             format!(
@@ -542,6 +550,10 @@ fn resolve_context_path(cwd: &str, path: &str) -> PathBuf {
 
 fn request_deadline(request: &TypedInvocationRequest) -> Option<Instant> {
     Instant::now().checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
+}
+
+fn is_direct_cli_request(request: &TypedInvocationRequest) -> bool {
+    request.context.remaining_timeout_ms == u64::MAX
 }
 
 fn retryable_http_error(code: &str) -> bool {
