@@ -71,7 +71,7 @@ struct GithubConnectionArgs {
     api_url: String,
     #[arg(long, global = true, value_name = "TOKEN")]
     token: Option<String>,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, default_value_t = true)]
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
     timeout_secs: u64,
@@ -2256,7 +2256,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "repo".to_owned(),
                 summary: "Detect GitHub repository context.".to_owned(),
-                usage: "repo [--repo OWNER/REPO] [--remote NAME] [--api-url URL] [--token TOKEN] [--use-git-credential]".to_owned(),
+                usage: "repo [--repo OWNER/REPO] [--remote NAME] [--api-url URL] [--token TOKEN]".to_owned(),
                 examples: vec![manual_example("Inspect current GitHub repository", &["repo"])],
             },
             ManualCommand {
@@ -2389,7 +2389,7 @@ fn plugin_manual() -> PluginManual {
         notes: vec![
             "GitHub-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
             "Repository defaults to GitHub owner/repo parsed from `origin`; override with --repo OWNER/REPO.".to_owned(),
-            "Authentication checks --token, GITHUB_TOKEN, then GH_TOKEN; use --use-git-credential to opt into git credential helper lookup.".to_owned(),
+            "Authentication checks --token, GITHUB_TOKEN, GH_TOKEN, then the Git credential helper.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap runs/log matches.".to_owned(),
             "Run logs default to an 8 MiB archive budget and 32 MiB expanded budget; override with command-local max byte flags.".to_owned(),
         ],
@@ -2519,6 +2519,13 @@ mod tests {
     #[test]
     fn parser_builds_command_tree() {
         let _ = GithubCli::command();
+    }
+
+    #[test]
+    fn cli_uses_git_credentials_by_default() {
+        let cli = GithubCli::try_parse_from(["github", "repo"]).unwrap();
+
+        assert!(cli.connection.use_git_credential);
     }
 
     #[test]
@@ -3283,9 +3290,16 @@ mod tests {
     }
 
     fn invoke_json_with_limit(argv: &[&str], limit: Option<usize>) -> InvocationResponse {
+        let mut argv = argv
+            .iter()
+            .map(|item| (*item).to_owned())
+            .collect::<Vec<_>>();
+        if !argv.iter().any(|item| item == "--token") {
+            argv.splice(0..0, ["--token".to_owned(), "test-token".to_owned()]);
+        }
         let request = InvocationRequest {
             domain: DOMAIN.to_owned(),
-            argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+            argv,
             globals: GlobalOptionsWire {
                 json: true,
                 quiet: false,

@@ -316,7 +316,7 @@ fn typed_connection(request: &TypedInvocationRequest) -> GithubConnectionArgs {
         remote: string_or(arguments, "remote", DEFAULT_REMOTE),
         api_url: string_or(arguments, "api_url", DEFAULT_API_URL),
         token: optional_string(arguments, "token"),
-        use_git_credential: bool_or(arguments, "use_git_credential", false),
+        use_git_credential: bool_or(arguments, "use_git_credential", true),
         timeout_secs: u64_or(arguments, "timeout_secs", DEFAULT_TIMEOUT_SECS)
             .min(remaining_seconds(request)),
         cwd: Some(PathBuf::from(&request.context.cwd)),
@@ -968,7 +968,10 @@ fn input_schema(mut properties: Map<String, Value>, required: Vec<&str>) -> Valu
     );
     properties.insert(
         "use_git_credential".to_owned(),
-        boolean_schema(false, "Allow Git credential helper lookup."),
+        boolean_schema(
+            true,
+            "Use Git credential helper lookup as the final fallback.",
+        ),
     );
     properties.insert(
         "timeout_secs".to_owned(),
@@ -1629,6 +1632,21 @@ mod tests {
                 .any(|item| item.id == "github.run.warnings")
         );
         assert!(catalog.commands.iter().all(|item| item.effects.open_world));
+    }
+
+    #[test]
+    fn typed_commands_use_git_credentials_by_default() {
+        let request = TypedInvocationRequest::new(
+            "github.repo",
+            json!({"repo": "owner/repo"}),
+            ExecutionContextWire::new("github-default-auth", ".", None, 2_000),
+        );
+
+        assert!(typed_connection(&request).use_git_credential);
+        assert_eq!(
+            command_catalog().commands[0].input_schema["properties"]["use_git_credential"]["default"],
+            true
+        );
     }
 
     #[test]

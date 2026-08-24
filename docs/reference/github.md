@@ -19,14 +19,14 @@ The plugin resolves a token in this order:
 1. `--token <TOKEN>`
 2. `GITHUB_TOKEN`
 3. `GH_TOKEN`
-4. `git credential fill` for `github.com`, only when `--use-git-credential` is set
+4. `git credential fill` for `github.com`
 
 Public repository reads may work without a token. Creating releases, dispatching workflows, and reading private repositories require a token with suitable GitHub permissions.
 
 Common flags:
 
 ```bash
-ah github [--repo OWNER/REPO] [--remote origin] [--api-url https://api.github.com] [--token TOKEN] [--use-git-credential] <command>
+ah github [--repo OWNER/REPO] [--remote origin] [--api-url https://api.github.com] [--token TOKEN] <command>
 ```
 
 If `--repo` is omitted, the plugin tries to parse `owner/repo` from `git remote get-url origin`.

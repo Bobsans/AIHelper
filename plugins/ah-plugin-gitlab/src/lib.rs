@@ -94,7 +94,7 @@ struct GitlabConnectionArgs {
     graphql_url: Option<String>,
     #[arg(long, global = true, value_name = "TOKEN")]
     token: Option<String>,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, default_value_t = true)]
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
     timeout_secs: u64,
@@ -2340,7 +2340,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "project".to_owned(),
                 summary: "Detect GitLab project context.".to_owned(),
-                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--graphql-url URL] [--token TOKEN] [--use-git-credential]".to_owned(),
+                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--graphql-url URL] [--token TOKEN]".to_owned(),
                 examples: vec![manual_example("Inspect current GitLab project", &["project"])],
             },
             ManualCommand {
@@ -2447,7 +2447,7 @@ fn plugin_manual() -> PluginManual {
             "GitLab-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
             "Project defaults to a GitLab path parsed from `origin`; override with --project group/project or numeric id.".to_owned(),
             "Use --host for self-managed GitLab, --api-url for nonstandard REST roots, and --graphql-url for a separately configured GraphQL endpoint.".to_owned(),
-            "Authentication checks --token, GITLAB_TOKEN, then GL_TOKEN; use --use-git-credential to opt into git credential helper lookup.".to_owned(),
+            "Authentication checks --token, GITLAB_TOKEN, GL_TOKEN, then the Git credential helper.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap releases, pipelines, or trace matches.".to_owned(),
             "Job traces default to an 8 MiB response budget; override with --max-body-bytes.".to_owned(),
         ],
@@ -2606,6 +2606,13 @@ mod tests {
     #[test]
     fn parser_builds_command_tree() {
         let _ = GitlabCli::command();
+    }
+
+    #[test]
+    fn cli_uses_git_credentials_by_default() {
+        let cli = GitlabCli::try_parse_from(["gitlab", "project"]).unwrap();
+
+        assert!(cli.connection.use_git_credential);
     }
 
     #[test]
@@ -3324,9 +3331,16 @@ mod tests {
     }
 
     fn invoke_json_with_limit(argv: &[&str], limit: Option<usize>) -> InvocationResponse {
+        let mut argv = argv
+            .iter()
+            .map(|item| (*item).to_owned())
+            .collect::<Vec<_>>();
+        if !argv.iter().any(|item| item == "--token") {
+            argv.splice(0..0, ["--token".to_owned(), "test-token".to_owned()]);
+        }
         let request = InvocationRequest {
             domain: DOMAIN.to_owned(),
-            argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+            argv,
             globals: GlobalOptionsWire {
                 json: true,
                 quiet: false,

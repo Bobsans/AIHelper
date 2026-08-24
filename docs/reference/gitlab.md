@@ -19,14 +19,14 @@ The plugin resolves a token in this order:
 1. `--token <TOKEN>`
 2. `GITLAB_TOKEN`
 3. `GL_TOKEN`
-4. `git credential fill` for the selected host, only when `--use-git-credential` is set
+4. `git credential fill` for the selected host
 
 Public project reads may work without a token. Creating releases and reading private projects require a token with suitable GitLab permissions.
 
 Common flags:
 
 ```bash
-ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https://gitlab.com] [--api-url https://gitlab.example.com/api/v4] [--graphql-url https://gitlab.example.com/api/graphql] [--token TOKEN] [--use-git-credential] <command>
+ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https://gitlab.com] [--api-url https://gitlab.example.com/api/v4] [--graphql-url https://gitlab.example.com/api/graphql] [--token TOKEN] <command>
 ```
 
 If `--project` is omitted, the plugin tries to parse a GitLab project path from `git remote get-url origin`.
