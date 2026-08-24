@@ -4,7 +4,7 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Child, Command, Output, Stdio},
     time::{Duration, Instant},
 };
 
@@ -32,6 +32,7 @@ const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 1800;
 const DEFAULT_MAX_LOG_BODY_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_EXPANDED_LOG_BYTES: usize = 32 * 1024 * 1024;
+const GIT_CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 static PLUGIN_NAME_C: &[u8] = b"external-github\0";
 static DOMAIN_C: &[u8] = b"github\0";
@@ -71,7 +72,14 @@ struct GithubConnectionArgs {
     api_url: String,
     #[arg(long, global = true, value_name = "TOKEN")]
     token: Option<String>,
-    #[arg(long, global = true, default_value_t = true)]
+    #[arg(
+        long,
+        global = true,
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
     timeout_secs: u64,
@@ -1659,7 +1667,7 @@ fn git_credential_token() -> Option<String> {
             .write_all(b"protocol=https\nhost=github.com\n\n")
             .ok()?;
     }
-    let output = child.wait_with_output().ok()?;
+    let output = wait_for_credential_child(child, GIT_CREDENTIAL_TIMEOUT)?;
     if !output.status.success() {
         return None;
     }
@@ -1673,6 +1681,19 @@ fn git_credential_token() -> Option<String> {
         }
     }
     None
+}
+
+fn wait_for_credential_child(mut child: Child, timeout: Duration) -> Option<Output> {
+    let deadline = Instant::now().checked_add(timeout)?;
+    while child.try_wait().ok()?.is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().ok()
 }
 
 fn github_json<T>(
@@ -2256,7 +2277,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "repo".to_owned(),
                 summary: "Detect GitHub repository context.".to_owned(),
-                usage: "repo [--repo OWNER/REPO] [--remote NAME] [--api-url URL] [--token TOKEN]".to_owned(),
+                usage: "repo [--repo OWNER/REPO] [--remote NAME] [--api-url URL] [--token TOKEN] [--use-git-credential[=true|false]]".to_owned(),
                 examples: vec![manual_example("Inspect current GitHub repository", &["repo"])],
             },
             ManualCommand {
@@ -2389,7 +2410,7 @@ fn plugin_manual() -> PluginManual {
         notes: vec![
             "GitHub-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
             "Repository defaults to GitHub owner/repo parsed from `origin`; override with --repo OWNER/REPO.".to_owned(),
-            "Authentication checks --token, GITHUB_TOKEN, GH_TOKEN, then the Git credential helper.".to_owned(),
+            "Authentication checks --token, GITHUB_TOKEN, GH_TOKEN, then the Git credential helper; pass --use-git-credential=false to skip the helper.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap runs/log matches.".to_owned(),
             "Run logs default to an 8 MiB archive budget and 32 MiB expanded budget; override with command-local max byte flags.".to_owned(),
         ],
@@ -2526,6 +2547,34 @@ mod tests {
         let cli = GithubCli::try_parse_from(["github", "repo"]).unwrap();
 
         assert!(cli.connection.use_git_credential);
+    }
+
+    #[test]
+    fn cli_allows_disabling_git_credentials() {
+        let cli = GithubCli::try_parse_from(["github", "--use-git-credential=false", "repo"])
+            .expect("the default credential lookup must be opt-out capable");
+
+        assert!(!cli.connection.use_git_credential);
+    }
+
+    #[test]
+    fn credential_helper_timeout_kills_the_child() {
+        if std::env::var_os("AH_GITHUB_TEST_CREDENTIAL_SLEEP").is_some() {
+            thread::sleep(Duration::from_secs(1));
+            return;
+        }
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::credential_helper_timeout_kills_the_child",
+            ])
+            .env("AH_GITHUB_TEST_CREDENTIAL_SLEEP", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        assert!(wait_for_credential_child(child, Duration::from_millis(20)).is_none());
     }
 
     #[test]

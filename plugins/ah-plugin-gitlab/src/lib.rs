@@ -4,7 +4,7 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Child, Command, Output, Stdio},
     time::{Duration, Instant},
 };
 
@@ -30,6 +30,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 1800;
 const DEFAULT_MAX_TRACE_BODY_BYTES: usize = 8 * 1024 * 1024;
+const GIT_CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(5);
 const ISSUE_DESIGNS_QUERY: &str = r#"
 query IssueDesigns($fullPath: ID!, $iid: String!, $first: Int!) {
   project(fullPath: $fullPath) {
@@ -94,7 +95,14 @@ struct GitlabConnectionArgs {
     graphql_url: Option<String>,
     #[arg(long, global = true, value_name = "TOKEN")]
     token: Option<String>,
-    #[arg(long, global = true, default_value_t = true)]
+    #[arg(
+        long,
+        global = true,
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
     timeout_secs: u64,
@@ -1557,7 +1565,7 @@ fn git_credential_token(host: &str) -> Option<String> {
             .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
             .ok()?;
     }
-    let output = child.wait_with_output().ok()?;
+    let output = wait_for_credential_child(child, GIT_CREDENTIAL_TIMEOUT)?;
     if !output.status.success() {
         return None;
     }
@@ -1571,6 +1579,19 @@ fn git_credential_token(host: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn wait_for_credential_child(mut child: Child, timeout: Duration) -> Option<Output> {
+    let deadline = Instant::now().checked_add(timeout)?;
+    while child.try_wait().ok()?.is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().ok()
 }
 
 fn gitlab_json<T>(
@@ -2340,7 +2361,7 @@ fn plugin_manual() -> PluginManual {
             ManualCommand {
                 name: "project".to_owned(),
                 summary: "Detect GitLab project context.".to_owned(),
-                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--graphql-url URL] [--token TOKEN]".to_owned(),
+                usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--graphql-url URL] [--token TOKEN] [--use-git-credential[=true|false]]".to_owned(),
                 examples: vec![manual_example("Inspect current GitLab project", &["project"])],
             },
             ManualCommand {
@@ -2447,7 +2468,7 @@ fn plugin_manual() -> PluginManual {
             "GitLab-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
             "Project defaults to a GitLab path parsed from `origin`; override with --project group/project or numeric id.".to_owned(),
             "Use --host for self-managed GitLab, --api-url for nonstandard REST roots, and --graphql-url for a separately configured GraphQL endpoint.".to_owned(),
-            "Authentication checks --token, GITLAB_TOKEN, GL_TOKEN, then the Git credential helper.".to_owned(),
+            "Authentication checks --token, GITLAB_TOKEN, GL_TOKEN, then the Git credential helper; pass --use-git-credential=false to skip the helper.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap releases, pipelines, or trace matches.".to_owned(),
             "Job traces default to an 8 MiB response budget; override with --max-body-bytes.".to_owned(),
         ],
@@ -2613,6 +2634,34 @@ mod tests {
         let cli = GitlabCli::try_parse_from(["gitlab", "project"]).unwrap();
 
         assert!(cli.connection.use_git_credential);
+    }
+
+    #[test]
+    fn cli_allows_disabling_git_credentials() {
+        let cli = GitlabCli::try_parse_from(["gitlab", "--use-git-credential=false", "project"])
+            .expect("the default credential lookup must be opt-out capable");
+
+        assert!(!cli.connection.use_git_credential);
+    }
+
+    #[test]
+    fn credential_helper_timeout_kills_the_child() {
+        if std::env::var_os("AH_GITLAB_TEST_CREDENTIAL_SLEEP").is_some() {
+            thread::sleep(Duration::from_secs(1));
+            return;
+        }
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::credential_helper_timeout_kills_the_child",
+            ])
+            .env("AH_GITLAB_TEST_CREDENTIAL_SLEEP", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        assert!(wait_for_credential_child(child, Duration::from_millis(20)).is_none());
     }
 
     #[test]

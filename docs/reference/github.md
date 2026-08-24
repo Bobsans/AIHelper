@@ -26,7 +26,7 @@ Public repository reads may work without a token. Creating releases, dispatching
 Common flags:
 
 ```bash
-ah github [--repo OWNER/REPO] [--remote origin] [--api-url https://api.github.com] [--token TOKEN] <command>
+ah github [--repo OWNER/REPO] [--remote origin] [--api-url https://api.github.com] [--token TOKEN] [--use-git-credential[=true|false]] <command>
 ```
 
 If `--repo` is omitted, the plugin tries to parse `owner/repo` from `git remote get-url origin`.

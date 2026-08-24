@@ -26,7 +26,7 @@ Public project reads may work without a token. Creating releases and reading pri
 Common flags:
 
 ```bash
-ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https://gitlab.com] [--api-url https://gitlab.example.com/api/v4] [--graphql-url https://gitlab.example.com/api/graphql] [--token TOKEN] <command>
+ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https://gitlab.com] [--api-url https://gitlab.example.com/api/v4] [--graphql-url https://gitlab.example.com/api/graphql] [--token TOKEN] [--use-git-credential[=true|false]] <command>
 ```
 
 If `--project` is omitted, the plugin tries to parse a GitLab project path from `git remote get-url origin`.
