@@ -106,6 +106,46 @@ fn http_missing_vault_credential_keeps_error_code_without_exposing_id() {
 }
 
 #[test]
+fn http_mismatched_vault_credential_redacts_all_kind_metadata() {
+    let credential_id = "http-mismatched-private-id";
+    let actual_kind = "postgres";
+    let accepted_kind = "http-basic";
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let store = VaultStore::at(
+        cmd.config_dir(),
+        Arc::new(ExplicitMasterKey::parse(TEST_MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(NewSecret::postgres(
+            credential_id,
+            "Mismatched CLI credential",
+            "database-password",
+        ))
+        .unwrap();
+
+    cmd.env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .args([
+            "--json",
+            "http",
+            "get",
+            "http://127.0.0.1:1",
+            "--credential",
+            &format!("basic={credential_id}"),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("SECRET_KIND_MISMATCH"))
+        .stderr(contains(credential_id).not())
+        .stderr(contains(actual_kind).not())
+        .stderr(contains(accepted_kind).not())
+        .stdout(contains(credential_id).not())
+        .stdout(contains(actual_kind).not())
+        .stdout(contains(accepted_kind).not());
+}
+
+#[test]
 fn credentialed_http_assertion_failure_renders_json_response_before_error() {
     let username = "vault-user";
     let password = "http-cli-assertion-secret";
@@ -204,6 +244,69 @@ fn credentialed_http_replay_assertion_failure_renders_json_response_before_error
         .stderr(contains("\"code\": \"HTTP_ASSERTION_FAILED\""))
         .stderr(contains(credential_id).not())
         .stderr(contains(password).not());
+    handle.join().expect("server thread should finish");
+}
+
+#[test]
+fn credentialed_http_quiet_get_assertion_failure_stays_nonzero() {
+    assert_quiet_credentialed_assertion_failure("get");
+}
+
+#[test]
+fn credentialed_http_quiet_replay_assertion_failure_stays_nonzero() {
+    assert_quiet_credentialed_assertion_failure("replay");
+}
+
+fn assert_quiet_credentialed_assertion_failure(command_name: &str) {
+    let username = format!("vault-quiet-{command_name}-user");
+    let password = format!("http-cli-quiet-{command_name}-secret");
+    let credential_id = format!("http-cli-quiet-{command_name}-id");
+    let expected_authorization = format!(
+        "Basic {}",
+        STANDARD.encode(format!("{username}:{password}"))
+    );
+    let (url, handle) = spawn_authorized_server(expected_authorization);
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    let store = VaultStore::at(
+        cmd.config_dir(),
+        Arc::new(ExplicitMasterKey::parse(TEST_MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(NewSecret::http_basic(
+            &credential_id,
+            format!("HTTP quiet {command_name}"),
+            &username,
+            &password,
+        ))
+        .unwrap();
+    let mut arguments = vec![
+        "--json".to_owned(),
+        "--quiet".to_owned(),
+        "http".to_owned(),
+        command_name.to_owned(),
+    ];
+    if command_name == "replay" {
+        arguments.extend(["--curl".to_owned(), format!("curl {url}")]);
+    } else {
+        arguments.push(url);
+    }
+    arguments.extend([
+        "--credential".to_owned(),
+        format!("basic={credential_id}"),
+        "--expect-status".to_owned(),
+        "201".to_owned(),
+    ]);
+
+    cmd.env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .args(arguments)
+        .assert()
+        .failure()
+        .stdout(predicates::str::is_empty())
+        .stderr(contains("\"code\": \"HTTP_ASSERTION_FAILED\""))
+        .stderr(contains(&credential_id).not())
+        .stderr(contains(&password).not());
     handle.join().expect("server thread should finish");
 }
 

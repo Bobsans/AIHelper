@@ -474,16 +474,9 @@ fn map_runtime_error(error: RuntimeError) -> AppError {
             "SECRET_NOT_FOUND",
             format!("credential for slot '{slot}' was not found for '{command}'"),
         ),
-        RuntimeError::SecretKindMismatch {
-            command,
-            slot,
-            accepted_kinds,
-            ..
-        } => AppError::external(
+        RuntimeError::SecretKindMismatch { .. } => AppError::external(
             "SECRET_KIND_MISMATCH",
-            format!(
-                "credential for slot '{slot}' has an incompatible kind; expected one of {accepted_kinds:?} for '{command}'"
-            ),
+            "credential kind does not match the required credential slot",
         ),
         RuntimeError::VaultLocked { command, slot, .. } => AppError::external(
             "VAULT_LOCKED",
@@ -593,6 +586,7 @@ mod tests {
     fn runtime_secret_errors_keep_codes_and_redact_credential_ids() {
         let credential_id = "runtime-private-credential-id";
         let unexpected_kind = "runtime-unexpected-private-kind";
+        let accepted_kind = "runtime-accepted-private-kind";
         let errors = [
             (
                 RuntimeError::SecretNotFound {
@@ -608,7 +602,7 @@ mod tests {
                     slot: "basic".to_owned(),
                     id: credential_id.to_owned(),
                     kind: unexpected_kind.to_owned(),
-                    accepted_kinds: vec!["http-basic".to_owned()],
+                    accepted_kinds: vec![accepted_kind.to_owned()],
                 },
                 "SECRET_KIND_MISMATCH",
             ),
@@ -635,6 +629,7 @@ mod tests {
             assert_eq!(error.code(), expected_code);
             assert!(!error.detail_message().contains(credential_id));
             assert!(!error.detail_message().contains(unexpected_kind));
+            assert!(!error.detail_message().contains(accepted_kind));
         }
     }
 

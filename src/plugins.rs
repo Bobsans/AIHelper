@@ -1372,6 +1372,32 @@ mod tests {
     }
 
     #[test]
+    fn http_mcp_max_timeout_expectation_failure_is_structured_error() {
+        let (url, server) = serve_http_once(200, "ok");
+        let mut manager = PluginManager::new();
+        let http = builtins()
+            .into_iter()
+            .find(|plugin| plugin.metadata().domain == "http")
+            .unwrap();
+        manager.register_builtin(http);
+        let response = manager
+            .invoke_typed(&TypedInvocationRequest::new(
+                "http.get",
+                serde_json::json!({"url": url, "expect_status": "201"}),
+                ah_plugin_api::ExecutionContextWire::new(
+                    "http-mcp-max-timeout-error-test",
+                    ".",
+                    None,
+                    u64::MAX,
+                ),
+            ))
+            .unwrap();
+        server.join().unwrap();
+        assert!(!response.success);
+        assert_eq!(response.error.unwrap().code, "HTTP_ASSERTION_FAILED");
+    }
+
+    #[test]
     fn task_manual_examples_parse() {
         let manual = task_manual();
         assert_examples_parse::<TaskPluginCli>(&manual);

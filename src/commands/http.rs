@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     fmt,
     path::PathBuf,
     time::{Duration, Instant},
@@ -158,6 +159,32 @@ impl fmt::Debug for BasicCredential {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("[REDACTED]")
     }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HttpInvocationSource {
+    Typed,
+    DirectCli,
+}
+
+thread_local! {
+    static HTTP_INVOCATION_SOURCE: Cell<HttpInvocationSource> =
+        const { Cell::new(HttpInvocationSource::Typed) };
+}
+
+struct HttpInvocationSourceReset(HttpInvocationSource);
+
+impl Drop for HttpInvocationSourceReset {
+    fn drop(&mut self) {
+        HTTP_INVOCATION_SOURCE.with(|source| source.set(self.0));
+    }
+}
+
+pub(crate) fn with_direct_cli_invocation<T>(invoke: impl FnOnce() -> T) -> T {
+    let previous =
+        HTTP_INVOCATION_SOURCE.with(|source| source.replace(HttpInvocationSource::DirectCli));
+    let _reset = HttpInvocationSourceReset(previous);
+    invoke()
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -373,7 +400,7 @@ fn typed_request(
         expect: typed_expectations(&request.arguments),
     };
     let output = domain::run_request_command(args, command_name)?;
-    if !output.ok && !is_direct_cli_request(request) {
+    if !output.ok && !is_direct_cli_invocation() {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
             format!(
@@ -393,7 +420,7 @@ fn typed_replay(request: &TypedInvocationRequest) -> Result<Value, AppError> {
         expect: typed_expectations(&request.arguments),
     };
     let output = domain::run_replay(args, "replay")?;
-    if !output.ok && !is_direct_cli_request(request) {
+    if !output.ok && !is_direct_cli_invocation() {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
             format!(
@@ -552,8 +579,8 @@ fn request_deadline(request: &TypedInvocationRequest) -> Option<Instant> {
     Instant::now().checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
 }
 
-fn is_direct_cli_request(request: &TypedInvocationRequest) -> bool {
-    request.context.remaining_timeout_ms == u64::MAX
+fn is_direct_cli_invocation() -> bool {
+    HTTP_INVOCATION_SOURCE.with(|source| source.get() == HttpInvocationSource::DirectCli)
 }
 
 fn retryable_http_error(code: &str) -> bool {

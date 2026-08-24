@@ -593,9 +593,12 @@ fn execute_credentialed_invocation(
             u64::MAX,
         ),
     );
-    let response = manager
-        .invoke_typed(&request)
-        .map_err(crate::map_runtime_error)?;
+    let response = if domain == "http" {
+        crate::commands::http::with_direct_cli_invocation(|| manager.invoke_typed(&request))
+    } else {
+        manager.invoke_typed(&request)
+    }
+    .map_err(crate::map_runtime_error)?;
     handle_typed_cli_response(domain, response, options)
 }
 
@@ -617,11 +620,13 @@ fn handle_typed_cli_response(
             error.exit_code_hint,
         )));
     }
-    if options.quiet {
+    if options.quiet && domain != "http" {
         return Ok(());
     }
-    for notice in response.notices {
-        emit_warning(notice.message);
+    if !options.quiet {
+        for notice in response.notices {
+            emit_warning(notice.message);
+        }
     }
     let data = response.data.unwrap_or(serde_json::Value::Null);
     if domain == "http" {
