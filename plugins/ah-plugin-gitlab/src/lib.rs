@@ -7,7 +7,7 @@ use std::{
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::credentials;
+use ah_plugin_sdk::{credentials, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
@@ -898,7 +898,7 @@ fn execute_project(context: &GitlabContext, globals: &GlobalOptionsWire) -> Invo
         visibility,
     };
 
-    render_success(
+    render::render_success(
         globals,
         &output,
         format!(
@@ -919,7 +919,7 @@ fn execute_issues(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssuesOutput {
             command: "gitlab.issues",
@@ -951,7 +951,7 @@ fn execute_issue(
             if args.full {
                 return issue_view_full(context, globals, args, issue);
             }
-            render_success(
+            render::render_success(
                 globals,
                 &IssueOutput {
                     command: "gitlab.issue.view",
@@ -984,7 +984,7 @@ fn issue_view_full(
         Ok(value) => (value, Vec::new()),
         Err(warning) => (Vec::new(), vec![warning]),
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueFullOutput {
             command: "gitlab.issue.view",
@@ -1036,7 +1036,7 @@ fn create_issue(
             Ok(value) => value,
             Err(error) => return error,
         };
-    render_success(
+    render::render_success(
         globals,
         &IssueOutput {
             command: "gitlab.issue.create",
@@ -1096,7 +1096,7 @@ fn update_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueOutput {
             command: "gitlab.issue.update",
@@ -1135,7 +1135,7 @@ fn close_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueOutput {
             command: "gitlab.issue.close",
@@ -1159,7 +1159,7 @@ fn comment_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueNoteOutput {
             command: "gitlab.issue.comment",
@@ -1181,7 +1181,7 @@ fn issue_comments(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueNotesOutput {
             command: "gitlab.issue.comments",
@@ -1205,7 +1205,7 @@ fn execute_releases(context: &GitlabContext, globals: &GlobalOptionsWire) -> Inv
         Err(error) => return error,
     };
     let text = render_releases_text(&releases, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &ReleasesOutput {
             command: "gitlab.releases",
@@ -1229,7 +1229,7 @@ fn execute_release(
                 Err(error) => return error,
             };
             let text = render_release_text(&release, TextFormatter::stdout());
-            render_success(
+            render::render_success(
                 globals,
                 &ReleaseOutput {
                     command: "gitlab.release.get",
@@ -1263,7 +1263,7 @@ fn execute_pipelines(
         Err(error) => return error,
     };
     let text = render_pipelines_text(&pipelines, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &PipelinesOutput {
             command: "gitlab.pipelines",
@@ -1289,7 +1289,7 @@ fn execute_pipeline(
             };
             let text =
                 render_pipelines_text(std::slice::from_ref(&pipeline), TextFormatter::stdout());
-            render_success(
+            render::render_success(
                 globals,
                 &PipelineOutput {
                     command: "gitlab.pipeline.get",
@@ -1363,7 +1363,7 @@ fn create_release(
         Err(error) => return error,
     };
     let text = render_release_text(&release, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &ReleaseOutput {
             command: "gitlab.release.create",
@@ -1401,7 +1401,7 @@ fn wait_pipeline(
             let elapsed_secs = start.elapsed().as_secs();
             let text =
                 render_pipelines_text(std::slice::from_ref(&pipeline), TextFormatter::stdout());
-            return render_success(
+            return render::render_success(
                 globals,
                 &WaitPipelineOutput {
                     command: "gitlab.pipeline.wait",
@@ -1453,7 +1453,7 @@ fn pipeline_jobs(
         Err(error) => return error,
     };
     let text = render_jobs_text(&jobs, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &JobsOutput {
             command: "gitlab.pipeline.jobs",
@@ -1494,7 +1494,7 @@ fn job_trace(
         .collect::<Vec<_>>()
         .join("\n")
         + if matches.is_empty() { "" } else { "\n" };
-    render_success(
+    render::render_success(
         globals,
         &TraceOutput {
             command: if warnings_only {
@@ -1876,7 +1876,7 @@ where
         return Err(format!(
             "GitLab returned HTTP {status} for '{}': {}",
             context.graphql_url,
-            truncate_for_error(&body, 500)
+            render::truncate_for_error(&body, 500)
         ));
     }
     response
@@ -1917,7 +1917,7 @@ fn gitlab_response(
             "GITLAB_API_FAILED",
             format!(
                 "GitLab returned HTTP {status} for '{url}': {}",
-                truncate_for_error(&body, 500)
+                render::truncate_for_error(&body, 500)
             ),
         ));
     }
@@ -1988,7 +1988,7 @@ fn collect_job_trace(
         let Ok(line) = std::str::from_utf8(&line_bytes) else {
             continue;
         };
-        let text = strip_ansi_sequences(line);
+        let text = render::strip_ansi_sequences(line);
         let selected = if warnings_only {
             is_warning_like(&text)
         } else if let Some(needle) = &grep_lower {
@@ -2184,27 +2184,6 @@ fn is_pipeline_terminal(status: &str) -> bool {
     )
 }
 
-fn render_success<T: Serialize>(
-    globals: &GlobalOptionsWire,
-    output: &T,
-    text_output: String,
-) -> InvocationResponse {
-    if globals.quiet {
-        return InvocationResponse::ok(None);
-    }
-    if globals.json {
-        match serde_json::to_string_pretty(output) {
-            Ok(payload) => InvocationResponse::ok(Some(payload)),
-            Err(error) => InvocationResponse::error(
-                "JSON_SERIALIZATION_FAILED",
-                format!("failed to serialize plugin output: {error}"),
-            ),
-        }
-    } else {
-        InvocationResponse::ok(Some(text_output))
-    }
-}
-
 fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> String {
     if issues.is_empty() {
         return String::new();
@@ -2217,7 +2196,7 @@ fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> Str
                 formatter.paint(TextStyle::Key, issue.iid),
                 formatter.paint(issue_state_style(&issue.state), &issue.state),
                 issue.title,
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     issue.web_url.as_deref().unwrap_or("")
@@ -2426,7 +2405,7 @@ fn render_designs_text(designs: &[IssueDesignResponse], formatter: TextFormatter
                 formatter.paint(TextStyle::Key, design.filename.as_deref().unwrap_or("-")),
                 formatter.paint(execution_status_style(event), event),
                 formatter.paint(TextStyle::Muted, design.notes_count.unwrap_or(0)),
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     design.image.as_deref().unwrap_or("")
@@ -2490,7 +2469,7 @@ fn render_pipelines_text(pipelines: &[PipelineResponse], formatter: TextFormatte
                 formatter.paint(TextStyle::Key, pipeline.id),
                 formatter.paint(TextStyle::Key, pipeline.r#ref.as_deref().unwrap_or("-")),
                 formatter.paint(execution_status_style(&pipeline.status), &pipeline.status),
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     pipeline.web_url.as_deref().unwrap_or("")
@@ -2513,7 +2492,7 @@ fn render_jobs_text(jobs: &[JobResponse], formatter: TextFormatter) -> String {
                 formatter.paint(TextStyle::Key, job.id),
                 formatter.paint(TextStyle::Key, &job.name),
                 formatter.paint(execution_status_style(&job.status), &job.status),
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     job.web_url.as_deref().unwrap_or("")
@@ -2557,41 +2536,6 @@ fn optional_value_style(value: &str) -> TextStyle {
     }
 }
 
-fn paint_if_present(formatter: TextFormatter, style: TextStyle, value: &str) -> String {
-    if value.is_empty() {
-        String::new()
-    } else {
-        formatter.paint(style, value)
-    }
-}
-
-fn truncate_for_error(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    text.chars().take(max_chars).collect::<String>() + "..."
-}
-
-fn strip_ansi_sequences(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\u{1b}' {
-            output.push(ch);
-            continue;
-        }
-        if chars.peek() == Some(&'[') {
-            chars.next();
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        }
-    }
-    output
-}
-
 fn plugin_manual() -> PluginManual {
     PluginManual {
         plugin_name: PLUGIN_NAME.to_owned(),
@@ -2602,25 +2546,25 @@ fn plugin_manual() -> PluginManual {
                 name: "project".to_owned(),
                 summary: "Detect GitLab project context.".to_owned(),
                 usage: "project [--project PATH_OR_ID] [--remote NAME] [--host URL] [--api-url URL] [--graphql-url URL] [--token TOKEN] [--use-git-credential[=true|false]]".to_owned(),
-                examples: vec![manual_example("Inspect current GitLab project", &["project"])],
+                examples: vec![ManualExample::new("Inspect current GitLab project", &["project"])],
             },
             ManualCommand {
                 name: "releases".to_owned(),
                 summary: "List GitLab releases.".to_owned(),
                 usage: "releases [--project PATH_OR_ID]".to_owned(),
-                examples: vec![manual_example("List releases", &["releases"])],
+                examples: vec![ManualExample::new("List releases", &["releases"])],
             },
             ManualCommand {
                 name: "release get".to_owned(),
                 summary: "Get release metadata by tag.".to_owned(),
                 usage: "release get <tag> [--project PATH_OR_ID]".to_owned(),
-                examples: vec![manual_example("Inspect release v1.0.0", &["release", "get", "v1.0.0"])],
+                examples: vec![ManualExample::new("Inspect release v1.0.0", &["release", "get", "v1.0.0"])],
             },
             ManualCommand {
                 name: "release create".to_owned(),
                 summary: "Create a GitLab release for a tag.".to_owned(),
                 usage: "release create <tag> [--name NAME] [--description TEXT|--description-file PATH] [--ref REF]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Create release from description file",
                     &["release", "create", "v1.0.1", "--name", "v1.0.1", "--description-file", "RELEASE_NOTES.md"],
                 )],
@@ -2629,79 +2573,79 @@ fn plugin_manual() -> PluginManual {
                 name: "issues".to_owned(),
                 summary: "List GitLab issues.".to_owned(),
                 usage: "issues [--state opened|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT]".to_owned(),
-                examples: vec![manual_example("List open bugs", &["issues", "--label", "bug"])],
+                examples: vec![ManualExample::new("List open bugs", &["issues", "--label", "bug"])],
             },
             ManualCommand {
                 name: "issue view".to_owned(),
                 summary: "View issue metadata, optionally with comments and designs.".to_owned(),
                 usage: "issue view <iid> [--full]".to_owned(),
-                examples: vec![manual_example("Inspect issue", &["issue", "view", "42"])],
+                examples: vec![ManualExample::new("Inspect issue", &["issue", "view", "42"])],
             },
             ManualCommand {
                 name: "issue create".to_owned(),
                 summary: "Create an issue.".to_owned(),
                 usage: "issue create --title TITLE [--description TEXT|--description-file PATH] [--label LABEL ...] [--assignee-id ID ...]".to_owned(),
-                examples: vec![manual_example("Create bug issue", &["issue", "create", "--title", "Fix build", "--description", "Build fails", "--label", "bug"])],
+                examples: vec![ManualExample::new("Create bug issue", &["issue", "create", "--title", "Fix build", "--description", "Build fails", "--label", "bug"])],
             },
             ManualCommand {
                 name: "issue update".to_owned(),
                 summary: "Update issue fields.".to_owned(),
                 usage: "issue update <iid> [--title TITLE] [--description TEXT|--description-file PATH] [--state opened|closed] [--label LABEL ...] [--assignee-id ID ...]".to_owned(),
-                examples: vec![manual_example("Close issue via update", &["issue", "update", "42", "--state", "closed"])],
+                examples: vec![ManualExample::new("Close issue via update", &["issue", "update", "42", "--state", "closed"])],
             },
             ManualCommand {
                 name: "issue close".to_owned(),
                 summary: "Close an issue, optionally after adding a comment.".to_owned(),
                 usage: "issue close <iid> [--comment TEXT|--comment-file PATH]".to_owned(),
-                examples: vec![manual_example("Close with comment", &["issue", "close", "42", "--comment", "Fixed in main"])],
+                examples: vec![ManualExample::new("Close with comment", &["issue", "close", "42", "--comment", "Fixed in main"])],
             },
             ManualCommand {
                 name: "issue comment".to_owned(),
                 summary: "Add an issue comment.".to_owned(),
                 usage: "issue comment <iid> --body TEXT|--body-file PATH".to_owned(),
-                examples: vec![manual_example("Comment on issue", &["issue", "comment", "42", "--body", "I can reproduce this"])],
+                examples: vec![ManualExample::new("Comment on issue", &["issue", "comment", "42", "--body", "I can reproduce this"])],
             },
             ManualCommand {
                 name: "issue comments".to_owned(),
                 summary: "List issue comments.".to_owned(),
                 usage: "issue comments <iid>".to_owned(),
-                examples: vec![manual_example("List comments", &["issue", "comments", "42"])],
+                examples: vec![ManualExample::new("List comments", &["issue", "comments", "42"])],
             },
             ManualCommand {
                 name: "pipelines".to_owned(),
                 summary: "List GitLab pipelines.".to_owned(),
                 usage: "pipelines [--branch BRANCH]".to_owned(),
-                examples: vec![manual_example("List main pipelines", &["pipelines", "--branch", "main"])],
+                examples: vec![ManualExample::new("List main pipelines", &["pipelines", "--branch", "main"])],
             },
             ManualCommand {
                 name: "pipeline get".to_owned(),
                 summary: "Get pipeline metadata.".to_owned(),
                 usage: "pipeline get <pipeline-id>".to_owned(),
-                examples: vec![manual_example("Inspect one pipeline", &["pipeline", "get", "42"])],
+                examples: vec![ManualExample::new("Inspect one pipeline", &["pipeline", "get", "42"])],
             },
             ManualCommand {
                 name: "pipeline wait".to_owned(),
                 summary: "Wait for pipeline completion.".to_owned(),
                 usage: "pipeline wait <pipeline-id> [--interval-secs SECONDS] [--timeout-secs SECONDS] [--fail-on-failure]".to_owned(),
-                examples: vec![manual_example("Wait for one pipeline", &["pipeline", "wait", "42", "--fail-on-failure"])],
+                examples: vec![ManualExample::new("Wait for one pipeline", &["pipeline", "wait", "42", "--fail-on-failure"])],
             },
             ManualCommand {
                 name: "pipeline jobs".to_owned(),
                 summary: "List jobs for a pipeline.".to_owned(),
                 usage: "pipeline jobs <pipeline-id>".to_owned(),
-                examples: vec![manual_example("Inspect pipeline jobs", &["pipeline", "jobs", "42"])],
+                examples: vec![ManualExample::new("Inspect pipeline jobs", &["pipeline", "jobs", "42"])],
             },
             ManualCommand {
                 name: "job trace".to_owned(),
                 summary: "Read or search a job trace.".to_owned(),
                 usage: "job trace <job-id> [--grep TEXT] [--max-body-bytes BYTES]".to_owned(),
-                examples: vec![manual_example("Search job trace", &["job", "trace", "7", "--grep", "warning"])],
+                examples: vec![ManualExample::new("Search job trace", &["job", "trace", "7", "--grep", "warning"])],
             },
             ManualCommand {
                 name: "job warnings".to_owned(),
                 summary: "Extract warning-like lines from a job trace.".to_owned(),
                 usage: "job warnings <job-id> [--max-body-bytes BYTES]".to_owned(),
-                examples: vec![manual_example("List job warnings", &["job", "warnings", "7"])],
+                examples: vec![ManualExample::new("List job warnings", &["job", "warnings", "7"])],
             },
         ],
         notes: vec![
@@ -2714,13 +2658,6 @@ fn plugin_manual() -> PluginManual {
             "Use global --json for stable machine-readable output and --limit to cap releases, pipelines, or trace matches.".to_owned(),
             "Job traces default to an 8 MiB response budget; override with --max-body-bytes.".to_owned(),
         ],
-    }
-}
-
-fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
-    ManualExample {
-        description: description.to_owned(),
-        argv: argv.iter().map(|item| (*item).to_owned()).collect(),
     }
 }
 
@@ -2792,7 +2729,7 @@ mod tests {
             TextFormatter::with_color(true),
         );
 
-        assert_eq!(strip_ansi_sequences(&styled), plain);
+        assert_eq!(render::strip_ansi_sequences(&styled), plain);
         assert!(styled.contains("\nraw description\n"));
         assert!(styled.contains("\nraw comment body\n"));
         assert!(!styled.contains("\u{1b}[36mraw description"));

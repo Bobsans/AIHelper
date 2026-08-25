@@ -105,6 +105,7 @@ name = "ah-plugin-ollama"
 version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
+ "ah-plugin-sdk",
  "clap",
  "reqwest",
  "schemars",
@@ -117,6 +118,7 @@ name = "ah-plugin-postgres"
 version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
+ "ah-plugin-sdk",
  "clap",
  "reqwest",
  "schemars",
@@ -131,6 +133,8 @@ name = "ah-plugin-sdk"
 version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

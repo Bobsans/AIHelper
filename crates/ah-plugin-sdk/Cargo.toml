@@ -12,3 +12,5 @@ publish = false
 
 [dependencies]
 ah-plugin-api = { path = "../ah-plugin-api" }
+serde.workspace = true
+serde_json.workspace = true

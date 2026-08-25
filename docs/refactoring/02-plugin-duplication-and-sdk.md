@@ -29,12 +29,12 @@ releases, CI runs and logs — with parallel, separately written code:
 | JSON request wrapper | `lib.rs:1833` `github_json` | `lib.rs:1737` `gitlab_json` |
 | response/error mapping | `lib.rs:1861` `github_response` | `lib.rs:1787` |
 | log/trace fetch with byte caps | `lib.rs:1902`, `lib.rs:2001` | `lib.rs:1827` |
-| ANSI stripping | `lib.rs:2364` | `lib.rs:2475` |
-| error truncation | `lib.rs:2357` | `lib.rs:2468` |
+| ~~ANSI stripping~~ | `ah_plugin_sdk::render` — **the two copies had diverged** | |
+| ~~error truncation~~ | `ah_plugin_sdk::render` | |
 | warning-line heuristic | `lib.rs:2091` | `lib.rs:2072` |
-| success rendering | `lib.rs:2099` `render_success` | `lib.rs:2087` |
+| ~~success rendering~~ | `ah_plugin_sdk::render`, shared by all four plugins | |
 | state/status styling | `lib.rs:2305–2349` | `lib.rs:2428–2460` |
-| manual example builder | `lib.rs:2556` | `lib.rs:2620` |
+| ~~manual example builder~~ | `ManualExample::new` in `ah-plugin-api`, shared with the host | |
 
 Two independent copies means two places to fix every credential-handling bug —
 and credential handling is exactly the code that must not diverge.
@@ -56,9 +56,14 @@ Cancellation is a *runtime* responsibility. Today the runtime exposes
 `cancel_typed(request_id)` ([`crates/ah-runtime/src/lib.rs:160`](../../crates/ah-runtime/src/lib.rs))
 and then every implementer has to invent the plumbing behind it.
 
-**Other duplicated primitives across the workspace:** `manual_example` (9),
-`normalize_path` (9), `truncate_for_error` (4), `render_success` (4),
-`strip_ansi_sequences` (2), `paint_if_present` (2), `input_schema` (2).
+**Other duplicated primitives across the workspace:** ~~`manual_example` (5)~~,
+`normalize_path` (9), ~~`truncate_for_error` (4)~~, ~~`render_success` (4)~~,
+~~`strip_ansi_sequences` (2)~~, ~~`paint_if_present` (2)~~, ~~`input_schema` (2)~~.
+
+`normalize_path` is the one left, and it is not one duplicate but nine *different*
+functions sharing a name: some take a `&Path`, some a `&str`, and they disagree on
+trailing separators. Unifying them is a semantic decision, so it belongs to group
+05, not here.
 
 ### 2.3 Test hooks live in the production binary *(resolved, and the finding was overstated)*
 
@@ -80,13 +85,17 @@ deleted. No injectable process runner was needed to delete it: **no test referen
 it**. The seam outlived whatever test it was cut for, and removing it removed a
 `PATH`-override primitive from the shipped plugin.
 
-### 2.4 Text rendering is re-invented per plugin
+### 2.4 Text rendering is re-invented per plugin *(partly resolved, partly not a finding)*
 
-`ah-plugin-api` provides `TextFormatter`/`TextStyle` but no table or list renderer,
-so every plugin writes its own `render_*_text` family (GitHub: 9 renderers,
-GitLab: 11, Postgres: 15). The host has the same problem
-(`render_plugins_table` in [`src/lib.rs:271`](../../src/lib.rs) hand-computes column
-widths). Column alignment logic exists in at least four places.
+Every plugin writes its own `render_*_text` family (GitHub: 9 renderers, GitLab: 11,
+Postgres: 15). Those are not duplication: each renders a different payload, and the
+prose inside them is the product surface. What *was* duplicated is the scaffolding
+under them, and that is now `ah_plugin_sdk::render`.
+
+The claim that "column alignment logic exists in at least four places" is wrong.
+`column_width`/`pad_column` exist once, in the host
+([`src/lib.rs`](../../src/lib.rs)); no plugin aligns columns at all. A shared table
+renderer would be speculative until something else needs one.
 
 ## Why it hurts
 
@@ -109,7 +118,7 @@ domains, which have the same needs):
 | `sdk::http` | blocking JSON client: retry policy, deadline, pagination, bounded response bodies, uniform error→`CommandError` mapping |
 | ~~`sdk::credentials`~~ *(done)* | authority parsing, loopback checks, `git credential fill` with bounded child wait, env fallback, ambient-token policy |
 | ~~`sdk::cancel`~~ | *done, as `ah_plugin_api::cancellation` — see B* |
-| `sdk::render` | table/list/keyvalue renderers built on `TextFormatter`, ANSI stripping, truncation |
+| ~~`sdk::render`~~ *(done)* | success rendering, ANSI stripping, truncation, styling an optional value. No table renderer: see 2.4 |
 | `sdk::descriptor` | descriptor/manual builders (feeds group 01) |
 | ~~`sdk::process`~~ | *dropped: the one shipped seam it was for is deleted, and nothing else asks for it* |
 
@@ -149,8 +158,9 @@ implementation, not a merged product surface.
 
 ## Migration
 
-1. Create `ah-plugin-sdk` with `sdk::render` and `sdk::http` first; migrate the
-   Ollama plugin (smallest, 1 040 lines) as the pilot.
+1. ~~Create `ah-plugin-sdk` with `sdk::render` and `sdk::http` first; migrate the
+   Ollama plugin (smallest, 1 040 lines) as the pilot.~~ **(`sdk::render` done, all
+   four plugins migrated at once; `sdk::http` outstanding)**
 2. ~~Move credential resolution into `sdk::credentials`; migrate GitHub, then GitLab.
    Add a shared test suite that runs against both.~~ **(done)** — the shared suite lives
    with the code it tests, in the SDK; each plugin keeps only the assertions about its

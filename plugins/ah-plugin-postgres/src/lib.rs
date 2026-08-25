@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ah_plugin_sdk::render;
+
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
     TextFormatter, TextStyle, noninteractive_command,
@@ -896,7 +898,7 @@ fn execute_tool_status(
         remediation: Some("ah postgres tool download".to_owned()),
     };
 
-    render_success(
+    render::render_success(
         globals,
         &output,
         render_tool_status_text(&output, TextFormatter::stdout()),
@@ -908,7 +910,7 @@ fn execute_tool_download(
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
     match download_managed_tool(&args.version, args.force, args.download_timeout_secs) {
-        Ok(output) => render_success(
+        Ok(output) => render::render_success(
             globals,
             &output,
             render_tool_download_text(&output, TextFormatter::stdout()),
@@ -953,7 +955,7 @@ fn execute_tool_use(args: ToolUseArgs, globals: &GlobalOptionsWire) -> Invocatio
         config_path,
     };
     let formatter = TextFormatter::stdout();
-    render_success(
+    render::render_success(
         globals,
         &output,
         format!(
@@ -1043,7 +1045,7 @@ fn execute_tool_cleanup(args: ToolCleanupArgs, globals: &GlobalOptionsWire) -> I
             ),
         )
     };
-    render_success(globals, &output, text)
+    render::render_success(globals, &output, text)
 }
 
 fn resolve_operational_tool(args: &ToolResolverArgs) -> Result<ToolContext, InvocationResponse> {
@@ -1296,7 +1298,7 @@ fn psql_version(psql_path: &Path, bin_dir: &Path) -> Result<ToolVersion, String>
             "'{} --version' failed with exit code {:?}: {}",
             psql_path.display(),
             output.status.code(),
-            truncate_for_error(&String::from_utf8_lossy(&output.stderr), 400)
+            render::truncate_for_error(&String::from_utf8_lossy(&output.stderr), 400)
         ));
     }
     let raw = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -1950,7 +1952,7 @@ fn execute_ping(
         command: "postgres.ping",
         info: row.clone(),
     };
-    render_success(
+    render::render_success(
         globals,
         &output,
         render_ping_text(&row, TextFormatter::stdout()),
@@ -1970,7 +1972,7 @@ fn execute_info(
         command: "postgres.info",
         info: row.clone(),
     };
-    render_success(
+    render::render_success(
         globals,
         &output,
         render_info_text(&row, TextFormatter::stdout()),
@@ -2148,7 +2150,7 @@ fn execute_describe(
         indexes,
         constraints,
     };
-    render_success(
+    render::render_success(
         globals,
         &output,
         render_describe_text(&output, TextFormatter::stdout()),
@@ -2385,7 +2387,7 @@ fn execute_query(
         row_count,
         rows,
     };
-    render_success(globals, &output, render_query_text(&output))
+    render::render_success(globals, &output, render_query_text(&output))
 }
 
 fn execute_exec(
@@ -2421,7 +2423,7 @@ fn execute_exec(
         stdout: output.stdout,
         stderr: output.stderr,
     };
-    render_success(globals, &exec_output, exec_output.stdout.clone())
+    render::render_success(globals, &exec_output, exec_output.stdout.clone())
 }
 
 fn execute_explain(
@@ -2457,7 +2459,7 @@ fn execute_explain(
             buffers: args.buffers,
             plan,
         };
-        render_success(
+        render::render_success(
             globals,
             &output,
             serde_json::to_string_pretty(&output.plan).unwrap_or_default(),
@@ -2476,7 +2478,7 @@ fn execute_explain(
             Err(error) => return error,
         };
         let stdout = output.stdout;
-        render_success(globals, &stdout, stdout.clone())
+        render::render_success(globals, &stdout, stdout.clone())
     }
 }
 
@@ -2972,7 +2974,7 @@ fn run_psql_capture(
             format!(
                 "psql failed with exit code {:?}: {}",
                 output.status.code(),
-                truncate_for_error(&stderr, 1200)
+                render::truncate_for_error(&stderr, 1200)
             ),
         ));
     }
@@ -3064,32 +3066,11 @@ where
         count: rows.len(),
         rows: rows.clone(),
     };
-    render_success(
+    render::render_success(
         globals,
         &output,
         text_renderer(&rows, TextFormatter::stdout()),
     )
-}
-
-fn render_success<T: Serialize>(
-    globals: &GlobalOptionsWire,
-    output: &T,
-    text_output: String,
-) -> InvocationResponse {
-    if globals.quiet {
-        return InvocationResponse::ok(None);
-    }
-    if globals.json {
-        match serde_json::to_string_pretty(output) {
-            Ok(payload) => InvocationResponse::ok(Some(payload)),
-            Err(error) => InvocationResponse::error(
-                "JSON_SERIALIZATION_FAILED",
-                format!("failed to serialize plugin output: {error}"),
-            ),
-        }
-    } else {
-        InvocationResponse::ok(Some(text_output))
-    }
 }
 
 fn render_tool_status_text(output: &ToolStatusOutput, formatter: TextFormatter) -> String {
@@ -3448,13 +3429,6 @@ fn render_query_text(output: &QueryOutput) -> String {
     }
 }
 
-fn truncate_for_error(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    text.chars().take(max_chars).collect::<String>() + "..."
-}
-
 fn plugin_manual() -> PluginManual {
     PluginManual {
         plugin_name: PLUGIN_NAME.to_owned(),
@@ -3465,13 +3439,13 @@ fn plugin_manual() -> PluginManual {
                 name: "tool status".to_owned(),
                 summary: "Show resolved PostgreSQL toolchain status.".to_owned(),
                 usage: "tool status".to_owned(),
-                examples: vec![manual_example("Inspect selected psql", &["tool", "status"])],
+                examples: vec![ManualExample::new("Inspect selected psql", &["tool", "status"])],
             },
             ManualCommand {
                 name: "tool download".to_owned(),
                 summary: "Download a managed PostgreSQL toolchain.".to_owned(),
                 usage: "tool download [--version VERSION] [--force]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Download PostgreSQL 18.4 tools",
                     &["tool", "download", "--version", "18.4"],
                 )],
@@ -3480,7 +3454,7 @@ fn plugin_manual() -> PluginManual {
                 name: "tool use".to_owned(),
                 summary: "Persist an explicit PostgreSQL toolchain path.".to_owned(),
                 usage: "tool use --path PATH".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Use an unpacked PostgreSQL bin directory",
                     &["tool", "use", "--path", "C:\\PostgreSQL\\pgsql\\bin"],
                 )],
@@ -3489,7 +3463,7 @@ fn plugin_manual() -> PluginManual {
                 name: "tool cleanup".to_owned(),
                 summary: "Remove managed PostgreSQL toolchain cache.".to_owned(),
                 usage: "tool cleanup [--version VERSION]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Remove managed PostgreSQL 18.4 tools",
                     &["tool", "cleanup", "--version", "18.4"],
                 )],
@@ -3498,7 +3472,7 @@ fn plugin_manual() -> PluginManual {
                 name: "ping".to_owned(),
                 summary: "Check PostgreSQL connection.".to_owned(),
                 usage: "ping [connection flags] [--ensure-tool]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Check local database",
                     &["ping", "--database", "postgres", "--user", "postgres"],
                 )],
@@ -3507,43 +3481,43 @@ fn plugin_manual() -> PluginManual {
                 name: "info".to_owned(),
                 summary: "Show server and session metadata.".to_owned(),
                 usage: "info [connection flags]".to_owned(),
-                examples: vec![manual_example("Show connection info", &["info"])],
+                examples: vec![ManualExample::new("Show connection info", &["info"])],
             },
             ManualCommand {
                 name: "databases".to_owned(),
                 summary: "List databases.".to_owned(),
                 usage: "databases [connection flags]".to_owned(),
-                examples: vec![manual_example("List databases", &["databases"])],
+                examples: vec![ManualExample::new("List databases", &["databases"])],
             },
             ManualCommand {
                 name: "schemas".to_owned(),
                 summary: "List schemas.".to_owned(),
                 usage: "schemas [--include-system]".to_owned(),
-                examples: vec![manual_example("List user schemas", &["schemas"])],
+                examples: vec![ManualExample::new("List user schemas", &["schemas"])],
             },
             ManualCommand {
                 name: "tables".to_owned(),
                 summary: "List tables and table-like relations.".to_owned(),
                 usage: "tables [--schema NAME] [--include-system]".to_owned(),
-                examples: vec![manual_example("List public tables", &["tables", "--schema", "public"])],
+                examples: vec![ManualExample::new("List public tables", &["tables", "--schema", "public"])],
             },
             ManualCommand {
                 name: "views".to_owned(),
                 summary: "List views.".to_owned(),
                 usage: "views [--schema NAME] [--include-system]".to_owned(),
-                examples: vec![manual_example("List public views", &["views", "--schema", "public"])],
+                examples: vec![ManualExample::new("List public views", &["views", "--schema", "public"])],
             },
             ManualCommand {
                 name: "describe".to_owned(),
                 summary: "Describe a table, view, or materialized view.".to_owned(),
                 usage: "describe <schema.object>".to_owned(),
-                examples: vec![manual_example("Describe a table", &["describe", "public.users"])],
+                examples: vec![ManualExample::new("Describe a table", &["describe", "public.users"])],
             },
             ManualCommand {
                 name: "indexes".to_owned(),
                 summary: "List indexes.".to_owned(),
                 usage: "indexes [--schema NAME] [--table NAME]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "List table indexes",
                     &["indexes", "--schema", "public", "--table", "users"],
                 )],
@@ -3552,13 +3526,13 @@ fn plugin_manual() -> PluginManual {
                 name: "extensions".to_owned(),
                 summary: "List installed or available extensions.".to_owned(),
                 usage: "extensions [--available]".to_owned(),
-                examples: vec![manual_example("List installed extensions", &["extensions"])],
+                examples: vec![ManualExample::new("List installed extensions", &["extensions"])],
             },
             ManualCommand {
                 name: "query".to_owned(),
                 summary: "Run a read-only SQL query.".to_owned(),
                 usage: "query --sql TEXT|--file PATH [--limit N]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Run read-only SQL",
                     &["query", "--sql", "select now() as current_time"],
                 )],
@@ -3567,7 +3541,7 @@ fn plugin_manual() -> PluginManual {
                 name: "exec".to_owned(),
                 summary: "Execute explicit SQL mutations or admin commands.".to_owned(),
                 usage: "exec --sql TEXT|--file PATH --yes [--single-transaction]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Run an explicit command",
                     &["exec", "--sql", "vacuum analyze", "--yes"],
                 )],
@@ -3576,7 +3550,7 @@ fn plugin_manual() -> PluginManual {
                 name: "explain".to_owned(),
                 summary: "Explain a SQL query plan.".to_owned(),
                 usage: "explain --sql TEXT|--file PATH [--analyze --yes] [--buffers]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Explain a query",
                     &["explain", "--sql", "select * from pg_class"],
                 )],
@@ -3585,25 +3559,25 @@ fn plugin_manual() -> PluginManual {
                 name: "activity".to_owned(),
                 summary: "Show pg_stat_activity rows.".to_owned(),
                 usage: "activity [--active] [--idle-in-tx] [--limit N]".to_owned(),
-                examples: vec![manual_example("List active sessions", &["activity", "--active"])],
+                examples: vec![ManualExample::new("List active sessions", &["activity", "--active"])],
             },
             ManualCommand {
                 name: "locks".to_owned(),
                 summary: "Show lock and blocking diagnostics.".to_owned(),
                 usage: "locks [--blocking] [--limit N]".to_owned(),
-                examples: vec![manual_example("Show blocking locks", &["locks", "--blocking"])],
+                examples: vec![ManualExample::new("Show blocking locks", &["locks", "--blocking"])],
             },
             ManualCommand {
                 name: "size".to_owned(),
                 summary: "Show database, schema, or table sizes.".to_owned(),
                 usage: "size [--schema NAME] [--table NAME]".to_owned(),
-                examples: vec![manual_example("Show current database size", &["size"])],
+                examples: vec![ManualExample::new("Show current database size", &["size"])],
             },
             ManualCommand {
                 name: "settings".to_owned(),
                 summary: "Show PostgreSQL settings.".to_owned(),
                 usage: "settings [--changed] [--limit N]".to_owned(),
-                examples: vec![manual_example("Show changed settings", &["settings", "--changed"])],
+                examples: vec![ManualExample::new("Show changed settings", &["settings", "--changed"])],
             },
         ],
         notes: vec![
@@ -3612,13 +3586,6 @@ fn plugin_manual() -> PluginManual {
             "Operational commands do not download tools unless --ensure-tool is provided.".to_owned(),
             "Use global --json for structured machine-readable output.".to_owned(),
         ],
-    }
-}
-
-fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
-    ManualExample {
-        description: description.to_owned(),
-        argv: argv.iter().map(|item| (*item).to_owned()).collect(),
     }
 }
 

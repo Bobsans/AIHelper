@@ -2,6 +2,8 @@ use std::time::Duration;
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
+use ah_plugin_sdk::render;
+
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
 };
@@ -295,7 +297,7 @@ fn execute_ask(args: AskArgs, globals: &GlobalOptionsWire) -> InvocationResponse
         },
     };
 
-    render_success(globals, &output, text)
+    render::render_success(globals, &output, text)
 }
 
 fn execute_chat(args: ChatArgs, globals: &GlobalOptionsWire) -> InvocationResponse {
@@ -361,28 +363,7 @@ fn execute_chat(args: ChatArgs, globals: &GlobalOptionsWire) -> InvocationRespon
         },
     };
 
-    render_success(globals, &output, text)
-}
-
-fn render_success(
-    globals: &GlobalOptionsWire,
-    output: &OllamaOutput,
-    text_output: String,
-) -> InvocationResponse {
-    if globals.quiet {
-        return InvocationResponse::ok(None);
-    }
-    if globals.json {
-        match serde_json::to_string_pretty(output) {
-            Ok(payload) => InvocationResponse::ok(Some(payload)),
-            Err(error) => InvocationResponse::error(
-                "JSON_SERIALIZATION_FAILED",
-                format!("failed to serialize plugin output: {error}"),
-            ),
-        }
-    } else {
-        InvocationResponse::ok(Some(text_output))
-    }
+    render::render_success(globals, &output, text)
 }
 
 fn non_empty_response_text(value: Option<String>) -> Result<String, InvocationResponse> {
@@ -434,7 +415,7 @@ where
             "OLLAMA_API_FAILED",
             format!(
                 "ollama returned HTTP {status} for '{url}': {}",
-                truncate_for_error(&body, 400)
+                render::truncate_for_error(&body, 400)
             ),
         ));
     }
@@ -458,13 +439,6 @@ fn normalize_base_url(base_url: &str) -> Result<String, InvocationResponse> {
     Ok(normalized)
 }
 
-fn truncate_for_error(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    text.chars().take(max_chars).collect::<String>() + "..."
-}
-
 fn plugin_manual() -> PluginManual {
     PluginManual {
         plugin_name: PLUGIN_NAME.to_owned(),
@@ -476,11 +450,11 @@ fn plugin_manual() -> PluginManual {
                 summary: "Single prompt generation via Ollama /api/generate.".to_owned(),
                 usage: "ask --model <MODEL> --prompt <TEXT> [--system <TEXT>] [--base-url <URL>] [--timeout-secs <SECONDS>]".to_owned(),
                 examples: vec![
-                    manual_example(
+                    ManualExample::new(
                         "Minimal prompt",
                         &["ask", "--model", "llama3.2", "--prompt", "Summarize Rust ownership in 3 bullets"],
                     ),
-                    manual_example(
+                    ManualExample::new(
                         "Prompt with system instruction",
                         &[
                             "ask",
@@ -499,7 +473,7 @@ fn plugin_manual() -> PluginManual {
                 summary: "Single message chat completion via Ollama /api/chat.".to_owned(),
                 usage: "chat --model <MODEL> --message <TEXT> [--system <TEXT>] [--base-url <URL>] [--timeout-secs <SECONDS>]".to_owned(),
                 examples: vec![
-                    manual_example(
+                    ManualExample::new(
                         "One-shot chat message",
                         &[
                             "chat",
@@ -509,7 +483,7 @@ fn plugin_manual() -> PluginManual {
                             "Generate test names for file parser edge cases",
                         ],
                     ),
-                    manual_example(
+                    ManualExample::new(
                         "Chat with explicit base URL",
                         &[
                             "chat",
@@ -529,13 +503,6 @@ fn plugin_manual() -> PluginManual {
             "Use global --json for structured machine-readable output.".to_owned(),
             "Plugin never streams responses; it waits for final message.".to_owned(),
         ],
-    }
-}
-
-fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
-    ManualExample {
-        description: description.to_owned(),
-        argv: argv.iter().map(|item| (*item).to_owned()).collect(),
     }
 }
 

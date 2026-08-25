@@ -7,7 +7,7 @@ use std::{
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::credentials;
+use ah_plugin_sdk::{credentials, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
@@ -928,7 +928,7 @@ fn execute_repo(context: &GithubContext, globals: &GlobalOptionsWire) -> Invocat
         private,
     };
 
-    render_success(
+    render::render_success(
         globals,
         &output,
         format!(
@@ -957,7 +957,7 @@ fn execute_issues(
         }
     };
     let text = render_issues_text(&issues, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &IssuesOutput {
             command: "github.issues",
@@ -986,7 +986,7 @@ fn execute_issue(
                 Ok(value) => value,
                 Err(error) => return error,
             };
-            render_success(
+            render::render_success(
                 globals,
                 &IssueOutput {
                     command: "github.issue.view",
@@ -1031,7 +1031,7 @@ fn create_issue(
             Ok(value) => value,
             Err(error) => return error,
         };
-    render_success(
+    render::render_success(
         globals,
         &IssueOutput {
             command: "github.issue.create",
@@ -1086,7 +1086,7 @@ fn update_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueOutput {
             command: "github.issue.update",
@@ -1124,7 +1124,7 @@ fn close_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueOutput {
             command: "github.issue.close",
@@ -1148,7 +1148,7 @@ fn comment_issue(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueCommentOutput {
             command: "github.issue.comment",
@@ -1175,7 +1175,7 @@ fn issue_comments(
         Ok(value) => value,
         Err(error) => return error,
     };
-    render_success(
+    render::render_success(
         globals,
         &IssueCommentsOutput {
             command: "github.issue.comments",
@@ -1200,7 +1200,7 @@ fn execute_release(
                 Err(error) => return error,
             };
             let text = render_release_text(&release, TextFormatter::stdout());
-            render_success(
+            render::render_success(
                 globals,
                 &ReleaseOutput {
                     command: "github.release.get",
@@ -1217,7 +1217,7 @@ fn execute_release(
             };
             let assets = release.assets;
             let text = render_assets_text(&assets, TextFormatter::stdout());
-            render_success(
+            render::render_success(
                 globals,
                 &ReleaseAssetsOutput {
                     command: "github.release.assets",
@@ -1243,7 +1243,7 @@ fn execute_workflows(context: &GithubContext, globals: &GlobalOptionsWire) -> In
         Err(error) => return error,
     };
     let text = render_workflows_text(&workflows, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &WorkflowsOutput {
             command: "github.workflows",
@@ -1295,7 +1295,7 @@ fn execute_runs(
         Err(error) => return error,
     };
     let text = render_runs_text(&runs, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &RunsOutput {
             command: "github.runs",
@@ -1321,7 +1321,7 @@ fn execute_run(
                 Err(error) => return error,
             };
             let text = render_runs_text(std::slice::from_ref(&run), TextFormatter::stdout());
-            render_success(
+            render::render_success(
                 globals,
                 &RunOutput {
                     command: "github.run.get",
@@ -1393,7 +1393,7 @@ fn create_release(
         Err(error) => return error,
     };
     let text = render_release_text(&release, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &ReleaseOutput {
             command: "github.release.create",
@@ -1435,7 +1435,7 @@ fn dispatch_workflow(
         formatter.paint(TextStyle::Muted, "on"),
         formatter.paint(TextStyle::Key, &args.r#ref)
     );
-    render_success(
+    render::render_success(
         globals,
         &WorkflowDispatchOutput {
             command: "github.workflow.run",
@@ -1475,7 +1475,7 @@ fn wait_run(
             }
             let elapsed_secs = start.elapsed().as_secs();
             let text = render_runs_text(std::slice::from_ref(&run), TextFormatter::stdout());
-            return render_success(
+            return render::render_success(
                 globals,
                 &WaitRunOutput {
                     command: "github.run.wait",
@@ -1522,7 +1522,7 @@ fn run_jobs(
         Err(error) => return error,
     };
     let text = render_jobs_text(&jobs, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &JobsOutput {
             command: "github.run.jobs",
@@ -1567,7 +1567,7 @@ fn run_logs(
         .collect::<Vec<_>>()
         .join("\n")
         + if matches.is_empty() { "" } else { "\n" };
-    render_success(
+    render::render_success(
         globals,
         &LogsOutput {
             command: if warnings_only {
@@ -1600,7 +1600,7 @@ fn run_artifacts(
         Err(error) => return error,
     };
     let text = render_artifacts_text(&artifacts, TextFormatter::stdout());
-    render_success(
+    render::render_success(
         globals,
         &ArtifactsOutput {
             command: "github.run.artifacts",
@@ -1983,7 +1983,7 @@ fn github_response(
             "GITHUB_API_FAILED",
             format!(
                 "GitHub returned HTTP {status} for '{url}': {}",
-                truncate_for_error(&body, 500)
+                render::truncate_for_error(&body, 500)
             ),
         ));
     }
@@ -2065,7 +2065,7 @@ fn download_run_logs(
             let Ok(line) = std::str::from_utf8(&line_bytes) else {
                 continue;
             };
-            let text = strip_ansi_sequences(line);
+            let text = render::strip_ansi_sequences(line);
             let selected = if warnings_only {
                 is_warning_like(&text)
             } else if let Some(needle) = &grep_lower {
@@ -2187,27 +2187,6 @@ fn is_warning_like(line: &str) -> bool {
         || lower.contains("will be removed")
 }
 
-fn render_success<T: Serialize>(
-    globals: &GlobalOptionsWire,
-    output: &T,
-    text_output: String,
-) -> InvocationResponse {
-    if globals.quiet {
-        return InvocationResponse::ok(None);
-    }
-    if globals.json {
-        match serde_json::to_string_pretty(output) {
-            Ok(payload) => InvocationResponse::ok(Some(payload)),
-            Err(error) => InvocationResponse::error(
-                "JSON_SERIALIZATION_FAILED",
-                format!("failed to serialize plugin output: {error}"),
-            ),
-        }
-    } else {
-        InvocationResponse::ok(Some(text_output))
-    }
-}
-
 fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> String {
     if issues.is_empty() {
         return String::new();
@@ -2220,7 +2199,7 @@ fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> Str
                 formatter.paint(TextStyle::Key, issue.number),
                 formatter.paint(issue_state_style(&issue.state), &issue.state),
                 issue.title,
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     issue.html_url.as_deref().unwrap_or("")
@@ -2272,7 +2251,7 @@ fn render_release_text(release: &ReleaseResponse, formatter: TextFormatter) -> S
         formatter.paint(bool_warning_style(release.draft), release.draft),
         formatter.paint(bool_warning_style(release.prerelease), release.prerelease),
         formatter.paint(TextStyle::Muted, release.assets.len()),
-        paint_if_present(
+        render::paint_if_present(
             formatter,
             TextStyle::Key,
             release.html_url.as_deref().unwrap_or("")
@@ -2291,7 +2270,7 @@ fn render_assets_text(assets: &[ReleaseAsset], formatter: TextFormatter) -> Stri
                 "{} {} {}",
                 formatter.paint(TextStyle::Key, &asset.name),
                 formatter.paint(TextStyle::Muted, asset.size),
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     asset.browser_download_url.as_deref().unwrap_or("")
@@ -2336,7 +2315,7 @@ fn render_runs_text(runs: &[WorkflowRunResponse], formatter: TextFormatter) -> S
                 formatter.paint(TextStyle::Muted, &run.event),
                 formatter.paint(execution_status_style(&run.status), &run.status),
                 formatter.paint(conclusion_style(conclusion), conclusion),
-                paint_if_present(
+                render::paint_if_present(
                     formatter,
                     TextStyle::Key,
                     run.html_url.as_deref().unwrap_or("")
@@ -2437,62 +2416,6 @@ fn bool_warning_style(value: bool) -> TextStyle {
     }
 }
 
-fn paint_if_present(formatter: TextFormatter, style: TextStyle, value: &str) -> String {
-    if value.is_empty() {
-        String::new()
-    } else {
-        formatter.paint(style, value)
-    }
-}
-
-fn truncate_for_error(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    text.chars().take(max_chars).collect::<String>() + "..."
-}
-
-fn strip_ansi_sequences(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\u{1b}' {
-            output.push(ch);
-            continue;
-        }
-        match chars.peek() {
-            Some(&'[') => {
-                chars.next();
-                for next in chars.by_ref() {
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            Some(&']') => {
-                chars.next();
-                loop {
-                    match chars.next() {
-                        None | Some('\x07') => break,
-                        Some('\u{1b}') => {
-                            if chars.peek() == Some(&'\\') {
-                                chars.next();
-                            }
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Some(_) => {
-                chars.next();
-            }
-            None => {}
-        }
-    }
-    output
-}
-
 fn plugin_manual() -> PluginManual {
     PluginManual {
         plugin_name: PLUGIN_NAME.to_owned(),
@@ -2503,67 +2426,67 @@ fn plugin_manual() -> PluginManual {
                 name: "repo".to_owned(),
                 summary: "Detect GitHub repository context.".to_owned(),
                 usage: "repo [--repo OWNER/REPO] [--remote NAME] [--api-url URL] [--token TOKEN] [--use-git-credential[=true|false]]".to_owned(),
-                examples: vec![manual_example("Inspect current GitHub repository", &["repo"])],
+                examples: vec![ManualExample::new("Inspect current GitHub repository", &["repo"])],
             },
             ManualCommand {
                 name: "issues".to_owned(),
                 summary: "List GitHub issues.".to_owned(),
                 usage: "issues [--state open|closed|all] [--label LABEL ...] [--assignee USER] [--author USER] [--since DATE] [--search TEXT]".to_owned(),
-                examples: vec![manual_example("List open bugs", &["issues", "--label", "bug"])],
+                examples: vec![ManualExample::new("List open bugs", &["issues", "--label", "bug"])],
             },
             ManualCommand {
                 name: "issue view".to_owned(),
                 summary: "View issue metadata.".to_owned(),
                 usage: "issue view <number>".to_owned(),
-                examples: vec![manual_example("Inspect issue", &["issue", "view", "42"])],
+                examples: vec![ManualExample::new("Inspect issue", &["issue", "view", "42"])],
             },
             ManualCommand {
                 name: "issue create".to_owned(),
                 summary: "Create an issue.".to_owned(),
                 usage: "issue create --title TITLE [--body TEXT|--body-file PATH] [--label LABEL ...] [--assignee USER ...]".to_owned(),
-                examples: vec![manual_example("Create bug issue", &["issue", "create", "--title", "Fix build", "--body", "Build fails", "--label", "bug"])],
+                examples: vec![ManualExample::new("Create bug issue", &["issue", "create", "--title", "Fix build", "--body", "Build fails", "--label", "bug"])],
             },
             ManualCommand {
                 name: "issue update".to_owned(),
                 summary: "Update issue fields.".to_owned(),
                 usage: "issue update <number> [--title TITLE] [--body TEXT|--body-file PATH] [--state open|closed] [--label LABEL ...] [--assignee USER ...]".to_owned(),
-                examples: vec![manual_example("Close issue via update", &["issue", "update", "42", "--state", "closed"])],
+                examples: vec![ManualExample::new("Close issue via update", &["issue", "update", "42", "--state", "closed"])],
             },
             ManualCommand {
                 name: "issue close".to_owned(),
                 summary: "Close an issue, optionally after adding a comment.".to_owned(),
                 usage: "issue close <number> [--comment TEXT|--comment-file PATH]".to_owned(),
-                examples: vec![manual_example("Close with comment", &["issue", "close", "42", "--comment", "Fixed in main"])],
+                examples: vec![ManualExample::new("Close with comment", &["issue", "close", "42", "--comment", "Fixed in main"])],
             },
             ManualCommand {
                 name: "issue comment".to_owned(),
                 summary: "Add an issue comment.".to_owned(),
                 usage: "issue comment <number> --body TEXT|--body-file PATH".to_owned(),
-                examples: vec![manual_example("Comment on issue", &["issue", "comment", "42", "--body", "I can reproduce this"])],
+                examples: vec![ManualExample::new("Comment on issue", &["issue", "comment", "42", "--body", "I can reproduce this"])],
             },
             ManualCommand {
                 name: "issue comments".to_owned(),
                 summary: "List issue comments.".to_owned(),
                 usage: "issue comments <number>".to_owned(),
-                examples: vec![manual_example("List comments", &["issue", "comments", "42"])],
+                examples: vec![ManualExample::new("List comments", &["issue", "comments", "42"])],
             },
             ManualCommand {
                 name: "release get".to_owned(),
                 summary: "Get release metadata by tag.".to_owned(),
                 usage: "release get <tag> [--repo OWNER/REPO]".to_owned(),
-                examples: vec![manual_example("Inspect release v0.3.0", &["release", "get", "v0.3.0"])],
+                examples: vec![ManualExample::new("Inspect release v0.3.0", &["release", "get", "v0.3.0"])],
             },
             ManualCommand {
                 name: "release assets".to_owned(),
                 summary: "List release assets by tag.".to_owned(),
                 usage: "release assets <tag> [--repo OWNER/REPO]".to_owned(),
-                examples: vec![manual_example("List release assets", &["release", "assets", "v0.3.0"])],
+                examples: vec![ManualExample::new("List release assets", &["release", "assets", "v0.3.0"])],
             },
             ManualCommand {
                 name: "release create".to_owned(),
                 summary: "Create a GitHub Release for a tag.".to_owned(),
                 usage: "release create <tag> [--title TITLE] [--notes TEXT|--notes-file PATH] [--target REF] [--draft] [--prerelease]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Create release from notes file",
                     &["release", "create", "v0.3.1", "--title", "v0.3.1", "--notes-file", "RELEASE_NOTES.md"],
                 )],
@@ -2572,13 +2495,13 @@ fn plugin_manual() -> PluginManual {
                 name: "workflows".to_owned(),
                 summary: "List GitHub Actions workflows.".to_owned(),
                 usage: "workflows [--repo OWNER/REPO]".to_owned(),
-                examples: vec![manual_example("List workflows", &["workflows"])],
+                examples: vec![ManualExample::new("List workflows", &["workflows"])],
             },
             ManualCommand {
                 name: "workflow run".to_owned(),
                 summary: "Dispatch a workflow by id or file name.".to_owned(),
                 usage: "workflow run <workflow> --ref <ref> [--input KEY=VALUE ...]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Run release workflow on main",
                     &["workflow", "run", "release.yml", "--ref", "main"],
                 )],
@@ -2587,7 +2510,7 @@ fn plugin_manual() -> PluginManual {
                 name: "runs".to_owned(),
                 summary: "List workflow runs.".to_owned(),
                 usage: "runs [--workflow WORKFLOW] [--branch BRANCH]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "List release workflow runs",
                     &["runs", "--workflow", "release.yml", "--branch", "main"],
                 )],
@@ -2596,25 +2519,25 @@ fn plugin_manual() -> PluginManual {
                 name: "run get".to_owned(),
                 summary: "Get workflow run metadata.".to_owned(),
                 usage: "run get <run-id>".to_owned(),
-                examples: vec![manual_example("Inspect one run", &["run", "get", "25451983278"])],
+                examples: vec![ManualExample::new("Inspect one run", &["run", "get", "25451983278"])],
             },
             ManualCommand {
                 name: "run wait".to_owned(),
                 summary: "Wait for workflow run completion.".to_owned(),
                 usage: "run wait <run-id> [--interval-secs SECONDS] [--timeout-secs SECONDS] [--fail-on-failure]".to_owned(),
-                examples: vec![manual_example("Wait for one run", &["run", "wait", "25451983278", "--fail-on-failure"])],
+                examples: vec![ManualExample::new("Wait for one run", &["run", "wait", "25451983278", "--fail-on-failure"])],
             },
             ManualCommand {
                 name: "run jobs".to_owned(),
                 summary: "List jobs for a workflow run.".to_owned(),
                 usage: "run jobs <run-id>".to_owned(),
-                examples: vec![manual_example("Inspect run jobs", &["run", "jobs", "25451983278"])],
+                examples: vec![ManualExample::new("Inspect run jobs", &["run", "jobs", "25451983278"])],
             },
             ManualCommand {
                 name: "run logs".to_owned(),
                 summary: "Search workflow run logs.".to_owned(),
                 usage: "run logs <run-id> [--grep TEXT] [--max-body-bytes BYTES] [--max-expanded-bytes BYTES]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Search logs for Node warning",
                     &["run", "logs", "25451983278", "--grep", "Node.js 20 actions are deprecated"],
                 )],
@@ -2623,13 +2546,13 @@ fn plugin_manual() -> PluginManual {
                 name: "run warnings".to_owned(),
                 summary: "Extract warning-like lines from workflow run logs.".to_owned(),
                 usage: "run warnings <run-id> [--max-body-bytes BYTES] [--max-expanded-bytes BYTES]".to_owned(),
-                examples: vec![manual_example("List run warnings", &["run", "warnings", "25451983278"])],
+                examples: vec![ManualExample::new("List run warnings", &["run", "warnings", "25451983278"])],
             },
             ManualCommand {
                 name: "run artifacts".to_owned(),
                 summary: "List workflow run artifacts.".to_owned(),
                 usage: "run artifacts <run-id>".to_owned(),
-                examples: vec![manual_example("List run artifacts", &["run", "artifacts", "25451983278"])],
+                examples: vec![ManualExample::new("List run artifacts", &["run", "artifacts", "25451983278"])],
             },
         ],
         notes: vec![
@@ -2641,13 +2564,6 @@ fn plugin_manual() -> PluginManual {
             "Use global --json for stable machine-readable output and --limit to cap runs/log matches.".to_owned(),
             "Run logs default to an 8 MiB archive budget and 32 MiB expanded budget; override with command-local max byte flags.".to_owned(),
         ],
-    }
-}
-
-fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
-    ManualExample {
-        description: description.to_owned(),
-        argv: argv.iter().map(|item| (*item).to_owned()).collect(),
     }
 }
 
@@ -2970,7 +2886,7 @@ mod tests {
     #[test]
     fn strips_ansi_sequences() {
         assert_eq!(
-            strip_ansi_sequences("\u{1b}[1mDownloaded\u{1b}[0m"),
+            render::strip_ansi_sequences("\u{1b}[1mDownloaded\u{1b}[0m"),
             "Downloaded"
         );
     }

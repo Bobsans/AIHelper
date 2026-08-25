@@ -197,11 +197,11 @@ fn file_manual() -> PluginManual {
                     "read <path> [-n] [--from N] [--to N] [--max-bytes BYTES] [--follow-symlinks]"
                         .to_owned(),
                 examples: vec![
-                    manual_example(
+                    ManualExample::new(
                         "Read first 120 lines with source numbers",
                         &["read", "src/main.rs", "-n", "--from", "1", "--to", "120"],
                     ),
-                    manual_example(
+                    ManualExample::new(
                         "Read with explicit size/symlink policy",
                         &[
                             "read",
@@ -218,7 +218,7 @@ fn file_manual() -> PluginManual {
                 summary: "Return first N lines.".to_owned(),
                 usage: "head <path> [--lines N] [-n] [--max-bytes BYTES] [--follow-symlinks]"
                     .to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Preview first 40 lines",
                     &["head", "src/lib.rs", "--lines", "40", "-n"],
                 )],
@@ -228,7 +228,7 @@ fn file_manual() -> PluginManual {
                 summary: "Return last N lines.".to_owned(),
                 usage: "tail <path> [--lines N] [-n] [--max-bytes BYTES] [--follow-symlinks]"
                     .to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Inspect file tail",
                     &["tail", "CHANGELOG.md", "--lines", "30"],
                 )],
@@ -237,13 +237,16 @@ fn file_manual() -> PluginManual {
                 name: "stat".to_owned(),
                 summary: "Show file metadata.".to_owned(),
                 usage: "stat <path>".to_owned(),
-                examples: vec![manual_example("Inspect metadata", &["stat", "Cargo.toml"])],
+                examples: vec![ManualExample::new(
+                    "Inspect metadata",
+                    &["stat", "Cargo.toml"],
+                )],
             },
             ManualCommand {
                 name: "tree".to_owned(),
                 summary: "Render directory tree.".to_owned(),
                 usage: "tree [path] [--depth N] [--follow-symlinks]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Show compact source tree",
                     &["tree", "src", "--depth", "2"],
                 )],
@@ -267,11 +270,11 @@ fn search_manual() -> PluginManual {
                 summary: "Search text in files (literal by default, regex with --regex).".to_owned(),
                 usage: "text <pattern> [path...] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks]".to_owned(),
                 examples: vec![
-                    manual_example(
+                    ManualExample::new(
                         "Literal search in Rust files",
                         &["text", "PluginManager", "src", "--glob", "*.rs", "--context", "1"],
                     ),
-                    manual_example(
+                    ManualExample::new(
                         "Regex search for function declarations",
                         &["text", "fn\\s+execute", "src", "--regex", "--context", "2"],
                     ),
@@ -281,7 +284,7 @@ fn search_manual() -> PluginManual {
                 name: "files".to_owned(),
                 summary: "Find file paths containing substring.".to_owned(),
                 usage: "files <query> [path...] [--follow-symlinks]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Find docs related to plugins",
                     &["files", "plugin", "docs"],
                 )],
@@ -304,7 +307,7 @@ fn ctx_manual() -> PluginManual {
                 name: "pack".to_owned(),
                 summary: "Create compact digest for files/directories.".to_owned(),
                 usage: "pack <path...> [--preset <summary|review|debug>] [--max-bytes BYTES] [--follow-symlinks]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Pack codebase context for review",
                     &["pack", "src", "docs", "--preset", "review"],
                 )],
@@ -314,7 +317,7 @@ fn ctx_manual() -> PluginManual {
                 summary:
                     "Extract code, config, and document symbols from file or directory.".to_owned(),
                 usage: "symbols <path> [--preset <summary|review|debug>] [--max-bytes BYTES] [--follow-symlinks]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Extract symbols from commands module",
                     &["symbols", "src/commands", "--preset", "summary"],
                 )],
@@ -323,7 +326,7 @@ fn ctx_manual() -> PluginManual {
                 name: "changed".to_owned(),
                 summary: "Show changed files from git status.".to_owned(),
                 usage: "changed".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Collect changed paths before review",
                     &["changed"],
                 )],
@@ -347,7 +350,7 @@ fn git_manual() -> PluginManual {
                 name: "status".to_owned(),
                 summary: "Show compact repository status summary.".to_owned(),
                 usage: "status".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Inspect branch, upstream, counts, commit, and tag",
                     &["status"],
                 )],
@@ -357,15 +360,15 @@ fn git_manual() -> PluginManual {
                 summary: "List tags newest-first.".to_owned(),
                 usage: "tags [--latest]".to_owned(),
                 examples: vec![
-                    manual_example("List tags", &["tags"]),
-                    manual_example("Show latest tag only", &["tags", "--latest"]),
+                    ManualExample::new("List tags", &["tags"]),
+                    ManualExample::new("Show latest tag only", &["tags", "--latest"]),
                 ],
             },
             ManualCommand {
                 name: "tag create".to_owned(),
                 summary: "Create a lightweight or annotated git tag.".to_owned(),
                 usage: "tag create <tag> [--message TEXT] [--ref REF]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Create an annotated release tag",
                     &["tag", "create", "v1.0.0", "--message", "v1.0.0"],
                 )],
@@ -374,19 +377,19 @@ fn git_manual() -> PluginManual {
                 name: "remotes".to_owned(),
                 summary: "List configured git remotes with provider hint.".to_owned(),
                 usage: "remotes".to_owned(),
-                examples: vec![manual_example("Inspect remotes", &["remotes"])],
+                examples: vec![ManualExample::new("Inspect remotes", &["remotes"])],
             },
             ManualCommand {
                 name: "changed".to_owned(),
                 summary: "Summarize working tree changes.".to_owned(),
                 usage: "changed".to_owned(),
-                examples: vec![manual_example("List changed files", &["changed"])],
+                examples: vec![ManualExample::new("List changed files", &["changed"])],
             },
             ManualCommand {
                 name: "diff".to_owned(),
                 summary: "Show local diff (optionally filtered by path).".to_owned(),
                 usage: "diff [--path <path>]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Review diff for one file",
                     &["diff", "--path", "src/cli.rs"],
                 )],
@@ -395,7 +398,7 @@ fn git_manual() -> PluginManual {
                 name: "blame".to_owned(),
                 summary: "Show blame data for file or single line.".to_owned(),
                 usage: "blame <path> [--line N]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Inspect ownership of a specific line",
                     &["blame", "src/commands/search.rs", "--line", "120"],
                 )],
@@ -404,7 +407,7 @@ fn git_manual() -> PluginManual {
                 name: "commit-info".to_owned(),
                 summary: "Show commit metadata, touched files, and line stats.".to_owned(),
                 usage: "commit-info [ref]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Inspect the latest commit",
                     &["commit-info", "HEAD"],
                 )],
@@ -426,14 +429,14 @@ fn project_manual() -> PluginManual {
                 summary: "Detect ecosystems, tools, roles, grouped files, versions, and commands."
                     .to_owned(),
                 usage: "detect [path]".to_owned(),
-                examples: vec![manual_example("Detect current project", &["detect"])],
+                examples: vec![ManualExample::new("Detect current project", &["detect"])],
             },
             ManualCommand {
                 name: "commands".to_owned(),
                 summary: "Suggest likely install, test, build, release, and infra commands."
                     .to_owned(),
                 usage: "commands [path]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Suggest commands for current project",
                     &["commands"],
                 )],
@@ -442,7 +445,7 @@ fn project_manual() -> PluginManual {
                 name: "version".to_owned(),
                 summary: "Detect project version from common manifest files.".to_owned(),
                 usage: "version [path]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Detect current project version",
                     &["version"],
                 )],
@@ -471,8 +474,8 @@ fn run_manual() -> PluginManual {
                 "check [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--tail-lines N] <command...>"
                     .to_owned(),
             examples: vec![
-                manual_example("Run cargo tests", &["check", "cargo", "test"]),
-                manual_example(
+                ManualExample::new("Run cargo tests", &["check", "cargo", "test"]),
+                ManualExample::new(
                     "Run command with timeout",
                     &["check", "--timeout-secs", "60", "cargo", "build"],
                 ),
@@ -495,7 +498,7 @@ fn task_manual() -> PluginManual {
                 name: "save".to_owned(),
                 summary: "Create or update task recipe.".to_owned(),
                 usage: "save <name> <command>".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Save quick status workflow",
                     &["save", "print-working-dir", "pwd"],
                 )],
@@ -504,7 +507,7 @@ fn task_manual() -> PluginManual {
                 name: "run".to_owned(),
                 summary: "Run saved task by name.".to_owned(),
                 usage: "run <name> [--timeout-secs SECONDS] [--max-output-bytes BYTES]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Execute saved workflow",
                     &["run", "print-working-dir"],
                 )],
@@ -513,7 +516,7 @@ fn task_manual() -> PluginManual {
                 name: "list".to_owned(),
                 summary: "List available task recipes.".to_owned(),
                 usage: "list".to_owned(),
-                examples: vec![manual_example("Inspect available recipes", &["list"])],
+                examples: vec![ManualExample::new("Inspect available recipes", &["list"])],
             },
         ],
         notes: vec!["Task commands execute through system shell.".to_owned()],
@@ -530,7 +533,7 @@ fn http_manual() -> PluginManual {
                 name: "request".to_owned(),
                 summary: "Send HTTP request with explicit method.".to_owned(),
                 usage: "request --method <METHOD> <url> [--header \"K: V\"] [--query \"KEY=VALUE\"] [--timeout-secs N] [--bearer TOKEN] [--basic USER:PASS] [--json <JSON>|--json-file <PATH>] [--body <TEXT>|--body-file <PATH>] [--expect-status <code|range>] [--expect-header \"K: V\"] [--expect-body-contains <TEXT>] [--expect-json <PATH:OP[:VALUE]>]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Basic request with status check",
                     &["request", "--method", "GET", "https://example.com/health", "--expect-status", "200"],
                 )],
@@ -539,7 +542,7 @@ fn http_manual() -> PluginManual {
                 name: "get".to_owned(),
                 summary: "Shortcut for GET request.".to_owned(),
                 usage: "get <url> [request/expect flags]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "GET JSON endpoint",
                     &["get", "https://example.com/api/version", "--expect-status", "2xx"],
                 )],
@@ -548,7 +551,7 @@ fn http_manual() -> PluginManual {
                 name: "post".to_owned(),
                 summary: "Shortcut for POST request.".to_owned(),
                 usage: "post <url> [request/expect flags]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "POST JSON payload",
                     &["post", "https://example.com/api/items", "--json", "{\"name\":\"demo\"}", "--expect-status", "201"],
                 )],
@@ -557,7 +560,7 @@ fn http_manual() -> PluginManual {
                 name: "replay".to_owned(),
                 summary: "Replay supported curl command form.".to_owned(),
                 usage: "replay --curl \"<curl ...>\" [request/expect flags]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Replay existing curl command",
                     &[
                         "replay",
@@ -570,7 +573,7 @@ fn http_manual() -> PluginManual {
                 name: "assert".to_owned(),
                 summary: "Run API assertions from YAML/JSON spec.".to_owned(),
                 usage: "assert <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Run assertions with machine output",
                     &["assert", "api/health.yaml", "--report", "json"],
                 )],
@@ -579,7 +582,7 @@ fn http_manual() -> PluginManual {
                 name: "run".to_owned(),
                 summary: "Alias for assert.".to_owned(),
                 usage: "run <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]".to_owned(),
-                examples: vec![manual_example(
+                examples: vec![ManualExample::new(
                     "Alias usage",
                     &["run", "api/health.yaml", "--fail-fast"],
                 )],
@@ -590,13 +593,6 @@ fn http_manual() -> PluginManual {
             "Global --json maps assert/run report format to json.".to_owned(),
             "Retries and atomic cross-case extract variables are supported.".to_owned(),
         ],
-    }
-}
-
-fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
-    ManualExample {
-        description: description.to_owned(),
-        argv: argv.iter().map(|value| (*value).to_owned()).collect(),
     }
 }
 

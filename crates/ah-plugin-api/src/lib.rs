@@ -790,6 +790,17 @@ pub struct ManualExample {
     pub argv: Vec<String>,
 }
 
+impl ManualExample {
+    /// Every manual entry builds its examples the same way, from a description
+    /// and a borrowed argv.
+    pub fn new(description: &str, argv: &[&str]) -> Self {
+        Self {
+            description: description.to_owned(),
+            argv: argv.iter().map(|item| (*item).to_owned()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ManualCommand {

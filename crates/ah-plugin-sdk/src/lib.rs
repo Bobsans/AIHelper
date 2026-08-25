@@ -7,3 +7,4 @@
 //! still loads.
 
 pub mod credentials;
+pub mod render;
