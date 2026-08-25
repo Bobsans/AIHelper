@@ -553,7 +553,7 @@ struct PluginListEntry {
     mcp_omission_reason: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 struct PluginStateMutationOutput {
     command: &'static str,
     domain: Option<String>,

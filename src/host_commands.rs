@@ -4,13 +4,13 @@ use ah_plugin_api::{
     AH_PLUGIN_ABI_VERSION, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
     CommandError, CommandExample, InvocationRequest, InvocationResponse, PluginCompatibility,
     PluginManual, PluginMetadata, Reversibility, RiskLevel, TypedInvocationRequest,
-    TypedInvocationResponse, plugin_capabilities,
+    TypedInvocationResponse, plugin_capabilities, schema::output_schema_for,
 };
 use ah_runtime::{BuiltinPlugin, PluginManager};
 use serde_json::{Value, json};
 
 use crate::{
-    ai,
+    PluginStateMutationOutput, ai,
     cli::PluginStateFilter,
     error::AppError,
     plugin_settings::PluginSettings,
@@ -456,6 +456,9 @@ fn secret_kind_names() -> Vec<&'static str> {
     SecretKind::ALL.iter().map(|kind| kind.as_str()).collect()
 }
 
+/// The output schema is hand-written: the payload is a `Vec<SecretMetadata>`,
+/// and that type does not derive `JsonSchema`. Both `enum` lists already come
+/// from `SecretKind` rather than being restated.
 fn secrets_list_descriptor() -> CommandDescriptor {
     CommandDescriptor::new(
         "secrets.list",
@@ -552,7 +555,7 @@ fn plugins_reset_descriptor() -> CommandDescriptor {
             },
             "additionalProperties": false
         }),
-        plugin_mutation_output_schema(),
+        output_schema_for::<PluginStateMutationOutput>("plugins.reset"),
         CommandEffects::new(
             false,
             false,
@@ -591,7 +594,7 @@ fn plugin_domain_mutation_descriptor(
             "required": ["domain"],
             "additionalProperties": false
         }),
-        plugin_mutation_output_schema(),
+        output_schema_for::<PluginStateMutationOutput>(id),
         CommandEffects::new(
             false,
             false,
@@ -608,30 +611,10 @@ fn plugin_domain_mutation_descriptor(
     )
 }
 
-fn plugin_mutation_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string"},
-            "domain": {"type": ["string", "null"]},
-            "changed": {"type": "boolean"},
-            "config_path": {"type": "string"},
-            "disabled_domains": {
-                "type": "array",
-                "items": {"type": "string"}
-            }
-        },
-        "required": [
-            "command",
-            "domain",
-            "changed",
-            "config_path",
-            "disabled_domains"
-        ],
-        "additionalProperties": false
-    })
-}
-
+/// Hand-written because `PluginListEntry::required_tools` is a
+/// `Vec<ah_plugin_api::RequiredTool>`, and that type does not derive
+/// `JsonSchema`; and because `mcp_omission_reason` is `skip_serializing_if`,
+/// which `output_schema_for` cannot express - it requires every property.
 fn plugin_list_entry_schema() -> Value {
     json!({
         "type": "object",
@@ -675,6 +658,9 @@ fn plugin_list_entry_schema() -> Value {
     })
 }
 
+/// Hand-written because `ai::typed_info_value` assembles the payload from
+/// `ah_plugin_api::PluginManual`, `ManualCommand` and `ManualExample`, none of
+/// which derive `JsonSchema`.
 fn ai_info_output_schema() -> Value {
     json!({
         "type": "object",

@@ -4017,6 +4017,7 @@
             "type": "boolean"
           },
           "command": {
+            "const": "plugins.disable",
             "type": "string"
           },
           "config_path": {
@@ -4036,11 +4037,11 @@
           }
         },
         "required": [
-          "command",
-          "domain",
           "changed",
+          "command",
           "config_path",
-          "disabled_domains"
+          "disabled_domains",
+          "domain"
         ],
         "type": "object"
       },
@@ -4089,6 +4090,7 @@
             "type": "boolean"
           },
           "command": {
+            "const": "plugins.enable",
             "type": "string"
           },
           "config_path": {
@@ -4108,11 +4110,11 @@
           }
         },
         "required": [
-          "command",
-          "domain",
           "changed",
+          "command",
           "config_path",
-          "disabled_domains"
+          "disabled_domains",
+          "domain"
         ],
         "type": "object"
       },
@@ -4288,6 +4290,7 @@
             "type": "boolean"
           },
           "command": {
+            "const": "plugins.reset",
             "type": "string"
           },
           "config_path": {
@@ -4307,11 +4310,11 @@
           }
         },
         "required": [
-          "command",
-          "domain",
           "changed",
+          "command",
           "config_path",
-          "disabled_domains"
+          "disabled_domains",
+          "domain"
         ],
         "type": "object"
       },
