@@ -8,15 +8,18 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::output_schema_for,
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand};
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
 
 use crate::{cli::GlobalOptions, error::AppError};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const TASK_NAME_PATTERN: &str = "^[A-Za-z0-9._-]+$";
 
 #[derive(Debug, Args)]
 pub struct TaskArgs {
@@ -34,30 +37,60 @@ pub enum TaskCommand {
     List(ListArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SaveArgs {
+    /// Task name.
+    #[schemars(length(min = 1), regex(pattern = TASK_NAME_PATTERN))]
     pub name: String,
+    /// Shell command stored verbatim; it is not executed by this tool.
+    #[schemars(length(min = 1))]
     pub command: String,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunArgs {
+    /// Task name.
+    #[schemars(length(min = 1), regex(pattern = TASK_NAME_PATTERN))]
     pub name: String,
+    /// Process timeout capped by the MCP request deadline.
     #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_timeout_secs")]
+    #[schemars(default = "default_timeout_secs", range(min = 1))]
     pub timeout_secs: u64,
+    /// Maximum captured bytes per output stream.
     #[arg(long, default_value_t = DEFAULT_MAX_OUTPUT_BYTES, value_name = "BYTES")]
+    #[serde(default = "default_max_output_bytes")]
+    #[schemars(default = "default_max_output_bytes", range(min = 1))]
     pub max_output_bytes: usize,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
     #[arg(skip)]
+    #[serde(skip)]
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Args)]
+fn default_timeout_secs() -> u64 {
+    DEFAULT_TIMEOUT_SECS
+}
+
+fn default_max_output_bytes() -> usize {
+    DEFAULT_MAX_OUTPUT_BYTES
+}
+
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListArgs {
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
 }
 
@@ -198,37 +231,29 @@ fn cancellation_requests() -> &'static Mutex<HashSet<String>> {
 }
 
 fn typed_execute(request: &TypedInvocationRequest) -> Result<domain::TaskResult, AppError> {
-    let arguments = &request.arguments;
     let cwd = Some(PathBuf::from(&request.context.cwd));
     let command = match request.command.as_str() {
-        "task.save" => TaskCommand::Save(SaveArgs {
-            name: required_string(arguments, "name"),
-            command: required_string(arguments, "command"),
-            cwd,
-        }),
-        "task.run" => {
-            let timeout_secs = arguments
-                .get("timeout_secs")
-                .and_then(Value::as_u64)
-                .unwrap_or(DEFAULT_TIMEOUT_SECS)
-                .max(1);
-            TaskCommand::Run(RunArgs {
-                name: required_string(arguments, "name"),
-                timeout_secs,
-                max_output_bytes: arguments
-                    .get("max_output_bytes")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES),
-                cwd,
-                timeout_ms: Some(
-                    timeout_secs
-                        .saturating_mul(1_000)
-                        .min(request.context.remaining_timeout_ms.max(1)),
-                ),
-            })
+        "task.save" => {
+            let mut args: SaveArgs = decode(request)?;
+            args.cwd = cwd;
+            TaskCommand::Save(args)
         }
-        "task.list" => TaskCommand::List(ListArgs { cwd }),
+        "task.run" => {
+            let mut args: RunArgs = decode(request)?;
+            args.timeout_secs = args.timeout_secs.max(1);
+            args.cwd = cwd;
+            args.timeout_ms = Some(
+                args.timeout_secs
+                    .saturating_mul(1_000)
+                    .min(request.context.remaining_timeout_ms.max(1)),
+            );
+            TaskCommand::Run(args)
+        }
+        "task.list" => {
+            let mut args: ListArgs = decode(request)?;
+            args.cwd = cwd;
+            TaskCommand::List(args)
+        }
         _ => {
             return Err(AppError::invalid_argument(format!(
                 "unknown typed task command: {}",
@@ -239,12 +264,15 @@ fn typed_execute(request: &TypedInvocationRequest) -> Result<domain::TaskResult,
     domain::execute(TaskArgs { command }, request.context.limit)
 }
 
-fn required_string(arguments: &Value, name: &str) -> String {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .expect("validated task input contains required string")
-        .to_owned()
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
+    })
 }
 
 fn save_descriptor() -> CommandDescriptor {
@@ -252,19 +280,7 @@ fn save_descriptor() -> CommandDescriptor {
         "task.save",
         "Save task",
         "Create or replace a named shell command in context.cwd/.ah/tasks.json.",
-        json!({
-            "type": "object",
-            "properties": {
-                "name": task_name_schema(),
-                "command": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Shell command stored verbatim; it is not executed by this tool."
-                }
-            },
-            "required": ["name", "command"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<SaveArgs>(),
         output_schema_for::<domain::TaskSaveOutput>("task.save"),
         CommandEffects::new(
             false,
@@ -292,26 +308,7 @@ fn run_descriptor() -> CommandDescriptor {
         "task.run",
         "Run saved task",
         "Load a named task and execute its command through the platform shell.",
-        json!({
-            "type": "object",
-            "properties": {
-                "name": task_name_schema(),
-                "timeout_secs": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": DEFAULT_TIMEOUT_SECS,
-                    "description": "Process timeout capped by the MCP request deadline."
-                },
-                "max_output_bytes": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": DEFAULT_MAX_OUTPUT_BYTES,
-                    "description": "Maximum captured bytes per output stream."
-                }
-            },
-            "required": ["name"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<RunArgs>(),
         output_schema_for::<domain::TaskRunOutput>("task.run"),
         CommandEffects::new(
             false,
@@ -342,11 +339,7 @@ fn list_descriptor() -> CommandDescriptor {
         "task.list",
         "List saved tasks",
         "Read saved task definitions from context.cwd/.ah/tasks.json.",
-        json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
+        input_schema_for::<ListArgs>(),
         output_schema_for::<domain::TaskListOutput>("task.list"),
         CommandEffects::new(
             true,
@@ -362,15 +355,6 @@ fn list_descriptor() -> CommandDescriptor {
             Reversibility::Yes,
         ),
     )
-}
-
-fn task_name_schema() -> Value {
-    json!({
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9._-]+$",
-        "description": "Task name."
-    })
 }
 
 #[cfg(test)]

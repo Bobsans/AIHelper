@@ -8,16 +8,16 @@ cheaper rather than harder.
 
 **Phase 0 is complete.** What changed, and what it bought:
 
-| Item | Outcome |
-|---|---|
-| Golden snapshots | `tests/snapshots/` freezes the typed command catalog, the plugin manuals, the whole CLI help tree, and the error-code table. Generated in-process by `src/snapshots.rs`, so they need no terminal, no git repository and no plugin directory. Regenerate with `AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots`. |
-| `ah-redact` extracted | The redaction engine and the credential detectors moved out of `src/event_log.rs` and `crates/ah-mcp/src/server.rs` into one crate with 13 dedicated tests, including generated-secret leak properties and a hostile-input case. `event_log.rs`: 1 845 → 1 195 lines. |
-| Workspace dependency management | `[workspace.package]` and `[workspace.dependencies]` added. `sha2` drift resolved (0.10.9 → 0.11), removing the duplicate `sha2`/`digest`/`block-buffer` trees from `Cargo.lock`. |
-| Toolchain and MSRV | `rust-toolchain.toml` pins 1.97.1. `rust-version = "1.88"` is declared and **verified by building it** — the metadata-derived guess of 1.86 was wrong, because `jsonc-parser` uses let-chains. |
-| CI as a gate | clippy `-D warnings` on all three platforms, a macOS runner, an MSRV job, a release build, `cargo doc -D warnings`, and `cargo deny`. |
-| Clippy clean | 12 findings fixed, including an unset `truncate` on the vault lock file and two `MutexGuard`s held across await points. |
-| `ConfigSource` | Deleted. All five variants and all three accessors were dead code, and two variants had no producer at all. |
-| `transaction.rs` collision | Renamed to `ah-updater-core::plan` (the model) and `ah-update-helper::apply` (the execution), each with a module doc stating the split. |
+| Item                            | Outcome                                                                                                                                                                                                                                                                                                           |
+|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Golden snapshots                | `tests/snapshots/` freezes the typed command catalog, the plugin manuals, the whole CLI help tree, and the error-code table. Generated in-process by `src/snapshots.rs`, so they need no terminal, no git repository and no plugin directory. Regenerate with `AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots`. |
+| `ah-redact` extracted           | The redaction engine and the credential detectors moved out of `src/event_log.rs` and `crates/ah-mcp/src/server.rs` into one crate with 13 dedicated tests, including generated-secret leak properties and a hostile-input case. `event_log.rs`: 1 845 → 1 195 lines.                                             |
+| Workspace dependency management | `[workspace.package]` and `[workspace.dependencies]` added. `sha2` drift resolved (0.10.9 → 0.11), removing the duplicate `sha2`/`digest`/`block-buffer` trees from `Cargo.lock`.                                                                                                                                 |
+| Toolchain and MSRV              | `rust-toolchain.toml` pins 1.97.1. `rust-version = "1.88"` is declared and **verified by building it** — the metadata-derived guess of 1.86 was wrong, because `jsonc-parser` uses let-chains.                                                                                                                    |
+| CI as a gate                    | clippy `-D warnings` on all three platforms, a macOS runner, an MSRV job, a release build, `cargo doc -D warnings`, and `cargo deny`.                                                                                                                                                                             |
+| Clippy clean                    | 12 findings fixed, including an unset `truncate` on the vault lock file and two `MutexGuard`s held across await points.                                                                                                                                                                                           |
+| `ConfigSource`                  | Deleted. All five variants and all three accessors were dead code, and two variants had no producer at all.                                                                                                                                                                                                       |
+| `transaction.rs` collision      | Renamed to `ah-updater-core::plan` (the model) and `ah-update-helper::apply` (the execution), each with a module doc stating the split.                                                                                                                                                                           |
 
 Deliberately **not** done in phase 0:
 
@@ -42,14 +42,14 @@ being behavior-preserving. Every phase below assumes phase 0 is complete.
 
 No architectural change. Everything here is mechanical and independently valuable.
 
-| Work | Group | Why first |
-|---|---|---|
-| Golden snapshots: catalog, manuals, `--help`, text/JSON output, error codes | 08 | prerequisite for every later phase |
-| `[workspace.package]` + `[workspace.dependencies]`, unify `sha2`, `rust-toolchain.toml`, MSRV | 09 | one PR, removes duplicate dependency builds |
-| CI: clippy (allows retained), macOS, release build, `cargo deny`/`audit` | 09 | turns CI into a gate |
-| Delete or implement `ConfigSource::Flags`/`Project` | 03 | stops the code describing a system that does not exist |
-| Rename the two `transaction.rs` files | 07 | zero risk, immediate clarity |
-| Extract `ah-redact` with property tests | 04, 05, 08 | highest security value per line moved |
+| Work                                                                                          | Group      | Why first                                              |
+|-----------------------------------------------------------------------------------------------|------------|--------------------------------------------------------|
+| Golden snapshots: catalog, manuals, `--help`, text/JSON output, error codes                   | 08         | prerequisite for every later phase                     |
+| `[workspace.package]` + `[workspace.dependencies]`, unify `sha2`, `rust-toolchain.toml`, MSRV | 09         | one PR, removes duplicate dependency builds            |
+| CI: clippy (allows retained), macOS, release build, `cargo deny`/`audit`                      | 09         | turns CI into a gate                                   |
+| Delete or implement `ConfigSource::Flags`/`Project`                                           | 03         | stops the code describing a system that does not exist |
+| Rename the two `transaction.rs` files                                                         | 07         | zero risk, immediate clarity                           |
+| Extract `ah-redact` with property tests                                                       | 04, 05, 08 | highest security value per line moved                  |
 
 **Exit criterion:** a byte-level snapshot exists for every user-visible artifact, and
 CI fails on clippy regressions.
@@ -58,19 +58,19 @@ CI fails on clippy regressions.
 
 The highest-leverage phase. Nothing moves between crates yet.
 
-| Work | Group |
-|---|---|
-| ~~`schemars`-derived output schemas for built-in domains~~ **(done)** | 01 |
-| `schemars`-derived output schemas for host commands and dynamic plugins | 01 |
-| `schemars`-derived input schemas; delete `typed_args` mappers | 01 |
-| Generate manuals from descriptors; delete `src/plugins.rs` literals | 01 |
-| Generate `docs/reference/*.md`; CI diff check | 01 |
-| `ah-plugin-sdk`: `render`, `http`, `credentials`, `process` | 02 |
-| Runtime-owned cancellation; delete five global registries | 02 |
-| Delete `AH_*_TEST_*` environment seams | 02, 08 |
-| `Emitter<W>`; remove `println!` from adapters; single `--quiet` handling | 04 |
-| `From<RuntimeError> for ErrorDiagnostic`; delete three mapping tables | 04 |
-| Box error payloads; remove `result_large_err` allows | 04, 09 |
+| Work                                                                     | Group  |
+|--------------------------------------------------------------------------|--------|
+| ~~`schemars`-derived output schemas for built-in domains~~ **(done)**    | 01     |
+| `schemars`-derived output schemas for host commands and dynamic plugins  | 01     |
+| `schemars`-derived input schemas; delete `typed_args` mappers            | 01     |
+| Generate manuals from descriptors; delete `src/plugins.rs` literals      | 01     |
+| Generate `docs/reference/*.md`; CI diff check                            | 01     |
+| `ah-plugin-sdk`: `render`, `http`, `credentials`, `process`              | 02     |
+| Runtime-owned cancellation; delete five global registries                | 02     |
+| Delete `AH_*_TEST_*` environment seams                                   | 02, 08 |
+| `Emitter<W>`; remove `println!` from adapters; single `--quiet` handling | 04     |
+| `From<RuntimeError> for ErrorDiagnostic`; delete three mapping tables    | 04     |
+| Box error payloads; remove `result_large_err` allows                     | 04, 09 |
 
 **Exit criterion:** adding a command is a one-file change; no security-relevant code
 exists in more than one copy; output is testable in-process.
@@ -79,18 +79,18 @@ exists in more than one copy; output is testable in-process.
 
 Mostly moves, made safe by phases 0–1.
 
-| Work | Group |
-|---|---|
-| `ctx_symbols` and `project/rules` become table-driven | 05 |
+| Work                                                                                     | Group  |
+|------------------------------------------------------------------------------------------|--------|
+| `ctx_symbols` and `project/rules` become table-driven                                    | 05     |
 | Split `http/domain.rs` into `client`/`curl`/`jsonpath`/`assert`/`spec`; fuzz the parsers | 05, 08 |
-| Move the secret-setup UI out of `ah-mcp`; split protocol/transport/shutdown/jobs | 05 |
-| Split `event_log` into sink and rotation | 05 |
-| Separate `ai/install` logic from progress rendering | 04, 05 |
-| One `commands/*` layout; delete the eight `mod adapters` shims | 05 |
-| Single-parse `Entry` enum; hidden subcommands replace env-var routing | 03 |
-| `run()` split into parse → bootstrap → dispatch → report | 03 |
-| Remove `set_current_dir`; request-scoped cwd; concurrency test | 03 |
-| `ah-paths`; `platform::{fs,process,exec}` ports | 03, 06 |
+| Move the secret-setup UI out of `ah-mcp`; split protocol/transport/shutdown/jobs         | 05     |
+| Split `event_log` into sink and rotation                                                 | 05     |
+| Separate `ai/install` logic from progress rendering                                      | 04, 05 |
+| One `commands/*` layout; delete the eight `mod adapters` shims                           | 05     |
+| Single-parse `Entry` enum; hidden subcommands replace env-var routing                    | 03     |
+| `run()` split into parse → bootstrap → dispatch → report                                 | 03     |
+| Remove `set_current_dir`; request-scoped cwd; concurrency test                           | 03     |
+| `ah-paths`; `platform::{fs,process,exec}` ports                                          | 03, 06 |
 
 **Exit criterion:** no file over ~800 production lines; one parse of argv; no
 process-global working directory.
@@ -99,13 +99,13 @@ process-global working directory.
 
 Now that boundaries are clean and the SDK exists, extraction is mechanical.
 
-| Work | Group |
-|---|---|
-| `ServiceGuard` trait; invert the updater↔service dependency | 07 |
-| Extract `ah-updater` from `src/updater/` | 07, 09 |
-| Extract `ah-secrets`, `ah-observability`, `ah-service` | 09 |
-| One `fsverify` module for updater hardening primitives | 07 |
-| Extract domain crates last | 09 |
+| Work                                                        | Group  |
+|-------------------------------------------------------------|--------|
+| `ServiceGuard` trait; invert the updater↔service dependency | 07     |
+| Extract `ah-updater` from `src/updater/`                    | 07, 09 |
+| Extract `ah-secrets`, `ah-observability`, `ah-service`      | 09     |
+| One `fsverify` module for updater hardening primitives      | 07     |
+| Extract domain crates last                                  | 09     |
 
 **Exit criterion:** the root crate is CLI wiring; every subsystem builds and tests
 independently.
@@ -114,13 +114,13 @@ independently.
 
 Only now is this cheap.
 
-| Work | Group |
-|---|---|
-| Platform-neutral `ServiceSpec` + `ServiceScheduler`; Windows adapter as a projection | 06 |
-| `SystemdUserScheduler`, `LaunchdScheduler` | 06 |
-| `Forge` abstraction; collapse GitHub/GitLab duplication into a shared core | 02 |
-| Cross-version updater compatibility fixtures | 07, 08 |
-| Convert the integration suite to a deliberate thin contract layer | 08 |
+| Work                                                                                 | Group  |
+|--------------------------------------------------------------------------------------|--------|
+| Platform-neutral `ServiceSpec` + `ServiceScheduler`; Windows adapter as a projection | 06     |
+| `SystemdUserScheduler`, `LaunchdScheduler`                                           | 06     |
+| `Forge` abstraction; collapse GitHub/GitLab duplication into a shared core           | 02     |
+| Cross-version updater compatibility fixtures                                         | 07, 08 |
+| Convert the integration suite to a deliberate thin contract layer                    | 08     |
 
 **Exit criterion:** the managed service runs on three platforms with one lifecycle
 test suite; a new forge plugin is a few hundred lines.

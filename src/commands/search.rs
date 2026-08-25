@@ -8,10 +8,12 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::output_schema_for,
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand};
-use serde_json::{Map, Value, json};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use crate::{cli::GlobalOptions, error::AppError};
 
@@ -29,43 +31,81 @@ pub enum SearchCommand {
     Files(FilesArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TextArgs {
+    /// Literal text or regular expression to find.
+    #[schemars(length(min = 1))]
     pub pattern: String,
+    /// Files or directories resolved against context.cwd; empty searches context.cwd.
     #[arg(value_name = "PATH")]
+    #[serde(default)]
+    #[schemars(default)]
     pub paths: Vec<std::path::PathBuf>,
+    /// Optional glob filters relative to each search root.
     #[arg(long = "glob")]
+    #[serde(default)]
     pub globs: Vec<String>,
+    /// Use case-insensitive matching.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     pub ignore_case: bool,
+    /// Context lines before and after each match.
     #[arg(long)]
+    #[serde(rename = "context_lines")]
     pub context: Option<usize>,
+    /// Interpret pattern as a regular expression.
     #[arg(
         long,
         help = "Interpret pattern as regex (default: literal/plain search)"
     )]
+    #[serde(default)]
+    #[schemars(default)]
     pub regex: bool,
+    /// Skip files larger than this many bytes.
     #[arg(
         long,
         value_name = "BYTES",
         default_value_t = crate::safety::DEFAULT_MAX_TEXT_BYTES,
         help = "Skip files larger than this size while scanning"
     )]
+    #[serde(default = "default_max_bytes")]
+    #[schemars(default = "default_max_bytes", range(min = 1))]
     pub max_bytes: u64,
+    /// Follow symlink directories during traversal.
     #[arg(long, help = "Follow symlink directories during traversal")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
 }
 
-#[derive(Debug, Args)]
+fn default_max_bytes() -> u64 {
+    crate::safety::DEFAULT_MAX_TEXT_BYTES
+}
+
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FilesArgs {
+    /// Case-sensitive substring matched against normalized paths; empty lists all files.
     pub query: String,
+    /// Files or directories resolved against context.cwd; empty searches context.cwd.
     #[arg(value_name = "PATH")]
+    #[serde(default)]
+    #[schemars(default)]
     pub paths: Vec<std::path::PathBuf>,
+    /// Follow symlink directories during traversal.
     #[arg(long, help = "Follow symlink directories during traversal")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
 }
 
@@ -205,83 +245,26 @@ fn cancellation_requests() -> &'static Mutex<HashSet<String>> {
 }
 
 fn typed_text(request: &TypedInvocationRequest) -> Result<domain::SearchResult, AppError> {
-    let arguments = &request.arguments;
-    domain::execute_text(
-        TextArgs {
-            pattern: arguments
-                .get("pattern")
-                .and_then(Value::as_str)
-                .expect("validated search.text input contains pattern")
-                .to_owned(),
-            paths: typed_paths(arguments),
-            globs: string_array(arguments, "globs"),
-            ignore_case: typed_bool(arguments, "ignore_case"),
-            context: arguments
-                .get("context_lines")
-                .and_then(Value::as_u64)
-                .and_then(|value| usize::try_from(value).ok()),
-            regex: typed_bool(arguments, "regex"),
-            max_bytes: arguments
-                .get("max_bytes")
-                .and_then(Value::as_u64)
-                .unwrap_or(crate::safety::DEFAULT_MAX_TEXT_BYTES),
-            follow_symlinks: typed_bool(arguments, "follow_symlinks"),
-            cwd: Some(PathBuf::from(&request.context.cwd)),
-        },
-        request.context.limit,
-    )
+    let mut args: TextArgs = decode(request)?;
+    args.cwd = Some(PathBuf::from(&request.context.cwd));
+    domain::execute_text(args, request.context.limit)
 }
 
 fn typed_files(request: &TypedInvocationRequest) -> Result<domain::SearchResult, AppError> {
-    let arguments = &request.arguments;
-    domain::execute_files(
-        FilesArgs {
-            query: arguments
-                .get("query")
-                .and_then(Value::as_str)
-                .expect("validated search.files input contains query")
-                .to_owned(),
-            paths: typed_paths(arguments),
-            follow_symlinks: typed_bool(arguments, "follow_symlinks"),
-            cwd: Some(PathBuf::from(&request.context.cwd)),
-        },
-        request.context.limit,
-    )
+    let mut args: FilesArgs = decode(request)?;
+    args.cwd = Some(PathBuf::from(&request.context.cwd));
+    domain::execute_files(args, request.context.limit)
 }
 
-fn typed_paths(arguments: &Value) -> Vec<PathBuf> {
-    arguments
-        .get("paths")
-        .and_then(Value::as_array)
-        .map(|paths| {
-            paths
-                .iter()
-                .filter_map(Value::as_str)
-                .map(PathBuf::from)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn string_array(arguments: &Value, name: &str) -> Vec<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn typed_bool(arguments: &Value, name: &str) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
+    })
 }
 
 fn typed_success(
@@ -304,53 +287,11 @@ fn typed_success(
 }
 
 fn text_descriptor() -> CommandDescriptor {
-    let mut properties = common_properties();
-    properties.insert(
-        "pattern".to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "description": "Literal text or regular expression to find."
-        }),
-    );
-    properties.insert(
-        "globs".to_owned(),
-        json!({
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Optional glob filters relative to each search root."
-        }),
-    );
-    properties.insert(
-        "ignore_case".to_owned(),
-        boolean_schema(false, "Use case-insensitive matching."),
-    );
-    properties.insert(
-        "context_lines".to_owned(),
-        json!({
-            "type": "integer",
-            "minimum": 0,
-            "description": "Context lines before and after each match."
-        }),
-    );
-    properties.insert(
-        "regex".to_owned(),
-        boolean_schema(false, "Interpret pattern as a regular expression."),
-    );
-    properties.insert(
-        "max_bytes".to_owned(),
-        json!({
-            "type": "integer",
-            "minimum": 1,
-            "default": crate::safety::DEFAULT_MAX_TEXT_BYTES,
-            "description": "Skip files larger than this many bytes."
-        }),
-    );
     descriptor(
         "search.text",
         "Search file text",
         "Search literal text or a regular expression across files.",
-        object_schema(properties, vec!["pattern"]),
+        input_schema_for::<TextArgs>(),
         output_schema_for::<domain::SearchTextOutput>("search.text"),
     )
     .with_example(CommandExample::new(
@@ -360,19 +301,11 @@ fn text_descriptor() -> CommandDescriptor {
 }
 
 fn files_descriptor() -> CommandDescriptor {
-    let mut properties = common_properties();
-    properties.insert(
-        "query".to_owned(),
-        json!({
-            "type": "string",
-            "description": "Case-sensitive substring matched against normalized paths; empty lists all files."
-        }),
-    );
     descriptor(
         "search.files",
         "Search file paths",
         "Find normalized file paths containing a substring.",
-        object_schema(properties, vec!["query"]),
+        input_schema_for::<FilesArgs>(),
         output_schema_for::<domain::SearchFilesOutput>("search.files"),
     )
 }
@@ -401,37 +334,6 @@ fn descriptor(
             Reversibility::Yes,
         ),
     )
-}
-
-fn common_properties() -> Map<String, Value> {
-    Map::from_iter([
-        (
-            "paths".to_owned(),
-            json!({
-                "type": "array",
-                "items": {"type": "string"},
-                "default": [],
-                "description": "Files or directories resolved against context.cwd; empty searches context.cwd."
-            }),
-        ),
-        (
-            "follow_symlinks".to_owned(),
-            boolean_schema(false, "Follow symlink directories during traversal."),
-        ),
-    ])
-}
-
-fn object_schema(properties: Map<String, Value>, required: Vec<&str>) -> Value {
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn boolean_schema(default: bool, description: &str) -> Value {
-    json!({"type": "boolean", "default": default, "description": description})
 }
 
 #[cfg(test)]

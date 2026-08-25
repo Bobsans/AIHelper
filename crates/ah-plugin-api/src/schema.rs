@@ -201,14 +201,25 @@ fn contains_ref(value: &Value) -> bool {
 fn substitute_refs(value: &mut Value, definitions: &Map<String, Value>) {
     match value {
         Value::Object(map) => {
+            // A property may carry its own keywords beside the reference - a
+            // description from a doc comment, a default - so the referenced
+            // subschema is merged in rather than replacing them.
             if let Some(target) = map
                 .get("$ref")
                 .and_then(Value::as_str)
                 .and_then(|reference| reference.strip_prefix("#/$defs/"))
                 .and_then(|name| definitions.get(name))
             {
-                *value = target.clone();
-                return;
+                let target = target.clone();
+                map.remove("$ref");
+                if let Value::Object(target) = target {
+                    for (key, nested) in target {
+                        map.entry(key).or_insert(nested);
+                    }
+                } else {
+                    *value = target;
+                    return;
+                }
             }
             for nested in map.values_mut() {
                 substitute_refs(nested, definitions);

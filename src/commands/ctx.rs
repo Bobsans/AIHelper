@@ -1,9 +1,11 @@
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::output_schema_for,
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand, ValueEnum};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -25,46 +27,78 @@ pub enum CtxCommand {
     Changed(ChangedArgs),
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum CtxPreset {
     Summary,
+    #[default]
     Review,
     Debug,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PackArgs {
+    /// Files or directories to pack; defaults to the context cwd.
+    #[serde(default)]
+    #[schemars(inner(length(min = 1)))]
     pub paths: Vec<PathBuf>,
+    /// Controls default limits and symbol density.
     #[arg(long, value_enum, default_value_t = CtxPreset::Review)]
+    #[serde(default)]
+    #[schemars(default)]
     pub preset: CtxPreset,
+    /// Skip text files larger than this byte size.
     #[arg(
         long,
         value_name = "BYTES",
         default_value_t = crate::safety::DEFAULT_MAX_TEXT_BYTES,
         help = "Skip files larger than this size while extracting symbols"
     )]
+    #[serde(default = "default_max_bytes")]
+    #[schemars(default = "default_max_bytes", range(min = 1))]
     pub max_bytes: u64,
+    /// Follow symlinked files and directories.
     #[arg(long, help = "Follow symlink directories during traversal")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
 }
 
-#[derive(Debug, Args)]
+fn default_max_bytes() -> u64 {
+    crate::safety::DEFAULT_MAX_TEXT_BYTES
+}
+
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolsArgs {
+    /// File or directory to inspect.
+    #[schemars(extend("minLength" = 1))]
     pub path: PathBuf,
+    /// Controls default limits and symbol density.
     #[arg(long, value_enum, default_value_t = CtxPreset::Review)]
+    #[serde(default)]
+    #[schemars(default)]
     pub preset: CtxPreset,
+    /// Skip text files larger than this byte size.
     #[arg(
         long,
         value_name = "BYTES",
         default_value_t = crate::safety::DEFAULT_MAX_TEXT_BYTES,
         help = "Skip files larger than this size while extracting symbols"
     )]
+    #[serde(default = "default_max_bytes")]
+    #[schemars(default = "default_max_bytes", range(min = 1))]
     pub max_bytes: u64,
+    /// Follow symlinked files and directories.
     #[arg(long, help = "Follow symlink directories during traversal")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ChangedArgs {}
 
 #[derive(Debug, Clone, Copy)]
@@ -174,24 +208,12 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
 
 fn typed_pack(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
     let cwd = Path::new(&request.context.cwd);
-    let paths = request
-        .arguments
-        .get("paths")
-        .and_then(Value::as_array)
-        .map(|paths| {
-            paths
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|path| resolve_context_path(cwd, Path::new(path)))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let args = PackArgs {
-        paths,
-        preset: typed_preset(&request.arguments),
-        max_bytes: typed_max_bytes(&request.arguments),
-        follow_symlinks: typed_bool(&request.arguments, "follow_symlinks"),
-    };
+    let mut args: PackArgs = decode(request)?;
+    args.paths = args
+        .paths
+        .iter()
+        .map(|path| resolve_context_path(cwd, path))
+        .collect();
     let result = domain::execute_pack(args, request.context.limit)?;
     let data = result_to_value(result)?;
     let count = data["item_count"].as_u64().unwrap_or(0);
@@ -200,17 +222,8 @@ fn typed_pack(request: &TypedInvocationRequest) -> Result<(Value, String), AppEr
 
 fn typed_symbols(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
     let cwd = Path::new(&request.context.cwd);
-    let path = request
-        .arguments
-        .get("path")
-        .and_then(Value::as_str)
-        .expect("validated ctx.symbols input contains path");
-    let args = SymbolsArgs {
-        path: resolve_context_path(cwd, Path::new(path)),
-        preset: typed_preset(&request.arguments),
-        max_bytes: typed_max_bytes(&request.arguments),
-        follow_symlinks: typed_bool(&request.arguments, "follow_symlinks"),
-    };
+    let mut args: SymbolsArgs = decode(request)?;
+    args.path = resolve_context_path(cwd, &args.path);
     let result = domain::execute_symbols(args, request.context.limit)?;
     let data = result_to_value(result)?;
     let count = data["symbol_count"].as_u64().unwrap_or(0);
@@ -218,10 +231,22 @@ fn typed_symbols(request: &TypedInvocationRequest) -> Result<(Value, String), Ap
 }
 
 fn typed_changed(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
-    let result = domain::execute_changed_at(ChangedArgs {}, Path::new(&request.context.cwd))?;
+    let args: ChangedArgs = decode(request)?;
+    let result = domain::execute_changed_at(args, Path::new(&request.context.cwd))?;
     let data = result_to_value(result)?;
     let count = data["changed_count"].as_u64().unwrap_or(0);
     Ok((data, format!("Returned {count} changed path(s).")))
+}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
+    })
 }
 
 fn result_to_value(result: domain::CtxResult) -> Result<Value, AppError> {
@@ -241,51 +266,12 @@ fn resolve_context_path(cwd: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn typed_preset(arguments: &Value) -> CtxPreset {
-    match arguments
-        .get("preset")
-        .and_then(Value::as_str)
-        .unwrap_or("review")
-    {
-        "summary" => CtxPreset::Summary,
-        "debug" => CtxPreset::Debug,
-        _ => CtxPreset::Review,
-    }
-}
-
-fn typed_max_bytes(arguments: &Value) -> u64 {
-    arguments
-        .get("max_bytes")
-        .and_then(Value::as_u64)
-        .unwrap_or(crate::safety::DEFAULT_MAX_TEXT_BYTES)
-}
-
-fn typed_bool(arguments: &Value, name: &str) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
 fn pack_descriptor() -> CommandDescriptor {
     CommandDescriptor::new(
         "ctx.pack",
         "Pack context metadata",
         "Create a compact metadata and symbol digest for files and directories.",
-        json!({
-            "type": "object",
-            "properties": {
-                "paths": {
-                    "type": "array",
-                    "items": {"type": "string", "minLength": 1},
-                    "description": "Files or directories to pack; defaults to the context cwd."
-                },
-                "preset": preset_schema(),
-                "max_bytes": max_bytes_schema(),
-                "follow_symlinks": follow_symlinks_schema()
-            },
-            "additionalProperties": false
-        }),
+        input_schema_for::<PackArgs>(),
         output_schema_for::<domain::CtxPackOutput>("ctx.pack"),
         ctx_read_effects(
             "Reads metadata and eligible text content under the requested paths; following symlinks may read outside those path trees.",
@@ -302,21 +288,7 @@ fn symbols_descriptor() -> CommandDescriptor {
         "ctx.symbols",
         "Extract context symbols",
         "Extract code, configuration, and document symbols from one file or directory.",
-        json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "File or directory to inspect."
-                },
-                "preset": preset_schema(),
-                "max_bytes": max_bytes_schema(),
-                "follow_symlinks": follow_symlinks_schema()
-            },
-            "required": ["path"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<SymbolsArgs>(),
         output_schema_for::<domain::CtxSymbolsOutput>("ctx.symbols"),
         ctx_read_effects(
             "Reads eligible text files under the requested path; following symlinks may read outside that path tree.",
@@ -333,11 +305,7 @@ fn changed_descriptor() -> CommandDescriptor {
         "ctx.changed",
         "List changed context paths",
         "Return changed paths from the Git working tree rooted at the execution cwd.",
-        json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
+        input_schema_for::<ChangedArgs>(),
         output_schema_for::<domain::CtxChangedOutput>("ctx.changed"),
         CommandEffects::new(
             true,
@@ -363,30 +331,4 @@ fn ctx_read_effects(impact: &str) -> CommandEffects {
         impact,
         Reversibility::Yes,
     )
-}
-
-fn preset_schema() -> Value {
-    json!({
-        "type": "string",
-        "enum": ["summary", "review", "debug"],
-        "default": "review",
-        "description": "Controls default limits and symbol density."
-    })
-}
-
-fn max_bytes_schema() -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 1,
-        "default": crate::safety::DEFAULT_MAX_TEXT_BYTES,
-        "description": "Skip text files larger than this byte size."
-    })
-}
-
-fn follow_symlinks_schema() -> Value {
-    json!({
-        "type": "boolean",
-        "default": false,
-        "description": "Follow symlinked files and directories."
-    })
 }

@@ -4,9 +4,11 @@ use crate::{cli::GlobalOptions, error::AppError};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::output_schema_for,
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Debug, Args)]
@@ -29,73 +31,137 @@ pub enum FileCommand {
     Tree(TreeArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReadArgs {
+    /// UTF-8 text file to read.
+    #[schemars(extend("minLength" = 1))]
     pub path: std::path::PathBuf,
+    /// Prefix returned content lines with source line numbers.
     #[arg(short = 'n', long = "number-lines", help = "Show line numbers")]
+    #[serde(default)]
+    #[schemars(default)]
     pub number_lines: bool,
+    /// Inclusive one-based start line.
     #[arg(long, value_name = "N", help = "Start line (1-based)")]
+    #[schemars(range(min = 1))]
     pub from: Option<usize>,
+    /// Inclusive one-based end line.
     #[arg(long, value_name = "N", help = "End line (1-based)")]
+    #[schemars(range(min = 1))]
     pub to: Option<usize>,
+    /// Reject a file larger than this byte size.
     #[arg(
         long,
         value_name = "BYTES",
         default_value_t = crate::safety::DEFAULT_MAX_TEXT_BYTES,
         help = "Fail when file size exceeds this limit"
     )]
+    #[serde(default = "default_max_bytes")]
+    #[schemars(default = "default_max_bytes", range(min = 1))]
     pub max_bytes: u64,
+    /// Allow reading or traversing symlink targets.
     #[arg(long, help = "Allow reading through symlink paths")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
 }
 
-#[derive(Debug, Args)]
+fn default_max_bytes() -> u64 {
+    crate::safety::DEFAULT_MAX_TEXT_BYTES
+}
+
+fn default_lines() -> usize {
+    20
+}
+
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct HeadArgs {
+    /// UTF-8 text file to read.
+    #[schemars(extend("minLength" = 1))]
     pub path: std::path::PathBuf,
+    /// Number of lines requested.
     #[arg(long, default_value_t = 20)]
+    #[serde(default = "default_lines")]
+    #[schemars(default = "default_lines")]
     pub lines: usize,
+    /// Prefix returned content lines with source line numbers.
     #[arg(short = 'n', long = "number-lines", help = "Show line numbers")]
+    #[serde(default)]
+    #[schemars(default)]
     pub number_lines: bool,
+    /// Reject a file larger than this byte size.
     #[arg(
         long,
         value_name = "BYTES",
         default_value_t = crate::safety::DEFAULT_MAX_TEXT_BYTES,
         help = "Fail when file size exceeds this limit"
     )]
+    #[serde(default = "default_max_bytes")]
+    #[schemars(default = "default_max_bytes", range(min = 1))]
     pub max_bytes: u64,
+    /// Allow reading or traversing symlink targets.
     #[arg(long, help = "Allow reading through symlink paths")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TailArgs {
+    /// UTF-8 text file to read.
+    #[schemars(extend("minLength" = 1))]
     pub path: std::path::PathBuf,
+    /// Number of lines requested.
     #[arg(long, default_value_t = 20)]
+    #[serde(default = "default_lines")]
+    #[schemars(default = "default_lines")]
     pub lines: usize,
+    /// Prefix returned content lines with source line numbers.
     #[arg(short = 'n', long = "number-lines", help = "Show line numbers")]
+    #[serde(default)]
+    #[schemars(default)]
     pub number_lines: bool,
+    /// Reject a file larger than this byte size.
     #[arg(
         long,
         value_name = "BYTES",
         default_value_t = crate::safety::DEFAULT_MAX_TEXT_BYTES,
         help = "Fail when file size exceeds this limit"
     )]
+    #[serde(default = "default_max_bytes")]
+    #[schemars(default = "default_max_bytes", range(min = 1))]
     pub max_bytes: u64,
+    /// Allow reading or traversing symlink targets.
     #[arg(long, help = "Allow reading through symlink paths")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StatArgs {
+    /// Filesystem path to inspect.
+    #[schemars(extend("minLength" = 1))]
     pub path: std::path::PathBuf,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TreeArgs {
+    /// Tree root; defaults to the context cwd.
+    #[schemars(extend("minLength" = 1))]
     pub path: Option<std::path::PathBuf>,
+    /// Maximum traversal depth, including zero for the root only.
     #[arg(long)]
     pub depth: Option<usize>,
+    /// Allow reading or traversing symlink targets.
     #[arg(long, help = "Follow symlink directories during traversal")]
+    #[serde(default)]
+    #[schemars(default)]
     pub follow_symlinks: bool,
 }
 
@@ -149,44 +215,35 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
 
 fn typed_args(request: &TypedInvocationRequest) -> Result<FileArgs, AppError> {
     let cwd = Path::new(&request.context.cwd);
-    let path = |required: bool| -> Result<Option<PathBuf>, AppError> {
-        match request.arguments.get("path").and_then(Value::as_str) {
-            Some(path) => Ok(Some(resolve_context_path(cwd, Path::new(path)))),
-            None if required => Err(AppError::invalid_argument("missing file path")),
-            None => Ok(None),
-        }
-    };
     let command = match request.command.as_str() {
-        "file.read" => FileCommand::Read(ReadArgs {
-            path: path(true)?.expect("required path should exist"),
-            number_lines: typed_bool(&request.arguments, "number_lines"),
-            from: typed_usize(&request.arguments, "from"),
-            to: typed_usize(&request.arguments, "to"),
-            max_bytes: typed_max_bytes(&request.arguments),
-            follow_symlinks: typed_bool(&request.arguments, "follow_symlinks"),
-        }),
-        "file.head" => FileCommand::Head(HeadArgs {
-            path: path(true)?.expect("required path should exist"),
-            lines: typed_usize(&request.arguments, "lines").unwrap_or(20),
-            number_lines: typed_bool(&request.arguments, "number_lines"),
-            max_bytes: typed_max_bytes(&request.arguments),
-            follow_symlinks: typed_bool(&request.arguments, "follow_symlinks"),
-        }),
-        "file.tail" => FileCommand::Tail(TailArgs {
-            path: path(true)?.expect("required path should exist"),
-            lines: typed_usize(&request.arguments, "lines").unwrap_or(20),
-            number_lines: typed_bool(&request.arguments, "number_lines"),
-            max_bytes: typed_max_bytes(&request.arguments),
-            follow_symlinks: typed_bool(&request.arguments, "follow_symlinks"),
-        }),
-        "file.stat" => FileCommand::Stat(StatArgs {
-            path: path(true)?.expect("required path should exist"),
-        }),
-        "file.tree" => FileCommand::Tree(TreeArgs {
-            path: path(false)?.or_else(|| Some(cwd.to_path_buf())),
-            depth: typed_usize(&request.arguments, "depth"),
-            follow_symlinks: typed_bool(&request.arguments, "follow_symlinks"),
-        }),
+        "file.read" => {
+            let mut args: ReadArgs = decode(request)?;
+            args.path = resolve_context_path(cwd, &args.path);
+            FileCommand::Read(args)
+        }
+        "file.head" => {
+            let mut args: HeadArgs = decode(request)?;
+            args.path = resolve_context_path(cwd, &args.path);
+            FileCommand::Head(args)
+        }
+        "file.tail" => {
+            let mut args: TailArgs = decode(request)?;
+            args.path = resolve_context_path(cwd, &args.path);
+            FileCommand::Tail(args)
+        }
+        "file.stat" => {
+            let mut args: StatArgs = decode(request)?;
+            args.path = resolve_context_path(cwd, &args.path);
+            FileCommand::Stat(args)
+        }
+        "file.tree" => {
+            let mut args: TreeArgs = decode(request)?;
+            args.path = Some(match args.path.as_deref() {
+                Some(path) => resolve_context_path(cwd, path),
+                None => cwd.to_path_buf(),
+            });
+            FileCommand::Tree(args)
+        }
         _ => {
             return Err(AppError::invalid_argument(format!(
                 "unknown typed file command: {}",
@@ -195,6 +252,17 @@ fn typed_args(request: &TypedInvocationRequest) -> Result<FileArgs, AppError> {
         }
     };
     Ok(FileArgs { command })
+}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
+    })
 }
 
 fn result_to_value(result: domain::FileResult) -> Result<Value, AppError> {
@@ -234,33 +302,12 @@ fn resolve_context_path(cwd: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn typed_bool(arguments: &Value, name: &str) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn typed_usize(arguments: &Value, name: &str) -> Option<usize> {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-}
-
-fn typed_max_bytes(arguments: &Value) -> u64 {
-    arguments
-        .get("max_bytes")
-        .and_then(Value::as_u64)
-        .unwrap_or(crate::safety::DEFAULT_MAX_TEXT_BYTES)
-}
-
 fn read_descriptor() -> CommandDescriptor {
     CommandDescriptor::new(
         "file.read",
         "Read file lines",
         "Read UTF-8 text from a file with an optional inclusive line range.",
-        line_input_schema(false),
+        input_schema_for::<ReadArgs>(),
         output_schema_for::<domain::FileLinesOutput>("file.read"),
         file_read_effects(
             "Reads the requested file; enabling symlink following may read a target outside its apparent path.",
@@ -277,7 +324,7 @@ fn head_descriptor() -> CommandDescriptor {
         "file.head",
         "Read file head",
         "Read the first requested number of UTF-8 text lines from a file.",
-        line_input_schema(true),
+        input_schema_for::<HeadArgs>(),
         output_schema_for::<domain::FileLinesOutput>("file.head"),
         file_read_effects(
             "Reads the beginning of the requested file; enabling symlink following may read an external target.",
@@ -294,7 +341,7 @@ fn tail_descriptor() -> CommandDescriptor {
         "file.tail",
         "Read file tail",
         "Read the last requested number of UTF-8 text lines from a file.",
-        line_input_schema(true),
+        input_schema_for::<TailArgs>(),
         output_schema_for::<domain::FileLinesOutput>("file.tail"),
         file_read_effects(
             "Reads the requested file to determine its final lines; enabling symlink following may read an external target.",
@@ -311,7 +358,7 @@ fn stat_descriptor() -> CommandDescriptor {
         "file.stat",
         "Inspect file metadata",
         "Return filesystem metadata for one file, directory, symlink, or other path.",
-        path_only_input_schema(),
+        input_schema_for::<StatArgs>(),
         output_schema_for::<domain::FileStatOutput>("file.stat"),
         file_read_effects("Reads filesystem metadata for the requested path only."),
     )
@@ -326,23 +373,7 @@ fn tree_descriptor() -> CommandDescriptor {
         "file.tree",
         "List directory tree",
         "Return a deterministic directory tree with optional depth and output limits.",
-        json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Tree root; defaults to the context cwd."
-                },
-                "depth": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Maximum traversal depth, including zero for the root only."
-                },
-                "follow_symlinks": follow_symlinks_schema()
-            },
-            "additionalProperties": false
-        }),
+        input_schema_for::<TreeArgs>(),
         output_schema_for::<domain::FileTreeOutput>("file.tree"),
         file_read_effects(
             "Reads directory metadata recursively; enabling symlink following may traverse outside the requested tree.",
@@ -352,94 +383,6 @@ fn tree_descriptor() -> CommandDescriptor {
         "List the source tree two levels deep",
         json!({"path": "src", "depth": 2}),
     ))
-}
-
-fn path_only_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Filesystem path to inspect."
-            }
-        },
-        "required": ["path"],
-        "additionalProperties": false
-    })
-}
-
-fn line_input_schema(head_or_tail: bool) -> Value {
-    let mut properties = serde_json::Map::new();
-    properties.insert(
-        "path".to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "description": "UTF-8 text file to read."
-        }),
-    );
-    if head_or_tail {
-        properties.insert(
-            "lines".to_owned(),
-            json!({
-                "type": "integer",
-                "minimum": 0,
-                "default": 20,
-                "description": "Number of lines requested."
-            }),
-        );
-    } else {
-        properties.insert(
-            "from".to_owned(),
-            json!({
-                "type": "integer",
-                "minimum": 1,
-                "description": "Inclusive one-based start line."
-            }),
-        );
-        properties.insert(
-            "to".to_owned(),
-            json!({
-                "type": "integer",
-                "minimum": 1,
-                "description": "Inclusive one-based end line."
-            }),
-        );
-    }
-    properties.insert(
-        "number_lines".to_owned(),
-        json!({
-            "type": "boolean",
-            "default": false,
-            "description": "Prefix returned content lines with source line numbers."
-        }),
-    );
-    properties.insert("max_bytes".to_owned(), max_bytes_schema());
-    properties.insert("follow_symlinks".to_owned(), follow_symlinks_schema());
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": ["path"],
-        "additionalProperties": false
-    })
-}
-
-fn max_bytes_schema() -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 1,
-        "default": crate::safety::DEFAULT_MAX_TEXT_BYTES,
-        "description": "Reject a file larger than this byte size."
-    })
-}
-
-fn follow_symlinks_schema() -> Value {
-    json!({
-        "type": "boolean",
-        "default": false,
-        "description": "Allow reading or traversing symlink targets."
-    })
 }
 
 fn file_read_effects(impact: &str) -> CommandEffects {

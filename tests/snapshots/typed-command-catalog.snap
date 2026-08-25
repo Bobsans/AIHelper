@@ -321,6 +321,7 @@
             "type": "integer"
           },
           "paths": {
+            "default": [],
             "description": "Files or directories to pack; defaults to the context cwd.",
             "items": {
               "minLength": 1,
@@ -5235,6 +5236,7 @@
             "type": "boolean"
           },
           "globs": {
+            "default": [],
             "description": "Optional glob filters relative to each search root.",
             "items": {
               "type": "string"

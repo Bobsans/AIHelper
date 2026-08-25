@@ -8,13 +8,15 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::output_schema_for,
+    schema::{input_schema_for, output_schema_for},
 };
 use ah_runtime::RunCheckOutcome;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{cli::GlobalOptions, error::AppError};
 use clap::Args;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
@@ -31,20 +33,41 @@ pub enum RunCommand {
     Check(CheckArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CheckArgs {
+    /// Process timeout capped by the MCP request deadline.
     #[arg(long, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_timeout_secs")]
+    #[schemars(default = "default_timeout_secs", range(min = 1))]
     pub timeout_secs: u64,
+    /// Maximum captured bytes for each output stream.
     #[arg(long, default_value_t = DEFAULT_MAX_OUTPUT_BYTES, value_name = "BYTES")]
+    #[serde(default = "default_max_output_bytes")]
+    #[schemars(default = "default_max_output_bytes", range(min = 1))]
     pub max_output_bytes: usize,
+    /// Return only the last N captured lines from each stream.
     #[arg(long, value_name = "N")]
     pub tail_lines: Option<usize>,
+    /// Program followed by its arguments; no shell parsing is performed.
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    #[schemars(length(min = 1))]
     pub command: Vec<String>,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     pub cwd: Option<PathBuf>,
     #[arg(skip)]
+    #[serde(skip)]
     pub timeout_ms: Option<u64>,
+}
+
+fn default_timeout_secs() -> u64 {
+    DEFAULT_TIMEOUT_SECS
+}
+
+fn default_max_output_bytes() -> usize {
+    DEFAULT_MAX_OUTPUT_BYTES
 }
 
 pub(crate) mod io;
@@ -204,46 +227,21 @@ fn cancellation_requests() -> &'static Mutex<HashSet<String>> {
 }
 
 fn typed_check(request: &TypedInvocationRequest) -> Result<domain::RunCheckOutput, AppError> {
-    let command = request
-        .arguments
-        .get("command")
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let requested_timeout_secs = request
-        .arguments
-        .get("timeout_secs")
-        .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_TIMEOUT_SECS)
-        .max(1);
-    let timeout_ms = requested_timeout_secs
-        .saturating_mul(1_000)
-        .min(request.context.remaining_timeout_ms.max(1));
-    let max_output_bytes = request
-        .arguments
-        .get("max_output_bytes")
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
-    let tail_lines = request
-        .arguments
-        .get("tail_lines")
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok());
-    domain::run_check(CheckArgs {
-        timeout_secs: requested_timeout_secs,
-        max_output_bytes,
-        tail_lines,
-        command,
-        cwd: Some(PathBuf::from(&request.context.cwd)),
-        timeout_ms: Some(timeout_ms),
-    })
+    let mut args: CheckArgs =
+        serde_json::from_value(request.arguments.clone()).map_err(|error| {
+            AppError::invalid_argument(format!(
+                "invalid arguments for {}: {error}",
+                request.command
+            ))
+        })?;
+    args.timeout_secs = args.timeout_secs.max(1);
+    args.cwd = Some(PathBuf::from(&request.context.cwd));
+    args.timeout_ms = Some(
+        args.timeout_secs
+            .saturating_mul(1_000)
+            .min(request.context.remaining_timeout_ms.max(1)),
+    );
+    domain::run_check(args)
 }
 
 fn check_descriptor() -> CommandDescriptor {
@@ -251,36 +249,7 @@ fn check_descriptor() -> CommandDescriptor {
         "run.check",
         "Run command",
         "Run one non-interactive child process, capture bounded output, and return its exit status.",
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"type": "string"},
-                    "description": "Program followed by its arguments; no shell parsing is performed."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": DEFAULT_TIMEOUT_SECS,
-                    "description": "Process timeout capped by the MCP request deadline."
-                },
-                "max_output_bytes": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": DEFAULT_MAX_OUTPUT_BYTES,
-                    "description": "Maximum captured bytes for each output stream."
-                },
-                "tail_lines": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Return only the last N captured lines from each stream."
-                }
-            },
-            "required": ["command"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<CheckArgs>(),
         output_schema_for::<domain::RunCheckOutput>("run.check"),
         CommandEffects::new(
             false,

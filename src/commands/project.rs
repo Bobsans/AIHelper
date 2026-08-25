@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::output_schema_for,
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand};
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{cli::GlobalOptions, error::AppError};
@@ -36,10 +37,18 @@ pub enum ProjectCommand {
     Version(ProjectPathArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectPathArgs {
+    /// Project path resolved against the execution cwd.
     #[arg(default_value = ".")]
+    #[serde(default = "current_directory")]
+    #[schemars(default = "current_directory", extend("minLength" = 1))]
     pub path: PathBuf,
+}
+
+fn current_directory() -> PathBuf {
+    PathBuf::from(".")
 }
 
 pub fn execute(args: ProjectArgs, options: &GlobalOptions) -> Result<(), AppError> {
@@ -92,7 +101,7 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
 }
 
 fn typed_detect(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
-    let output = domain::run_detect(typed_path_args(request))?;
+    let output = domain::run_detect(typed_path_args(request)?)?;
     let data = serialized_value(&output)?;
     let ecosystem_count = output.ecosystems.len();
     let file_count = output.files.packages.len()
@@ -112,33 +121,31 @@ fn typed_detect(request: &TypedInvocationRequest) -> Result<(Value, String), App
 }
 
 fn typed_commands(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
-    let output = domain::run_commands(typed_path_args(request))?;
+    let output = domain::run_commands(typed_path_args(request)?)?;
     let count = output.commands.len();
     let data = serialized_value(&output)?;
     Ok((data, format!("Suggested {count} project command(s).")))
 }
 
 fn typed_version(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
-    let output = domain::run_version(typed_path_args(request), request.context.limit)?;
+    let output = domain::run_version(typed_path_args(request)?, request.context.limit)?;
     let count = output.version_count;
     let data = serialized_value(&output)?;
     Ok((data, format!("Detected {count} project version(s).")))
 }
 
-fn typed_path_args(request: &TypedInvocationRequest) -> ProjectPathArgs {
-    let raw = request
-        .arguments
-        .get("path")
-        .and_then(Value::as_str)
-        .unwrap_or(".");
-    let path = PathBuf::from(raw);
-    ProjectPathArgs {
-        path: if path.is_absolute() {
-            path
-        } else {
-            PathBuf::from(&request.context.cwd).join(path)
-        },
+fn typed_path_args(request: &TypedInvocationRequest) -> Result<ProjectPathArgs, AppError> {
+    let mut args: ProjectPathArgs =
+        serde_json::from_value(request.arguments.clone()).map_err(|error| {
+            AppError::invalid_argument(format!(
+                "invalid arguments for {}: {error}",
+                request.command
+            ))
+        })?;
+    if !args.path.is_absolute() {
+        args.path = PathBuf::from(&request.context.cwd).join(&args.path);
     }
+    Ok(args)
 }
 
 fn serialized_value<T: Serialize>(output: &T) -> Result<Value, AppError> {
@@ -181,7 +188,7 @@ fn descriptor(id: &str, title: &str, description: &str, output_schema: Value) ->
         id,
         title,
         description,
-        path_input_schema(),
+        input_schema_for::<ProjectPathArgs>(),
         output_schema,
         CommandEffects::new(
             true,
@@ -194,21 +201,6 @@ fn descriptor(id: &str, title: &str, description: &str, output_schema: Value) ->
             Reversibility::Yes,
         ),
     )
-}
-
-fn path_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "minLength": 1,
-                "default": ".",
-                "description": "Project path resolved against the execution cwd."
-            }
-        },
-        "additionalProperties": false
-    })
 }
 
 fn execute_detect(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
