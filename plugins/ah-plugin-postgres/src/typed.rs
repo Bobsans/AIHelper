@@ -3,11 +3,50 @@ use std::path::{Path, PathBuf};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     GlobalOptionsWire, InvocationResponse, Reversibility, RiskLevel, SecretSlot,
-    TypedInvocationRequest, TypedInvocationResponse, schema::output_schema_for,
+    TypedInvocationRequest, TypedInvocationResponse,
+    schema::{input_schema_for, output_schema_for},
 };
-use serde_json::{Map, Value, json};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use super::*;
+
+// A database command takes the toolchain block, the connection block and its own
+// arguments; a tool command takes only the toolchain block. A doc comment on
+// either would be published as the schema `description`, and
+// `deny_unknown_fields` cannot be combined with `flatten`, so the closed-object
+// rule is stated for the schema and the runtime enforces it before dispatch.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
+struct DbWire<T> {
+    #[serde(flatten)]
+    tool: ToolResolverArgs,
+    #[serde(flatten)]
+    connection: ConnectionArgs,
+    #[serde(flatten)]
+    command: T,
+}
+
+// A command whose only arguments are the shared blocks.
+#[derive(Debug, Deserialize, JsonSchema)]
+struct NoArgs {}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(
+    request: &TypedInvocationRequest,
+) -> Result<T, CommandError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        command_error(
+            request,
+            "INVALID_ARGUMENT",
+            "PostgreSQL command arguments are invalid",
+            error.to_string(),
+            false,
+        )
+    })
+}
 
 pub(super) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new(
@@ -56,94 +95,145 @@ pub(super) fn cancel(_request_id: &str) -> bool {
 }
 
 fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandError> {
-    let arguments = &request.arguments;
     let cwd = Path::new(&request.context.cwd);
-    let tool = ToolResolverArgs {
-        tool_path: optional_path(arguments, "tool_path", cwd),
-        ensure_tool: bool_or(arguments, "ensure_tool", false),
-    };
-    let connection = typed_connection(request)?;
-    let command = match request.command.as_str() {
-        "postgres.tool.status" => PostgresCommand::Tool(ToolArgs {
-            command: ToolCommand::Status,
-        }),
-        "postgres.tool.download" => PostgresCommand::Tool(ToolArgs {
-            command: ToolCommand::Download(ToolDownloadArgs {
-                version: string_or(arguments, "version", DEFAULT_POSTGRES_VERSION),
-                force: bool_or(arguments, "force", false),
-                download_timeout_secs: u64_or(
-                    arguments,
-                    "timeout_secs",
-                    DEFAULT_DOWNLOAD_TIMEOUT_SECS,
-                )
-                .min(remaining_seconds(request)),
-            }),
-        }),
-        "postgres.tool.use" => PostgresCommand::Tool(ToolArgs {
-            command: ToolCommand::Use(ToolUseArgs {
-                path: required_path(arguments, "path", cwd, request)?,
-            }),
-        }),
-        "postgres.tool.cleanup" => PostgresCommand::Tool(ToolArgs {
-            command: ToolCommand::Cleanup(ToolCleanupArgs {
-                version: optional_string(arguments, "version"),
-            }),
-        }),
-        "postgres.ping" => PostgresCommand::Ping,
-        "postgres.info" => PostgresCommand::Info,
-        "postgres.databases" => PostgresCommand::Databases,
-        "postgres.schemas" => PostgresCommand::Schemas(IncludeSystemArgs {
-            include_system: bool_or(arguments, "include_system", false),
-        }),
-        "postgres.tables" => PostgresCommand::Tables(RelationListArgs {
-            schema: optional_string(arguments, "schema"),
-            include_system: bool_or(arguments, "include_system", false),
-        }),
-        "postgres.views" => PostgresCommand::Views(RelationListArgs {
-            schema: optional_string(arguments, "schema"),
-            include_system: bool_or(arguments, "include_system", false),
-        }),
-        "postgres.describe" => PostgresCommand::Describe(DescribeArgs {
-            object: required_string(arguments, "object", request)?,
-        }),
-        "postgres.indexes" => PostgresCommand::Indexes(IndexesArgs {
-            schema: optional_string(arguments, "schema"),
-            table: optional_string(arguments, "table"),
-        }),
-        "postgres.extensions" => PostgresCommand::Extensions(ExtensionsArgs {
-            available: bool_or(arguments, "available", false),
-        }),
-        "postgres.query" => PostgresCommand::Query(QueryArgs {
-            sql: optional_string(arguments, "sql"),
-            file: optional_path(arguments, "file", cwd),
-        }),
-        "postgres.exec" => PostgresCommand::Exec(ExecArgs {
-            sql: optional_string(arguments, "sql"),
-            file: optional_path(arguments, "file", cwd),
-            single_transaction: bool_or(arguments, "single_transaction", false),
-            yes: bool_or(arguments, "yes", false),
-        }),
-        "postgres.explain" => PostgresCommand::Explain(ExplainArgs {
-            sql: optional_string(arguments, "sql"),
-            file: optional_path(arguments, "file", cwd),
-            analyze: bool_or(arguments, "analyze", false),
-            buffers: bool_or(arguments, "buffers", false),
-            yes: bool_or(arguments, "yes", false),
-        }),
-        "postgres.activity" => PostgresCommand::Activity(ActivityArgs {
-            active: bool_or(arguments, "active", false),
-            idle_in_tx: bool_or(arguments, "idle_in_tx", false),
-        }),
-        "postgres.locks" => PostgresCommand::Locks(LocksArgs {
-            blocking: bool_or(arguments, "blocking", false),
-        }),
-        "postgres.size" => PostgresCommand::Size(SizeArgs {
-            schema: optional_string(arguments, "schema"),
-            table: optional_string(arguments, "table"),
-        }),
-        "postgres.settings" => PostgresCommand::Settings(SettingsArgs {
-            changed: bool_or(arguments, "changed", false),
-        }),
+
+    /// A toolchain command: no connection block, no credential, and no
+    /// `ensure_tool` - see [`ToolPathArgs`].
+    macro_rules! tool_command {
+        ($args:ty) => {{
+            let args: $args = decode(request)?;
+            (
+                ToolResolverArgs {
+                    tool_path: None,
+                    ensure_tool: false,
+                },
+                ConnectionArgs::unset(),
+                args,
+            )
+        }};
+    }
+
+    /// A database command: toolchain plus connection.
+    macro_rules! db_command {
+        ($args:ty) => {{
+            let wire: DbWire<$args> = decode(request)?;
+            (wire.tool, wire.connection, wire.command)
+        }};
+    }
+
+    let (mut tool, connection, command) = match request.command.as_str() {
+        "postgres.tool.status" => {
+            let args: ToolPathArgs = decode(request)?;
+            (
+                ToolResolverArgs {
+                    tool_path: args.tool_path,
+                    ensure_tool: false,
+                },
+                ConnectionArgs::unset(),
+                PostgresCommand::Tool(ToolArgs {
+                    command: ToolCommand::Status,
+                }),
+            )
+        }
+        "postgres.tool.download" => {
+            let (tool, connection, mut args) = tool_command!(ToolDownloadArgs);
+            args.download_timeout_secs = args.download_timeout_secs.min(remaining_seconds(request));
+            (
+                tool,
+                connection,
+                PostgresCommand::Tool(ToolArgs {
+                    command: ToolCommand::Download(args),
+                }),
+            )
+        }
+        "postgres.tool.use" => {
+            let (tool, connection, mut args) = tool_command!(ToolUseArgs);
+            args.path = resolve_path(args.path, cwd);
+            (
+                tool,
+                connection,
+                PostgresCommand::Tool(ToolArgs {
+                    command: ToolCommand::Use(args),
+                }),
+            )
+        }
+        "postgres.tool.cleanup" => {
+            let (tool, connection, args) = tool_command!(ToolCleanupArgs);
+            (
+                tool,
+                connection,
+                PostgresCommand::Tool(ToolArgs {
+                    command: ToolCommand::Cleanup(args),
+                }),
+            )
+        }
+        "postgres.ping" => {
+            let (tool, connection, _) = db_command!(NoArgs);
+            (tool, connection, PostgresCommand::Ping)
+        }
+        "postgres.info" => {
+            let (tool, connection, _) = db_command!(NoArgs);
+            (tool, connection, PostgresCommand::Info)
+        }
+        "postgres.databases" => {
+            let (tool, connection, _) = db_command!(NoArgs);
+            (tool, connection, PostgresCommand::Databases)
+        }
+        "postgres.schemas" => {
+            let (tool, connection, args) = db_command!(IncludeSystemArgs);
+            (tool, connection, PostgresCommand::Schemas(args))
+        }
+        "postgres.tables" => {
+            let (tool, connection, args) = db_command!(RelationListArgs);
+            (tool, connection, PostgresCommand::Tables(args))
+        }
+        "postgres.views" => {
+            let (tool, connection, args) = db_command!(RelationListArgs);
+            (tool, connection, PostgresCommand::Views(args))
+        }
+        "postgres.describe" => {
+            let (tool, connection, args) = db_command!(DescribeArgs);
+            (tool, connection, PostgresCommand::Describe(args))
+        }
+        "postgres.indexes" => {
+            let (tool, connection, args) = db_command!(IndexesArgs);
+            (tool, connection, PostgresCommand::Indexes(args))
+        }
+        "postgres.extensions" => {
+            let (tool, connection, args) = db_command!(ExtensionsArgs);
+            (tool, connection, PostgresCommand::Extensions(args))
+        }
+        "postgres.query" => {
+            let (tool, connection, mut args) = db_command!(QueryArgs);
+            args.file = args.file.map(|file| resolve_path(file, cwd));
+            (tool, connection, PostgresCommand::Query(args))
+        }
+        "postgres.exec" => {
+            let (tool, connection, mut args) = db_command!(ExecArgs);
+            args.file = args.file.map(|file| resolve_path(file, cwd));
+            (tool, connection, PostgresCommand::Exec(args))
+        }
+        "postgres.explain" => {
+            let (tool, connection, mut args) = db_command!(ExplainArgs);
+            args.file = args.file.map(|file| resolve_path(file, cwd));
+            (tool, connection, PostgresCommand::Explain(args))
+        }
+        "postgres.activity" => {
+            let (tool, connection, args) = db_command!(ActivityArgs);
+            (tool, connection, PostgresCommand::Activity(args))
+        }
+        "postgres.locks" => {
+            let (tool, connection, args) = db_command!(LocksArgs);
+            (tool, connection, PostgresCommand::Locks(args))
+        }
+        "postgres.size" => {
+            let (tool, connection, args) = db_command!(SizeArgs);
+            (tool, connection, PostgresCommand::Size(args))
+        }
+        "postgres.settings" => {
+            let (tool, connection, args) = db_command!(SettingsArgs);
+            (tool, connection, PostgresCommand::Settings(args))
+        }
         _ => {
             return Err(command_error(
                 request,
@@ -154,53 +244,46 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandErr
             ));
         }
     };
+
+    tool.tool_path = tool.tool_path.map(|path| resolve_path(path, cwd));
     Ok(PostgresCli {
         tool,
-        connection,
+        connection: apply_context(connection, request)?,
         command,
     })
 }
 
-fn typed_connection(request: &TypedInvocationRequest) -> Result<ConnectionArgs, CommandError> {
-    let arguments = &request.arguments;
+/// A relative path argument is resolved against the execution cwd.
+fn resolve_path(path: PathBuf, cwd: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    }
+}
+
+/// Fill in what the caller cannot supply: the credential from the vault, and the
+/// timeouts bounded by the request deadline.
+fn apply_context(
+    mut connection: ConnectionArgs,
+    request: &TypedInvocationRequest,
+) -> Result<ConnectionArgs, CommandError> {
+    connection.resolved_password = resolved_database_password(request)?;
     let unbounded = request.context.remaining_timeout_ms == u64::MAX;
-    let remaining_ms = request.context.remaining_timeout_ms.max(1);
-    let requested_connect_timeout = u64_or(
-        arguments,
-        "connect_timeout_secs",
-        DEFAULT_CONNECT_TIMEOUT_SECS,
-    );
-    let statement_timeout_ms = arguments
-        .get("statement_timeout_ms")
-        .and_then(Value::as_u64);
-    Ok(ConnectionArgs {
-        host: optional_string(arguments, "host"),
-        port: arguments
-            .get("port")
-            .and_then(Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok()),
-        database: optional_string(arguments, "database"),
-        user: optional_string(arguments, "user"),
-        service: optional_string(arguments, "service"),
-        sslmode: optional_string(arguments, "sslmode"),
-        password_env: optional_string(arguments, "password_env"),
-        resolved_password: resolved_database_password(request)?,
-        connect_timeout_secs: if unbounded {
-            requested_connect_timeout
-        } else {
-            requested_connect_timeout.min(remaining_seconds(request))
-        },
-        statement_timeout_ms: if unbounded {
-            statement_timeout_ms
-        } else {
-            Some(
-                statement_timeout_ms
-                    .unwrap_or(remaining_ms)
-                    .max(1)
-                    .min(remaining_ms),
-            )
-        },
-    })
+    if !unbounded {
+        let remaining_ms = request.context.remaining_timeout_ms.max(1);
+        connection.connect_timeout_secs = connection
+            .connect_timeout_secs
+            .min(remaining_seconds(request));
+        connection.statement_timeout_ms = Some(
+            connection
+                .statement_timeout_ms
+                .unwrap_or(remaining_ms)
+                .max(1)
+                .min(remaining_ms),
+        );
+    }
+    Ok(connection)
 }
 
 fn resolved_database_password(
@@ -222,7 +305,13 @@ fn resolved_database_password(
     let public_id = credentials
         .and_then(|items| items.get("database"))
         .and_then(Value::as_str);
-    if public_id.is_some() && optional_string(&request.arguments, "password_env").is_some() {
+    if public_id.is_some()
+        && request
+            .arguments
+            .get("password_env")
+            .and_then(Value::as_str)
+            .is_some()
+    {
         return Err(command_error(
             request,
             "INVALID_ARGUMENT",
@@ -464,78 +553,12 @@ fn command_error(
     )
 }
 
-fn required_string(
-    arguments: &Value,
-    name: &str,
-    request: &TypedInvocationRequest,
-) -> Result<String, CommandError> {
-    optional_string(arguments, name)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            command_error(
-                request,
-                "INVALID_ARGUMENT",
-                format!("Missing {name}"),
-                format!("typed input requires non-empty '{name}'"),
-                false,
-            )
-        })
-}
-
-fn optional_string(arguments: &Value, name: &str) -> Option<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn string_or(arguments: &Value, name: &str, default: &str) -> String {
-    optional_string(arguments, name).unwrap_or_else(|| default.to_owned())
-}
-
-fn bool_or(arguments: &Value, name: &str, default: bool) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(default)
-}
-
-fn u64_or(arguments: &Value, name: &str, default: u64) -> u64 {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .unwrap_or(default)
-        .max(1)
-}
-
-fn optional_path(arguments: &Value, name: &str, cwd: &Path) -> Option<PathBuf> {
-    optional_string(arguments, name).map(|value| absolute_path(cwd, &value))
-}
-
-fn required_path(
-    arguments: &Value,
-    name: &str,
-    cwd: &Path,
-    request: &TypedInvocationRequest,
-) -> Result<PathBuf, CommandError> {
-    required_string(arguments, name, request).map(|value| absolute_path(cwd, &value))
-}
-
-fn absolute_path(cwd: &Path, value: &str) -> PathBuf {
-    let path = PathBuf::from(value);
-    if path.is_absolute() {
-        path
-    } else {
-        cwd.join(path)
-    }
-}
-
 fn tool_status_descriptor() -> CommandDescriptor {
     descriptor(
         "postgres.tool.status",
         "Inspect PostgreSQL toolchain",
         "Resolve psql candidates and report the selected client toolchain.",
-        tool_path_input(),
+        input_schema_for::<ToolPathArgs>(),
         output_schema_for::<ToolStatusOutput>("postgres.tool.status"),
         CommandEffects::new(
             true,
@@ -555,32 +578,11 @@ fn tool_status_descriptor() -> CommandDescriptor {
 }
 
 fn tool_download_descriptor() -> CommandDescriptor {
-    let properties = Map::from_iter([
-        (
-            "version".to_owned(),
-            json!({
-                "type": "string",
-                "minLength": 1,
-                "default": DEFAULT_POSTGRES_VERSION
-            }),
-        ),
-        (
-            "force".to_owned(),
-            boolean_schema(false, "Replace an existing managed toolchain."),
-        ),
-        (
-            "timeout_secs".to_owned(),
-            positive_integer_default(
-                DEFAULT_DOWNLOAD_TIMEOUT_SECS,
-                "Download timeout capped by the MCP request deadline.",
-            ),
-        ),
-    ]);
     descriptor(
         "postgres.tool.download",
         "Download PostgreSQL toolchain",
         "Download, verify, and unpack the supported PostgreSQL client toolchain.",
-        object_input(properties, Vec::new()),
+        input_schema_for::<ToolDownloadArgs>(),
         output_schema_for::<ToolDownloadOutput>("postgres.tool.download"),
         CommandEffects::new(
             false,
@@ -605,13 +607,7 @@ fn tool_use_descriptor() -> CommandDescriptor {
         "postgres.tool.use",
         "Select PostgreSQL toolchain",
         "Validate a psql toolchain path and persist it as the shared default.",
-        object_input(
-            Map::from_iter([(
-                "path".to_owned(),
-                required_text_schema("Tool executable or directory resolved against cwd."),
-            )]),
-            vec!["path"],
-        ),
+        input_schema_for::<ToolUseArgs>(),
         output_schema_for::<ToolUseOutput>("postgres.tool.use"),
         CommandEffects::new(
             false,
@@ -635,15 +631,7 @@ fn tool_cleanup_descriptor() -> CommandDescriptor {
         "postgres.tool.cleanup",
         "Clean PostgreSQL tool cache",
         "Delete one version or all versions from the managed PostgreSQL tool cache.",
-        object_input(
-            Map::from_iter([(
-                "version".to_owned(),
-                optional_text_schema(
-                    "Managed version to remove; omit to remove every cached version.",
-                ),
-            )]),
-            Vec::new(),
-        ),
+        input_schema_for::<ToolCleanupArgs>(),
         output_schema_for::<ToolCleanupOutput>("postgres.tool.cleanup"),
         CommandEffects::new(
             false,
@@ -659,106 +647,71 @@ fn tool_cleanup_descriptor() -> CommandDescriptor {
 }
 
 fn ping_descriptor() -> CommandDescriptor {
-    database_descriptor(
+    database_descriptor::<NoArgs>(
         "postgres.ping",
         "Ping PostgreSQL",
         "Connect and return server plus session identity metadata.",
-        Map::new(),
         output_schema_for::<InfoOutput>("postgres.ping"),
         "Reads server/session metadata. ensure_tool=true may first download and write a shared client toolchain.",
     )
 }
 
 fn info_descriptor() -> CommandDescriptor {
-    database_descriptor(
+    database_descriptor::<NoArgs>(
         "postgres.info",
         "Inspect PostgreSQL session",
         "Return selected server and session metadata.",
-        Map::new(),
         output_schema_for::<InfoOutput>("postgres.info"),
         "Reads server/session metadata. ensure_tool=true may first download and write a shared client toolchain.",
     )
 }
 
 fn databases_descriptor() -> CommandDescriptor {
-    rows_descriptor::<DatabaseRow>(
+    rows_descriptor::<NoArgs, DatabaseRow>(
         "postgres.databases",
         "List PostgreSQL databases",
-        Map::new(),
         "Reads database names, owners, encodings, connection flags, and visible size information.",
     )
 }
 
 fn schemas_descriptor() -> CommandDescriptor {
-    rows_descriptor::<SchemaRow>(
+    rows_descriptor::<IncludeSystemArgs, SchemaRow>(
         "postgres.schemas",
         "List PostgreSQL schemas",
-        Map::from_iter([(
-            "include_system".to_owned(),
-            boolean_schema(false, "Include system schemas."),
-        )]),
         "Reads schema names and owners, optionally including system schemas.",
     )
 }
 
 fn relations_descriptor(id: &str, title: &str) -> CommandDescriptor {
-    rows_descriptor::<RelationRow>(
+    rows_descriptor::<RelationListArgs, RelationRow>(
         id,
         title,
-        Map::from_iter([
-            (
-                "schema".to_owned(),
-                optional_text_schema("Restrict results to this schema."),
-            ),
-            (
-                "include_system".to_owned(),
-                boolean_schema(false, "Include system relations."),
-            ),
-        ]),
         "Reads relation names, owners, row estimates, and total sizes.",
     )
 }
 
 fn describe_descriptor() -> CommandDescriptor {
-    database_descriptor(
+    database_descriptor::<DescribeArgs>(
         "postgres.describe",
         "Describe PostgreSQL relation",
         "Describe a table, view, or materialized view.",
-        Map::from_iter([(
-            "object".to_owned(),
-            required_text_schema("Relation name as NAME or SCHEMA.NAME."),
-        )]),
         output_schema_for::<DescribeOutput>("postgres.describe"),
         "Reads relation, column, index, and constraint definitions that may reveal database structure.",
     )
 }
 
 fn indexes_descriptor() -> CommandDescriptor {
-    rows_descriptor::<IndexRow>(
+    rows_descriptor::<IndexesArgs, IndexRow>(
         "postgres.indexes",
         "List PostgreSQL indexes",
-        Map::from_iter([
-            (
-                "schema".to_owned(),
-                optional_text_schema("Restrict results to this schema."),
-            ),
-            (
-                "table".to_owned(),
-                optional_text_schema("Restrict results to this table."),
-            ),
-        ]),
         "Reads index names and full definitions.",
     )
 }
 
 fn extensions_descriptor() -> CommandDescriptor {
-    rows_descriptor::<ExtensionRow>(
+    rows_descriptor::<ExtensionsArgs, ExtensionRow>(
         "postgres.extensions",
         "List PostgreSQL extensions",
-        Map::from_iter([(
-            "available".to_owned(),
-            boolean_schema(false, "Include available but not installed extensions."),
-        )]),
         "Reads installed extension metadata or the server's available extension catalog.",
     )
 }
@@ -768,7 +721,7 @@ fn query_descriptor() -> CommandDescriptor {
         "postgres.query",
         "Query PostgreSQL",
         "Run SQL restricted to SELECT, WITH, TABLE, or VALUES in a read-only transaction.",
-        database_input(sql_source_properties(), vec![]),
+        input_schema_for::<DbWire<QueryArgs>>(),
         output_schema_for::<QueryOutput>("postgres.query"),
         CommandEffects::new(
             false,
@@ -789,24 +742,11 @@ fn query_descriptor() -> CommandDescriptor {
 }
 
 fn exec_descriptor() -> CommandDescriptor {
-    let mut properties = sql_source_properties();
-    properties.insert(
-        "single_transaction".to_owned(),
-        boolean_schema(false, "Execute all SQL in one transaction."),
-    );
-    properties.insert(
-        "yes".to_owned(),
-        json!({
-            "type": "boolean",
-            "const": true,
-            "description": "Required explicit confirmation for arbitrary SQL mutation."
-        }),
-    );
     descriptor(
         "postgres.exec",
         "Execute PostgreSQL SQL",
         "Execute explicitly confirmed SQL mutations or administrative commands.",
-        database_input(properties, vec!["yes"]),
+        input_schema_for::<DbWire<ExecArgs>>(),
         output_schema_for::<ExecOutput>("postgres.exec"),
         CommandEffects::new(
             false,
@@ -830,31 +770,11 @@ fn exec_descriptor() -> CommandDescriptor {
 }
 
 fn explain_descriptor() -> CommandDescriptor {
-    let mut properties = sql_source_properties();
-    properties.insert(
-        "analyze".to_owned(),
-        boolean_schema(
-            false,
-            "Execute the SQL while collecting actual plan statistics.",
-        ),
-    );
-    properties.insert(
-        "buffers".to_owned(),
-        boolean_schema(false, "Include buffer usage in the plan."),
-    );
-    properties.insert(
-        "yes".to_owned(),
-        boolean_schema(
-            false,
-            "Required when analyze=true because the SQL is executed.",
-        ),
-    );
-    let schema = database_input(properties, Vec::new());
     descriptor(
         "postgres.explain",
         "Explain PostgreSQL SQL",
         "Return a query plan; analyze=true executes the supplied SQL.",
-        schema,
+        input_schema_for::<DbWire<ExplainArgs>>(),
         output_schema_for::<ExplainOutput>("postgres.explain"),
         CommandEffects::new(
             false,
@@ -878,86 +798,55 @@ fn explain_descriptor() -> CommandDescriptor {
 }
 
 fn activity_descriptor() -> CommandDescriptor {
-    rows_descriptor::<ActivityRow>(
+    rows_descriptor::<ActivityArgs, ActivityRow>(
         "postgres.activity",
         "Inspect PostgreSQL activity",
-        Map::from_iter([
-            (
-                "active".to_owned(),
-                boolean_schema(false, "Show only active sessions."),
-            ),
-            (
-                "idle_in_tx".to_owned(),
-                boolean_schema(false, "Show only sessions idle in a transaction."),
-            ),
-        ]),
         "Reads session identities, client addresses, wait states, timestamps, and truncated SQL text from pg_stat_activity.",
     )
 }
 
 fn locks_descriptor() -> CommandDescriptor {
-    rows_descriptor::<LockRow>(
+    rows_descriptor::<LocksArgs, LockRow>(
         "postgres.locks",
         "Inspect PostgreSQL locks",
-        Map::from_iter([(
-            "blocking".to_owned(),
-            boolean_schema(false, "Return only locks with a known blocking session."),
-        )]),
         "Reads blocked and blocking session identities plus truncated SQL text.",
     )
 }
 
 fn size_descriptor() -> CommandDescriptor {
-    rows_descriptor::<SizeRow>(
+    rows_descriptor::<SizeArgs, SizeRow>(
         "postgres.size",
         "Inspect PostgreSQL sizes",
-        Map::from_iter([
-            (
-                "schema".to_owned(),
-                optional_text_schema("Show aggregate size for a schema or qualify a table."),
-            ),
-            (
-                "table".to_owned(),
-                optional_text_schema("Show table size; may be NAME or SCHEMA.NAME."),
-            ),
-        ]),
         "Reads database, schema, or relation size statistics.",
     )
 }
 
 fn settings_descriptor() -> CommandDescriptor {
-    rows_descriptor::<SettingRow>(
+    rows_descriptor::<SettingsArgs, SettingRow>(
         "postgres.settings",
         "Inspect PostgreSQL settings",
-        Map::from_iter([(
-            "changed".to_owned(),
-            boolean_schema(false, "Return only settings whose source is not default."),
-        )]),
         "Reads server settings, sources, units, and descriptions; configuration values may contain sensitive operational details.",
     )
 }
 
-fn rows_descriptor<T: schemars::JsonSchema>(
+fn rows_descriptor<A: JsonSchema, T: JsonSchema>(
     id: &str,
     title: &str,
-    properties: Map<String, Value>,
     impact: &str,
 ) -> CommandDescriptor {
-    database_descriptor(
+    database_descriptor::<A>(
         id,
         title,
         title,
-        properties,
         output_schema_for::<RowsOutput<T>>(id),
         impact,
     )
 }
 
-fn database_descriptor(
+fn database_descriptor<A: JsonSchema>(
     id: &str,
     title: &str,
     description: &str,
-    properties: Map<String, Value>,
     output_schema: Value,
     impact: &str,
 ) -> CommandDescriptor {
@@ -965,7 +854,7 @@ fn database_descriptor(
         id,
         title,
         description,
-        database_input(properties, Vec::new()),
+        input_schema_for::<DbWire<A>>(),
         output_schema,
         CommandEffects::new(
             false,
@@ -1007,120 +896,6 @@ fn database_effects() -> Vec<CommandEffect> {
         CommandEffect::NetworkRead,
         CommandEffect::ExternalRead,
     ]
-}
-
-fn tool_path_input() -> Value {
-    object_input(
-        Map::from_iter([(
-            "tool_path".to_owned(),
-            optional_text_schema(
-                "Explicit psql executable or tool directory resolved against cwd.",
-            ),
-        )]),
-        Vec::new(),
-    )
-}
-
-fn database_input(mut properties: Map<String, Value>, required: Vec<&str>) -> Value {
-    properties.insert(
-        "tool_path".to_owned(),
-        optional_text_schema("Explicit psql executable or tool directory resolved against cwd."),
-    );
-    properties.insert(
-        "ensure_tool".to_owned(),
-        boolean_schema(
-            false,
-            "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
-        ),
-    );
-    properties.insert("host".to_owned(), optional_text_schema("PostgreSQL host."));
-    properties.insert(
-        "port".to_owned(),
-        json!({"type": "integer", "minimum": 1, "maximum": 65535}),
-    );
-    properties.insert(
-        "database".to_owned(),
-        optional_text_schema("PostgreSQL database name."),
-    );
-    properties.insert("user".to_owned(), optional_text_schema("PostgreSQL user."));
-    properties.insert(
-        "service".to_owned(),
-        optional_text_schema("libpq service name."),
-    );
-    properties.insert(
-        "sslmode".to_owned(),
-        json!({
-            "type": "string",
-            "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
-        }),
-    );
-    properties.insert(
-        "password_env".to_owned(),
-        optional_text_schema(
-            "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
-        ),
-    );
-    properties.insert(
-        "connect_timeout_secs".to_owned(),
-        positive_integer_default(
-            DEFAULT_CONNECT_TIMEOUT_SECS,
-            "Connection timeout capped by the MCP request deadline.",
-        ),
-    );
-    properties.insert(
-        "statement_timeout_ms".to_owned(),
-        json!({
-            "type": "integer",
-            "minimum": 1,
-            "description": "Server statement timeout capped by the MCP request deadline."
-        }),
-    );
-    object_input(properties, required)
-}
-
-fn sql_source_properties() -> Map<String, Value> {
-    Map::from_iter([
-        (
-            "sql".to_owned(),
-            optional_text_schema("Inline SQL text. Exactly one of sql or file is required."),
-        ),
-        (
-            "file".to_owned(),
-            optional_text_schema(
-                "UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.",
-            ),
-        ),
-    ])
-}
-
-fn object_input(properties: Map<String, Value>, required: Vec<&str>) -> Value {
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn required_text_schema(description: &str) -> Value {
-    json!({"type": "string", "minLength": 1, "description": description})
-}
-
-fn optional_text_schema(description: &str) -> Value {
-    json!({"type": "string", "description": description})
-}
-
-fn boolean_schema(default: bool, description: &str) -> Value {
-    json!({"type": "boolean", "default": default, "description": description})
-}
-
-fn positive_integer_default(default: u64, description: &str) -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 1,
-        "default": default,
-        "description": description
-    })
 }
 
 #[cfg(test)]

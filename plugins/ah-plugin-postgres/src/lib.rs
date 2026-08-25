@@ -85,25 +85,49 @@ struct PostgresCli {
     command: PostgresCommand,
 }
 
-#[derive(Debug, Args, Clone)]
+// Only the path half of `ToolResolverArgs`. A doc comment here would be
+// published as the schema `description`.
+//
+// A toolchain command must not accept `ensure_tool`: `postgres.tool.status` is
+// declared read-only and low risk, and honouring it there would let a caller
+// trigger a download from a command that promises not to write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ToolPathArgs {
+    #[schemars(description = "Explicit psql executable or tool directory resolved against cwd.")]
+    tool_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Clone, Deserialize, JsonSchema)]
 struct ToolResolverArgs {
     #[arg(long, global = true, value_name = "PATH")]
+    #[schemars(description = "Explicit psql executable or tool directory resolved against cwd.")]
     tool_path: Option<PathBuf>,
     #[arg(long, global = true)]
+    #[serde(default)]
+    #[schemars(
+        default,
+        description = "Download the managed toolchain when no usable psql exists. This writes the shared cache."
+    )]
     ensure_tool: bool,
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Deserialize, JsonSchema)]
 struct ConnectionArgs {
     #[arg(long, global = true, value_name = "HOST")]
+    #[schemars(description = "PostgreSQL host.")]
     host: Option<String>,
     #[arg(long, global = true, value_name = "PORT")]
+    #[schemars(range(min = 1, max = 65535))]
     port: Option<u16>,
     #[arg(long, global = true, value_name = "NAME")]
+    #[schemars(description = "PostgreSQL database name.")]
     database: Option<String>,
     #[arg(long, global = true, value_name = "USER")]
+    #[schemars(description = "PostgreSQL user.")]
     user: Option<String>,
     #[arg(long, global = true, value_name = "NAME")]
+    #[schemars(description = "libpq service name.")]
     service: Option<String>,
     #[arg(
         long,
@@ -111,15 +135,55 @@ struct ConnectionArgs {
         value_name = "MODE",
         value_parser = ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
     )]
+    #[schemars(extend("enum" = ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]))]
     sslmode: Option<String>,
     #[arg(long, global = true, value_name = "ENV_VAR")]
+    #[schemars(
+        description = "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead."
+    )]
     password_env: Option<String>,
+    // Bound from the vault, never sent by the caller.
     #[arg(skip)]
+    #[serde(skip)]
+    #[schemars(skip)]
     resolved_password: Option<SecretValue>,
     #[arg(long, global = true, default_value_t = DEFAULT_CONNECT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_connect_timeout_secs")]
+    #[schemars(
+        default = "default_connect_timeout_secs",
+        range(min = 1),
+        description = "Connection timeout capped by the MCP request deadline."
+    )]
     connect_timeout_secs: u64,
     #[arg(long, global = true, value_name = "MILLISECONDS")]
+    #[schemars(
+        range(min = 1),
+        description = "Server statement timeout capped by the MCP request deadline."
+    )]
     statement_timeout_ms: Option<u64>,
+}
+
+fn default_connect_timeout_secs() -> u64 {
+    DEFAULT_CONNECT_TIMEOUT_SECS
+}
+
+impl ConnectionArgs {
+    /// A toolchain command never connects, so it carries an unset block rather
+    /// than pretending to have connection arguments the caller did not send.
+    fn unset() -> Self {
+        Self {
+            host: None,
+            port: None,
+            database: None,
+            user: None,
+            service: None,
+            sslmode: None,
+            password_env: None,
+            resolved_password: None,
+            connect_timeout_secs: DEFAULT_CONNECT_TIMEOUT_SECS,
+            statement_timeout_ms: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -197,120 +261,208 @@ enum ToolCommand {
     Cleanup(ToolCleanupArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolDownloadArgs {
     #[arg(long, default_value = DEFAULT_POSTGRES_VERSION, value_name = "VERSION")]
+    #[serde(default = "default_postgres_version")]
+    #[schemars(default = "default_postgres_version", length(min = 1))]
     version: String,
+    /// Replace an existing managed toolchain.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     force: bool,
+    /// Download timeout capped by the MCP request deadline.
     #[arg(skip = DEFAULT_DOWNLOAD_TIMEOUT_SECS)]
+    #[serde(rename = "timeout_secs", default = "default_download_timeout_secs")]
+    #[schemars(
+        rename = "timeout_secs",
+        default = "default_download_timeout_secs",
+        range(min = 1)
+    )]
     download_timeout_secs: u64,
 }
 
-#[derive(Debug, Args)]
+fn default_postgres_version() -> String {
+    DEFAULT_POSTGRES_VERSION.to_owned()
+}
+
+fn default_download_timeout_secs() -> u64 {
+    DEFAULT_DOWNLOAD_TIMEOUT_SECS
+}
+
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolUseArgs {
+    /// Tool executable or directory resolved against cwd.
     #[arg(long, value_name = "PATH")]
+    #[schemars(extend("minLength" = 1))]
     path: PathBuf,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolCleanupArgs {
+    /// Managed version to remove; omit to remove every cached version.
     #[arg(long, value_name = "VERSION")]
     version: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IncludeSystemArgs {
+    /// Include system schemas.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     include_system: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RelationListArgs {
+    /// Restrict results to this schema.
     #[arg(long, value_name = "NAME")]
     schema: Option<String>,
+    /// Include system relations.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     include_system: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct DescribeArgs {
+    /// Relation name as NAME or SCHEMA.NAME.
+    #[schemars(length(min = 1))]
     object: String,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IndexesArgs {
+    /// Restrict results to this schema.
     #[arg(long, value_name = "NAME")]
     schema: Option<String>,
+    /// Restrict results to this table.
     #[arg(long, value_name = "NAME")]
     table: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ExtensionsArgs {
+    /// Include available but not installed extensions.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     available: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct QueryArgs {
+    /// Inline SQL text. Exactly one of sql or file is required.
     #[arg(long, value_name = "TEXT", conflicts_with = "file")]
     sql: Option<String>,
+    /// UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.
     #[arg(long, value_name = "PATH")]
     file: Option<PathBuf>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ExecArgs {
+    /// Inline SQL text. Exactly one of sql or file is required.
     #[arg(long, value_name = "TEXT", conflicts_with = "file")]
     sql: Option<String>,
+    /// UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.
     #[arg(long, value_name = "PATH")]
     file: Option<PathBuf>,
+    /// Execute all SQL in one transaction.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     single_transaction: bool,
+    /// Required explicit confirmation for arbitrary SQL mutation.
+    // Deliberately not defaulted: omitting it must fail validation rather than
+    // silently mean "no".
     #[arg(long)]
+    #[schemars(extend("const" = true))]
     yes: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ExplainArgs {
+    /// Inline SQL text. Exactly one of sql or file is required.
     #[arg(long, value_name = "TEXT", conflicts_with = "file")]
     sql: Option<String>,
+    /// UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.
     #[arg(long, value_name = "PATH")]
     file: Option<PathBuf>,
+    /// Execute the SQL while collecting actual plan statistics.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     analyze: bool,
+    /// Include buffer usage in the plan.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     buffers: bool,
+    /// Required when analyze=true because the SQL is executed.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     yes: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ActivityArgs {
+    /// Show only active sessions.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     active: bool,
+    /// Show only sessions idle in a transaction.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     idle_in_tx: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct LocksArgs {
+    /// Return only locks with a known blocking session.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     blocking: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SizeArgs {
+    /// Show aggregate size for a schema or qualify a table.
     #[arg(long, value_name = "NAME")]
     schema: Option<String>,
+    /// Show table size; may be NAME or SCHEMA.NAME.
     #[arg(long, value_name = "NAME")]
     table: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SettingsArgs {
+    /// Return only settings whose source is not default.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     changed: bool,
 }
 
