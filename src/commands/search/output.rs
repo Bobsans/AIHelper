@@ -1,58 +1,36 @@
 use crate::commands::search::domain::{SearchFilesOutput, SearchResult, SearchTextOutput};
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
+    output::{Emitter, TextFormatter, TextStyle},
 };
 
-pub(crate) fn emit(result: SearchResult, options: &GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
+const TRUNCATED: &str = "output truncated by --limit";
 
+pub(crate) fn emit(result: SearchResult, emitter: &mut Emitter) -> Result<(), AppError> {
     match result {
-        SearchResult::Text(payload) => emit_text(payload, options),
-        SearchResult::Files(payload) => emit_files(payload, options),
+        SearchResult::Text(payload) => emit_text(payload, emitter),
+        SearchResult::Files(payload) => emit_files(payload, emitter),
     }
 }
 
-fn emit_text(payload: SearchTextOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            let rendered =
-                render_text_matches(&payload.matches, payload.context, TextFormatter::stdout());
-            if !rendered.is_empty() {
-                println!("{rendered}");
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
+fn emit_text(payload: SearchTextOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        render_text_matches(&payload.matches, payload.context, formatter)
+    })?;
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
+    Ok(())
 }
 
-fn emit_files(payload: SearchFilesOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            let rendered = render_file_matches(&payload.files, TextFormatter::stdout());
-            if !rendered.is_empty() {
-                println!("{rendered}");
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
+fn emit_files(payload: SearchFilesOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        render_file_matches(&payload.files, formatter)
+    })?;
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
+    Ok(())
 }
 
 fn render_text_matches(

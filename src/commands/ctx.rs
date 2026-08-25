@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-use crate::{cli::GlobalOptions, error::AppError};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
 #[derive(Debug, Args)]
 pub struct CtxArgs {
@@ -152,15 +152,15 @@ pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         CtxCommand::Pack(pack_args) => {
             let result = domain::execute_pack(pack_args, options.limit)?;
-            adapters::output::emit(result, options)
+            adapters::output::emit(result, &mut Emitter::stdio(options))
         }
         CtxCommand::Symbols(symbols_args) => {
             let result = domain::execute_symbols(symbols_args, options.limit)?;
-            adapters::output::emit(result, options)
+            adapters::output::emit(result, &mut Emitter::stdio(options))
         }
         CtxCommand::Changed(changed_args) => {
             let result = domain::execute_changed(changed_args)?;
-            adapters::output::emit(result, options)
+            adapters::output::emit(result, &mut Emitter::stdio(options))
         }
     }
 }

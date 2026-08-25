@@ -1,9 +1,7 @@
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
+    output::{Emitter, TextFormatter, TextStyle},
 };
-use serde_json;
 
 use super::super::domain::{
     DetectedFile, ProjectCommandsOutput, ProjectDetectOutput, ProjectVersionEntry,
@@ -12,104 +10,73 @@ use super::super::domain::{
 
 pub(crate) fn emit_detect(
     payload: ProjectDetectOutput,
-    options: &GlobalOptions,
+    emitter: &mut Emitter,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-
-    match options.output {
-        OutputMode::Text => {
-            let formatter = TextFormatter::stdout();
-            println!(
-                "{}",
-                render_assignment("root", &payload.root, TextStyle::Key, formatter)
-            );
-            println!(
-                "{}",
-                render_list_assignment("ecosystems", &payload.ecosystems, formatter)
-            );
-            println!(
-                "{}",
-                render_list_assignment("tools", &payload.tools, formatter)
-            );
-            println!(
-                "{}",
-                render_list_assignment("roles", &payload.roles, formatter)
-            );
-            print_files("package", &payload.files.packages, formatter);
-            print_files("lock", &payload.files.locks, formatter);
-            print_files("ci", &payload.files.ci, formatter);
-            print_files("docs", &payload.files.docs, formatter);
-            print_files("changelog", &payload.files.changelogs, formatter);
-            print_files("deploy", &payload.files.deploy, formatter);
-            print_files("infra", &payload.files.infra, formatter);
-            print_files("config", &payload.files.config, formatter);
-            print_files("quality", &payload.files.quality, formatter);
-            print_files("security", &payload.files.security, formatter);
+    emitter.value(&payload, |formatter| {
+        let mut lines = vec![
+            render_assignment("root", &payload.root, TextStyle::Key, formatter),
+            render_list_assignment("ecosystems", &payload.ecosystems, formatter),
+            render_list_assignment("tools", &payload.tools, formatter),
+            render_list_assignment("roles", &payload.roles, formatter),
+        ];
+        for (label, files) in [
+            ("package", &payload.files.packages),
+            ("lock", &payload.files.locks),
+            ("ci", &payload.files.ci),
+            ("docs", &payload.files.docs),
+            ("changelog", &payload.files.changelogs),
+            ("deploy", &payload.files.deploy),
+            ("infra", &payload.files.infra),
+            ("config", &payload.files.config),
+            ("quality", &payload.files.quality),
+            ("security", &payload.files.security),
+        ] {
+            lines.extend(file_lines(label, files, formatter));
         }
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(&payload)?),
-    }
-
-    Ok(())
+        lines.join("\n")
+    })
 }
 
 pub(crate) fn emit_commands(
     payload: ProjectCommandsOutput,
-    options: &GlobalOptions,
+    emitter: &mut Emitter,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-
-    match options.output {
-        OutputMode::Text => {
-            let formatter = TextFormatter::stdout();
-            for item in &payload.commands {
-                println!("{}", render_command(item, formatter));
-            }
-        }
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(&payload)?),
-    }
-
-    Ok(())
+    emitter.value(&payload, |formatter| {
+        payload
+            .commands
+            .iter()
+            .map(|item| render_command(item, formatter))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 pub(crate) fn emit_version(
     payload: ProjectVersionOutput,
-    options: &GlobalOptions,
+    emitter: &mut Emitter,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-
-    match options.output {
-        OutputMode::Text => {
-            if payload.versions.is_empty() {
-                println!(
-                    "{}",
-                    TextFormatter::stdout().paint(TextStyle::Muted, "no project versions found")
-                );
-                return Ok(());
-            }
-            let formatter = TextFormatter::stdout();
-            for item in &payload.versions {
-                println!("{}", render_version(item, formatter));
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
+    emitter.value(&payload, |formatter| {
+        if payload.versions.is_empty() {
+            return formatter.paint(TextStyle::Muted, "no project versions found");
         }
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(&payload)?),
+        payload
+            .versions
+            .iter()
+            .map(|item| render_version(item, formatter))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    if !payload.versions.is_empty() && payload.truncated {
+        emitter.text_warning("output truncated by --limit");
     }
-
     Ok(())
 }
 
-fn print_files(label: &str, files: &[DetectedFile], formatter: TextFormatter) {
-    for file in files {
-        println!("{}", render_file(label, file, formatter));
-    }
+fn file_lines(label: &str, files: &[DetectedFile], formatter: TextFormatter) -> Vec<String> {
+    files
+        .iter()
+        .map(|file| render_file(label, file, formatter))
+        .collect()
 }
 
 fn render_assignment(

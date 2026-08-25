@@ -21,7 +21,7 @@ use serde::Serialize;
 use crate::{
     cli::GlobalOptions,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle},
+    output::{Emitter, TextFormatter, TextStyle},
 };
 
 pub fn execute_info(
@@ -41,21 +41,23 @@ pub fn execute_info(
         }
     }
 
-    if options.quiet {
-        return Ok(());
-    }
+    let payload = AiInfoOutput {
+        command: "ai.info",
+        domain_filter: domain_filter.map(str::to_owned),
+        global_options: global_options_docs(),
+        plugin_count: manuals.len(),
+        host_commands,
+        plugins: manuals,
+    };
 
-    match options.output {
-        OutputMode::Text => render_text(
-            domain_filter,
-            &host_commands,
-            &manuals,
-            TextFormatter::stdout(),
-        ),
-        OutputMode::Json => render_json(domain_filter, host_commands, manuals)?,
-    }
-
-    Ok(())
+    Emitter::stdio(&options).value(&payload, |formatter| {
+        render_text(
+            payload.domain_filter.as_deref(),
+            &payload.host_commands,
+            &payload.plugins,
+            formatter,
+        )
+    })
 }
 
 pub(crate) fn typed_info_value(
@@ -87,105 +89,90 @@ fn render_text(
     host_commands: &[HostCommandDoc],
     manuals: &[PluginManual],
     formatter: TextFormatter,
-) {
-    println!(
-        "{}",
-        formatter.paint(TextStyle::Heading, "AIHelper agent manual")
-    );
-    println!(
-        "{}",
-        formatter.paint(TextStyle::Key, "usage: ah <domain> <command> [options]")
-    );
+) -> String {
+    let mut lines = vec![
+        formatter.paint(TextStyle::Heading, "AIHelper agent manual"),
+        formatter.paint(TextStyle::Key, "usage: ah <domain> <command> [options]"),
+    ];
     if let Some(filter) = domain_filter {
-        println!(
+        lines.push(format!(
             "{} {}",
             formatter.paint(TextStyle::Heading, "domain filter:"),
             formatter.paint(TextStyle::Key, filter)
-        );
+        ));
     }
-    println!();
+    lines.push(String::new());
 
-    println!("{}", formatter.paint(TextStyle::Heading, "Global flags:"));
+    lines.push(formatter.paint(TextStyle::Heading, "Global flags:"));
     for option in global_options_docs() {
-        println!(
+        lines.push(format!(
             "  {}  {}",
             formatter.paint(TextStyle::Key, option.flag),
             option.description
-        );
+        ));
     }
-    println!();
+    lines.push(String::new());
 
-    println!("{}", formatter.paint(TextStyle::Heading, "Host commands:"));
+    lines.push(formatter.paint(TextStyle::Heading, "Host commands:"));
     for command in host_commands {
-        println!(
+        lines.push(format!(
             "  {}",
             formatter.paint(TextStyle::Key, format!("ah {}", command.usage))
-        );
-        println!("    {}", command.summary);
+        ));
+        lines.push(format!("    {}", command.summary));
         for example in &command.examples {
-            println!(
+            lines.push(format!(
                 "    {} {}: {}",
                 formatter.paint(TextStyle::Muted, "e.g."),
                 example.description,
                 formatter.paint(TextStyle::Key, &example.command)
-            );
+            ));
         }
     }
-    println!();
+    lines.push(String::new());
 
     for manual in manuals {
-        println!(
+        lines.push(format!(
             "{} {} ({})",
             formatter.paint(TextStyle::Heading, "Domain:"),
             formatter.paint(TextStyle::Key, &manual.domain),
             formatter.paint(TextStyle::Muted, &manual.plugin_name)
-        );
-        println!("  {}", manual.description);
+        ));
+        lines.push(format!("  {}", manual.description));
         if !manual.notes.is_empty() {
-            println!("  {}", formatter.paint(TextStyle::Heading, "Notes:"));
-            for note in &manual.notes {
-                println!("    - {}", note);
-            }
+            lines.push(format!(
+                "  {}",
+                formatter.paint(TextStyle::Heading, "Notes:")
+            ));
+            lines.extend(manual.notes.iter().map(|note| format!("    - {note}")));
         }
-        println!("  {}", formatter.paint(TextStyle::Heading, "Commands:"));
+        lines.push(format!(
+            "  {}",
+            formatter.paint(TextStyle::Heading, "Commands:")
+        ));
         for command in &manual.commands {
-            println!(
+            lines.push(format!(
                 "    {}",
                 formatter.paint(
                     TextStyle::Key,
                     format!("ah {} {}", manual.domain, command.usage)
                 )
-            );
-            println!("      {}", command.summary);
+            ));
+            lines.push(format!("      {}", command.summary));
             for example in &command.examples {
                 let rendered = render_plugin_example(&manual.domain, &example.argv);
-                println!(
+                lines.push(format!(
                     "      {} {}: {}",
                     formatter.paint(TextStyle::Muted, "e.g."),
                     example.description,
                     formatter.paint(TextStyle::Key, rendered)
-                );
+                ));
             }
         }
-        println!();
+        lines.push(String::new());
     }
-}
 
-fn render_json(
-    domain_filter: Option<&str>,
-    host_commands: Vec<HostCommandDoc>,
-    manuals: Vec<PluginManual>,
-) -> Result<(), AppError> {
-    let payload = AiInfoOutput {
-        command: "ai.info",
-        domain_filter: domain_filter.map(str::to_owned),
-        global_options: global_options_docs(),
-        host_commands,
-        plugin_count: manuals.len(),
-        plugins: manuals,
-    };
-    println!("{}", serde_json::to_string_pretty(&payload)?);
-    Ok(())
+    lines.join("\n")
 }
 
 fn render_plugin_example(domain: &str, argv: &[String]) -> String {

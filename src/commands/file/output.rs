@@ -1,75 +1,44 @@
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
+    output::{Emitter, TextFormatter, TextStyle},
 };
 
 use crate::commands::file::domain::{
     FileKind, FileLinesOutput, FileResult, FileStatOutput, FileTreeOutput, TreeEntry,
 };
 
-pub(crate) fn emit(result: FileResult, options: &GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
+const TRUNCATED: &str = "output truncated by --limit";
 
+pub(crate) fn emit(result: FileResult, emitter: &mut Emitter) -> Result<(), AppError> {
     match result {
-        FileResult::Read(payload) => emit_lines(payload, options),
-        FileResult::Head(payload) => emit_lines(payload, options),
-        FileResult::Tail(payload) => emit_lines(payload, options),
-        FileResult::Stat(payload) => emit_stat(payload, options),
-        FileResult::Tree(payload) => emit_tree(payload, options),
+        FileResult::Read(payload) => emit_lines(payload, emitter),
+        FileResult::Head(payload) => emit_lines(payload, emitter),
+        FileResult::Tail(payload) => emit_lines(payload, emitter),
+        FileResult::Stat(payload) => emit_stat(payload, emitter),
+        FileResult::Tree(payload) => emit_tree(payload, emitter),
     }
 }
 
-fn emit_lines(payload: FileLinesOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            if !payload.content.is_empty() {
-                println!("{}", payload.content);
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
+fn emit_lines(payload: FileLinesOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |_| payload.content.clone())?;
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
+    Ok(())
 }
 
-fn emit_stat(payload: FileStatOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            println!("{}", render_stat_text(&payload, TextFormatter::stdout()));
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
-    }
+fn emit_stat(payload: FileStatOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| render_stat_text(&payload, formatter))
 }
 
-fn emit_tree(payload: FileTreeOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            let content = render_tree_text(&payload.entries, TextFormatter::stdout());
-            if !content.is_empty() {
-                println!("{content}");
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
+fn emit_tree(payload: FileTreeOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        render_tree_text(&payload.entries, formatter)
+    })?;
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
+    Ok(())
 }
 
 fn render_stat_text(payload: &FileStatOutput, formatter: TextFormatter) -> String {

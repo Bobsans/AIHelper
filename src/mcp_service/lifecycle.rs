@@ -7,7 +7,7 @@ use std::{
 
 use uuid::Uuid;
 
-use crate::{config::ConfigContext, error::AppError};
+use crate::{config::ConfigContext, error::AppError, output::Emitter};
 
 use super::{
     command::{InstallOptions, ServiceCommand},
@@ -59,27 +59,27 @@ pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
         match command {
             ServiceCommand::Install(options) => {
                 let output = service.install(&options)?;
-                emit_mutation(&output, options.options.output, options.options.quiet)
+                emit_mutation(&output, &mut Emitter::stdio(&options.options))
             }
             ServiceCommand::Start { options } => {
                 let output = service.start()?;
-                emit_mutation(&output, options.output, options.quiet)
+                emit_mutation(&output, &mut Emitter::stdio(&options))
             }
             ServiceCommand::Stop { options } => {
                 let output = service.stop()?;
-                emit_mutation(&output, options.output, options.quiet)
+                emit_mutation(&output, &mut Emitter::stdio(&options))
             }
             ServiceCommand::Restart { options } => {
                 let output = service.restart()?;
-                emit_mutation(&output, options.output, options.quiet)
+                emit_mutation(&output, &mut Emitter::stdio(&options))
             }
             ServiceCommand::Status { options } => {
                 let output = service.status();
-                emit_status(&output, options.output, options.quiet)
+                emit_status(&output, &mut Emitter::stdio(&options))
             }
             ServiceCommand::Uninstall { options } => {
                 let output = service.uninstall()?;
-                emit_uninstall(&output, options.output, options.quiet)
+                emit_uninstall(&output, &mut Emitter::stdio(&options))
             }
         }
     }

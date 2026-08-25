@@ -5,128 +5,101 @@ use crate::commands::{
     ctx_symbols::Symbol,
 };
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::{
-        OutputMode, TextFormatter, TextStyle, emit_warning, git_status_style, render_semantic_count,
-    },
+    output::{Emitter, TextFormatter, TextStyle, git_status_style, render_semantic_count},
 };
 
-pub(crate) fn emit(result: CtxResult, options: &GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
+const TRUNCATED: &str = "output truncated by --limit";
 
+pub(crate) fn emit(result: CtxResult, emitter: &mut Emitter) -> Result<(), AppError> {
     match result {
-        CtxResult::Pack(payload) => emit_pack(payload, options),
-        CtxResult::Symbols(payload) => emit_symbols(payload, options),
-        CtxResult::Changed(payload) => emit_changed(payload, options),
+        CtxResult::Pack(payload) => emit_pack(payload, emitter),
+        CtxResult::Symbols(payload) => emit_symbols(payload, emitter),
+        CtxResult::Changed(payload) => emit_changed(payload, emitter),
     }
 }
 
-fn emit_pack(payload: CtxPackOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            if !payload.items.is_empty() {
-                let formatter = TextFormatter::stdout();
-                println!(
-                    "{} {}",
-                    formatter.paint(TextStyle::Muted, "preset:"),
-                    formatter.paint(TextStyle::Key, &payload.preset)
-                );
-                println!("{}", render_pack_counts(&payload, formatter));
-                println!(
-                    "{}",
-                    render_skipped_counts(
-                        payload.skipped_binary_files,
-                        payload.skipped_large_files,
-                        payload.skipped_symlink_files,
-                        formatter
-                    )
-                );
-                for item in &payload.items {
-                    println!("{}", render_pack_item(item, formatter));
-                    for symbol in &item.symbols {
-                        println!("{}", render_symbol(symbol, true, formatter));
-                    }
-                }
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
+fn emit_pack(payload: CtxPackOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        if payload.items.is_empty() {
+            return String::new();
         }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-        }
-    }
-
-    Ok(())
-}
-
-fn emit_symbols(payload: CtxSymbolsOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            let formatter = TextFormatter::stdout();
-            println!(
+        let mut lines = vec![
+            format!(
                 "{} {}",
                 formatter.paint(TextStyle::Muted, "preset:"),
                 formatter.paint(TextStyle::Key, &payload.preset)
+            ),
+            render_pack_counts(&payload, formatter),
+            render_skipped_counts(
+                payload.skipped_binary_files,
+                payload.skipped_large_files,
+                payload.skipped_symlink_files,
+                formatter,
+            ),
+        ];
+        for item in &payload.items {
+            lines.push(render_pack_item(item, formatter));
+            lines.extend(
+                item.symbols
+                    .iter()
+                    .map(|symbol| render_symbol(symbol, true, formatter)),
             );
-            println!(
-                "{}",
-                render_skipped_counts(
-                    payload.skipped_binary_files,
-                    payload.skipped_large_files,
-                    payload.skipped_symlink_files,
-                    formatter
-                )
-            );
-            for file in &payload.files {
-                println!("{}", formatter.paint(TextStyle::Key, &file.path));
-                for symbol in &file.symbols {
-                    println!("{}", render_symbol(symbol, false, formatter));
-                }
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
         }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-        }
+        lines.join("\n")
+    })?;
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
-
     Ok(())
 }
 
-fn emit_changed(payload: CtxChangedOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            let formatter = TextFormatter::stdout();
-            if !payload.in_git_repo {
-                println!(
-                    "{}",
-                    formatter.paint(TextStyle::Warning, "not a git repository")
-                );
-                return Ok(());
-            }
-            if payload.entries.is_empty() {
-                println!(
-                    "{}",
-                    formatter.paint(TextStyle::Success, "working tree is clean")
-                );
-                return Ok(());
-            }
-            for entry in &payload.entries {
-                println!("{}", render_changed_entry(entry, formatter));
-            }
+fn emit_symbols(payload: CtxSymbolsOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        let mut lines = vec![
+            format!(
+                "{} {}",
+                formatter.paint(TextStyle::Muted, "preset:"),
+                formatter.paint(TextStyle::Key, &payload.preset)
+            ),
+            render_skipped_counts(
+                payload.skipped_binary_files,
+                payload.skipped_large_files,
+                payload.skipped_symlink_files,
+                formatter,
+            ),
+        ];
+        for file in &payload.files {
+            lines.push(formatter.paint(TextStyle::Key, &file.path));
+            lines.extend(
+                file.symbols
+                    .iter()
+                    .map(|symbol| render_symbol(symbol, false, formatter)),
+            );
         }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-        }
+        lines.join("\n")
+    })?;
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
-
     Ok(())
+}
+
+fn emit_changed(payload: CtxChangedOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        if !payload.in_git_repo {
+            return formatter.paint(TextStyle::Warning, "not a git repository");
+        }
+        if payload.entries.is_empty() {
+            return formatter.paint(TextStyle::Success, "working tree is clean");
+        }
+        payload
+            .entries
+            .iter()
+            .map(|entry| render_changed_entry(entry, formatter))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 fn render_pack_counts(payload: &CtxPackOutput, formatter: TextFormatter) -> String {

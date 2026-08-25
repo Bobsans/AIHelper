@@ -1,49 +1,34 @@
 use crate::{
-    cli::GlobalOptions,
     commands::run::domain::RunCheckOutput,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
+    output::{Emitter, TextFormatter, TextStyle},
 };
 
 pub(crate) fn emit_check_result(
     result: RunCheckOutput,
-    options: &GlobalOptions,
+    emitter: &mut Emitter,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-
-    match options.output {
-        OutputMode::Text => {
-            let stdout_formatter = TextFormatter::stdout();
-            let stderr_formatter = TextFormatter::stderr();
-            println!("{}", render_status_line(&result, stdout_formatter));
-            if !result.stdout.is_empty() {
-                println!(
-                    "{}\n{}",
-                    stdout_formatter.paint(TextStyle::Key, "stdout:"),
-                    result.stdout
-                );
-            }
-            if !result.stderr.is_empty() {
-                eprintln!(
-                    "{}\n{}",
-                    stderr_formatter.paint(TextStyle::Error, "stderr:"),
-                    result.stderr
-                );
-            }
-            if result.stdout_truncated {
-                emit_warning("stdout truncated");
-            }
-            if result.stderr_truncated {
-                emit_warning("stderr truncated");
-            }
+    emitter.value(&result, |formatter| {
+        let mut rendered = render_status_line(&result, formatter);
+        if !result.stdout.is_empty() {
+            rendered.push_str(&format!(
+                "\n{}\n{}",
+                formatter.paint(TextStyle::Key, "stdout:"),
+                result.stdout
+            ));
         }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&result)?);
-        }
+        rendered
+    })?;
+    if !result.stderr.is_empty() {
+        let heading = emitter.err_formatter().paint(TextStyle::Error, "stderr:");
+        emitter.raw_err(&format!("{heading}\n{}\n", result.stderr));
     }
-
+    if result.stdout_truncated {
+        emitter.text_warning("stdout truncated");
+    }
+    if result.stderr_truncated {
+        emitter.text_warning("stderr truncated");
+    }
     Ok(())
 }
 

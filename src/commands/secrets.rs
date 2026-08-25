@@ -8,7 +8,7 @@ use crate::{
     cli::GlobalOptions,
     config::ConfigContext,
     error::AppError,
-    output::OutputMode,
+    output::{Emitter, OutputMode},
     secrets::{
         NewSecret, SecretKind, SecretMetadata, VaultError, VaultStore, resolve_key_provider,
     },
@@ -66,17 +66,10 @@ pub(crate) fn execute(
     let store = VaultStore::new(config, resolve_key_provider().map_err(vault_error)?);
     let values = prompt_values(&store, &request)?;
     let output = apply(&store, request, values)?;
-    if options.quiet {
-        return Ok(());
-    }
-    println!(
-        "{}",
-        match options.output {
-            OutputMode::Text => render_text(&output),
-            OutputMode::Json => render_json(&output)?,
-        }
-    );
-    Ok(())
+    Emitter::stdio(&options).report(|_| match options.output {
+        OutputMode::Text => Ok(render_text(&output)),
+        OutputMode::Json => render_json(&output),
+    })
 }
 
 fn browser_setup_request(request: &SecretsCommand) -> Option<SecretSetupRequest> {
@@ -145,13 +138,7 @@ fn open_browser_setup(request: SecretSetupRequest, options: GlobalOptions) -> Re
         })?;
     let setup_url = validate_setup_url(&origin, &response.setup_url)?;
     let _ = open_browser(setup_url.as_str());
-    if !options.quiet {
-        println!(
-            "{}",
-            render_setup_output(setup_url.as_str(), options.output)?
-        );
-    }
-    Ok(())
+    Emitter::stdio(&options).report(|_| render_setup_output(setup_url.as_str(), options.output))
 }
 
 fn validate_setup_url(origin: &reqwest::Url, setup_url: &str) -> Result<reqwest::Url, AppError> {

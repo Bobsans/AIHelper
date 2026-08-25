@@ -27,7 +27,7 @@ use crate::{
     cli::GlobalOptions,
     error::AppError,
     mcp_service::{lock::FileLease, paths::ServicePaths},
-    output::OutputMode,
+    output::Emitter,
 };
 
 use super::{
@@ -452,12 +452,8 @@ fn ensure_directory(path: &Path) -> Result<(), UpdaterError> {
 }
 
 fn render(result: &UpgradeLaunchResult<'_>, options: GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-    match options.output {
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(result)?),
-        OutputMode::Text => println!(
+    Emitter::stdio(&options).value(result, |_| {
+        format!(
             "operation={} status={} current_version={} selected_version={} target={} source={} activation={} managed_mcp_restoration={} rollback={}",
             operation_name(result.operation),
             result.status,
@@ -468,9 +464,8 @@ fn render(result: &UpgradeLaunchResult<'_>, options: GlobalOptions) -> Result<()
             result.activation,
             result.managed_mcp_restoration,
             result.rollback,
-        ),
-    }
-    Ok(())
+        )
+    })
 }
 
 fn operation_name(operation: UpdateOperation) -> &'static str {

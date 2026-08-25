@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{cli::GlobalOptions, error::AppError};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
@@ -101,7 +101,7 @@ mod domain;
 
 pub fn execute(args: TaskArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let result = domain::execute(args, options.limit)?;
-    adapters::output::emit(result, options)
+    adapters::output::emit(result, &mut Emitter::stdio(options))
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {

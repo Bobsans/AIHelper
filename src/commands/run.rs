@@ -8,7 +8,7 @@ use ah_plugin_api::{
 use ah_runtime::RunCheckOutcome;
 use serde_json::json;
 
-use crate::{cli::GlobalOptions, error::AppError};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 use clap::Args;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -93,7 +93,7 @@ pub(crate) fn execute_observed(
                 timed_out: result.timed_out,
                 exit_code: result.exit_code,
             };
-            adapters::output::emit_check_result(result, options)?;
+            adapters::output::emit_check_result(result, &mut Emitter::stdio(options))?;
             Ok(outcome)
         }
     }

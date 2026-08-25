@@ -1,9 +1,8 @@
 use ah_runtime::core::truncate_lines;
 
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
+    output::{Emitter, TextFormatter, TextStyle},
 };
 
 use super::super::domain::{
@@ -12,62 +11,48 @@ use super::super::domain::{
 
 pub(crate) fn emit_request(
     payload: HttpRequestOutput,
-    options: &GlobalOptions,
+    limit: Option<usize>,
+    emitter: &mut Emitter,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
+    let (body_rendered, line_truncated) = truncate_lines(&payload.body, limit);
+    let status = payload.status;
+    let status_text = payload.status_text.clone();
+    let body_truncated = payload.body_truncated;
 
-    let (body_rendered, line_truncated) = truncate_lines(&payload.body, options.limit);
-    match options.output {
-        OutputMode::Text => {
-            if !body_rendered.trim().is_empty() {
-                println!("{body_rendered}");
-            } else {
-                println!(
-                    "{}",
-                    render_http_status_line(
-                        payload.status,
-                        &payload.status_text,
-                        TextFormatter::stdout()
-                    )
-                );
-            }
-            if payload.body_truncated {
-                emit_warning("response body truncated by --max-response-bytes");
-            }
-            if line_truncated {
-                emit_warning("output truncated by --limit");
-            }
-        }
-        OutputMode::Json => {
-            let mut rendered = payload;
-            rendered.body = body_rendered;
-            rendered.truncated |= line_truncated;
-            println!("{}", serde_json::to_string_pretty(&rendered)?);
-        }
-    }
+    let mut json = payload;
+    json.body = body_rendered.clone();
+    json.truncated |= line_truncated;
 
+    emitter.value(&json, |formatter| {
+        if body_rendered.trim().is_empty() {
+            render_http_status_line(status, &status_text, formatter)
+        } else {
+            body_rendered.clone()
+        }
+    })?;
+    if body_truncated {
+        emitter.text_warning("response body truncated by --max-response-bytes");
+    }
+    if line_truncated {
+        emitter.text_warning("output truncated by --limit");
+    }
     Ok(())
 }
 
+/// The assert report has its own format flag, which decides the rendering
+/// instead of the global output mode.
 pub(crate) fn emit_assert(
     output: &HttpAssertOutput,
     report: AssertReportFormat,
-    options: &GlobalOptions,
+    emitter: &mut Emitter,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-
     match report {
         AssertReportFormat::Text => {
-            println!("{}", render_assert_text(output, TextFormatter::stdout()))
+            emitter.report(|formatter| Ok(render_assert_text(output, formatter)))
         }
-        AssertReportFormat::Json => println!("{}", serde_json::to_string_pretty(&output)?),
-        AssertReportFormat::Junit => println!("{}", render_assert_junit(output)),
+        AssertReportFormat::Json => emitter.report(|_| Ok(serde_json::to_string_pretty(&output)?)),
+        AssertReportFormat::Junit => emitter.report(|_| Ok(render_assert_junit(output))),
     }
-    Ok(())
 }
 
 fn render_http_status_line(status: u16, status_text: &str, formatter: TextFormatter) -> String {

@@ -6,30 +6,31 @@ between them.
 
 ## Findings
 
-### 4.1 Rendering writes directly to the process, not to a sink
+### 4.1 Rendering writes directly to the process, not to a sink *(resolved for every adapter)*
 
-174 `println!`/`eprintln!` call sites in `src/`. Most are correctly confined to
-`*/output.rs` adapters — the convention is right — but the adapters print to the
-process rather than to an injected writer:
+There were 177 print macro calls in `src/`. Most were correctly confined to
+`*/output.rs` adapters — the convention was right — but the adapters printed to
+the process rather than to an injected writer, so `--quiet` was re-checked by
+hand at the top of every `emit` function and no output could be asserted without
+spawning a subprocess.
 
-| File | Sites |
-|---|---|
-| `src/mcp_service/output.rs` | 33 |
-| `src/commands/git/output.rs` | 31 |
-| `src/ai.rs` | 22 |
-| `src/commands/ctx/output.rs` | 15 |
-| `src/commands/project/adapters/output.rs` | 11 |
-| `src/ai/install.rs` | 10 |
-| `src/lib.rs` | 7 |
+**Status:** `Emitter` in [`src/output.rs`](../../src/output.rs) is the sink, and
+every command adapter goes through it. 177 print calls are 23, and none of the
+remainder is a command result:
 
-Consequences:
+| Holdout | Sites | Why it is still there |
+|---|---|---|
+| `src/ai/install.rs` | 13 | live terminal frames with cursor control — finding 4.2 |
+| `src/output.rs` | 3 | `emit_warning`/`emit_muted_stderr`, process-level notices outside any command's output contract |
+| `src/error.rs` | 3 | `AppError::print` — finding 4.3 |
+| `src/runtime_flow.rs` | 2 | update-recovery notices, emitted before a command exists |
+| `src/bin/ah-mcp-service.rs`, `src/ai/prompt.rs` | 2 | a service entry point and an interactive prompt |
 
-- Every output assertion must spawn a subprocess (`tests/integration/*`, ~7.5k lines).
-- Output cannot be captured, buffered, tee-d to the event log, or rendered into a
-  different transport without changing every adapter.
-- `--quiet` is re-checked by hand at the top of ~20 functions
-  (`if options.quiet { return Ok(()); }` in `src/lib.rs:79`, `:238`,
-  `src/commands/git/output.rs:14`, and so on) instead of being a property of the sink.
+`--quiet` is now a property of the sink: the ~20 hand-written
+`if options.quiet { return Ok(()); }` guards in adapters are gone, and a new
+adapter cannot forget the check because it never sees the flag. Output is
+assertable in-process — see the `Emitter::capture` tests in
+[`src/commands/git/output.rs`](../../src/commands/git/output.rs).
 
 ### 4.2 `src/ai.rs` and `src/ai/install.rs` bypass the layering
 
@@ -153,25 +154,39 @@ move, so it stays out of the safety-net phase — see step 1 below.
 
 ## Target design
 
-### A. One `Emitter` abstraction
+### A. One `Emitter` abstraction *(done)*
+
+Shipped as `Emitter` rather than `Emitter<W>`: it needs two sinks, stdout and
+stderr, which are different types, and boxing them costs nothing at terminal
+output rates while keeping the type out of every adapter signature.
 
 ```rust
-pub struct Emitter<W: Write> {
-    writer: W,
-    mode: OutputMode,
-    quiet: bool,
-    color: TextFormatter,
-}
+impl Emitter {
+    pub fn stdio(options: &GlobalOptions) -> Self;
+    pub fn capture(options: &GlobalOptions) -> (Self, Captured);
 
-impl<W: Write> Emitter<W> {
-    pub fn value<T: Serialize>(&mut self, text: impl FnOnce(TextFormatter) -> String, json: &T) -> Result<(), AppError>;
+    pub fn value<T: Serialize + ?Sized>(&mut self, json: &T, text: impl FnOnce(TextFormatter) -> String) -> Result<(), AppError>;
+    pub fn report(&mut self, render: impl FnOnce(TextFormatter) -> Result<String, AppError>) -> Result<(), AppError>;
+    pub fn raw(&mut self, text: &str) -> Result<(), AppError>;
+    pub fn raw_err(&mut self, text: &str);
     pub fn warning(&mut self, message: impl Display);
+    pub fn text_warning(&mut self, message: impl Display);
+    pub fn muted(&mut self, message: impl Display);
 }
 ```
 
 - `quiet` is enforced once, inside the emitter.
 - Text and JSON rendering stay side by side, which is what keeps them consistent.
-- Tests render into a `Vec<u8>`; no subprocess required.
+- Tests render into buffers; no subprocess required.
+- `report` exists for output whose format the command chose itself — `--report
+  junit` — which the global mode does not describe.
+- `raw`/`raw_err` pass a child process's captured bytes through unchanged, since
+  reformatting them would break whatever the caller pipes them into.
+- `text_warning` is the one that accompanies text output only: in JSON mode the
+  payload already carries `truncated: true`, so repeating it on stderr is noise a
+  machine reader has to filter.
+- An empty rendering writes nothing rather than a blank line, which is what the
+  hand-written `if !items.is_empty()` guards used to do.
 - The MCP path can reuse the same renderers for the human-readable `text` field of
   a typed response instead of maintaining separate `*_result_text` helpers.
 
@@ -216,8 +231,10 @@ added) and a future fuzz target (group 08).
    the bounds moved as-is; `event_log.rs` went from 1 845 to 1 195 lines and the
    MCP adapter no longer defines its own credential detectors. Next: converge the
    three field-selection policies onto one vocabulary.
-2. Introduce `Emitter`; migrate one domain (`git`, the largest output surface) and
-   convert its output tests from `assert_cmd` to in-process assertions.
+2. ~~Introduce `Emitter`; migrate one domain (`git`, the largest output surface) and
+   convert its output tests from `assert_cmd` to in-process assertions.~~ **(done, and
+   every other adapter with it — the shape repeated exactly, so stopping at one
+   domain would have left the duplication in place for no gain)**
 3. Migrate the remaining domains, then `src/ai.rs` and `mcp_service/output.rs`.
 4. Separate `ai/install.rs` live rendering into a `progress` module that writes
    through the emitter; installation logic returns events, the renderer consumes them.

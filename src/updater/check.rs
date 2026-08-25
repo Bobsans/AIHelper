@@ -7,7 +7,7 @@ use semver::Version;
 use crate::{
     cli::GlobalOptions,
     error::AppError,
-    output::OutputMode,
+    output::Emitter,
     updater::{
         command::UpgradeRequest, github::GitHubReleaseClient, trust::production_release_trust,
     },
@@ -59,21 +59,16 @@ pub(crate) fn perform_check(
 }
 
 fn render_result(result: &UpgradeCheckResultV1, options: GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-    match options.output {
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(result)?),
-        OutputMode::Text => println!(
+    Emitter::stdio(&options).value(result, |_| {
+        format!(
             "status={} current_version={} selected_version={} target={} source={}",
             check_status(result.status),
             result.current_version,
             result.selected_version.as_deref().unwrap_or("none"),
             result.target.as_deref().unwrap_or("none"),
             update_source(result.source),
-        ),
-    }
-    Ok(())
+        )
+    })
 }
 
 fn check_status(status: CheckStatus) -> &'static str {

@@ -32,7 +32,7 @@ use serde::Serialize;
 use crate::{
     cli::{PluginStateFilter, RuntimeCommand},
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle},
+    output::{Emitter, OutputMode, TextFormatter, TextStyle},
     plugin_settings::PluginSettings,
 };
 
@@ -78,28 +78,15 @@ fn execute_plugins_list(
     state_filter: Option<PluginStateFilter>,
     options: cli::GlobalOptions,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-
     let plugins = collect_plugin_list_entries(manager, state_filter)?;
 
-    match options.output {
-        OutputMode::Text => {
-            if plugins.is_empty() {
-                println!("no plugins registered");
-                return Ok(());
-            }
-            println!(
-                "{}",
-                render_plugins_table(&plugins, TextFormatter::stdout())
-            );
+    Emitter::stdio(&options).value(&plugins, |formatter| {
+        if plugins.is_empty() {
+            "no plugins registered".to_owned()
+        } else {
+            render_plugins_table(&plugins, formatter)
         }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&plugins)?);
-        }
-    }
-    Ok(())
+    })
 }
 
 fn collect_plugin_list_entries(
@@ -237,30 +224,22 @@ fn render_plugin_state_mutation(
     text_message: String,
     options: cli::GlobalOptions,
 ) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-    match options.output {
-        OutputMode::Text => {
-            let style = if changed {
-                TextStyle::Success
-            } else {
-                TextStyle::Warning
-            };
-            println!("{}", TextFormatter::stdout().paint(style, text_message));
-        }
-        OutputMode::Json => {
-            let payload = PluginStateMutationOutput {
-                command,
-                changed,
-                config_path: normalize_path(settings.path()),
-                disabled_domains: settings.disabled_domains().cloned().collect(),
-                domain: domain.map(str::to_owned),
-            };
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-        }
-    }
-    Ok(())
+    let payload = PluginStateMutationOutput {
+        command,
+        changed,
+        config_path: normalize_path(settings.path()),
+        disabled_domains: settings.disabled_domains().cloned().collect(),
+        domain: domain.map(str::to_owned),
+    };
+
+    Emitter::stdio(&options).value(&payload, |formatter| {
+        let style = if changed {
+            TextStyle::Success
+        } else {
+            TextStyle::Warning
+        };
+        formatter.paint(style, text_message)
+    })
 }
 
 fn matches_plugin_filter(plugin: &PluginListEntry, filter: PluginStateFilter) -> bool {
@@ -374,14 +353,15 @@ fn handle_response(
     quiet: bool,
 ) -> Result<(), AppError> {
     if response.success {
-        if quiet {
-            return Ok(());
-        }
         if let Some(message) = response.message {
-            match output_mode {
-                OutputMode::Text => println!("{message}"),
-                OutputMode::Json => println!("{message}"),
-            }
+            // A plugin already rendered for the requested mode, so the message
+            // is emitted as-is either way.
+            Emitter::stdio(&cli::GlobalOptions {
+                output: output_mode,
+                quiet,
+                limit: None,
+            })
+            .report(|_| Ok(message))?;
         }
         return Ok(());
     }

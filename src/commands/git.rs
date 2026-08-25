@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{cli::GlobalOptions, error::AppError};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
@@ -133,7 +133,7 @@ mod domain;
 
 pub fn execute(args: GitArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let result = domain::execute(args, options.limit, None)?;
-    adapters::output::emit(result, options)
+    adapters::output::emit(result, &mut Emitter::stdio(options))
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {

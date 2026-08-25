@@ -1,69 +1,59 @@
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
+    output::{Emitter, TextFormatter, TextStyle},
 };
 
 use crate::commands::task::domain::{
     TaskEntry, TaskListOutput, TaskResult, TaskRunOutput, TaskSaveOutput,
 };
 
-pub(crate) fn emit(result: TaskResult, options: &GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
+const TRUNCATED: &str = "output truncated by --limit";
 
+pub(crate) fn emit(result: TaskResult, emitter: &mut Emitter) -> Result<(), AppError> {
     match result {
-        TaskResult::Save(payload) => emit_save(payload, options),
-        TaskResult::List(payload) => emit_list(payload, options),
-        TaskResult::Run(payload) => emit_run(payload, options),
+        TaskResult::Save(payload) => emit_save(payload, emitter),
+        TaskResult::List(payload) => emit_list(payload, emitter),
+        TaskResult::Run(payload) => emit_run(payload, emitter),
     }
 }
 
-fn emit_save(payload: TaskSaveOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            println!(
-                "{}",
-                render_saved_task(
-                    &payload.name,
-                    &payload.task_command,
-                    TextFormatter::stdout()
-                )
-            );
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
-    }
+fn emit_save(payload: TaskSaveOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        render_saved_task(&payload.name, &payload.task_command, formatter)
+    })
 }
 
-fn emit_list(payload: TaskListOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            if payload.tasks.is_empty() {
-                println!(
-                    "{}",
-                    TextFormatter::stdout().paint(TextStyle::Muted, "no tasks saved")
-                );
-                return Ok(());
-            }
-            let formatter = TextFormatter::stdout();
-            for task in &payload.tasks {
-                println!("{}", render_task_entry(task, formatter));
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
-            Ok(())
+fn emit_list(payload: TaskListOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    emitter.value(&payload, |formatter| {
+        if payload.tasks.is_empty() {
+            return formatter.paint(TextStyle::Muted, "no tasks saved");
         }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
+        payload
+            .tasks
+            .iter()
+            .map(|task| render_task_entry(task, formatter))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    if !payload.tasks.is_empty() && payload.truncated {
+        emitter.text_warning(TRUNCATED);
     }
+    Ok(())
+}
+
+/// The task's own stdout and stderr are passed through byte for byte, so they
+/// stay usable by whatever the caller pipes them into.
+fn emit_run(payload: TaskRunOutput, emitter: &mut Emitter) -> Result<(), AppError> {
+    if emitter.is_text() {
+        emitter.raw(&payload.stdout)?;
+        emitter.raw_err(&payload.stderr);
+    } else {
+        emitter.value(&payload, |_| String::new())?;
+    }
+    if payload.truncated {
+        emitter.text_warning(TRUNCATED);
+    }
+    Ok(())
 }
 
 fn render_saved_task(name: &str, command: &str, formatter: TextFormatter) -> String {
@@ -83,27 +73,6 @@ fn render_task_entry(task: &TaskEntry, formatter: TextFormatter) -> String {
         formatter.paint(TextStyle::Muted, "=>"),
         formatter.paint(TextStyle::Muted, &task.command)
     )
-}
-
-fn emit_run(payload: TaskRunOutput, options: &GlobalOptions) -> Result<(), AppError> {
-    match options.output {
-        OutputMode::Text => {
-            if !payload.stdout.is_empty() {
-                print!("{}", payload.stdout);
-            }
-            if !payload.stderr.is_empty() {
-                eprint!("{}", payload.stderr);
-            }
-            if payload.truncated {
-                emit_warning("output truncated by --limit");
-            }
-            Ok(())
-        }
-        OutputMode::Json => {
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            Ok(())
-        }
-    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{cli::GlobalOptions, error::AppError};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
 #[derive(Debug, Args)]
 pub struct SearchArgs {
@@ -119,7 +119,7 @@ pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError
         SearchCommand::Text(text_args) => domain::execute_text(text_args, options.limit)?,
         SearchCommand::Files(files_args) => domain::execute_files(files_args, options.limit)?,
     };
-    adapters::output::emit(result, options)
+    adapters::output::emit(result, &mut Emitter::stdio(options))
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {

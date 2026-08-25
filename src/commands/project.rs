@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{cli::GlobalOptions, error::AppError};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
 mod rules;
 
@@ -205,15 +205,15 @@ fn descriptor(id: &str, title: &str, description: &str, output_schema: Value) ->
 
 fn execute_detect(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let output = domain::run_detect(args)?;
-    adapters::output::emit_detect(output, options)
+    adapters::output::emit_detect(output, &mut Emitter::stdio(options))
 }
 
 fn execute_commands(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let output = domain::run_commands(args)?;
-    adapters::output::emit_commands(output, options)
+    adapters::output::emit_commands(output, &mut Emitter::stdio(options))
 }
 
 fn execute_version(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let output = domain::run_version(args, options.limit)?;
-    adapters::output::emit_version(output, options)
+    adapters::output::emit_version(output, &mut Emitter::stdio(options))
 }

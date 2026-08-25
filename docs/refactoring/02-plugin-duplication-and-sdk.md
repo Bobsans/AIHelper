@@ -26,8 +26,8 @@ releases, CI runs and logs — with parallel, separately written code:
 | ~~`git credential fill` driver~~ | `ah_plugin_sdk::credentials` | |
 | ~~bounded credential child wait~~ | `ah_plugin_sdk::credentials` | |
 | ~~ambient-token policy~~ | `credentials::TokenPolicy`, per-forge data only | |
-| JSON request wrapper | `lib.rs:1833` `github_json` | `lib.rs:1737` `gitlab_json` |
-| response/error mapping | `lib.rs:1861` `github_response` | `lib.rs:1787` |
+| ~~JSON request wrapper~~ | `ah_plugin_sdk::http::JsonApi`, shared with Ollama too | |
+| ~~response/error mapping~~ | `ah_plugin_sdk::http::JsonApi` | |
 | log/trace fetch with byte caps | `lib.rs:1902`, `lib.rs:2001` | `lib.rs:1827` |
 | ~~ANSI stripping~~ | `ah_plugin_sdk::render` — **the two copies had diverged** | |
 | ~~error truncation~~ | `ah_plugin_sdk::render` | |
@@ -115,7 +115,7 @@ domains, which have the same needs):
 
 | Module | Provides |
 |---|---|
-| `sdk::http` | blocking JSON client: retry policy, deadline, pagination, bounded response bodies, uniform error→`CommandError` mapping |
+| ~~`sdk::http`~~ *(done)* | blocking JSON client: bounded error bodies, authority-bound credentials, uniform error mapping. No retry policy or pagination: neither existed to share |
 | ~~`sdk::credentials`~~ *(done)* | authority parsing, loopback checks, `git credential fill` with bounded child wait, env fallback, ambient-token policy |
 | ~~`sdk::cancel`~~ | *done, as `ah_plugin_api::cancellation` — see B* |
 | ~~`sdk::render`~~ *(done)* | success rendering, ANSI stripping, truncation, styling an optional value. No table renderer: see 2.4 |
@@ -159,8 +159,9 @@ implementation, not a merged product surface.
 ## Migration
 
 1. ~~Create `ah-plugin-sdk` with `sdk::render` and `sdk::http` first; migrate the
-   Ollama plugin (smallest, 1 040 lines) as the pilot.~~ **(`sdk::render` done, all
-   four plugins migrated at once; `sdk::http` outstanding)**
+   Ollama plugin (smallest, 1 040 lines) as the pilot.~~ **(done; all four plugins
+   migrated at once rather than piloting one, since the golden snapshots made the
+   whole set safe to move together)**
 2. ~~Move credential resolution into `sdk::credentials`; migrate GitHub, then GitLab.
    Add a shared test suite that runs against both.~~ **(done)** — the shared suite lives
    with the code it tests, in the SDK; each plugin keeps only the assertions about its
