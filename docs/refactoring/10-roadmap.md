@@ -68,7 +68,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 | ~~Host command schemas, input and output~~ **(done)**                                       | 01     |
 | ~~Schemas for the dynamic plugins: ollama, gitlab, postgres, github~~ **(done)**            | 01     |
 | ~~Tie the manual to the CLI it documents~~ **(done; generating it would rewrite prose)**    | 01     |
-| Generate `docs/reference/*.md`; CI diff check                                               | 01     |
+| ~~Tie `docs/reference/*.md` to the catalog~~ **(done as a drift test)**                     | 01     |
 | `ah-plugin-sdk`: `render`, `http`, `credentials`, `process`                                 | 02     |
 | ~~One cancellation registry instead of five~~ **(done)**                                    | 02     |
 | Delete `AH_*_TEST_*` environment seams                                                      | 02, 08 |

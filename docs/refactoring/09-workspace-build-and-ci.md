@@ -50,7 +50,7 @@ Missing:
 | macOS runner | `keyring` is configured with `apple-native`; untested |
 | `cargo deny` / `cargo audit` | the project downloads and executes signed releases and handles credentials |
 | MSRV job | no MSRV is declared, so there is nothing to verify |
-| docs freshness | `docs/reference` has no coupling to code (group 01) |
+| ~~docs freshness~~ **(done)** | `docs/reference` is drift-tested against the catalogs (group 01) |
 | `cargo doc --no-deps -D warnings` | public plugin API is the contract for third parties |
 | supply-chain pinning for plugin builds | plugins are cdylibs loaded at runtime |
 
@@ -121,7 +121,7 @@ jobs:
   msrv:     # cargo check with the pinned MSRV toolchain
   release:  # cargo build --release --locked, then release_smoke
   supply:   # cargo deny check, cargo audit
-  docs:     # regenerate docs/reference, fail on diff
+  # docs/reference drift is checked by the test suite, not a separate job
 ```
 
 Nightly: fuzz targets (group 08), plus a slow acceptance run of the managed-service

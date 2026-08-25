@@ -11,6 +11,8 @@ pub mod output;
 mod persistence;
 pub mod plugin_settings;
 pub mod plugins;
+#[cfg(test)]
+mod reference_docs;
 mod runtime_flow;
 pub mod safety;
 pub mod secrets;

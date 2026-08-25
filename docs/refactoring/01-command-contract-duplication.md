@@ -70,12 +70,21 @@ the manual summary and the clap `about` deliberately differ in wording
 "Read file content (supports line range and numbering)"), so generating them
 would rewrite agent-facing text. That is a product decision, not a refactor.
 
-### 1.5 Documentation has no coupling to the code at all
+### 1.5 Documentation has no coupling to the code at all *(resolved for `docs/reference`)*
 
-Searching the Rust sources for `docs/reference` returns nothing. There is no test,
-no generator, no check. `docs/reference/*.md` and `docs/agents/recipes/*.md` are
-drift by construction, and `AGENTS.md` correctly but expensively compensates by
+Searching the Rust sources for `docs/reference` returned nothing. There was no test,
+no generator, no check. `docs/reference/*.md` and `docs/agents/recipes/*.md` were
+drift by construction, and `AGENTS.md` correctly but expensively compensated by
 *instructing humans to remember*.
+
+**Status:** generating the pages is not the right answer and is not being done. They
+are prose — per-domain notes, error-code tables, tool-resolution order, security
+warnings — and a generator would replace all of it with a schema dump, the same
+conclusion the manual reached in 1.4. What was missing is the *tie*, so
+`src/reference_docs.rs` now asserts it in both directions: every command in the five
+checked-in catalogs and in the CLI help tree is named by its own domain page, and
+every ``## `ah ...` `` heading resolves to a command that exists. `docs/agents/recipes`
+is still unchecked.
 
 ## Why it hurts
 
@@ -122,7 +131,7 @@ Derived artifacts:
 | output JSON Schema | `#[derive(JsonSchema)]` on the output type | `schemars` |
 | `CommandDescriptor` | `#[command_meta]` + the two schemas | one proc-macro or builder |
 | manual entry | doc comments + `#[command_meta]` | generator |
-| `docs/reference/<domain>.md` | the catalog | self-documenting generator + CI diff check |
+| `docs/reference/<domain>.md` | prose, checked against the catalog | drift test in both directions |
 
 Two structural consequences worth calling out:
 
@@ -151,9 +160,8 @@ Each step is independently shippable and behavior-preserving.
 5. **Collapse the argument helpers** (`required_string` and friends) as their call
    sites disappear; delete the duplicates.
 6. **Generate the manual** from descriptors; delete the literals in `src/plugins.rs`.
-7. **Generate `docs/reference/*.md`** from the catalog; add a CI job that regenerates
-   and fails on diff. Hand-written prose moves to per-command doc comments so it lives
-   next to the code.
+7. **Tie `docs/reference/*.md` to the catalog** with a drift test rather than a
+   generator: the prose is worth keeping, the missing coupling is not the prose.
 8. **Repeat for dynamic plugins**, which benefit most (142 `json!` literals in the
    GitHub plugin alone).
 
@@ -200,7 +208,8 @@ command — and the golden snapshots make the failure visible.
 
 - Adding a new typed command requires editing **one** file and **one** struct.
 - No `json!({...})` literal describes a type that also exists as a Rust struct.
-- `docs/reference/*.md` is generated; CI fails if it is stale.
+- `docs/reference/*.md` cannot document a command that does not exist, and cannot
+  omit one that does; CI fails either way.
 - `typed_args`-style hand mappers no longer exist in any domain or plugin.
 - The catalog golden snapshot is unchanged by the whole migration, except for
   deliberately recorded diffs.

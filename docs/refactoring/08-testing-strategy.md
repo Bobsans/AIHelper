@@ -51,7 +51,7 @@ files in group 05 look even more unmanageable than they are.
 | property/fuzz tests for redaction | **none** | ~550 lines of security-critical heuristics |
 | fuzz tests for the curl and JSONPath parsers | **none** | untrusted input parsers (`src/commands/http/domain.rs:1086`, `:918`) |
 | concurrency tests for parallel typed execution | minimal (`mcp_service/lifecycle/tests/concurrency.rs`, 54 lines) | the executor is the flagship path; the process-cwd issue (group 03) would be caught here |
-| docs freshness | **none** | `docs/reference` has zero coupling to code |
+| docs freshness | ~~none~~ drift test | `docs/reference` is checked against the catalogs |
 | cross-version updater compatibility | manual (`scripts/release_smoke.py`) | highest-risk area (group 07) |
 
 ### 8.5 Determinism is asserted narrowly
@@ -131,7 +131,8 @@ down from 7.6k.
 6. Convert integration tests to in-process tests domain by domain, deleting the
    subprocess equivalents only once the in-process version asserts strictly more.
 7. Add cross-version updater fixtures (v1.4 journal → current recovery, and back).
-8. Add a CI job that regenerates `docs/reference` and fails on diff.
+8. ~~Add a CI job that regenerates `docs/reference` and fails on diff.~~ **(done as a
+   drift test; generating it would rewrite prose)**
 
 ## Risks and invariants
 
