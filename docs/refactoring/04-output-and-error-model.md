@@ -1,0 +1,198 @@
+# 04 — Output and Error Model
+
+**Severity: High.** Presentation is fused to the process (`stdout`), and the same
+error information is modelled three times with hand-written translation tables
+between them.
+
+## Findings
+
+### 4.1 Rendering writes directly to the process, not to a sink
+
+174 `println!`/`eprintln!` call sites in `src/`. Most are correctly confined to
+`*/output.rs` adapters — the convention is right — but the adapters print to the
+process rather than to an injected writer:
+
+| File | Sites |
+|---|---|
+| `src/mcp_service/output.rs` | 33 |
+| `src/commands/git/output.rs` | 31 |
+| `src/ai.rs` | 22 |
+| `src/commands/ctx/output.rs` | 15 |
+| `src/commands/project/adapters/output.rs` | 11 |
+| `src/ai/install.rs` | 10 |
+| `src/lib.rs` | 7 |
+
+Consequences:
+
+- Every output assertion must spawn a subprocess (`tests/integration/*`, ~7.5k lines).
+- Output cannot be captured, buffered, tee-d to the event log, or rendered into a
+  different transport without changing every adapter.
+- `--quiet` is re-checked by hand at the top of ~20 functions
+  (`if options.quiet { return Ok(()); }` in `src/lib.rs:79`, `:238`,
+  `src/commands/git/output.rs:14`, and so on) instead of being a property of the sink.
+
+### 4.2 `src/ai.rs` and `src/ai/install.rs` bypass the layering
+
+Unlike the `commands/*` domains, the `ai` domain prints from business logic:
+`install.rs` renders live terminal frames (`render_live_lines:897`,
+`write_live_frame:963`, `emit_live_status:973`) interleaved with installation work,
+inside the same 1 367-line module that performs config-file mutation and HTTP
+readiness probing. Cursor control and redraw logic sit next to registrar mutation.
+
+### 4.3 The error type knows how to paint a terminal
+
+[`src/error.rs:123`](../../src/error.rs) `AppError::print()` and
+`console_diagnostic` (`:441`) put ANSI styling and layout inside the error enum.
+An error value is data; how it is shown is a policy of the presentation layer.
+This is why `error.rs` is 1 113 lines for 15 variants.
+
+### 4.4 Three error taxonomies, two hand-written translation tables
+
+| Layer | Type | Variants |
+|---|---|---|
+| runtime | `RuntimeError` (`crates/ah-runtime/src/lib.rs:32`) | ~28 |
+| host | `AppError` (`src/error.rs:9`) | 15 |
+| wire | `CommandError` / `ErrorDiagnostic` (`crates/ah-plugin-api/src/lib.rs:607`, `:227`) | structured |
+
+The translations are manual and duplicated:
+
+- [`src/lib.rs:390`](../../src/lib.rs) `map_runtime_error` — 133 lines mapping 28
+  variants into `AppError::external(code, message)`.
+- [`crates/ah-mcp/src/server.rs:2453`](../../crates/ah-mcp/src/server.rs)
+  `runtime_command_error` — maps the *same* 28 variants again, for MCP.
+- [`crates/ah-mcp/src/server.rs:2553`](../../crates/ah-mcp/src/server.rs)
+  `runtime_error_code` — a *third* pass over the same variants, for the code string.
+
+Adding one `RuntimeError` variant means editing three match statements in two
+crates, and the compiler only catches two of them if the matches are exhaustive.
+
+`AppError::External { code: String, message: String }` is the escape hatch that
+absorbs everything — which means the host error type has effectively degenerated
+into a stringly-typed pair, while still carrying 14 structured variants for
+filesystem errors.
+
+### 4.5 Error values are large enough to be suppressed rather than fixed
+
+`#![allow(clippy::result_large_err)]` appears at the crate root of `src/lib.rs`,
+`crates/ah-mcp/src/server.rs`, and all four plugins, plus six targeted `#[allow]`s
+in `ah-plugin-api`. The lint is correct: `AppError` embeds `ErrorDiagnostic`
+(five `String`s plus options) and `Box<AppError>`, and `InvocationResponse` is
+returned by value from every plugin entry point. Every `Result` in the codebase
+pays that size. The allow silences the signal instead of boxing the payload.
+
+### 4.6 Redaction is implemented three times
+
+Secret redaction — the most security-sensitive cross-cutting concern here — has
+three independent implementations:
+
+- [`src/cli.rs`](../../src/cli.rs) `redact_secret_command_argv` (argv before logging)
+- [`src/event_log.rs:448–1000`](../../src/event_log.rs) — ~550 lines: URL userinfo,
+  header-like strings, curl `-u`/`--user`, embedded assignments, JSON values,
+  sensitive-name heuristics, percent-decoding
+- [`crates/ah-mcp/src/server.rs:1973`](../../crates/ah-mcp/src/server.rs)
+  `redact_mcp_plaintext_auth` plus `curl_contains_auth:1921`,
+  `url_contains_userinfo:1963`, `is_authorization_header:1915`
+
+Three code paths, three sets of heuristics, one shared risk: a secret leaking
+through whichever path was not updated.
+
+## Why it hurts
+
+- Presentation cannot be tested without a process; the test suite is slow and
+  coarse (group 08).
+- The MCP transport and the CLI transport render errors through separate,
+  divergent tables; the same failure can present differently in each.
+- The redaction split is a security defect waiting to happen: any new sink
+  (a future HTTP transport, a new log format) starts from zero.
+
+## Target design
+
+### A. One `Emitter` abstraction
+
+```rust
+pub struct Emitter<W: Write> {
+    writer: W,
+    mode: OutputMode,
+    quiet: bool,
+    color: TextFormatter,
+}
+
+impl<W: Write> Emitter<W> {
+    pub fn value<T: Serialize>(&mut self, text: impl FnOnce(TextFormatter) -> String, json: &T) -> Result<(), AppError>;
+    pub fn warning(&mut self, message: impl Display);
+}
+```
+
+- `quiet` is enforced once, inside the emitter.
+- Text and JSON rendering stay side by side, which is what keeps them consistent.
+- Tests render into a `Vec<u8>`; no subprocess required.
+- The MCP path can reuse the same renderers for the human-readable `text` field of
+  a typed response instead of maintaining separate `*_result_text` helpers.
+
+### B. One diagnostic currency
+
+`ErrorDiagnostic` already exists in `ah-plugin-api` and already crosses the ABI.
+Make it the single carrier:
+
+- `RuntimeError` and `AppError` keep their variants but each gains
+  `fn diagnostic(&self) -> ErrorDiagnostic` (`AppError` already has one at
+  `src/error.rs:423`) — and *that* is the only conversion anyone writes.
+- Delete `map_runtime_error`, `runtime_command_error`, `runtime_error_code`;
+  replace with `impl From<RuntimeError> for ErrorDiagnostic` in `ah-runtime`,
+  owned by the crate that owns the variants. Adding a variant then breaks exactly
+  one exhaustive match, in the right crate.
+- `AppError::External` shrinks back to a genuine "foreign error" case rather than
+  the universal fallback.
+
+### C. Rendering moves out of the error type
+
+`AppError::print` and `console_diagnostic` move to
+`presentation::render_error(&ErrorDiagnostic, &mut Emitter)`. `error.rs` should
+end up around 300 lines.
+
+### D. Box the error payloads
+
+Change `Result<T, AppError>` payloads to `Box`-ed inner data (or reduce
+`ErrorDiagnostic` to `Box<DiagnosticInner>`), then delete every
+`allow(clippy::result_large_err)` and enable the lint as a denial.
+
+### E. Extract `ah-redact`
+
+One crate, one implementation, consumed by CLI argv redaction, the event log and
+the MCP adapter. This is the correct place for property tests and a fuzz target
+(group 08). Any new sink gets redaction for free instead of reimplementing it.
+
+## Migration
+
+1. Extract `ah-redact` first — smallest blast radius, largest security payoff.
+   Move the `event_log.rs` implementation as-is, port the other two call sites to
+   it, keep every existing test.
+2. Introduce `Emitter`; migrate one domain (`git`, the largest output surface) and
+   convert its output tests from `assert_cmd` to in-process assertions.
+3. Migrate the remaining domains, then `src/ai.rs` and `mcp_service/output.rs`.
+4. Separate `ai/install.rs` live rendering into a `progress` module that writes
+   through the emitter; installation logic returns events, the renderer consumes them.
+5. Add `From<RuntimeError> for ErrorDiagnostic`; delete the three mapping functions.
+6. Move error rendering out of `error.rs`.
+7. Box error payloads; remove the `result_large_err` allows; add `-D warnings` to CI
+   (group 09).
+
+## Risks and invariants
+
+- **Text output must remain byte-identical**, including ANSI placement. The
+  existing tests in `src/output.rs` and `src/lib.rs` (`plugins_table_applies_styles_after_padding`)
+  show the project already treats this as a contract — extend that pattern to every
+  renderer *before* migrating it.
+- **Error codes are part of the public contract** (`DOMAIN_DISABLED`,
+  `SECRET_NOT_FOUND`, `OUTPUT_SCHEMA_VIOLATION`, …). The consolidation must preserve
+  every code string exactly; snapshot them in a test.
+- **Redaction extraction must not weaken any heuristic.** Port tests first, then code.
+
+## Acceptance criteria
+
+- No `println!` outside the emitter implementation.
+- `--quiet` is handled in exactly one place.
+- One conversion path from each error enum to `ErrorDiagnostic`; no duplicated
+  match statements across crates.
+- `clippy::result_large_err` is enabled, not allowed.
+- Exactly one redaction implementation, with property and fuzz coverage.
