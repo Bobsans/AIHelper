@@ -301,6 +301,13 @@ fn substitute_refs(value: &mut Value, definitions: &Map<String, Value>) {
     }
 }
 
+/// Keywords whose value is a map of *names* to subschemas.
+///
+/// Recursion must not treat these as schemas: a property legitimately named
+/// `title` or `format` would otherwise be deleted by the annotation stripping
+/// below, which is exactly what happened to `gitlab.issue.create.title`.
+const NAME_KEYED: &[&str] = &["properties", "patternProperties", "$defs", "definitions"];
+
 /// Remove keys that describe the Rust type rather than the JSON contract.
 fn strip_annotations(value: &mut Value) {
     match value {
@@ -308,8 +315,16 @@ fn strip_annotations(value: &mut Value) {
             map.remove("$schema");
             map.remove("title");
             map.remove("format");
-            for nested in map.values_mut() {
-                strip_annotations(nested);
+            for (key, nested) in map.iter_mut() {
+                if NAME_KEYED.contains(&key.as_str()) {
+                    if let Value::Object(named) = nested {
+                        for subschema in named.values_mut() {
+                            strip_annotations(subschema);
+                        }
+                    }
+                } else {
+                    strip_annotations(nested);
+                }
             }
         }
         Value::Array(values) => {
@@ -535,6 +550,25 @@ mod tests {
             derived["properties"]["command"],
             json!({"type": "string", "const": "gitlab.releases"})
         );
+    }
+
+    #[derive(JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct AnnotationNamedArgs {
+        title: String,
+        format: Option<String>,
+    }
+
+    #[test]
+    fn a_property_named_like_an_annotation_survives() {
+        let derived = input_schema_for::<AnnotationNamedArgs>();
+        assert_eq!(
+            derived["properties"]["title"],
+            json!({"type": "string"}),
+            "`title` is a property name here, not a schema annotation"
+        );
+        assert_eq!(derived["properties"]["format"], json!({"type": "string"}));
     }
 
     #[test]

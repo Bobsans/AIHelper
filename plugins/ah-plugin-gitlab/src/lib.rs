@@ -104,21 +104,34 @@ struct GitlabCli {
     command: GitlabCommand,
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Deserialize, JsonSchema)]
 struct GitlabConnectionArgs {
     #[arg(long, global = true, value_name = "PATH_OR_ID")]
+    #[schemars(
+        description = "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd."
+    )]
     project: Option<String>,
     #[arg(long, global = true, default_value = DEFAULT_REMOTE, value_name = "NAME")]
+    #[serde(default = "default_remote")]
+    #[schemars(default = "default_remote", length(min = 1))]
     remote: String,
     /// Left unset the default is assumed, which also allows falling back to the
     /// host named by the git remote.
     #[arg(long, global = true, value_name = "URL")]
+    #[schemars(
+        default = "default_host",
+        length(min = 1),
+        description = "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read."
+    )]
     host: Option<String>,
     #[arg(long, global = true, value_name = "URL")]
+    #[schemars(description = "REST API base URL. A supplied token is sent to this host.")]
     api_url: Option<String>,
     #[arg(long, global = true, value_name = "URL")]
+    #[schemars(description = "GraphQL API URL used for issue designs.")]
     graphql_url: Option<String>,
     #[arg(long, global = true, value_name = "TOKEN")]
+    #[schemars(description = "Explicit GitLab token; prefer environment-based authentication.")]
     token: Option<String>,
     #[arg(
         long,
@@ -128,11 +141,40 @@ struct GitlabConnectionArgs {
         num_args = 0..=1,
         default_missing_value = "true"
     )]
+    #[serde(default = "enabled")]
+    #[schemars(
+        default = "enabled",
+        description = "Use Git credential helper lookup as the final fallback."
+    )]
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_timeout_secs")]
+    #[schemars(
+        default = "default_timeout_secs",
+        range(min = 1),
+        description = "Per-request HTTP timeout."
+    )]
     timeout_secs: u64,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     cwd: Option<PathBuf>,
+}
+
+fn default_remote() -> String {
+    DEFAULT_REMOTE.to_owned()
+}
+
+fn default_host() -> String {
+    DEFAULT_HOST.to_owned()
+}
+
+fn enabled() -> bool {
+    true
+}
+
+fn default_timeout_secs() -> u64 {
+    DEFAULT_TIMEOUT_SECS
 }
 
 #[derive(Debug, Subcommand)]
@@ -155,20 +197,32 @@ enum GitlabCommand {
     Job(JobArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssuesArgs {
     #[arg(long, default_value = "opened", value_parser = ["opened", "closed", "all"])]
+    #[serde(default = "default_issue_state")]
+    #[schemars(default = "default_issue_state", extend("enum" = ["opened", "closed", "all"]))]
     state: String,
     #[arg(long = "label", value_name = "LABEL")]
+    #[serde(default)]
     labels: Vec<String>,
+    /// Optional issue filter.
     #[arg(long)]
     assignee: Option<String>,
+    /// Optional issue filter.
     #[arg(long)]
     author: Option<String>,
+    /// Optional issue filter.
     #[arg(long)]
     since: Option<String>,
+    /// Optional issue filter.
     #[arg(long)]
     search: Option<String>,
+}
+
+fn default_issue_state() -> String {
+    "opened".to_owned()
 }
 
 #[derive(Debug, Args)]
@@ -193,63 +247,101 @@ enum IssueCommand {
     Comments(IssueIidArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueIidArgs {
+    /// Project issue iid.
+    #[schemars(range(min = 1))]
     iid: u64,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueViewArgs {
+    /// Project issue iid.
+    #[schemars(range(min = 1))]
     iid: u64,
+    /// Also load comments and designs.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     full: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CreateIssueArgs {
+    /// Issue title.
     #[arg(long)]
+    #[schemars(length(min = 1))]
     title: String,
+    /// Inline text.
     #[arg(long, value_name = "TEXT")]
     description: Option<String>,
+    /// UTF-8 text file resolved against the execution cwd.
     #[arg(long, value_name = "PATH")]
     description_file: Option<String>,
     #[arg(long = "label", value_name = "LABEL")]
+    #[serde(default)]
     labels: Vec<String>,
     #[arg(long = "assignee-id", value_name = "ID")]
+    #[serde(default)]
+    #[schemars(inner(range(min = 1)))]
     assignee_ids: Vec<u64>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct UpdateIssueArgs {
+    /// Project issue iid.
+    #[schemars(range(min = 1))]
     iid: u64,
+    /// Replacement title.
     #[arg(long)]
     title: Option<String>,
+    /// Inline text.
     #[arg(long, value_name = "TEXT")]
     description: Option<String>,
+    /// UTF-8 text file resolved against the execution cwd.
     #[arg(long, value_name = "PATH")]
     description_file: Option<String>,
     #[arg(long, value_parser = ["opened", "closed"])]
+    #[schemars(extend("enum" = ["opened", "closed"]))]
     state: Option<String>,
     #[arg(long = "label", value_name = "LABEL")]
+    #[serde(default)]
+    #[schemars(length(min = 1))]
     labels: Vec<String>,
     #[arg(long = "assignee-id", value_name = "ID")]
+    #[serde(default)]
+    #[schemars(length(min = 1), inner(range(min = 1)))]
     assignee_ids: Vec<u64>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CloseIssueArgs {
+    /// Project issue iid.
+    #[schemars(range(min = 1))]
     iid: u64,
+    /// Inline text.
     #[arg(long, value_name = "TEXT")]
     comment: Option<String>,
+    /// UTF-8 text file resolved against the execution cwd.
     #[arg(long, value_name = "PATH")]
     comment_file: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CommentIssueArgs {
+    /// Project issue iid.
+    #[schemars(range(min = 1))]
     iid: u64,
+    /// Inline text.
     #[arg(long, value_name = "TEXT")]
     body: Option<String>,
+    /// UTF-8 text file resolved against the execution cwd.
     #[arg(long, value_name = "PATH")]
     body_file: Option<String>,
 }
@@ -268,26 +360,38 @@ enum ReleaseCommand {
     Create(CreateReleaseArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TagArgs {
+    /// Release tag.
+    #[schemars(length(min = 1))]
     tag: String,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CreateReleaseArgs {
+    /// Release tag.
+    #[schemars(length(min = 1))]
     tag: String,
+    /// Release name.
     #[arg(long)]
     name: Option<String>,
+    /// Inline text.
     #[arg(long, value_name = "TEXT")]
     description: Option<String>,
+    /// UTF-8 text file resolved against the execution cwd.
     #[arg(long, value_name = "PATH")]
     description_file: Option<String>,
+    /// Tag target reference.
     #[arg(long)]
     r#ref: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct PipelinesArgs {
+    /// Branch filter.
     #[arg(long, value_name = "BRANCH")]
     branch: Option<String>,
 }
@@ -308,20 +412,41 @@ enum PipelineCommand {
     Jobs(PipelineIdArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct PipelineIdArgs {
+    #[schemars(range(min = 1))]
     pipeline_id: u64,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WaitPipelineArgs {
+    #[schemars(range(min = 1))]
     pipeline_id: u64,
+    /// Polling interval.
     #[arg(long, default_value_t = DEFAULT_WAIT_INTERVAL_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_wait_interval_secs")]
+    #[schemars(default = "default_wait_interval_secs", range(min = 1))]
     interval_secs: u64,
+    /// Maximum wait duration.
     #[arg(long, default_value_t = DEFAULT_WAIT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(rename = "wait_timeout_secs", default = "default_wait_timeout_secs")]
+    #[schemars(default = "default_wait_timeout_secs", range(min = 1))]
     timeout_secs: u64,
+    /// Return an error for a non-success status.
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default)]
     fail_on_failure: bool,
+}
+
+fn default_wait_interval_secs() -> u64 {
+    DEFAULT_WAIT_INTERVAL_SECS
+}
+
+fn default_wait_timeout_secs() -> u64 {
+    DEFAULT_WAIT_TIMEOUT_SECS
 }
 
 #[derive(Debug, Args)]
@@ -338,30 +463,44 @@ enum JobCommand {
     Warnings(JobTraceReadArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
 struct JobTraceArgs {
+    #[schemars(range(min = 1))]
     job_id: u64,
+    /// Optional text filter.
     #[arg(long)]
     grep: Option<String>,
     #[command(flatten)]
+    #[serde(flatten)]
     limits: JobTraceLimitArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
 struct JobTraceReadArgs {
+    #[schemars(range(min = 1))]
     job_id: u64,
     #[command(flatten)]
+    #[serde(flatten)]
     limits: JobTraceLimitArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
 struct JobTraceLimitArgs {
+    /// Maximum trace response bytes.
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_TRACE_BODY_BYTES,
         value_name = "BYTES"
     )]
+    #[serde(default = "default_max_trace_body_bytes")]
+    #[schemars(default = "default_max_trace_body_bytes", range(min = 1))]
     max_body_bytes: usize,
+}
+
+fn default_max_trace_body_bytes() -> usize {
+    DEFAULT_MAX_TRACE_BODY_BYTES
 }
 
 #[derive(Debug, Clone)]

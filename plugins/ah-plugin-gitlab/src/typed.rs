@@ -3,11 +3,48 @@ use std::path::{Path, PathBuf};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse, cancellation, schema::output_schema_for,
+    TypedInvocationResponse, cancellation,
+    schema::{input_schema_for, output_schema_for},
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::*;
+
+// Every GitLab command takes the same connection block plus its own arguments,
+// so one generic wire type describes all of them. A doc comment here would be
+// published as the schema `description`; `deny_unknown_fields` cannot be
+// combined with `flatten`, so the closed-object rule is stated for the schema
+// and the runtime rejects unknown properties against it before dispatch.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
+struct Wire<T> {
+    #[serde(flatten)]
+    connection: GitlabConnectionArgs,
+    #[serde(flatten)]
+    command: T,
+}
+
+// A command whose only arguments are the connection block.
+#[derive(Debug, Deserialize, JsonSchema)]
+struct NoArgs {}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(
+    request: &TypedInvocationRequest,
+) -> Result<Wire<T>, CommandError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        command_error(
+            request,
+            "INVALID_ARGUMENT",
+            "GitLab command arguments are invalid",
+            error.to_string(),
+            false,
+        )
+    })
+}
 
 pub(super) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new(
@@ -72,114 +109,149 @@ fn invoke_inner(request: &TypedInvocationRequest) -> TypedInvocationResponse {
 }
 
 fn typed_cli(request: &TypedInvocationRequest) -> Result<GitlabCli, CommandError> {
-    let arguments = &request.arguments;
     let cwd = PathBuf::from(&request.context.cwd);
-    let connection = typed_connection(request)?;
-    let command = match request.command.as_str() {
-        "gitlab.project" => GitlabCommand::Project,
-        "gitlab.releases" => GitlabCommand::Releases,
-        "gitlab.release.get" => GitlabCommand::Release(ReleaseArgs {
-            command: ReleaseCommand::Get(TagArgs {
-                tag: required_string(arguments, "tag", request)?,
-            }),
-        }),
-        "gitlab.release.create" => GitlabCommand::Release(ReleaseArgs {
-            command: ReleaseCommand::Create(CreateReleaseArgs {
-                tag: required_string(arguments, "tag", request)?,
-                name: optional_string(arguments, "name"),
-                description: optional_string(arguments, "description"),
-                description_file: optional_file(arguments, "description_file", &cwd),
-                r#ref: optional_string(arguments, "ref"),
-            }),
-        }),
-        "gitlab.issues" => GitlabCommand::Issues(IssuesArgs {
-            state: string_or(arguments, "state", "opened"),
-            labels: string_array(arguments, "labels"),
-            assignee: optional_string(arguments, "assignee"),
-            author: optional_string(arguments, "author"),
-            since: optional_string(arguments, "since"),
-            search: optional_string(arguments, "search"),
-        }),
-        "gitlab.issue.view" => GitlabCommand::Issue(IssueArgs {
-            command: IssueCommand::View(IssueViewArgs {
-                iid: required_u64(arguments, "iid", request)?,
-                full: bool_or(arguments, "full", false),
-            }),
-        }),
-        "gitlab.issue.create" => GitlabCommand::Issue(IssueArgs {
-            command: IssueCommand::Create(CreateIssueArgs {
-                title: required_string(arguments, "title", request)?,
-                description: optional_string(arguments, "description"),
-                description_file: optional_file(arguments, "description_file", &cwd),
-                labels: string_array(arguments, "labels"),
-                assignee_ids: u64_array(arguments, "assignee_ids"),
-            }),
-        }),
-        "gitlab.issue.update" => GitlabCommand::Issue(IssueArgs {
-            command: IssueCommand::Update(UpdateIssueArgs {
-                iid: required_u64(arguments, "iid", request)?,
-                title: optional_string(arguments, "title"),
-                description: optional_string(arguments, "description"),
-                description_file: optional_file(arguments, "description_file", &cwd),
-                state: optional_string(arguments, "state"),
-                labels: string_array(arguments, "labels"),
-                assignee_ids: u64_array(arguments, "assignee_ids"),
-            }),
-        }),
-        "gitlab.issue.close" => GitlabCommand::Issue(IssueArgs {
-            command: IssueCommand::Close(CloseIssueArgs {
-                iid: required_u64(arguments, "iid", request)?,
-                comment: optional_string(arguments, "comment"),
-                comment_file: optional_file(arguments, "comment_file", &cwd),
-            }),
-        }),
-        "gitlab.issue.comment" => GitlabCommand::Issue(IssueArgs {
-            command: IssueCommand::Comment(CommentIssueArgs {
-                iid: required_u64(arguments, "iid", request)?,
-                body: optional_string(arguments, "body"),
-                body_file: optional_file(arguments, "body_file", &cwd),
-            }),
-        }),
-        "gitlab.issue.comments" => GitlabCommand::Issue(IssueArgs {
-            command: IssueCommand::Comments(IssueIidArgs {
-                iid: required_u64(arguments, "iid", request)?,
-            }),
-        }),
-        "gitlab.pipelines" => GitlabCommand::Pipelines(PipelinesArgs {
-            branch: optional_string(arguments, "branch"),
-        }),
-        "gitlab.pipeline.get" => GitlabCommand::Pipeline(PipelineArgs {
-            command: PipelineCommand::Get(PipelineIdArgs {
-                pipeline_id: required_u64(arguments, "pipeline_id", request)?,
-            }),
-        }),
-        "gitlab.pipeline.wait" => GitlabCommand::Pipeline(PipelineArgs {
-            command: PipelineCommand::Wait(WaitPipelineArgs {
-                pipeline_id: required_u64(arguments, "pipeline_id", request)?,
-                interval_secs: u64_or(arguments, "interval_secs", DEFAULT_WAIT_INTERVAL_SECS),
-                timeout_secs: u64_or(arguments, "wait_timeout_secs", DEFAULT_WAIT_TIMEOUT_SECS)
-                    .min(remaining_seconds(request)),
-                fail_on_failure: bool_or(arguments, "fail_on_failure", false),
-            }),
-        }),
-        "gitlab.pipeline.jobs" => GitlabCommand::Pipeline(PipelineArgs {
-            command: PipelineCommand::Jobs(PipelineIdArgs {
-                pipeline_id: required_u64(arguments, "pipeline_id", request)?,
-            }),
-        }),
-        "gitlab.job.trace" => GitlabCommand::Job(JobArgs {
-            command: JobCommand::Trace(JobTraceArgs {
-                job_id: required_u64(arguments, "job_id", request)?,
-                grep: optional_string(arguments, "grep"),
-                limits: trace_limits(arguments),
-            }),
-        }),
-        "gitlab.job.warnings" => GitlabCommand::Job(JobArgs {
-            command: JobCommand::Warnings(JobTraceReadArgs {
-                job_id: required_u64(arguments, "job_id", request)?,
-                limits: trace_limits(arguments),
-            }),
-        }),
+
+    macro_rules! decoded {
+        ($args:ty) => {{
+            let wire: Wire<$args> = decode(request)?;
+            (wire.connection, wire.command)
+        }};
+    }
+
+    let (connection, command) = match request.command.as_str() {
+        "gitlab.project" => (decoded!(NoArgs).0, GitlabCommand::Project),
+        "gitlab.releases" => (decoded!(NoArgs).0, GitlabCommand::Releases),
+        "gitlab.release.get" => {
+            let (connection, args) = decoded!(TagArgs);
+            (
+                connection,
+                GitlabCommand::Release(ReleaseArgs {
+                    command: ReleaseCommand::Get(args),
+                }),
+            )
+        }
+        "gitlab.release.create" => {
+            let (connection, mut args) = decoded!(CreateReleaseArgs);
+            args.description_file = resolve_file(args.description_file, &cwd);
+            (
+                connection,
+                GitlabCommand::Release(ReleaseArgs {
+                    command: ReleaseCommand::Create(args),
+                }),
+            )
+        }
+        "gitlab.issues" => {
+            let (connection, args) = decoded!(IssuesArgs);
+            (connection, GitlabCommand::Issues(args))
+        }
+        "gitlab.issue.view" => {
+            let (connection, args) = decoded!(IssueViewArgs);
+            (
+                connection,
+                GitlabCommand::Issue(IssueArgs {
+                    command: IssueCommand::View(args),
+                }),
+            )
+        }
+        "gitlab.issue.create" => {
+            let (connection, mut args) = decoded!(CreateIssueArgs);
+            args.description_file = resolve_file(args.description_file, &cwd);
+            (
+                connection,
+                GitlabCommand::Issue(IssueArgs {
+                    command: IssueCommand::Create(args),
+                }),
+            )
+        }
+        "gitlab.issue.update" => {
+            let (connection, mut args) = decoded!(UpdateIssueArgs);
+            args.description_file = resolve_file(args.description_file, &cwd);
+            (
+                connection,
+                GitlabCommand::Issue(IssueArgs {
+                    command: IssueCommand::Update(args),
+                }),
+            )
+        }
+        "gitlab.issue.close" => {
+            let (connection, mut args) = decoded!(CloseIssueArgs);
+            args.comment_file = resolve_file(args.comment_file, &cwd);
+            (
+                connection,
+                GitlabCommand::Issue(IssueArgs {
+                    command: IssueCommand::Close(args),
+                }),
+            )
+        }
+        "gitlab.issue.comment" => {
+            let (connection, mut args) = decoded!(CommentIssueArgs);
+            args.body_file = resolve_file(args.body_file, &cwd);
+            (
+                connection,
+                GitlabCommand::Issue(IssueArgs {
+                    command: IssueCommand::Comment(args),
+                }),
+            )
+        }
+        "gitlab.issue.comments" => {
+            let (connection, args) = decoded!(IssueIidArgs);
+            (
+                connection,
+                GitlabCommand::Issue(IssueArgs {
+                    command: IssueCommand::Comments(args),
+                }),
+            )
+        }
+        "gitlab.pipelines" => {
+            let (connection, args) = decoded!(PipelinesArgs);
+            (connection, GitlabCommand::Pipelines(args))
+        }
+        "gitlab.pipeline.get" => {
+            let (connection, args) = decoded!(PipelineIdArgs);
+            (
+                connection,
+                GitlabCommand::Pipeline(PipelineArgs {
+                    command: PipelineCommand::Get(args),
+                }),
+            )
+        }
+        "gitlab.pipeline.wait" => {
+            let (connection, mut args) = decoded!(WaitPipelineArgs);
+            args.timeout_secs = args.timeout_secs.min(remaining_seconds(request));
+            (
+                connection,
+                GitlabCommand::Pipeline(PipelineArgs {
+                    command: PipelineCommand::Wait(args),
+                }),
+            )
+        }
+        "gitlab.pipeline.jobs" => {
+            let (connection, args) = decoded!(PipelineIdArgs);
+            (
+                connection,
+                GitlabCommand::Pipeline(PipelineArgs {
+                    command: PipelineCommand::Jobs(args),
+                }),
+            )
+        }
+        "gitlab.job.trace" => {
+            let (connection, args) = decoded!(JobTraceArgs);
+            (
+                connection,
+                GitlabCommand::Job(JobArgs {
+                    command: JobCommand::Trace(args),
+                }),
+            )
+        }
+        "gitlab.job.warnings" => {
+            let (connection, args) = decoded!(JobTraceReadArgs);
+            (
+                connection,
+                GitlabCommand::Job(JobArgs {
+                    command: JobCommand::Warnings(args),
+                }),
+            )
+        }
         _ => {
             return Err(command_error(
                 request,
@@ -190,35 +262,45 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<GitlabCli, CommandError
             ));
         }
     };
+
     Ok(GitlabCli {
-        connection,
+        connection: apply_context(connection, request, cwd)?,
         command,
     })
 }
 
-fn typed_connection(
-    request: &TypedInvocationRequest,
-) -> Result<GitlabConnectionArgs, CommandError> {
-    let arguments = &request.arguments;
-    let token = connection_token(request)?;
-    Ok(GitlabConnectionArgs {
-        project: optional_string(arguments, "project"),
-        remote: string_or(arguments, "remote", DEFAULT_REMOTE),
-        host: optional_string(arguments, "host"),
-        api_url: optional_string(arguments, "api_url"),
-        graphql_url: optional_string(arguments, "graphql_url"),
-        token,
-        use_git_credential: bool_or(arguments, "use_git_credential", true),
-        timeout_secs: u64_or(arguments, "timeout_secs", DEFAULT_TIMEOUT_SECS)
-            .min(remaining_seconds(request)),
-        cwd: Some(PathBuf::from(&request.context.cwd)),
+/// A relative text-file argument is resolved against the execution cwd.
+fn resolve_file(path: Option<String>, cwd: &Path) -> Option<String> {
+    path.map(|value| {
+        let path = Path::new(&value);
+        if path.is_absolute() {
+            value
+        } else {
+            cwd.join(path).to_string_lossy().into_owned()
+        }
     })
+}
+
+/// Fill in what the caller cannot supply: the cwd, the request deadline, and a
+/// token resolved from the vault.
+fn apply_context(
+    mut connection: GitlabConnectionArgs,
+    request: &TypedInvocationRequest,
+    cwd: PathBuf,
+) -> Result<GitlabConnectionArgs, CommandError> {
+    let inline = connection.token.take();
+    connection.token = connection_token(request, inline)?;
+    connection.timeout_secs = connection.timeout_secs.min(remaining_seconds(request));
+    connection.cwd = Some(cwd);
+    Ok(connection)
 }
 
 /// The vault credential and an inline token are mutually exclusive; a resolved
 /// credential always wins over nothing, never over an explicit argument.
-fn connection_token(request: &TypedInvocationRequest) -> Result<Option<String>, CommandError> {
-    let inline = optional_string(&request.arguments, "token");
+fn connection_token(
+    request: &TypedInvocationRequest,
+    inline: Option<String>,
+) -> Result<Option<String>, CommandError> {
     let resolved = resolved_token(request)?;
     if inline.is_some() && resolved.is_some() {
         return Err(command_error(
@@ -240,12 +322,6 @@ fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
         .checked_div(1_000)
         .unwrap_or(1)
         .max(1)
-}
-
-fn trace_limits(arguments: &Value) -> JobTraceLimitArgs {
-    JobTraceLimitArgs {
-        max_body_bytes: usize_or(arguments, "max_body_bytes", DEFAULT_MAX_TRACE_BODY_BYTES),
-    }
 }
 
 fn invocation_response(
@@ -428,110 +504,12 @@ fn command_error(
     )
 }
 
-fn required_string(
-    arguments: &Value,
-    name: &str,
-    request: &TypedInvocationRequest,
-) -> Result<String, CommandError> {
-    optional_string(arguments, name).ok_or_else(|| {
-        command_error(
-            request,
-            "INVALID_ARGUMENT",
-            format!("Missing {name}"),
-            format!("typed input requires '{name}'"),
-            false,
-        )
-    })
-}
-
-fn required_u64(
-    arguments: &Value,
-    name: &str,
-    request: &TypedInvocationRequest,
-) -> Result<u64, CommandError> {
-    arguments.get(name).and_then(Value::as_u64).ok_or_else(|| {
-        command_error(
-            request,
-            "INVALID_ARGUMENT",
-            format!("Missing {name}"),
-            format!("typed input requires positive integer '{name}'"),
-            false,
-        )
-    })
-}
-
-fn optional_string(arguments: &Value, name: &str) -> Option<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn optional_file(arguments: &Value, name: &str, cwd: &Path) -> Option<String> {
-    optional_string(arguments, name).map(|value| {
-        let path = Path::new(&value);
-        if path.is_absolute() {
-            value
-        } else {
-            cwd.join(path).to_string_lossy().into_owned()
-        }
-    })
-}
-
-fn string_or(arguments: &Value, name: &str, default: &str) -> String {
-    optional_string(arguments, name).unwrap_or_else(|| default.to_owned())
-}
-
-fn string_array(arguments: &Value, name: &str) -> Vec<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn u64_array(arguments: &Value, name: &str) -> Vec<u64> {
-    arguments
-        .get(name)
-        .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(Value::as_u64).collect())
-        .unwrap_or_default()
-}
-
-fn bool_or(arguments: &Value, name: &str, default: bool) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(default)
-}
-
-fn u64_or(arguments: &Value, name: &str, default: u64) -> u64 {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .unwrap_or(default)
-}
-
-fn usize_or(arguments: &Value, name: &str, default: usize) -> usize {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(default)
-}
-
 fn project_descriptor() -> CommandDescriptor {
     descriptor(
         "gitlab.project",
         "Inspect GitLab project",
         "Detect the GitLab project and return remote plus API metadata.",
-        input_schema(Map::new(), Vec::new()),
+        input_schema_for::<Wire<NoArgs>>(),
         output_schema_for::<ProjectOutput>("gitlab.project"),
         read_effects(
             "May run Git project detection and sends a read request to the configured API URL; a supplied token is sent to that host.",
@@ -544,7 +522,7 @@ fn releases_descriptor() -> CommandDescriptor {
         "gitlab.releases",
         "List GitLab releases",
         "List project releases with the shared result limit.",
-        input_schema(Map::new(), Vec::new()),
+        input_schema_for::<Wire<NoArgs>>(),
         output_schema_for::<ReleasesOutput>("gitlab.releases"),
         read_effects("Reads release metadata and assets from the configured GitLab API."),
     )
@@ -555,25 +533,18 @@ fn release_get_descriptor() -> CommandDescriptor {
         "gitlab.release.get",
         "Get GitLab release",
         "Return one GitLab release by tag.",
-        input_schema(tag_properties(), vec!["tag"]),
+        input_schema_for::<Wire<TagArgs>>(),
         output_schema_for::<ReleaseOutput>("gitlab.release.get"),
         read_effects("Reads release metadata and asset links from the configured GitLab API."),
     )
 }
 
 fn release_create_descriptor() -> CommandDescriptor {
-    let mut properties = tag_properties();
-    properties.insert("name".to_owned(), optional_text_schema("Release name."));
-    properties.extend(text_file_properties("description", "description_file"));
-    properties.insert(
-        "ref".to_owned(),
-        optional_text_schema("Tag target reference."),
-    );
     descriptor(
         "gitlab.release.create",
         "Create GitLab release",
         "Create a project release with optional description and target reference. Use description or description_file, not both.",
-        input_schema(properties, vec!["tag"]),
+        input_schema_for::<Wire<CreateReleaseArgs>>(),
         output_schema_for::<ReleaseOutput>("gitlab.release.create"),
         write_effects(
             "Creates a persistent release and may create a tag; description files are read from the execution cwd.",
@@ -582,23 +553,11 @@ fn release_create_descriptor() -> CommandDescriptor {
 }
 
 fn issues_descriptor() -> CommandDescriptor {
-    let mut properties = Map::new();
-    properties.insert(
-        "state".to_owned(),
-        json!({"type": "string", "enum": ["opened", "closed", "all"], "default": "opened"}),
-    );
-    properties.insert("labels".to_owned(), string_array_schema());
-    for field in ["assignee", "author", "since", "search"] {
-        properties.insert(
-            field.to_owned(),
-            optional_text_schema("Optional issue filter."),
-        );
-    }
     descriptor(
         "gitlab.issues",
         "List GitLab issues",
         "List project issues with state, label, author, assignee, date, and search filters.",
-        input_schema(properties, Vec::new()),
+        input_schema_for::<Wire<IssuesArgs>>(),
         output_schema_for::<IssuesOutput>("gitlab.issues"),
         read_effects(
             "Reads issue metadata from the configured GitLab API and may expose private project data.",
@@ -607,16 +566,11 @@ fn issues_descriptor() -> CommandDescriptor {
 }
 
 fn issue_view_descriptor() -> CommandDescriptor {
-    let mut properties = iid_properties();
-    properties.insert(
-        "full".to_owned(),
-        boolean_schema(false, "Also load comments and designs."),
-    );
     descriptor(
         "gitlab.issue.view",
         "View GitLab issue",
         "Return one issue, optionally with comments, designs, and warnings.",
-        input_schema(properties, vec!["iid"]),
+        input_schema_for::<Wire<IssueViewArgs>>(),
         // Hand-written: `gitlab.issue.view` returns one of two payloads
         // depending on `full`, so no single type describes it. Deriving would
         // need an untagged enum, whose `anyOf` is not the published `oneOf`.
@@ -647,15 +601,11 @@ fn issue_view_descriptor() -> CommandDescriptor {
 }
 
 fn issue_create_descriptor() -> CommandDescriptor {
-    let mut properties = text_file_properties("description", "description_file");
-    properties.insert("title".to_owned(), required_text_schema("Issue title."));
-    properties.insert("labels".to_owned(), string_array_schema());
-    properties.insert("assignee_ids".to_owned(), u64_array_schema());
     descriptor(
         "gitlab.issue.create",
         "Create GitLab issue",
         "Create a project issue with optional description, labels, and assignees. Use description or description_file, not both.",
-        input_schema(properties, vec!["title"]),
+        input_schema_for::<Wire<CreateIssueArgs>>(),
         output_schema_for::<IssueOutput>("gitlab.issue.create"),
         write_effects(
             "Creates a persistent issue and may notify project participants; description files are read from the execution cwd.",
@@ -664,29 +614,11 @@ fn issue_create_descriptor() -> CommandDescriptor {
 }
 
 fn issue_update_descriptor() -> CommandDescriptor {
-    let mut properties = iid_properties();
-    properties.extend(text_file_properties("description", "description_file"));
-    properties.insert(
-        "title".to_owned(),
-        optional_text_schema("Replacement title."),
-    );
-    properties.insert(
-        "state".to_owned(),
-        json!({"type": "string", "enum": ["opened", "closed"]}),
-    );
-    properties.insert(
-        "labels".to_owned(),
-        json!({"type": "array", "minItems": 1, "items": string_schema()}),
-    );
-    properties.insert(
-        "assignee_ids".to_owned(),
-        json!({"type": "array", "minItems": 1, "items": positive_integer_schema()}),
-    );
     descriptor(
         "gitlab.issue.update",
         "Update GitLab issue",
         "Update one or more fields on a project issue. At least one update field is required; use description or description_file, not both.",
-        input_schema(properties, vec!["iid"]),
+        input_schema_for::<Wire<UpdateIssueArgs>>(),
         output_schema_for::<IssueOutput>("gitlab.issue.update"),
         write_effects(
             "Mutates a persistent issue and may change workflow state or notify participants.",
@@ -695,26 +627,22 @@ fn issue_update_descriptor() -> CommandDescriptor {
 }
 
 fn issue_close_descriptor() -> CommandDescriptor {
-    let mut properties = iid_properties();
-    properties.extend(text_file_properties("comment", "comment_file"));
     descriptor(
         "gitlab.issue.close",
         "Close GitLab issue",
         "Close an issue, optionally adding a comment first. Use comment or comment_file, not both.",
-        input_schema(properties, vec!["iid"]),
+        input_schema_for::<Wire<CloseIssueArgs>>(),
         output_schema_for::<IssueOutput>("gitlab.issue.close"),
         write_effects("May create a note, closes a persistent issue, and may notify participants."),
     )
 }
 
 fn issue_comment_descriptor() -> CommandDescriptor {
-    let mut properties = iid_properties();
-    properties.extend(text_file_properties("body", "body_file"));
     descriptor(
         "gitlab.issue.comment",
         "Comment on GitLab issue",
         "Create a note on one project issue. Exactly one of body or body_file is required.",
-        input_schema(properties, vec!["iid"]),
+        input_schema_for::<Wire<CommentIssueArgs>>(),
         output_schema_for::<IssueNoteOutput>("gitlab.issue.comment"),
         write_effects("Creates a persistent issue note and may notify project participants."),
     )
@@ -725,20 +653,18 @@ fn issue_comments_descriptor() -> CommandDescriptor {
         "gitlab.issue.comments",
         "List GitLab issue comments",
         "List notes for one project issue with the shared result limit.",
-        input_schema(iid_properties(), vec!["iid"]),
+        input_schema_for::<Wire<IssueIidArgs>>(),
         output_schema_for::<IssueNotesOutput>("gitlab.issue.comments"),
         read_effects("Reads issue notes and author metadata from the configured GitLab API."),
     )
 }
 
 fn pipelines_descriptor() -> CommandDescriptor {
-    let mut properties = Map::new();
-    properties.insert("branch".to_owned(), optional_text_schema("Branch filter."));
     descriptor(
         "gitlab.pipelines",
         "List GitLab pipelines",
         "List project pipelines with an optional branch filter.",
-        input_schema(properties, Vec::new()),
+        input_schema_for::<Wire<PipelinesArgs>>(),
         output_schema_for::<PipelinesOutput>("gitlab.pipelines"),
         read_effects(
             "Reads pipeline status, commit SHA, references, and URLs from the configured GitLab API.",
@@ -751,7 +677,7 @@ fn pipeline_get_descriptor() -> CommandDescriptor {
         "gitlab.pipeline.get",
         "Get GitLab pipeline",
         "Return one project pipeline by id.",
-        input_schema(pipeline_id_properties(), vec!["pipeline_id"]),
+        input_schema_for::<Wire<PipelineIdArgs>>(),
         output_schema_for::<PipelineOutput>("gitlab.pipeline.get"),
         read_effects(
             "Reads one pipeline and its commit/status metadata from the configured GitLab API.",
@@ -760,24 +686,11 @@ fn pipeline_get_descriptor() -> CommandDescriptor {
 }
 
 fn pipeline_wait_descriptor() -> CommandDescriptor {
-    let mut properties = pipeline_id_properties();
-    properties.insert(
-        "interval_secs".to_owned(),
-        integer_with_default(DEFAULT_WAIT_INTERVAL_SECS, "Polling interval."),
-    );
-    properties.insert(
-        "wait_timeout_secs".to_owned(),
-        integer_with_default(DEFAULT_WAIT_TIMEOUT_SECS, "Maximum wait duration."),
-    );
-    properties.insert(
-        "fail_on_failure".to_owned(),
-        boolean_schema(false, "Return an error for a non-success status."),
-    );
     descriptor(
         "gitlab.pipeline.wait",
         "Wait for GitLab pipeline",
         "Poll a pipeline until completion, timeout, or cancellation. pipeline_id is a pipeline id from gitlab.pipelines, not a job id and not a merge request iid.",
-        input_schema(properties, vec!["pipeline_id"]),
+        input_schema_for::<Wire<WaitPipelineArgs>>(),
         output_schema_for::<WaitPipelineOutput>("gitlab.pipeline.wait"),
         read_effects("Repeatedly reads external pipeline state and may consume API rate limits."),
     )
@@ -792,7 +705,7 @@ fn pipeline_jobs_descriptor() -> CommandDescriptor {
         "gitlab.pipeline.jobs",
         "List GitLab pipeline jobs",
         "List jobs belonging to one project pipeline.",
-        input_schema(pipeline_id_properties(), vec!["pipeline_id"]),
+        input_schema_for::<Wire<PipelineIdArgs>>(),
         output_schema_for::<JobsOutput>("gitlab.pipeline.jobs"),
         read_effects(
             "Reads job names, stages, statuses, timestamps, and URLs from the configured GitLab API.",
@@ -806,20 +719,6 @@ fn job_trace_descriptor(warnings: bool) -> CommandDescriptor {
     } else {
         "gitlab.job.trace"
     };
-    let mut properties = job_id_properties();
-    if !warnings {
-        properties.insert(
-            "grep".to_owned(),
-            optional_text_schema("Optional text filter."),
-        );
-    }
-    properties.insert(
-        "max_body_bytes".to_owned(),
-        integer_with_default(
-            DEFAULT_MAX_TRACE_BODY_BYTES as u64,
-            "Maximum trace response bytes.",
-        ),
-    );
     descriptor(
         id,
         if warnings {
@@ -832,7 +731,11 @@ fn job_trace_descriptor(warnings: bool) -> CommandDescriptor {
         } else {
             "Read or filter one job trace."
         },
-        input_schema(properties, vec!["job_id"]),
+        if warnings {
+            input_schema_for::<Wire<JobTraceReadArgs>>()
+        } else {
+            input_schema_for::<Wire<JobTraceArgs>>()
+        },
         output_schema_for::<TraceOutput>(id),
         read_effects("Downloads a job trace that may contain secrets or untrusted build output."),
     )
@@ -891,121 +794,6 @@ fn write_effects(impact: &str) -> CommandEffects {
         impact,
         Reversibility::Unknown,
     )
-}
-
-fn input_schema(mut properties: Map<String, Value>, required: Vec<&str>) -> Value {
-    properties.insert(
-        "project".to_owned(),
-        optional_text_schema(
-            "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
-        ),
-    );
-    properties.insert(
-        "remote".to_owned(),
-        json!({"type": "string", "minLength": 1, "default": DEFAULT_REMOTE}),
-    );
-    properties.insert(
-        "host".to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "default": DEFAULT_HOST,
-            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read."
-        }),
-    );
-    properties.insert(
-        "api_url".to_owned(),
-        optional_text_schema("REST API base URL. A supplied token is sent to this host."),
-    );
-    properties.insert(
-        "graphql_url".to_owned(),
-        optional_text_schema("GraphQL API URL used for issue designs."),
-    );
-    properties.insert(
-        "token".to_owned(),
-        optional_text_schema("Explicit GitLab token; prefer environment-based authentication."),
-    );
-    properties.insert(
-        "use_git_credential".to_owned(),
-        boolean_schema(
-            true,
-            "Use Git credential helper lookup as the final fallback.",
-        ),
-    );
-    properties.insert(
-        "timeout_secs".to_owned(),
-        integer_with_default(DEFAULT_TIMEOUT_SECS, "Per-request HTTP timeout."),
-    );
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn iid_properties() -> Map<String, Value> {
-    Map::from_iter([(
-        "iid".to_owned(),
-        json!({"type": "integer", "minimum": 1, "description": "Project issue iid."}),
-    )])
-}
-
-fn tag_properties() -> Map<String, Value> {
-    Map::from_iter([("tag".to_owned(), required_text_schema("Release tag."))])
-}
-
-fn pipeline_id_properties() -> Map<String, Value> {
-    Map::from_iter([(
-        "pipeline_id".to_owned(),
-        json!({"type": "integer", "minimum": 1}),
-    )])
-}
-
-fn job_id_properties() -> Map<String, Value> {
-    Map::from_iter([(
-        "job_id".to_owned(),
-        json!({"type": "integer", "minimum": 1}),
-    )])
-}
-
-fn text_file_properties(inline: &str, file: &str) -> Map<String, Value> {
-    Map::from_iter([
-        (inline.to_owned(), optional_text_schema("Inline text.")),
-        (
-            file.to_owned(),
-            optional_text_schema("UTF-8 text file resolved against the execution cwd."),
-        ),
-    ])
-}
-
-fn required_text_schema(description: &str) -> Value {
-    json!({"type": "string", "minLength": 1, "description": description})
-}
-
-fn optional_text_schema(description: &str) -> Value {
-    json!({"type": "string", "description": description})
-}
-
-fn string_array_schema() -> Value {
-    json!({"type": "array", "items": string_schema()})
-}
-
-fn u64_array_schema() -> Value {
-    json!({"type": "array", "items": positive_integer_schema()})
-}
-
-fn boolean_schema(default: bool, description: &str) -> Value {
-    json!({"type": "boolean", "default": default, "description": description})
-}
-
-fn integer_with_default(default: u64, description: &str) -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 1,
-        "default": default,
-        "description": description
-    })
 }
 
 fn string_schema() -> Value {
@@ -1103,6 +891,14 @@ mod tests {
         }
     }
 
+    /// The connection block is no longer built by a function of its own; it
+    /// comes out of the decoded wire type, so exercise it through that.
+    fn connection_of(
+        request: &TypedInvocationRequest,
+    ) -> Result<GitlabConnectionArgs, CommandError> {
+        typed_cli(request).map(|cli| cli.connection)
+    }
+
     #[test]
     fn typed_connection_binds_a_matching_resolved_token() {
         let request = token_request(json!({"project": "group/project"})).with_resolved_secrets(
@@ -1112,7 +908,7 @@ mod tests {
             )]),
         );
 
-        let connection = typed_connection(&request).expect("credential should bind");
+        let connection = connection_of(&request).expect("credential should bind");
 
         assert_eq!(connection.token.as_deref(), Some("vault-token-sentinel"));
     }
@@ -1134,7 +930,7 @@ mod tests {
             resolved_secret("gitlab-token", "vault-token-sentinel"),
         )]));
 
-        let error = typed_connection(&request).expect_err("token sources must conflict");
+        let error = connection_of(&request).expect_err("token sources must conflict");
         let serialized = serde_json::to_string(&error).expect("error serializes");
 
         assert_eq!(error.code, "INVALID_ARGUMENT");
@@ -1146,7 +942,7 @@ mod tests {
     fn typed_connection_rejects_unresolved_and_mismatched_credentials() {
         let unresolved = token_request(json!({"project": "group/project"}));
         assert_eq!(
-            typed_connection(&unresolved)
+            connection_of(&unresolved)
                 .expect_err("public id requires private resolution")
                 .code,
             "SECRET_REQUIRED"
@@ -1158,7 +954,7 @@ mod tests {
                 resolved_secret("http-basic", "wrong-kind-sentinel"),
             )]),
         );
-        let error = typed_connection(&wrong_kind).expect_err("kind must match");
+        let error = connection_of(&wrong_kind).expect_err("kind must match");
         let serialized = serde_json::to_string(&error).expect("error serializes");
 
         assert_eq!(error.code, "SECRET_KIND_MISMATCH");
@@ -1190,7 +986,7 @@ mod tests {
             ExecutionContextWire::new("gitlab-default-auth", ".", None, 2_000),
         );
 
-        assert!(typed_connection(&request).unwrap().use_git_credential);
+        assert!(connection_of(&request).unwrap().use_git_credential);
         assert_eq!(
             command_catalog().commands[0].input_schema["properties"]["use_git_credential"]["default"],
             true
