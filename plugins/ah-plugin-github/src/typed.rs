@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
     GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse, cancellation,
+    TypedInvocationResponse, cancellation, schema::output_schema_for,
 };
 use serde_json::{Map, Value, json};
 
@@ -549,7 +549,7 @@ fn repo_descriptor() -> CommandDescriptor {
         "Inspect GitHub repository",
         "Detect the GitHub repository and return remote plus API metadata.",
         input_schema(Map::new(), Vec::new()),
-        repo_output_schema(),
+        output_schema_for::<RepoOutput>("github.repo"),
         read_effects(
             "May run Git repository detection and sends a read request to the configured API URL; a supplied token is sent to that host.",
         ),
@@ -581,7 +581,7 @@ fn issues_descriptor() -> CommandDescriptor {
         "List GitHub issues",
         "List or search repository issues with filters and the shared result limit.",
         input_schema(properties, Vec::new()),
-        issues_output_schema(),
+        output_schema_for::<IssuesOutput>("github.issues"),
         read_effects(
             "Reads issue metadata from the configured GitHub API and may expose private repository data.",
         ),
@@ -594,7 +594,7 @@ fn issue_view_descriptor() -> CommandDescriptor {
         "View GitHub issue",
         "Return one GitHub issue by repository issue number.",
         input_schema(number_properties(), vec!["number"]),
-        issue_output_schema("github.issue.view"),
+        output_schema_for::<IssueOutput>("github.issue.view"),
         read_effects("Reads one issue and its metadata from the configured GitHub API."),
     )
 }
@@ -612,7 +612,7 @@ fn issue_create_descriptor() -> CommandDescriptor {
         "Create GitHub issue",
         "Create a repository issue with optional body, labels, and assignees. Use body or body_file, not both.",
         input_schema(properties, vec!["title"]),
-        issue_output_schema("github.issue.create"),
+        output_schema_for::<IssueOutput>("github.issue.create"),
         write_effects(
             "Creates a persistent issue and may notify repository participants; body files are read from the execution cwd.",
         ),
@@ -643,7 +643,7 @@ fn issue_update_descriptor() -> CommandDescriptor {
         "Update GitHub issue",
         "Update one or more issue fields. At least one update field is required; use body or body_file, not both.",
         input_schema(properties, vec!["number"]),
-        issue_output_schema("github.issue.update"),
+        output_schema_for::<IssueOutput>("github.issue.update"),
         write_effects(
             "Mutates a persistent issue and may change workflow state or notify participants.",
         ),
@@ -658,7 +658,7 @@ fn issue_close_descriptor() -> CommandDescriptor {
         "Close GitHub issue",
         "Close an issue, optionally adding a comment first. Use comment or comment_file, not both.",
         input_schema(properties, vec!["number"]),
-        issue_output_schema("github.issue.close"),
+        output_schema_for::<IssueOutput>("github.issue.close"),
         write_effects(
             "May create a comment, closes a persistent issue, and may notify participants.",
         ),
@@ -673,7 +673,7 @@ fn issue_comment_descriptor() -> CommandDescriptor {
         "Comment on GitHub issue",
         "Create a comment on one repository issue. Exactly one of body or body_file is required.",
         input_schema(properties, vec!["number"]),
-        issue_comment_output_schema(),
+        output_schema_for::<IssueCommentOutput>("github.issue.comment"),
         write_effects("Creates a persistent issue comment and may notify repository participants."),
     )
 }
@@ -684,7 +684,7 @@ fn issue_comments_descriptor() -> CommandDescriptor {
         "List GitHub issue comments",
         "List comments for one issue with the shared result limit.",
         input_schema(number_properties(), vec!["number"]),
-        issue_comments_output_schema(),
+        output_schema_for::<IssueCommentsOutput>("github.issue.comments"),
         read_effects("Reads issue comments and author metadata from the configured GitHub API."),
     )
 }
@@ -695,7 +695,7 @@ fn release_get_descriptor() -> CommandDescriptor {
         "Get GitHub release",
         "Return GitHub release metadata by tag.",
         input_schema(tag_properties(), vec!["tag"]),
-        release_output_schema("github.release.get"),
+        output_schema_for::<ReleaseOutput>("github.release.get"),
         read_effects("Reads release metadata and asset URLs from the configured GitHub API."),
     )
 }
@@ -706,7 +706,7 @@ fn release_assets_descriptor() -> CommandDescriptor {
         "List GitHub release assets",
         "List assets attached to a release tag.",
         input_schema(tag_properties(), vec!["tag"]),
-        release_assets_output_schema(),
+        output_schema_for::<ReleaseAssetsOutput>("github.release.assets"),
         read_effects(
             "Reads release asset metadata and download URLs from the configured GitHub API.",
         ),
@@ -734,7 +734,7 @@ fn release_create_descriptor() -> CommandDescriptor {
         "Create GitHub release",
         "Create a GitHub release for a tag with optional notes and flags. Use notes or notes_file, not both.",
         input_schema(properties, vec!["tag"]),
-        release_output_schema("github.release.create"),
+        output_schema_for::<ReleaseOutput>("github.release.create"),
         write_effects(
             "Creates a persistent release and may create or resolve a tag target; release notes files are read from the execution cwd.",
         ),
@@ -747,7 +747,7 @@ fn workflows_descriptor() -> CommandDescriptor {
         "List GitHub workflows",
         "List GitHub Actions workflows in the repository.",
         input_schema(Map::new(), Vec::new()),
-        workflows_output_schema(),
+        output_schema_for::<WorkflowsOutput>("github.workflows"),
         read_effects(
             "Reads workflow names, paths, states, and URLs from the configured GitHub API.",
         ),
@@ -777,7 +777,7 @@ fn workflow_run_descriptor() -> CommandDescriptor {
         "Dispatch GitHub workflow",
         "Dispatch a GitHub Actions workflow on a reference. Dispatching needs a token carrying the actions write scope, which the git credential helper usually does not: on HTTP 401 stop and ask the user for a github-token secret rather than retrying.",
         input_schema(properties, vec!["workflow", "ref"]),
-        workflow_dispatch_output_schema(),
+        output_schema_for::<WorkflowDispatchOutput>("github.workflow.run"),
         write_effects(
             "Starts an external workflow that may execute arbitrary repository automation and consume billed resources.",
         ),
@@ -799,7 +799,7 @@ fn runs_descriptor() -> CommandDescriptor {
         "List GitHub workflow runs",
         "List workflow runs with optional workflow and branch filters.",
         input_schema(properties, Vec::new()),
-        runs_output_schema(),
+        output_schema_for::<RunsOutput>("github.runs"),
         read_effects(
             "Reads workflow run status, commit SHA, and URLs from the configured GitHub API.",
         ),
@@ -812,7 +812,7 @@ fn run_get_descriptor() -> CommandDescriptor {
         "Get GitHub workflow run",
         "Return one workflow run by numeric id.",
         input_schema(run_id_properties(), vec!["run_id"]),
-        run_output_schema("github.run.get"),
+        output_schema_for::<RunOutput>("github.run.get"),
         read_effects(
             "Reads one workflow run and its commit/status metadata from the configured GitHub API.",
         ),
@@ -838,7 +838,7 @@ fn run_wait_descriptor() -> CommandDescriptor {
         "Wait for GitHub workflow run",
         "Poll a workflow run until completion, timeout, or cancellation.",
         input_schema(properties, vec!["run_id"]),
-        wait_run_output_schema(),
+        output_schema_for::<WaitRunOutput>("github.run.wait"),
         read_effects(
             "Repeatedly reads external workflow state until completion and may consume API rate limits.",
         ),
@@ -851,7 +851,7 @@ fn run_jobs_descriptor() -> CommandDescriptor {
         "List GitHub workflow jobs",
         "List jobs belonging to one workflow run.",
         input_schema(run_id_properties(), vec!["run_id"]),
-        jobs_output_schema(),
+        output_schema_for::<JobsOutput>("github.run.jobs"),
         read_effects(
             "Reads workflow job names, status, timestamps, and URLs from the configured GitHub API.",
         ),
@@ -898,7 +898,7 @@ fn run_logs_descriptor(warnings: bool) -> CommandDescriptor {
             "Read or filter lines from one workflow run log archive. The archive exists only once the run has finished and until GitHub expires it, so an unfinished or expired run answers 404: check github.run.get, or wait with github.run.wait, instead of retrying."
         },
         input_schema(properties, vec!["run_id"]),
-        logs_output_schema(id),
+        output_schema_for::<LogsOutput>(id),
         read_effects(
             "Downloads and expands workflow logs, which may contain secrets or untrusted build output.",
         ),
@@ -911,7 +911,7 @@ fn run_artifacts_descriptor() -> CommandDescriptor {
         "List GitHub workflow artifacts",
         "List artifacts produced by one workflow run.",
         input_schema(run_id_properties(), vec!["run_id"]),
-        artifacts_output_schema(),
+        output_schema_for::<ArtifactsOutput>("github.run.artifacts"),
         read_effects(
             "Reads artifact names, sizes, expiry state, and archive URLs from the configured GitHub API.",
         ),
@@ -1077,563 +1077,6 @@ fn positive_integer_schema(default: u64, description: &str) -> Value {
         "default": default,
         "description": description
     })
-}
-
-fn nullable(schema: Value) -> Value {
-    json!({"oneOf": [schema, {"type": "null"}]})
-}
-
-fn object_schema(properties: Map<String, Value>, required: &[&str]) -> Value {
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn command_output_schema(
-    command: &str,
-    mut properties: Map<String, Value>,
-    required: &[&str],
-) -> Value {
-    properties.insert(
-        "command".to_owned(),
-        json!({"type": "string", "const": command}),
-    );
-    let mut all_required = vec!["command"];
-    all_required.extend_from_slice(required);
-    object_schema(properties, &all_required)
-}
-
-fn repo_output_schema() -> Value {
-    let mut p = Map::new();
-    p.insert("repository".to_owned(), json!({"type": "string"}));
-    p.insert("owner".to_owned(), json!({"type": "string"}));
-    p.insert("name".to_owned(), json!({"type": "string"}));
-    p.insert("remote_url".to_owned(), nullable(json!({"type": "string"})));
-    p.insert("api_url".to_owned(), json!({"type": "string"}));
-    p.insert("html_url".to_owned(), nullable(json!({"type": "string"})));
-    p.insert(
-        "default_branch".to_owned(),
-        nullable(json!({"type": "string"})),
-    );
-    p.insert("private".to_owned(), nullable(json!({"type": "boolean"})));
-    command_output_schema(
-        "github.repo",
-        p,
-        &[
-            "repository",
-            "owner",
-            "name",
-            "remote_url",
-            "api_url",
-            "html_url",
-            "default_branch",
-            "private",
-        ],
-    )
-}
-
-fn user_schema() -> Value {
-    object_schema(
-        Map::from_iter([("login".to_owned(), json!({"type": "string"}))]),
-        &["login"],
-    )
-}
-
-fn label_schema() -> Value {
-    object_schema(
-        Map::from_iter([("name".to_owned(), json!({"type": "string"}))]),
-        &["name"],
-    )
-}
-
-fn issue_schema() -> Value {
-    let mut p = Map::new();
-    p.insert(
-        "number".to_owned(),
-        json!({"type": "integer", "minimum": 1}),
-    );
-    p.insert("title".to_owned(), json!({"type": "string"}));
-    p.insert("body".to_owned(), nullable(json!({"type": "string"})));
-    p.insert("state".to_owned(), json!({"type": "string"}));
-    p.insert("html_url".to_owned(), nullable(json!({"type": "string"})));
-    p.insert("user".to_owned(), nullable(user_schema()));
-    p.insert(
-        "labels".to_owned(),
-        json!({"type": "array", "items": label_schema()}),
-    );
-    p.insert(
-        "assignees".to_owned(),
-        json!({"type": "array", "items": user_schema()}),
-    );
-    p.insert(
-        "comments".to_owned(),
-        nullable(json!({"type": "integer", "minimum": 0})),
-    );
-    for field in ["created_at", "updated_at", "closed_at"] {
-        p.insert(field.to_owned(), nullable(json!({"type": "string"})));
-    }
-    p.insert(
-        "pull_request".to_owned(),
-        nullable(json!({"type": "object", "additionalProperties": true})),
-    );
-    object_schema(
-        p,
-        &[
-            "number",
-            "title",
-            "body",
-            "state",
-            "html_url",
-            "user",
-            "labels",
-            "assignees",
-            "comments",
-            "created_at",
-            "updated_at",
-            "closed_at",
-            "pull_request",
-        ],
-    )
-}
-
-fn issues_output_schema() -> Value {
-    let mut p = Map::new();
-    p.insert("repository".to_owned(), json!({"type": "string"}));
-    p.insert("state".to_owned(), json!({"type": "string"}));
-    p.insert(
-        "labels".to_owned(),
-        json!({"type": "array", "items": {"type": "string"}}),
-    );
-    for field in ["assignee", "author", "since", "search"] {
-        p.insert(field.to_owned(), nullable(json!({"type": "string"})));
-    }
-    p.insert(
-        "issue_count".to_owned(),
-        json!({"type": "integer", "minimum": 0}),
-    );
-    p.insert(
-        "issues".to_owned(),
-        json!({"type": "array", "items": issue_schema()}),
-    );
-    command_output_schema(
-        "github.issues",
-        p,
-        &[
-            "repository",
-            "state",
-            "labels",
-            "assignee",
-            "author",
-            "since",
-            "search",
-            "issue_count",
-            "issues",
-        ],
-    )
-}
-
-fn issue_output_schema(command: &str) -> Value {
-    command_output_schema(
-        command,
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("issue".to_owned(), issue_schema()),
-        ]),
-        &["repository", "issue"],
-    )
-}
-
-fn comment_schema() -> Value {
-    let mut p = Map::new();
-    p.insert("id".to_owned(), json!({"type": "integer", "minimum": 1}));
-    p.insert("body".to_owned(), nullable(json!({"type": "string"})));
-    p.insert("html_url".to_owned(), nullable(json!({"type": "string"})));
-    p.insert("user".to_owned(), nullable(user_schema()));
-    p.insert("created_at".to_owned(), nullable(json!({"type": "string"})));
-    p.insert("updated_at".to_owned(), nullable(json!({"type": "string"})));
-    object_schema(
-        p,
-        &["id", "body", "html_url", "user", "created_at", "updated_at"],
-    )
-}
-
-fn issue_comments_output_schema() -> Value {
-    command_output_schema(
-        "github.issue.comments",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            (
-                "number".to_owned(),
-                json!({"type": "integer", "minimum": 1}),
-            ),
-            (
-                "comment_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            (
-                "comments".to_owned(),
-                json!({"type": "array", "items": comment_schema()}),
-            ),
-        ]),
-        &["repository", "number", "comment_count", "comments"],
-    )
-}
-
-fn issue_comment_output_schema() -> Value {
-    command_output_schema(
-        "github.issue.comment",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            (
-                "number".to_owned(),
-                json!({"type": "integer", "minimum": 1}),
-            ),
-            ("comment".to_owned(), comment_schema()),
-        ]),
-        &["repository", "number", "comment"],
-    )
-}
-
-fn release_asset_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("id".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("name".to_owned(), json!({"type": "string"})),
-            ("size".to_owned(), json!({"type": "integer", "minimum": 0})),
-            (
-                "browser_download_url".to_owned(),
-                nullable(json!({"type": "string"})),
-            ),
-        ]),
-        &["id", "name", "size", "browser_download_url"],
-    )
-}
-
-fn release_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("id".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("tag_name".to_owned(), json!({"type": "string"})),
-            ("name".to_owned(), nullable(json!({"type": "string"}))),
-            ("draft".to_owned(), json!({"type": "boolean"})),
-            ("prerelease".to_owned(), json!({"type": "boolean"})),
-            ("html_url".to_owned(), nullable(json!({"type": "string"}))),
-            (
-                "published_at".to_owned(),
-                nullable(json!({"type": "string"})),
-            ),
-            (
-                "assets".to_owned(),
-                json!({"type": "array", "items": release_asset_schema()}),
-            ),
-        ]),
-        &[
-            "id",
-            "tag_name",
-            "name",
-            "draft",
-            "prerelease",
-            "html_url",
-            "published_at",
-            "assets",
-        ],
-    )
-}
-
-fn release_output_schema(command: &str) -> Value {
-    command_output_schema(
-        command,
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("release".to_owned(), release_schema()),
-        ]),
-        &["repository", "release"],
-    )
-}
-
-fn release_assets_output_schema() -> Value {
-    command_output_schema(
-        "github.release.assets",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("tag".to_owned(), json!({"type": "string"})),
-            (
-                "asset_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            (
-                "assets".to_owned(),
-                json!({"type": "array", "items": release_asset_schema()}),
-            ),
-        ]),
-        &["repository", "tag", "asset_count", "assets"],
-    )
-}
-
-fn workflow_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("id".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("name".to_owned(), json!({"type": "string"})),
-            ("path".to_owned(), json!({"type": "string"})),
-            ("state".to_owned(), json!({"type": "string"})),
-            ("html_url".to_owned(), nullable(json!({"type": "string"}))),
-        ]),
-        &["id", "name", "path", "state", "html_url"],
-    )
-}
-
-fn workflows_output_schema() -> Value {
-    command_output_schema(
-        "github.workflows",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            (
-                "workflow_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            (
-                "workflows".to_owned(),
-                json!({"type": "array", "items": workflow_schema()}),
-            ),
-        ]),
-        &["repository", "workflow_count", "workflows"],
-    )
-}
-
-fn workflow_dispatch_output_schema() -> Value {
-    command_output_schema(
-        "github.workflow.run",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("workflow".to_owned(), json!({"type": "string"})),
-            ("ref".to_owned(), json!({"type": "string"})),
-            (
-                "input_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            ("dispatched".to_owned(), json!({"type": "boolean"})),
-        ]),
-        &["repository", "workflow", "ref", "input_count", "dispatched"],
-    )
-}
-
-fn run_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("id".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("name".to_owned(), nullable(json!({"type": "string"}))),
-            ("event".to_owned(), json!({"type": "string"})),
-            ("status".to_owned(), json!({"type": "string"})),
-            ("conclusion".to_owned(), nullable(json!({"type": "string"}))),
-            (
-                "head_branch".to_owned(),
-                nullable(json!({"type": "string"})),
-            ),
-            ("head_sha".to_owned(), json!({"type": "string"})),
-            ("html_url".to_owned(), nullable(json!({"type": "string"}))),
-            ("created_at".to_owned(), nullable(json!({"type": "string"}))),
-            ("updated_at".to_owned(), nullable(json!({"type": "string"}))),
-        ]),
-        &[
-            "id",
-            "name",
-            "event",
-            "status",
-            "conclusion",
-            "head_branch",
-            "head_sha",
-            "html_url",
-            "created_at",
-            "updated_at",
-        ],
-    )
-}
-
-fn runs_output_schema() -> Value {
-    command_output_schema(
-        "github.runs",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("workflow".to_owned(), nullable(json!({"type": "string"}))),
-            ("branch".to_owned(), nullable(json!({"type": "string"}))),
-            (
-                "run_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            (
-                "runs".to_owned(),
-                json!({"type": "array", "items": run_schema()}),
-            ),
-        ]),
-        &["repository", "workflow", "branch", "run_count", "runs"],
-    )
-}
-
-fn run_output_schema(command: &str) -> Value {
-    command_output_schema(
-        command,
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("run".to_owned(), run_schema()),
-        ]),
-        &["repository", "run"],
-    )
-}
-
-fn wait_run_output_schema() -> Value {
-    command_output_schema(
-        "github.run.wait",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            ("run".to_owned(), run_schema()),
-            (
-                "elapsed_secs".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-        ]),
-        &["repository", "run", "elapsed_secs"],
-    )
-}
-
-fn job_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("id".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("name".to_owned(), json!({"type": "string"})),
-            ("status".to_owned(), json!({"type": "string"})),
-            ("conclusion".to_owned(), nullable(json!({"type": "string"}))),
-            ("html_url".to_owned(), nullable(json!({"type": "string"}))),
-            ("started_at".to_owned(), nullable(json!({"type": "string"}))),
-            (
-                "completed_at".to_owned(),
-                nullable(json!({"type": "string"})),
-            ),
-        ]),
-        &[
-            "id",
-            "name",
-            "status",
-            "conclusion",
-            "html_url",
-            "started_at",
-            "completed_at",
-        ],
-    )
-}
-
-fn jobs_output_schema() -> Value {
-    command_output_schema(
-        "github.run.jobs",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            (
-                "run_id".to_owned(),
-                json!({"type": "integer", "minimum": 1}),
-            ),
-            (
-                "job_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            (
-                "jobs".to_owned(),
-                json!({"type": "array", "items": job_schema()}),
-            ),
-        ]),
-        &["repository", "run_id", "job_count", "jobs"],
-    )
-}
-
-fn log_line_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("file".to_owned(), json!({"type": "string"})),
-            ("line".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("text".to_owned(), json!({"type": "string"})),
-        ]),
-        &["file", "line", "text"],
-    )
-}
-
-fn logs_output_schema(command: &str) -> Value {
-    command_output_schema(
-        command,
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            (
-                "run_id".to_owned(),
-                json!({"type": "integer", "minimum": 1}),
-            ),
-            ("grep".to_owned(), nullable(json!({"type": "string"}))),
-            (
-                "match_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            ("truncated".to_owned(), json!({"type": "boolean"})),
-            (
-                "matches".to_owned(),
-                json!({"type": "array", "items": log_line_schema()}),
-            ),
-        ]),
-        &[
-            "repository",
-            "run_id",
-            "grep",
-            "match_count",
-            "truncated",
-            "matches",
-        ],
-    )
-}
-
-fn artifact_schema() -> Value {
-    object_schema(
-        Map::from_iter([
-            ("id".to_owned(), json!({"type": "integer", "minimum": 1})),
-            ("name".to_owned(), json!({"type": "string"})),
-            (
-                "size_in_bytes".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            ("expired".to_owned(), json!({"type": "boolean"})),
-            (
-                "archive_download_url".to_owned(),
-                nullable(json!({"type": "string"})),
-            ),
-        ]),
-        &[
-            "id",
-            "name",
-            "size_in_bytes",
-            "expired",
-            "archive_download_url",
-        ],
-    )
-}
-
-fn artifacts_output_schema() -> Value {
-    command_output_schema(
-        "github.run.artifacts",
-        Map::from_iter([
-            ("repository".to_owned(), json!({"type": "string"})),
-            (
-                "run_id".to_owned(),
-                json!({"type": "integer", "minimum": 1}),
-            ),
-            (
-                "artifact_count".to_owned(),
-                json!({"type": "integer", "minimum": 0}),
-            ),
-            (
-                "artifacts".to_owned(),
-                json!({"type": "array", "items": artifact_schema()}),
-            ),
-        ]),
-        &["repository", "run_id", "artifact_count", "artifacts"],
-    )
 }
 
 #[cfg(test)]

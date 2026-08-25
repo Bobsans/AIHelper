@@ -54,23 +54,15 @@
             "type": "string"
           },
           "default_branch": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "html_url": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "name": {
@@ -80,23 +72,15 @@
             "type": "string"
           },
           "private": {
-            "oneOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "remote_url": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "repository": {
@@ -104,15 +88,15 @@
           }
         },
         "required": [
-          "command",
-          "repository",
-          "owner",
-          "name",
-          "remote_url",
           "api_url",
-          "html_url",
+          "command",
           "default_branch",
-          "private"
+          "html_url",
+          "name",
+          "owner",
+          "private",
+          "remote_url",
+          "repository"
         ],
         "type": "object"
       },
@@ -220,23 +204,15 @@
         "additionalProperties": false,
         "properties": {
           "assignee": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "author": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "command": {
@@ -267,54 +243,34 @@
                   "type": "array"
                 },
                 "body": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "closed_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "comments": {
-                  "oneOf": [
-                    {
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
                   ]
                 },
                 "created_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "html_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "labels": {
@@ -354,13 +310,9 @@
                   "type": "string"
                 },
                 "updated_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "user": {
@@ -384,19 +336,19 @@
                 }
               },
               "required": [
-                "number",
-                "title",
-                "body",
-                "state",
-                "html_url",
-                "user",
-                "labels",
                 "assignees",
+                "body",
+                "closed_at",
                 "comments",
                 "created_at",
+                "html_url",
+                "labels",
+                "number",
+                "pull_request",
+                "state",
+                "title",
                 "updated_at",
-                "closed_at",
-                "pull_request"
+                "user"
               ],
               "type": "object"
             },
@@ -412,23 +364,15 @@
             "type": "string"
           },
           "search": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "since": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "state": {
@@ -436,16 +380,16 @@
           }
         },
         "required": [
-          "command",
-          "repository",
-          "state",
-          "labels",
           "assignee",
           "author",
-          "since",
-          "search",
+          "command",
           "issue_count",
-          "issues"
+          "issues",
+          "labels",
+          "repository",
+          "search",
+          "since",
+          "state"
         ],
         "type": "object"
       },
@@ -550,54 +494,34 @@
                 "type": "array"
               },
               "body": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "closed_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "comments": {
-                "oneOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "labels": {
@@ -637,13 +561,9 @@
                 "type": "string"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "user": {
@@ -667,19 +587,19 @@
               }
             },
             "required": [
-              "number",
-              "title",
-              "body",
-              "state",
-              "html_url",
-              "user",
-              "labels",
               "assignees",
+              "body",
+              "closed_at",
               "comments",
               "created_at",
+              "html_url",
+              "labels",
+              "number",
+              "pull_request",
+              "state",
+              "title",
               "updated_at",
-              "closed_at",
-              "pull_request"
+              "user"
             ],
             "type": "object"
           },
@@ -689,8 +609,8 @@
         },
         "required": [
           "command",
-          "repository",
-          "issue"
+          "issue",
+          "repository"
         ],
         "type": "object"
       },
@@ -817,54 +737,34 @@
                 "type": "array"
               },
               "body": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "closed_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "comments": {
-                "oneOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "labels": {
@@ -904,13 +804,9 @@
                 "type": "string"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "user": {
@@ -934,19 +830,19 @@
               }
             },
             "required": [
-              "number",
-              "title",
-              "body",
-              "state",
-              "html_url",
-              "user",
-              "labels",
               "assignees",
+              "body",
+              "closed_at",
               "comments",
               "created_at",
+              "html_url",
+              "labels",
+              "number",
+              "pull_request",
+              "state",
+              "title",
               "updated_at",
-              "closed_at",
-              "pull_request"
+              "user"
             ],
             "type": "object"
           },
@@ -956,8 +852,8 @@
         },
         "required": [
           "command",
-          "repository",
-          "issue"
+          "issue",
+          "repository"
         ],
         "type": "object"
       },
@@ -1096,54 +992,34 @@
                 "type": "array"
               },
               "body": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "closed_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "comments": {
-                "oneOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "labels": {
@@ -1183,13 +1059,9 @@
                 "type": "string"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "user": {
@@ -1213,19 +1085,19 @@
               }
             },
             "required": [
-              "number",
-              "title",
-              "body",
-              "state",
-              "html_url",
-              "user",
-              "labels",
               "assignees",
+              "body",
+              "closed_at",
               "comments",
               "created_at",
+              "html_url",
+              "labels",
+              "number",
+              "pull_request",
+              "state",
+              "title",
               "updated_at",
-              "closed_at",
-              "pull_request"
+              "user"
             ],
             "type": "object"
           },
@@ -1235,8 +1107,8 @@
         },
         "required": [
           "command",
-          "repository",
-          "issue"
+          "issue",
+          "repository"
         ],
         "type": "object"
       },
@@ -1350,54 +1222,34 @@
                 "type": "array"
               },
               "body": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "closed_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "comments": {
-                "oneOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "labels": {
@@ -1437,13 +1289,9 @@
                 "type": "string"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "user": {
@@ -1467,19 +1315,19 @@
               }
             },
             "required": [
-              "number",
-              "title",
-              "body",
-              "state",
-              "html_url",
-              "user",
-              "labels",
               "assignees",
+              "body",
+              "closed_at",
               "comments",
               "created_at",
+              "html_url",
+              "labels",
+              "number",
+              "pull_request",
+              "state",
+              "title",
               "updated_at",
-              "closed_at",
-              "pull_request"
+              "user"
             ],
             "type": "object"
           },
@@ -1489,8 +1337,8 @@
         },
         "required": [
           "command",
-          "repository",
-          "issue"
+          "issue",
+          "repository"
         ],
         "type": "object"
       },
@@ -1589,33 +1437,21 @@
             "additionalProperties": false,
             "properties": {
               "body": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "id": {
@@ -1623,13 +1459,9 @@
                 "type": "integer"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "user": {
@@ -1653,12 +1485,12 @@
               }
             },
             "required": [
-              "id",
               "body",
-              "html_url",
-              "user",
               "created_at",
-              "updated_at"
+              "html_url",
+              "id",
+              "updated_at",
+              "user"
             ],
             "type": "object"
           },
@@ -1672,9 +1504,9 @@
         },
         "required": [
           "command",
-          "repository",
+          "comment",
           "number",
-          "comment"
+          "repository"
         ],
         "type": "object"
       },
@@ -1770,33 +1602,21 @@
               "additionalProperties": false,
               "properties": {
                 "body": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "created_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "html_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "id": {
@@ -1804,13 +1624,9 @@
                   "type": "integer"
                 },
                 "updated_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "user": {
@@ -1834,12 +1650,12 @@
                 }
               },
               "required": [
-                "id",
                 "body",
-                "html_url",
-                "user",
                 "created_at",
-                "updated_at"
+                "html_url",
+                "id",
+                "updated_at",
+                "user"
               ],
               "type": "object"
             },
@@ -1855,10 +1671,10 @@
         },
         "required": [
           "command",
-          "repository",
-          "number",
           "comment_count",
-          "comments"
+          "comments",
+          "number",
+          "repository"
         ],
         "type": "object"
       },
@@ -1952,13 +1768,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "browser_download_url": {
-                      "oneOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "id": {
@@ -1974,10 +1786,10 @@
                     }
                   },
                   "required": [
+                    "browser_download_url",
                     "id",
                     "name",
-                    "size",
-                    "browser_download_url"
+                    "size"
                   ],
                   "type": "object"
                 },
@@ -1987,13 +1799,9 @@
                 "type": "boolean"
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "id": {
@@ -2001,26 +1809,18 @@
                 "type": "integer"
               },
               "name": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "prerelease": {
                 "type": "boolean"
               },
               "published_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "tag_name": {
@@ -2028,14 +1828,14 @@
               }
             },
             "required": [
-              "id",
-              "tag_name",
-              "name",
+              "assets",
               "draft",
-              "prerelease",
               "html_url",
+              "id",
+              "name",
+              "prerelease",
               "published_at",
-              "assets"
+              "tag_name"
             ],
             "type": "object"
           },
@@ -2045,8 +1845,8 @@
         },
         "required": [
           "command",
-          "repository",
-          "release"
+          "release",
+          "repository"
         ],
         "type": "object"
       },
@@ -2137,13 +1937,9 @@
               "additionalProperties": false,
               "properties": {
                 "browser_download_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "id": {
@@ -2159,10 +1955,10 @@
                 }
               },
               "required": [
+                "browser_download_url",
                 "id",
                 "name",
-                "size",
-                "browser_download_url"
+                "size"
               ],
               "type": "object"
             },
@@ -2180,11 +1976,11 @@
           }
         },
         "required": [
+          "asset_count",
+          "assets",
           "command",
           "repository",
-          "tag",
-          "asset_count",
-          "assets"
+          "tag"
         ],
         "type": "object"
       },
@@ -2304,13 +2100,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "browser_download_url": {
-                      "oneOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "id": {
@@ -2326,10 +2118,10 @@
                     }
                   },
                   "required": [
+                    "browser_download_url",
                     "id",
                     "name",
-                    "size",
-                    "browser_download_url"
+                    "size"
                   ],
                   "type": "object"
                 },
@@ -2339,13 +2131,9 @@
                 "type": "boolean"
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "id": {
@@ -2353,26 +2141,18 @@
                 "type": "integer"
               },
               "name": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "prerelease": {
                 "type": "boolean"
               },
               "published_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "tag_name": {
@@ -2380,14 +2160,14 @@
               }
             },
             "required": [
-              "id",
-              "tag_name",
-              "name",
+              "assets",
               "draft",
-              "prerelease",
               "html_url",
+              "id",
+              "name",
+              "prerelease",
               "published_at",
-              "assets"
+              "tag_name"
             ],
             "type": "object"
           },
@@ -2397,8 +2177,8 @@
         },
         "required": [
           "command",
-          "repository",
-          "release"
+          "release",
+          "repository"
         ],
         "type": "object"
       },
@@ -2490,13 +2270,9 @@
               "additionalProperties": false,
               "properties": {
                 "html_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "id": {
@@ -2514,11 +2290,11 @@
                 }
               },
               "required": [
+                "html_url",
                 "id",
                 "name",
                 "path",
-                "state",
-                "html_url"
+                "state"
               ],
               "type": "object"
             },
@@ -2648,11 +2424,11 @@
         },
         "required": [
           "command",
-          "repository",
-          "workflow",
-          "ref",
+          "dispatched",
           "input_count",
-          "dispatched"
+          "ref",
+          "repository",
+          "workflow"
         ],
         "type": "object"
       },
@@ -2737,13 +2513,9 @@
         "additionalProperties": false,
         "properties": {
           "branch": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "command": {
@@ -2762,49 +2534,33 @@
               "additionalProperties": false,
               "properties": {
                 "conclusion": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "created_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "event": {
                   "type": "string"
                 },
                 "head_branch": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "head_sha": {
                   "type": "string"
                 },
                 "html_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "id": {
@@ -2812,39 +2568,31 @@
                   "type": "integer"
                 },
                 "name": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "status": {
                   "type": "string"
                 },
                 "updated_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
-                "id",
-                "name",
-                "event",
-                "status",
                 "conclusion",
+                "created_at",
+                "event",
                 "head_branch",
                 "head_sha",
                 "html_url",
-                "created_at",
+                "id",
+                "name",
+                "status",
                 "updated_at"
               ],
               "type": "object"
@@ -2852,23 +2600,19 @@
             "type": "array"
           },
           "workflow": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
         "required": [
+          "branch",
           "command",
           "repository",
-          "workflow",
-          "branch",
           "run_count",
-          "runs"
+          "runs",
+          "workflow"
         ],
         "type": "object"
       },
@@ -2961,49 +2705,33 @@
             "additionalProperties": false,
             "properties": {
               "conclusion": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "event": {
                 "type": "string"
               },
               "head_branch": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "head_sha": {
                 "type": "string"
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "id": {
@@ -3011,39 +2739,31 @@
                 "type": "integer"
               },
               "name": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "status": {
                 "type": "string"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               }
             },
             "required": [
-              "id",
-              "name",
-              "event",
-              "status",
               "conclusion",
+              "created_at",
+              "event",
               "head_branch",
               "head_sha",
               "html_url",
-              "created_at",
+              "id",
+              "name",
+              "status",
               "updated_at"
             ],
             "type": "object"
@@ -3166,49 +2886,33 @@
             "additionalProperties": false,
             "properties": {
               "conclusion": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "created_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "event": {
                 "type": "string"
               },
               "head_branch": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "head_sha": {
                 "type": "string"
               },
               "html_url": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "id": {
@@ -3216,39 +2920,31 @@
                 "type": "integer"
               },
               "name": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "status": {
                 "type": "string"
               },
               "updated_at": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               }
             },
             "required": [
-              "id",
-              "name",
-              "event",
-              "status",
               "conclusion",
+              "created_at",
+              "event",
               "head_branch",
               "head_sha",
               "html_url",
-              "created_at",
+              "id",
+              "name",
+              "status",
               "updated_at"
             ],
             "type": "object"
@@ -3256,9 +2952,9 @@
         },
         "required": [
           "command",
+          "elapsed_secs",
           "repository",
-          "run",
-          "elapsed_secs"
+          "run"
         ],
         "type": "object"
       },
@@ -3353,33 +3049,21 @@
               "additionalProperties": false,
               "properties": {
                 "completed_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "conclusion": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "html_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "id": {
@@ -3390,13 +3074,9 @@
                   "type": "string"
                 },
                 "started_at": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "status": {
@@ -3404,13 +3084,13 @@
                 }
               },
               "required": [
-                "id",
-                "name",
-                "status",
+                "completed_at",
                 "conclusion",
                 "html_url",
+                "id",
+                "name",
                 "started_at",
-                "completed_at"
+                "status"
               ],
               "type": "object"
             },
@@ -3426,10 +3106,10 @@
         },
         "required": [
           "command",
-          "repository",
-          "run_id",
           "job_count",
-          "jobs"
+          "jobs",
+          "repository",
+          "run_id"
         ],
         "type": "object"
       },
@@ -3532,13 +3212,9 @@
             "type": "string"
           },
           "grep": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "match_count": {
@@ -3582,12 +3258,12 @@
         },
         "required": [
           "command",
-          "repository",
-          "run_id",
           "grep",
           "match_count",
-          "truncated",
-          "matches"
+          "matches",
+          "repository",
+          "run_id",
+          "truncated"
         ],
         "type": "object"
       },
@@ -3686,13 +3362,9 @@
             "type": "string"
           },
           "grep": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "match_count": {
@@ -3736,12 +3408,12 @@
         },
         "required": [
           "command",
-          "repository",
-          "run_id",
           "grep",
           "match_count",
-          "truncated",
-          "matches"
+          "matches",
+          "repository",
+          "run_id",
+          "truncated"
         ],
         "type": "object"
       },
@@ -3832,13 +3504,9 @@
               "additionalProperties": false,
               "properties": {
                 "archive_download_url": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "expired": {
@@ -3857,11 +3525,11 @@
                 }
               },
               "required": [
+                "archive_download_url",
+                "expired",
                 "id",
                 "name",
-                "size_in_bytes",
-                "expired",
-                "archive_download_url"
+                "size_in_bytes"
               ],
               "type": "object"
             },
@@ -3880,11 +3548,11 @@
           }
         },
         "required": [
+          "artifact_count",
+          "artifacts",
           "command",
           "repository",
-          "run_id",
-          "artifact_count",
-          "artifacts"
+          "run_id"
         ],
         "type": "object"
       },

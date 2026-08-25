@@ -14,6 +14,7 @@ use ah_plugin_api::{
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 #[cfg(test)]
@@ -375,7 +376,8 @@ struct GithubContext {
     remote_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RepoOutput {
     command: &'static str,
     repository: String,
@@ -388,7 +390,8 @@ struct RepoOutput {
     private: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct GithubRepoResponse {
     full_name: Option<String>,
     html_url: Option<String>,
@@ -396,18 +399,29 @@ struct GithubRepoResponse {
     private: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct GithubUser {
     login: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct GithubLabel {
     name: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// GitHub owns the shape of a linked pull request, and it is absent for a plain
+/// issue, so the published schema stays open and nullable.
+fn nullable_external_object(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let object = ah_plugin_api::schema::external_object(generator);
+    schemars::json_schema!({"oneOf": [object, {"type": "null"}]})
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct IssueResponse {
+    #[schemars(range(min = 1))]
     number: u64,
     title: String,
     body: Option<String>,
@@ -422,7 +436,9 @@ struct IssueResponse {
     created_at: Option<String>,
     updated_at: Option<String>,
     closed_at: Option<String>,
+    // GitHub owns this sub-object and only its presence matters here.
     #[serde(default)]
+    #[schemars(schema_with = "nullable_external_object")]
     pull_request: Option<Value>,
 }
 
@@ -431,7 +447,8 @@ struct IssueSearchResponse {
     items: Vec<IssueResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssuesOutput {
     command: &'static str,
     repository: String,
@@ -445,15 +462,18 @@ struct IssuesOutput {
     issues: Vec<IssueResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueOutput {
     command: &'static str,
     repository: String,
     issue: IssueResponse,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct IssueCommentResponse {
+    #[schemars(range(min = 1))]
     id: u64,
     body: Option<String>,
     html_url: Option<String>,
@@ -462,25 +482,31 @@ struct IssueCommentResponse {
     updated_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueCommentsOutput {
     command: &'static str,
     repository: String,
+    #[schemars(range(min = 1))]
     number: u64,
     comment_count: usize,
     comments: Vec<IssueCommentResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueCommentOutput {
     command: &'static str,
     repository: String,
+    #[schemars(range(min = 1))]
     number: u64,
     comment: IssueCommentResponse,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ReleaseResponse {
+    #[schemars(range(min = 1))]
     id: u64,
     tag_name: String,
     name: Option<String>,
@@ -491,22 +517,26 @@ struct ReleaseResponse {
     assets: Vec<ReleaseAsset>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ReleaseAsset {
+    #[schemars(range(min = 1))]
     id: u64,
     name: String,
     size: u64,
     browser_download_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ReleaseOutput {
     command: &'static str,
     repository: String,
     release: ReleaseResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ReleaseAssetsOutput {
     command: &'static str,
     repository: String,
@@ -520,8 +550,10 @@ struct WorkflowListResponse {
     workflows: Vec<WorkflowResponse>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct WorkflowResponse {
+    #[schemars(range(min = 1))]
     id: u64,
     name: String,
     path: String,
@@ -529,7 +561,8 @@ struct WorkflowResponse {
     html_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WorkflowsOutput {
     command: &'static str,
     repository: String,
@@ -537,7 +570,8 @@ struct WorkflowsOutput {
     workflows: Vec<WorkflowResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WorkflowDispatchOutput {
     command: &'static str,
     repository: String,
@@ -552,8 +586,10 @@ struct RunsListResponse {
     workflow_runs: Vec<WorkflowRunResponse>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct WorkflowRunResponse {
+    #[schemars(range(min = 1))]
     id: u64,
     name: Option<String>,
     event: String,
@@ -566,7 +602,8 @@ struct WorkflowRunResponse {
     updated_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RunsOutput {
     command: &'static str,
     repository: String,
@@ -576,14 +613,16 @@ struct RunsOutput {
     runs: Vec<WorkflowRunResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RunOutput {
     command: &'static str,
     repository: String,
     run: WorkflowRunResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WaitRunOutput {
     command: &'static str,
     repository: String,
@@ -596,8 +635,10 @@ struct JobsListResponse {
     jobs: Vec<JobResponse>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct JobResponse {
+    #[schemars(range(min = 1))]
     id: u64,
     name: String,
     status: String,
@@ -607,26 +648,32 @@ struct JobResponse {
     completed_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct JobsOutput {
     command: &'static str,
     repository: String,
+    #[schemars(range(min = 1))]
     run_id: u64,
     job_count: usize,
     jobs: Vec<JobResponse>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct LogLine {
     file: String,
+    #[schemars(range(min = 1))]
     line: usize,
     text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct LogsOutput {
     command: &'static str,
     repository: String,
+    #[schemars(range(min = 1))]
     run_id: u64,
     grep: Option<String>,
     match_count: usize,
@@ -634,10 +681,12 @@ struct LogsOutput {
     matches: Vec<LogLine>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ArtifactsOutput {
     command: &'static str,
     repository: String,
+    #[schemars(range(min = 1))]
     run_id: u64,
     artifact_count: usize,
     artifacts: Vec<ArtifactResponse>,
@@ -648,8 +697,10 @@ struct ArtifactsListResponse {
     artifacts: Vec<ArtifactResponse>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ArtifactResponse {
+    #[schemars(range(min = 1))]
     id: u64,
     name: String,
     size_in_bytes: u64,

@@ -78,6 +78,7 @@ dependencies = [
  "ah-plugin-api",
  "clap",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "urlencoding",
