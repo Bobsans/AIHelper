@@ -3,7 +3,7 @@
 Goal: make an AI coding agent able to call AIHelper, in one command, without
 hand-editing that agent's configuration.
 
-Targets: `claude`, `codex`, `gemini`, `cursor`, `copilot`. The server is
+Targets: `claude`, `codex`, `gemini`, `cursor`, `copilot`, `opencode`. The server is
 registered as `aihelper`.
 
 ## Check the current state first
@@ -15,7 +15,12 @@ ah ai status
 Reports per target whether the agent CLI is on `PATH` (or that the target is
 file-backed), whether the MCP server is registered and with which transport,
 whether a legacy `ah` registration is still present, and whether the rules block
-is installed.
+is installed in each supported system, user, project, or local environment.
+Project and local environments appear only inside a project. In a terminal all
+targets and environments appear immediately, and each leaf updates as its
+parallel check finishes; probes wait for their agent without a timeout. A report
+too tall for the terminal animates clipped to the visible rows and is printed in
+full once every check has finished.
 
 ## Preview before changing anything
 

@@ -1,6 +1,7 @@
 pub mod install;
 mod json_config;
 pub mod managed;
+mod opencode_config;
 mod prompt;
 
 /// Whether `ah ai install` should prompt: a terminal invocation that carried no
@@ -215,7 +216,7 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
         },
         HostCommandDoc {
             name: "ai.install".to_owned(),
-            summary: "Register the `aihelper` MCP server and rules block in an AI coding agent (claude, codex, gemini, cursor, copilot)."
+            summary: "Register the `aihelper` MCP server and rules block in an AI coding agent (claude, codex, gemini, cursor, copilot, opencode)."
                 .to_owned(),
             usage: "ai install <TARGET> [--scope <local|project|user>] [--transport <stdio|http|managed>] [--url URL] [--mcp-only|--rules-only] [--yes] [--dry-run]".to_owned(),
             examples: vec![

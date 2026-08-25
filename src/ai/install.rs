@@ -1,4 +1,10 @@
-use std::path::PathBuf;
+use std::{
+    borrow::Cow,
+    io::{self, IsTerminal, Write},
+    path::PathBuf,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use ah_runtime::PluginManager;
 use serde::Serialize;
@@ -12,7 +18,7 @@ use crate::{
 use super::{
     json_config,
     managed::{self, ManagedAction},
-    prompt, registrar,
+    opencode_config, prompt, registrar,
     rules::{self, BlockAction as Action},
     targets::{
         self, LEGACY_SERVER_NAMES, Registrar, SERVER_NAME, Scope, ServerSpec, Target, Transport,
@@ -57,7 +63,7 @@ pub enum AiCommand {
     Status(StatusRequest),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct McpReport {
     action: Action,
     registrar: &'static str,
@@ -111,6 +117,40 @@ struct TargetStatus {
     legacy_server: Option<&'static str>,
     mcp: McpReport,
     rules: RulesReport,
+    scopes: Vec<ScopeStatus>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScopeStatus {
+    scope: Scope,
+    mcp: Option<ScopedMcpReport>,
+    rules: Option<ScopedRulesReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ScopedMcpReport {
+    action: StatusAction,
+    registrar: &'static str,
+    scope: Scope,
+    transport: Option<Transport>,
+    url: Option<String>,
+    path: Option<String>,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ScopedRulesReport {
+    action: StatusAction,
+    path: Option<String>,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StatusAction {
+    Installed,
+    NotPresent,
+    Unknown,
 }
 
 const SCHEMA_VERSION: u32 = 1;
@@ -130,14 +170,51 @@ pub fn execute(
             emit(&report, options)
         }
         AiCommand::Status(request) => {
-            let report = status(request)?;
-            emit_status(&report, options)
+            if !options.quiet
+                && matches!(options.output, OutputMode::Text)
+                && std::io::stdout().is_terminal()
+            {
+                emit_live_status(request)
+            } else {
+                let report = status(request)?;
+                emit_status(&report, options)
+            }
         }
     }
 }
 
 fn project_root() -> Result<PathBuf, AppError> {
     std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))
+}
+
+fn status_project_root(cwd: &std::path::Path) -> Option<PathBuf> {
+    if let Some(root) = cwd.ancestors().find(|path| path.join(".git").exists()) {
+        return Some(root.to_path_buf());
+    }
+    const MARKERS: [&str; 18] = [
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "pom.xml",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "GEMINI.md",
+        "opencode.json",
+        "opencode.jsonc",
+        ".mcp.json",
+        ".claude",
+        ".codex",
+        ".gemini",
+        ".cursor",
+        ".vscode",
+        ".github",
+        ".opencode",
+    ];
+    MARKERS
+        .iter()
+        .any(|marker| cwd.join(marker).exists())
+        .then(|| cwd.to_path_buf())
 }
 
 fn resolve_scope(target: &Target, requested: Option<Scope>) -> Result<Scope, AppError> {
@@ -433,6 +510,11 @@ fn config_path_for(
     scope: Scope,
     root: &std::path::Path,
 ) -> Result<Option<String>, AppError> {
+    if target.probe == targets::ProbeKind::OpenCode {
+        return Ok(Some(
+            opencode_config::path(scope, root)?.display().to_string(),
+        ));
+    }
     match (target.registrar, target.json) {
         (Registrar::File, Some(config)) => {
             Ok(Some(config.path(scope, root)?.display().to_string()))
@@ -448,7 +530,12 @@ fn legacy_registration(
     root: &std::path::Path,
 ) -> Result<Option<&'static str>, AppError> {
     for name in LEGACY_SERVER_NAMES {
-        if registrar::probe(target, scope, name, root)?.is_some() {
+        let present = if target.probe == targets::ProbeKind::OpenCode {
+            opencode_config::contains(scope, root, name)?
+        } else {
+            registrar::probe(target, scope, name, root)?.is_some()
+        };
+        if present {
             return Ok(Some(name));
         }
     }
@@ -472,6 +559,12 @@ fn apply_remove(
             Ok(vec![invocation])
         }
         Registrar::File => {
+            if target.probe == targets::ProbeKind::OpenCode {
+                if !dry_run {
+                    opencode_config::remove(scope, root, name)?;
+                }
+                return Ok(Vec::new());
+            }
             let config = target.json_config()?;
             let file = config.path(scope, root)?;
             if !dry_run
@@ -502,6 +595,11 @@ fn install_mcp(
         ));
     }
     let existing = registrar::probe(target, mcp_scope, SERVER_NAME, root)?;
+    let present = if target.probe == targets::ProbeKind::OpenCode {
+        opencode_config::contains(mcp_scope, root, SERVER_NAME)?
+    } else {
+        existing.is_some()
+    };
     let action = match &existing {
         Some(current) if current == spec => Action::Unchanged,
         Some(current) => {
@@ -512,6 +610,7 @@ fn install_mcp(
             ));
             Action::Updated
         }
+        None if present => Action::Updated,
         None => Action::Installed,
     };
 
@@ -547,12 +646,23 @@ fn install_mcp(
                 commands.push(invocation);
             }
             Registrar::File => {
-                let config = target.json_config()?;
-                let file = config.path(mcp_scope, root)?;
-                if !dry_run {
-                    let document =
-                        json_config::merge(json_config::read(&file)?, &config, SERVER_NAME, spec);
-                    json_config::write(&file, &document)?;
+                if target.probe == targets::ProbeKind::OpenCode {
+                    let file = opencode_config::path(mcp_scope, root)?;
+                    if !dry_run {
+                        opencode_config::merge(&file, SERVER_NAME, spec)?;
+                    }
+                } else {
+                    let config = target.json_config()?;
+                    let file = config.path(mcp_scope, root)?;
+                    if !dry_run {
+                        let document = json_config::merge(
+                            json_config::read(&file)?,
+                            &config,
+                            SERVER_NAME,
+                            spec,
+                        );
+                        json_config::write(&file, &document)?;
+                    }
                 }
             }
         }
@@ -602,9 +712,14 @@ fn uninstall(request: UninstallRequest) -> Result<TargetReport, AppError> {
     let mut warnings = Vec::new();
 
     let existing = registrar::probe(target, mcp_scope, SERVER_NAME, &root)?;
+    let present = if target.probe == targets::ProbeKind::OpenCode {
+        opencode_config::contains(mcp_scope, &root, SERVER_NAME)?
+    } else {
+        existing.is_some()
+    };
     let mut commands = Vec::new();
     let config_path = config_path_for(target, mcp_scope, &root)?;
-    let mut mcp_action = if existing.is_some() {
+    let mut mcp_action = if present {
         commands.extend(apply_remove(
             target,
             mcp_scope,
@@ -689,61 +804,15 @@ fn status(request: StatusRequest) -> Result<StatusReport, AppError> {
         Some(name) => vec![targets::find(&name)?],
         None => targets::TARGETS.iter().collect(),
     };
-    let root = project_root()?;
-    let mut reports = Vec::new();
-    for target in selected {
-        let scope = target.default_scope;
-        let mcp_scope = target.mcp_scope(scope);
-        // A file-backed target has no CLI to look for, so it is always usable.
-        let available = match target.cli_program() {
-            Some(program) => cli_available(program),
-            None => true,
-        };
-        let existing = if available {
-            registrar::probe(target, mcp_scope, SERVER_NAME, &root)?
-        } else {
-            None
-        };
-        let legacy = if available {
-            legacy_registration(target, mcp_scope, &root)?
-        } else {
-            None
-        };
-        let config_path = config_path_for(target, mcp_scope, &root)?;
-        let path = target.rules_path(scope, &root)?;
-        let hint = path.display().to_string();
-        let rules_action = match rules::read(&path)? {
-            Some(contents) if contents.contains(rules::BEGIN_MARKER) => Action::Installed,
-            _ => Action::NotPresent,
-        };
-        reports.push(TargetStatus {
-            target: target.name,
-            scope,
-            cli: target.cli_program(),
-            cli_available: available,
-            legacy_server: legacy,
-            mcp: McpReport {
-                action: if existing.is_some() {
-                    Action::Installed
-                } else {
-                    Action::NotPresent
-                },
-                registrar: registrar_label(target),
-                scope: mcp_scope,
-                transport: existing.as_ref().map(ServerSpec::transport),
-                url: existing
-                    .as_ref()
-                    .and_then(ServerSpec::url)
-                    .map(str::to_owned),
-                path: config_path,
-                commands: Vec::new(),
-            },
-            rules: RulesReport {
-                action: rules_action,
-                path: hint,
-            },
-        });
-    }
+    let cwd = project_root()?;
+    let project = status_project_root(&cwd);
+    let in_project = project.is_some();
+    let root = project.as_deref().unwrap_or(&cwd);
+    let reports = parallel_map(&selected, |target| {
+        status_target(target, root, in_project, |_| {})
+    })
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
     Ok(StatusReport {
         command: "ai.status",
         schema_version: SCHEMA_VERSION,
@@ -751,12 +820,884 @@ fn status(request: StatusRequest) -> Result<StatusReport, AppError> {
     })
 }
 
-fn cli_available(program: &str) -> bool {
-    registrar::run(&registrar::Invocation {
-        program: program.to_owned(),
-        args: vec!["--version".to_owned()],
+fn status_target(
+    target: &Target,
+    root: &std::path::Path,
+    in_project: bool,
+    mut progress: impl FnMut(StatusProgress),
+) -> Result<TargetStatus, AppError> {
+    let scope = if !in_project && target.supports(Scope::User) {
+        Scope::User
+    } else {
+        target.default_scope
+    };
+    let mcp_scope = target.mcp_scope(scope);
+    // A file-backed target has no CLI to look for, so it is always usable.
+    let available = target.cli_program().is_none_or(cli_available);
+    progress(StatusProgress::Cli {
+        cli: target.cli_program(),
+        available,
+    });
+    let mut scopes = Vec::new();
+    for status_scope in status_scopes(target, in_project) {
+        let rules = match scoped_rules_status(target, status_scope, root) {
+            Ok(rules) => rules,
+            Err(error) => Some(ScopedRulesReport {
+                action: StatusAction::Unknown,
+                path: None,
+                detail: Some(error.code().to_owned()),
+            }),
+        };
+        if let Some(report) = &rules {
+            progress(StatusProgress::Rules {
+                scope: status_scope,
+                report: report.clone(),
+            });
+        }
+        let mcp = match scoped_mcp_status(target, status_scope, root, available) {
+            Ok(mcp) => mcp,
+            Err(error) => Some(ScopedMcpReport {
+                action: StatusAction::Unknown,
+                registrar: registrar_label(target),
+                scope: status_scope,
+                transport: None,
+                url: None,
+                path: None,
+                detail: Some(error.code().to_owned()),
+            }),
+        };
+        if target.name != "codex" {
+            if let Some(report) = &mcp {
+                progress(StatusProgress::Mcp {
+                    scope: status_scope,
+                    report: report.clone(),
+                });
+            }
+        }
+        scopes.push(ScopeStatus {
+            scope: status_scope,
+            mcp,
+            rules,
+        });
+    }
+    let scoped_rules = scopes
+        .iter()
+        .find(|status| status.scope == scope)
+        .and_then(|status| status.rules.as_ref());
+    let hint = scoped_rules
+        .and_then(|rules| rules.path.clone())
+        .unwrap_or_else(|| {
+            target
+                .rules_path(scope, root)
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        });
+    let rules_action = match scoped_rules.map(|rules| rules.action) {
+        Some(StatusAction::Installed) => Action::Installed,
+        _ => Action::NotPresent,
+    };
+    let (codex_existing, codex_legacy) = if target.name == "codex" && available {
+        let mut names = vec![SERVER_NAME];
+        names.extend_from_slice(LEGACY_SERVER_NAMES);
+        let probes = registrar::probe_codex_list(target, &names)?;
+        let existing = probes.first().cloned().flatten();
+        let legacy = LEGACY_SERVER_NAMES
+            .iter()
+            .zip(probes.iter().skip(1))
+            .find_map(|(name, probe)| probe.is_some().then_some(*name));
+        (existing, legacy)
+    } else {
+        (None, None)
+    };
+    if target.name == "codex" {
+        for status in &scopes {
+            if let Some(report) = &status.mcp {
+                progress(StatusProgress::Mcp {
+                    scope: status.scope,
+                    report: report.clone(),
+                });
+            }
+        }
+    }
+    let mcp = if target.name == "codex" {
+        McpReport {
+            action: if codex_existing.is_some() {
+                Action::Installed
+            } else {
+                Action::NotPresent
+            },
+            registrar: registrar_label(target),
+            scope: mcp_scope,
+            transport: codex_existing.as_ref().map(ServerSpec::transport),
+            url: codex_existing
+                .as_ref()
+                .and_then(ServerSpec::url)
+                .map(str::to_owned),
+            path: config_path_for(target, mcp_scope, root)?,
+            commands: Vec::new(),
+        }
+    } else {
+        scopes
+            .iter()
+            .find(|status| status.scope == mcp_scope)
+            .and_then(|status| status.mcp.as_ref())
+            .map(|status| McpReport {
+                action: if matches!(status.action, StatusAction::Installed) {
+                    Action::Installed
+                } else {
+                    Action::NotPresent
+                },
+                registrar: status.registrar,
+                scope: status.scope,
+                transport: status.transport,
+                url: status.url.clone(),
+                path: status.path.clone(),
+                commands: Vec::new(),
+            })
+            .ok_or_else(|| {
+                AppError::external(
+                    "AI_STATUS_SCOPE_UNSUPPORTED",
+                    format!(
+                        "{} has no MCP status for scope {}",
+                        target.name,
+                        mcp_scope.as_str()
+                    ),
+                )
+            })?
+    };
+    let legacy = if target.name == "codex" {
+        codex_legacy
+    } else if available {
+        legacy_registration(target, mcp_scope, root)?
+    } else {
+        None
+    };
+    Ok(TargetStatus {
+        target: target.name,
+        scope,
+        cli: target.cli_program(),
+        cli_available: available,
+        legacy_server: legacy,
+        mcp,
+        rules: RulesReport {
+            action: rules_action,
+            path: hint,
+        },
+        scopes,
     })
-    .is_ok()
+}
+
+fn status_scopes(target: &Target, in_project: bool) -> Vec<Scope> {
+    [Scope::System, Scope::User, Scope::Project, Scope::Local]
+        .into_iter()
+        .filter(|scope| target.supports_status_mcp(*scope) || target.supports_status_rules(*scope))
+        .filter(|scope| matches!(scope, Scope::System | Scope::User) || in_project)
+        .collect()
+}
+
+fn scoped_rules_status(
+    target: &Target,
+    scope: Scope,
+    root: &std::path::Path,
+) -> Result<Option<ScopedRulesReport>, AppError> {
+    if !target.supports_status_rules(scope) {
+        return Ok(None);
+    }
+    if target.name == "cursor" && scope == Scope::User {
+        return Ok(Some(ScopedRulesReport {
+            action: StatusAction::Unknown,
+            path: None,
+            detail: Some("Cursor settings".to_owned()),
+        }));
+    }
+    let path = match (target.name, scope) {
+        ("claude", Scope::System) => system_config_directory(target)?.join("CLAUDE.md"),
+        ("claude", Scope::Local) => root.join("CLAUDE.local.md"),
+        _ => target.rules_path(scope, root)?,
+    };
+    let action = match rules::read(&path)? {
+        Some(contents) if contents.contains(rules::BEGIN_MARKER) => StatusAction::Installed,
+        _ => StatusAction::NotPresent,
+    };
+    Ok(Some(ScopedRulesReport {
+        action,
+        path: Some(path.display().to_string()),
+        detail: None,
+    }))
+}
+
+fn scoped_mcp_status(
+    target: &Target,
+    scope: Scope,
+    root: &std::path::Path,
+    cli_available: bool,
+) -> Result<Option<ScopedMcpReport>, AppError> {
+    if !target.supports_status_mcp(scope) {
+        return Ok(None);
+    }
+    let (existing, path) = if target.name == "codex" {
+        let path = codex_config_path(scope, root)?;
+        (
+            codex_mcp_entry(&path, SERVER_NAME)?,
+            Some(path.display().to_string()),
+        )
+    } else if target.name == "copilot" && scope == Scope::User {
+        let path = copilot_user_mcp_path()?;
+        let config = target.json_config()?;
+        let existing = json_config::read(&path)?
+            .and_then(|document| json_config::lookup(&document, &config, SERVER_NAME));
+        (existing, Some(path.display().to_string()))
+    } else if scope == Scope::System {
+        let (existing, path) = system_mcp_status(target)?;
+        (existing, Some(path.display().to_string()))
+    } else {
+        let existing = if target.cli_program().is_none() || cli_available {
+            registrar::probe(target, scope, SERVER_NAME, root)?
+        } else {
+            None
+        };
+        (existing, config_path_for(target, scope, root)?)
+    };
+    Ok(Some(ScopedMcpReport {
+        action: if existing.is_some() {
+            StatusAction::Installed
+        } else {
+            StatusAction::NotPresent
+        },
+        registrar: registrar_label(target),
+        scope,
+        transport: existing.as_ref().map(ServerSpec::transport),
+        url: existing
+            .as_ref()
+            .and_then(ServerSpec::url)
+            .map(str::to_owned),
+        path,
+        detail: None,
+    }))
+}
+
+fn system_mcp_status(target: &Target) -> Result<(Option<ServerSpec>, PathBuf), AppError> {
+    let paths = system_mcp_paths(target)?;
+    for path in &paths {
+        let existing = if target.name == "opencode" {
+            opencode_config::lookup_path(path, SERVER_NAME)?
+        } else {
+            let config = target.json_config().unwrap_or(targets::JsonConfig {
+                key: "mcpServers",
+                project_path: None,
+                user_path: None,
+            });
+            json_config::read(path)?
+                .and_then(|document| json_config::lookup(&document, &config, SERVER_NAME))
+        };
+        if existing.is_some() {
+            return Ok((existing, path.clone()));
+        }
+    }
+    Ok((None, paths[0].clone()))
+}
+
+fn copilot_user_mcp_path() -> Result<PathBuf, AppError> {
+    #[cfg(windows)]
+    {
+        return std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(|path| path.join("Code").join("User").join("mcp.json"))
+            .ok_or_else(|| {
+                AppError::external(
+                    "AI_HOME_UNRESOLVED",
+                    "unable to resolve %APPDATA% for VS Code configuration",
+                )
+            });
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(targets::home_dir()?
+            .join("Library")
+            .join("Application Support")
+            .join("Code")
+            .join("User")
+            .join("mcp.json"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(targets::home_dir()?.join(".config"));
+        Ok(base.join("Code").join("User").join("mcp.json"))
+    }
+}
+
+fn codex_config_path(scope: Scope, root: &std::path::Path) -> Result<PathBuf, AppError> {
+    match scope {
+        Scope::System => system_mcp_path(targets::find("codex")?),
+        Scope::User => Ok(targets::home_dir()?.join(".codex").join("config.toml")),
+        Scope::Project | Scope::Local => Ok(root.join(".codex").join("config.toml")),
+    }
+}
+
+fn codex_mcp_entry(path: &std::path::Path, name: &str) -> Result<Option<ServerSpec>, AppError> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(AppError::file_read(path.to_path_buf(), source)),
+    };
+    let headers = [
+        format!("[mcp_servers.{name}]"),
+        format!("[mcp_servers.\"{name}\"]"),
+        format!("[mcp_servers.'{name}']"),
+    ];
+    let mut entry = false;
+    for line in contents.lines().map(str::trim) {
+        if line.starts_with('[') {
+            if entry {
+                break;
+            }
+            entry = headers.iter().any(|header| line == header);
+            continue;
+        }
+        if !entry {
+            continue;
+        }
+        if let Some(url) = toml_string(line, "url") {
+            return Ok(Some(ServerSpec::Http { url }));
+        }
+        if let Some(command) = toml_string(line, "command") {
+            return Ok(Some(ServerSpec::Stdio {
+                command,
+                args: Vec::new(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn toml_string(line: &str, key: &str) -> Option<String> {
+    let (candidate, value) = line.split_once('=')?;
+    if candidate.trim() != key {
+        return None;
+    }
+    let value = value.trim();
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.split_once('"').map(|(value, _)| value.to_owned()))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.split_once('\'').map(|(value, _)| value.to_owned()))
+        })
+}
+
+fn system_mcp_path(target: &Target) -> Result<PathBuf, AppError> {
+    Ok(system_mcp_paths(target)?[0].clone())
+}
+
+fn system_mcp_paths(target: &Target) -> Result<Vec<PathBuf>, AppError> {
+    let directory = system_config_directory(target)?;
+    Ok(match target.name {
+        "claude" => vec![directory.join("managed-mcp.json")],
+        "gemini" => vec![
+            directory.join("settings.json"),
+            directory.join("system-defaults.json"),
+        ],
+        "opencode" => ["config.json", "opencode.json", "opencode.jsonc"]
+            .map(|name| directory.join(name))
+            .to_vec(),
+        "codex" => vec![directory.join("config.toml")],
+        _ => vec![directory.join("mcp.json")],
+    })
+}
+
+fn system_config_directory(target: &Target) -> Result<PathBuf, AppError> {
+    #[cfg(windows)]
+    {
+        // Every agent keeps its machine-wide configuration under %ProgramData%,
+        // the writable counterpart of the read-only install directory.
+        let base = std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                AppError::external(
+                    "AI_SYSTEM_CONFIG_UNRESOLVED",
+                    format!("unable to resolve %ProgramData% for {}", target.name),
+                )
+            })?;
+        return Ok(base.join(match target.name {
+            "claude" => "ClaudeCode",
+            "gemini" => "gemini-cli",
+            "opencode" => "opencode",
+            _ => target.name,
+        }));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(
+            PathBuf::from("/Library/Application Support").join(match target.name {
+                "claude" => "ClaudeCode",
+                "gemini" => "GeminiCli",
+                _ => target.name,
+            }),
+        );
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Ok(PathBuf::from("/etc").join(match target.name {
+            "claude" => "claude-code",
+            "gemini" => "gemini-cli",
+            _ => target.name,
+        }))
+    }
+}
+
+fn parallel_map<T: Sync, R: Send>(values: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    std::thread::scope(|scope| {
+        let work = &work;
+        values
+            .iter()
+            .map(|value| scope.spawn(move || work(value)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|worker| worker.join().expect("status worker panicked"))
+            .collect()
+    })
+}
+
+struct LiveTarget {
+    target: &'static Target,
+    primary_scope: Scope,
+    cli: Option<(Option<&'static str>, bool)>,
+    scopes: Vec<LiveScope>,
+    legacy_server: Option<&'static str>,
+    error: bool,
+}
+
+struct LiveScope {
+    scope: Scope,
+    mcp_supported: bool,
+    mcp: Option<ScopedMcpReport>,
+    rules_supported: bool,
+    rules: Option<ScopedRulesReport>,
+}
+
+impl LiveTarget {
+    fn new(target: &'static Target, in_project: bool) -> Self {
+        Self {
+            target,
+            primary_scope: if !in_project && target.supports(Scope::User) {
+                Scope::User
+            } else {
+                target.default_scope
+            },
+            cli: None,
+            scopes: status_scopes(target, in_project)
+                .into_iter()
+                .map(|scope| LiveScope {
+                    scope,
+                    mcp_supported: target.supports_status_mcp(scope),
+                    mcp: None,
+                    rules_supported: target.supports_status_rules(scope),
+                    rules: None,
+                })
+                .collect(),
+            legacy_server: None,
+            error: false,
+        }
+    }
+
+    fn apply(&mut self, progress: StatusProgress) {
+        match progress {
+            StatusProgress::Cli { cli, available } => self.cli = Some((cli, available)),
+            StatusProgress::Mcp { scope, report } => {
+                self.scopes
+                    .iter_mut()
+                    .find(|status| status.scope == scope)
+                    .expect("status scope should be preallocated")
+                    .mcp = Some(report)
+            }
+            StatusProgress::Rules { scope, report } => {
+                self.scopes
+                    .iter_mut()
+                    .find(|status| status.scope == scope)
+                    .expect("status scope should be preallocated")
+                    .rules = Some(report)
+            }
+        }
+    }
+
+    fn complete(&mut self, result: &Result<TargetStatus, AppError>) {
+        match result {
+            Ok(status) => self.legacy_server = status.legacy_server,
+            Err(_) => self.error = true,
+        }
+    }
+}
+
+enum StatusProgress {
+    Cli {
+        cli: Option<&'static str>,
+        available: bool,
+    },
+    Mcp {
+        scope: Scope,
+        report: ScopedMcpReport,
+    },
+    Rules {
+        scope: Scope,
+        report: ScopedRulesReport,
+    },
+}
+
+enum LiveEvent {
+    Progress(usize, StatusProgress),
+    Complete(usize, Result<TargetStatus, AppError>),
+}
+
+struct CursorGuard;
+
+impl Drop for CursorGuard {
+    fn drop(&mut self) {
+        let mut output = io::stdout();
+        let _ = write!(output, "\u{1b}[?25h");
+        let _ = output.flush();
+    }
+}
+
+/// One scope of one target: `mcp` and `rules` side by side under a heading.
+struct LiveRow {
+    target: usize,
+    scope: &'static str,
+    mcp: String,
+    rules: String,
+}
+
+const UNSUPPORTED: &str = "not supported";
+
+/// Widest cell a finished `mcp` check can produce, reserved before the first
+/// frame so the `rules` column never shifts as spinners become results.
+fn mcp_width() -> usize {
+    let transport = [Transport::Stdio, Transport::Http]
+        .into_iter()
+        .map(|transport| transport.as_str().len())
+        .max()
+        .unwrap_or(0);
+    [
+        StatusAction::Installed,
+        StatusAction::NotPresent,
+        StatusAction::Unknown,
+    ]
+    .into_iter()
+    .map(|action| {
+        let label = status_action_label(action).len();
+        // Only a registration carries a transport in parentheses.
+        match action {
+            StatusAction::Installed => label + " (".len() + transport + ")".len(),
+            _ => label,
+        }
+    })
+    .chain([UNSUPPORTED.len()])
+    .max()
+    .unwrap_or(UNSUPPORTED.len())
+}
+
+fn render_live_lines(
+    targets: &[LiveTarget],
+    spinner: &str,
+    formatter: TextFormatter,
+) -> Vec<String> {
+    let error = formatter.paint(TextStyle::Error, "error");
+    let unsupported = formatter.paint(TextStyle::Muted, UNSUPPORTED);
+    let headings = targets.iter().map(|target| {
+        let cli = match target.cli {
+            Some((Some(cli), true)) => {
+                formatter.paint(TextStyle::Success, format!("`{cli}` available"))
+            }
+            Some((Some(cli), false)) => {
+                formatter.paint(TextStyle::Warning, format!("`{cli}` missing"))
+            }
+            Some((None, _)) => formatter.paint(TextStyle::Muted, "config file"),
+            None if target.error => error.clone(),
+            None => spinner.to_owned(),
+        };
+        // A legacy registration belongs to the target rather than to one of its
+        // scopes, and would widen the mcp column it used to sit in.
+        let legacy = target
+            .legacy_server
+            .map(|name| formatter.paint(TextStyle::Warning, format!(", legacy `{name}` present")))
+            .unwrap_or_default();
+        format!(
+            "{} ({cli}{legacy})",
+            formatter.paint(TextStyle::Heading, target.target.name),
+        )
+    });
+    let error = error.as_str();
+    let unsupported = unsupported.as_str();
+    let rows: Vec<LiveRow> = targets
+        .iter()
+        .enumerate()
+        .flat_map(|(index, target)| {
+            let pending = move || {
+                if target.error {
+                    error.to_owned()
+                } else {
+                    spinner.to_owned()
+                }
+            };
+            target.scopes.iter().map(move |scope| {
+                let mcp = if !scope.mcp_supported {
+                    unsupported.to_owned()
+                } else if let Some(mcp) = &scope.mcp {
+                    let details: Vec<String> = mcp
+                        .transport
+                        .map(|transport| transport.as_str().to_owned())
+                        .into_iter()
+                        .chain(mcp.detail.clone())
+                        .collect();
+                    state_cell(mcp.action, &details, formatter)
+                } else {
+                    pending()
+                };
+                let rules = if !scope.rules_supported {
+                    unsupported.to_owned()
+                } else if let Some(rules) = &scope.rules {
+                    state_cell(rules.action, rules.detail.as_slice(), formatter)
+                } else {
+                    pending()
+                };
+                LiveRow {
+                    target: index,
+                    scope: scope.scope.as_str(),
+                    mcp,
+                    rules,
+                }
+            })
+        })
+        .collect();
+    let scope_width = rows.iter().map(|row| row.scope.len()).max().unwrap_or(0);
+    let mcp_width = mcp_width();
+    let separator = formatter.paint(TextStyle::Muted, "::");
+    let mut lines = Vec::with_capacity(targets.len() + rows.len());
+    for (index, heading) in headings.enumerate() {
+        lines.push(heading);
+        for row in rows.iter().filter(|row| row.target == index) {
+            lines.push(format!(
+                "  {} {separator} mcp {} rules {}",
+                pad(&formatter.paint(TextStyle::Key, row.scope), scope_width),
+                pad(&row.mcp, mcp_width),
+                row.rules,
+            ));
+        }
+    }
+    lines
+}
+
+fn state_cell(action: StatusAction, details: &[String], formatter: TextFormatter) -> String {
+    let state = formatter.paint(status_action_style(action), status_action_label(action));
+    if details.is_empty() {
+        return state;
+    }
+    format!("{state} ({})", details.join(", "))
+}
+
+/// Pads to a visible width, which `{:<width$}` cannot do once a cell carries
+/// colour escapes.
+fn pad(cell: &str, width: usize) -> String {
+    let padding = width.saturating_sub(console::measure_text_width(cell));
+    format!("{cell}{:padding$}", "")
+}
+
+/// A live block redrawn in place, kept inside the terminal it lands in.
+struct LiveScreen {
+    /// Widest column a line may occupy before it wraps and desynchronises the
+    /// cursor arithmetic below.
+    width: Option<usize>,
+    /// Tallest block that may be animated: once the block scrolls, its first row
+    /// is out of reach, `\u{1b}[<n>A` clamps at the top of the screen and every
+    /// frame is appended instead of replacing the previous one.
+    height: Option<usize>,
+    drawn: usize,
+}
+
+impl LiveScreen {
+    fn new() -> Self {
+        let size = console::Term::stdout().size_checked();
+        Self {
+            // Terminals differ on whether a line filling the last column wraps
+            // immediately, so keep one column and one row spare.
+            width: size.map(|(_, width)| usize::from(width).saturating_sub(1)),
+            height: size.map(|(height, _)| usize::from(height).saturating_sub(1)),
+            drawn: 0,
+        }
+    }
+
+    /// One animation frame, clipped to the visible viewport.
+    fn draw(&mut self, output: &mut impl Write, lines: &[String]) -> io::Result<()> {
+        let visible = clip_height(lines, self.height);
+        self.rewind(output)?;
+        write_live_lines(output, &visible, self.width)?;
+        self.drawn = visible.len();
+        output.flush()
+    }
+
+    /// The finished report, in full: the clipped frames are erased first so the
+    /// rows the viewport could not hold are not left behind as a stale copy.
+    fn finish(&mut self, output: &mut impl Write, lines: &[String]) -> io::Result<()> {
+        self.rewind(output)?;
+        if self.drawn > 0 {
+            write!(output, "\r\u{1b}[J")?;
+        }
+        write_live_lines(output, lines, self.width)?;
+        self.drawn = lines.len();
+        output.flush()
+    }
+
+    fn rewind(&self, output: &mut impl Write) -> io::Result<()> {
+        if self.drawn > 0 {
+            write!(output, "\u{1b}[{}A", self.drawn)?;
+        }
+        Ok(())
+    }
+}
+
+/// Keeps the block inside `height` rows, replacing the rows that do not fit with
+/// a count of what the finished report will add.
+fn clip_height(lines: &[String], height: Option<usize>) -> Vec<String> {
+    let Some(height) = height.filter(|height| lines.len() > *height) else {
+        return lines.to_vec();
+    };
+    let kept = height.saturating_sub(1);
+    let mut visible = lines[..kept].to_vec();
+    if height > 0 {
+        visible.push(format!("… {} more", lines.len() - kept));
+    }
+    visible
+}
+
+fn write_live_lines(
+    output: &mut impl Write,
+    lines: &[String],
+    width: Option<usize>,
+) -> io::Result<()> {
+    for line in lines {
+        let line = match width {
+            Some(width) => console::truncate_str(line, width, ""),
+            None => Cow::Borrowed(line.as_str()),
+        };
+        // Overwrite in place and clear the tail: clearing first would blank the
+        // row for a frame and read as flicker.
+        write!(output, "\r{line}\u{1b}[K\n")?;
+    }
+    Ok(())
+}
+
+fn emit_live_status(request: StatusRequest) -> Result<(), AppError> {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const FRAME_INTERVAL: Duration = Duration::from_millis(80);
+
+    let selected: Vec<&Target> = match request.target {
+        Some(name) => vec![targets::find(&name)?],
+        None => targets::TARGETS.iter().collect(),
+    };
+    let cwd = project_root()?;
+    let project = status_project_root(&cwd);
+    let in_project = project.is_some();
+    let root = project.as_deref().unwrap_or(&cwd);
+    let mut targets = selected
+        .iter()
+        .map(|target| LiveTarget::new(target, in_project))
+        .collect::<Vec<_>>();
+    let mut results = std::iter::repeat_with(|| None)
+        .take(selected.len())
+        .collect::<Vec<Option<Result<TargetStatus, AppError>>>>();
+    let formatter = TextFormatter::stdout();
+    let mut output = io::stdout();
+    let started = Instant::now();
+    let frame = |elapsed: Duration| {
+        FRAMES[(elapsed.as_millis() / FRAME_INTERVAL.as_millis()) as usize % FRAMES.len()]
+    };
+    let mut screen = LiveScreen::new();
+    write!(output, "\u{1b}[?25l").map_err(status_render_error)?;
+    let _cursor = CursorGuard;
+    screen
+        .draw(
+            &mut output,
+            &render_live_lines(&targets, FRAMES[0], formatter),
+        )
+        .map_err(status_render_error)?;
+
+    std::thread::scope(|scope| -> Result<(), AppError> {
+        let (sender, receiver) = mpsc::channel();
+        for (index, target) in selected.iter().copied().enumerate() {
+            let sender = sender.clone();
+            let root = &root;
+            scope.spawn(move || {
+                let result = status_target(target, root, in_project, |progress| {
+                    let _ = sender.send(LiveEvent::Progress(index, progress));
+                });
+                let _ = sender.send(LiveEvent::Complete(index, result));
+            });
+        }
+        drop(sender);
+
+        let mut completed = 0;
+        while completed < selected.len() {
+            match receiver.recv_timeout(FRAME_INTERVAL) {
+                Ok(LiveEvent::Progress(index, progress)) => targets[index].apply(progress),
+                Ok(LiveEvent::Complete(index, result)) => {
+                    targets[index].complete(&result);
+                    if results[index].is_none() {
+                        completed += 1;
+                    }
+                    results[index] = Some(result);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(AppError::external(
+                        "AI_STATUS_WORKER_FAILED",
+                        "an AI status worker stopped without returning a result",
+                    ));
+                }
+            }
+            screen
+                .draw(
+                    &mut output,
+                    &render_live_lines(&targets, frame(started.elapsed()), formatter),
+                )
+                .map_err(status_render_error)?;
+        }
+        Ok(())
+    })?;
+
+    screen
+        .finish(
+            &mut output,
+            &render_live_lines(&targets, FRAMES[0], formatter),
+        )
+        .map_err(status_render_error)?;
+
+    results
+        .into_iter()
+        .map(|result| {
+            result.unwrap_or_else(|| {
+                Err(AppError::external(
+                    "AI_STATUS_WORKER_FAILED",
+                    "an AI status worker stopped without returning a result",
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(())
+}
+
+fn status_render_error(source: io::Error) -> AppError {
+    AppError::external(
+        "AI_STATUS_RENDER_FAILED",
+        format!("unable to render AI status: {source}"),
+    )
+}
+
+fn cli_available(program: &str) -> bool {
+    registrar::available(program)
 }
 
 fn action_label(action: Action) -> &'static str {
@@ -774,6 +1715,21 @@ fn action_style(action: Action) -> TextStyle {
     match action {
         Action::Installed | Action::Updated | Action::Removed => TextStyle::Success,
         Action::Unchanged | Action::NotPresent | Action::Skipped => TextStyle::Muted,
+    }
+}
+
+fn status_action_label(action: StatusAction) -> &'static str {
+    match action {
+        StatusAction::Installed => "installed",
+        StatusAction::NotPresent => "not present",
+        StatusAction::Unknown => "unknown",
+    }
+}
+
+fn status_action_style(action: StatusAction) -> TextStyle {
+    match action {
+        StatusAction::Installed => TextStyle::Success,
+        StatusAction::NotPresent | StatusAction::Unknown => TextStyle::Muted,
     }
 }
 
@@ -867,27 +1823,52 @@ fn emit_status(report: &StatusReport, options: GlobalOptions) -> Result<(), AppE
                         )
                     );
                 }
-                let transport = entry
-                    .mcp
-                    .transport
-                    .map(|transport| format!(", {}", transport.as_str()))
-                    .unwrap_or_default();
-                println!(
-                    "  mcp   {} (scope {}{transport})",
-                    formatter.paint(
-                        action_style(entry.mcp.action),
-                        action_label(entry.mcp.action)
-                    ),
-                    entry.mcp.scope.as_str(),
-                );
-                println!(
-                    "  rules {} ({})",
-                    formatter.paint(
-                        action_style(entry.rules.action),
-                        action_label(entry.rules.action)
-                    ),
-                    formatter.paint(TextStyle::Key, &entry.rules.path),
-                );
+                for scope in &entry.scopes {
+                    println!(
+                        "  {}",
+                        formatter.paint(TextStyle::Key, scope.scope.as_str())
+                    );
+                    if let Some(mcp) = &scope.mcp {
+                        let detail = mcp
+                            .transport
+                            .map(|transport| transport.as_str())
+                            .or(mcp.detail.as_deref())
+                            .map(|detail| format!(" ({detail})"))
+                            .unwrap_or_default();
+                        println!(
+                            "    mcp   {}{detail}",
+                            formatter.paint(
+                                status_action_style(mcp.action),
+                                status_action_label(mcp.action)
+                            ),
+                        );
+                    } else {
+                        println!(
+                            "    mcp   {}",
+                            formatter.paint(TextStyle::Muted, "not supported")
+                        );
+                    }
+                    if let Some(rules) = &scope.rules {
+                        let detail = rules
+                            .path
+                            .as_deref()
+                            .or(rules.detail.as_deref())
+                            .map(|detail| format!(" ({})", formatter.paint(TextStyle::Key, detail)))
+                            .unwrap_or_default();
+                        println!(
+                            "    rules {}{detail}",
+                            formatter.paint(
+                                status_action_style(rules.action),
+                                status_action_label(rules.action)
+                            ),
+                        );
+                    } else {
+                        println!(
+                            "    rules {}",
+                            formatter.paint(TextStyle::Muted, "not supported")
+                        );
+                    }
+                }
             }
         }
     }
@@ -896,8 +1877,22 @@ fn emit_status(report: &StatusReport, options: GlobalOptions) -> Result<(), AppE
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_HTTP_URL, http_spec};
-    use crate::ai::targets::ServerSpec;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use std::io;
+
+    use super::{
+        DEFAULT_HTTP_URL, LiveScreen, LiveTarget, ScopedMcpReport, StatusAction, StatusProgress,
+        http_spec, parallel_map, render_live_lines, status_target,
+    };
+    use crate::ai::targets::{Scope, ServerSpec, Transport};
+    use crate::output::TextFormatter;
 
     #[test]
     fn http_spec_defaults_to_the_managed_loopback_endpoint() {
@@ -937,5 +1932,236 @@ mod tests {
         ] {
             assert!(http_spec(Some(url)).is_err(), "{url} should be refused");
         }
+    }
+
+    #[test]
+    fn parallel_map_runs_work_concurrently_and_preserves_order() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let values = [3, 1, 2];
+
+        let results = parallel_map(&values, |value| {
+            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+            maximum.fetch_max(current, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(50));
+            active.fetch_sub(1, Ordering::SeqCst);
+            value * 2
+        });
+
+        assert!(maximum.load(Ordering::SeqCst) > 1);
+        assert_eq!(results, vec![6, 2, 4]);
+    }
+
+    #[test]
+    fn pending_status_renders_each_supported_scope() {
+        let targets = [LiveTarget::new(
+            crate::ai::targets::find("cursor").unwrap(),
+            true,
+        )];
+
+        assert_eq!(
+            render_live_lines(&targets, "*", TextFormatter::with_color(false)),
+            vec![
+                "cursor (*)",
+                "  user    :: mcp *                 rules *",
+                "  project :: mcp *                 rules *",
+            ]
+        );
+    }
+
+    #[test]
+    fn live_status_replaces_ready_slots_without_waiting_for_mcp() {
+        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
+        target.apply(StatusProgress::Cli {
+            cli: None,
+            available: true,
+        });
+        target.apply(StatusProgress::Rules {
+            scope: Scope::User,
+            report: super::ScopedRulesReport {
+                action: super::StatusAction::Unknown,
+                path: None,
+                detail: Some("Cursor settings".to_owned()),
+            },
+        });
+
+        assert_eq!(
+            render_live_lines(&[target], "*", TextFormatter::with_color(false)),
+            vec![
+                "cursor (config file)",
+                "  user    :: mcp *                 rules unknown (Cursor settings)",
+                "  project :: mcp *                 rules *",
+            ]
+        );
+    }
+
+    #[test]
+    fn live_status_replaces_the_mcp_slot_when_its_probe_finishes() {
+        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
+        target.apply(StatusProgress::Mcp {
+            scope: Scope::Project,
+            report: ScopedMcpReport {
+                action: StatusAction::Installed,
+                registrar: "file",
+                scope: Scope::Project,
+                transport: Some(Transport::Http),
+                url: Some("http://127.0.0.1:8787/mcp".to_owned()),
+                path: Some("opencode.json".to_owned()),
+                detail: None,
+            },
+        });
+
+        assert_eq!(
+            render_live_lines(&[target], "*", TextFormatter::with_color(false))[2],
+            "  project :: mcp installed (http)  rules *"
+        );
+    }
+
+    #[test]
+    fn the_rules_column_does_not_move_when_a_spinner_becomes_a_result() {
+        let formatter = TextFormatter::with_color(false);
+        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
+        let pending = render_live_lines(std::slice::from_ref(&target), "*", formatter);
+        target.apply(StatusProgress::Mcp {
+            scope: Scope::User,
+            report: ScopedMcpReport {
+                action: StatusAction::Installed,
+                registrar: "file",
+                scope: Scope::User,
+                transport: Some(Transport::Stdio),
+                url: None,
+                path: None,
+                detail: None,
+            },
+        });
+
+        let column = |lines: &[String]| {
+            lines[1..]
+                .iter()
+                .map(|line| line.find("rules ").expect("every row has a rules cell"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            column(&pending),
+            column(&render_live_lines(&[target], "*", formatter))
+        );
+    }
+
+    #[test]
+    fn status_target_reports_cli_and_rules_before_mcp() {
+        let root = tempfile::tempdir().unwrap();
+        let mut events = Vec::new();
+
+        status_target(
+            crate::ai::targets::find("cursor").unwrap(),
+            root.path(),
+            true,
+            |event| {
+                events.push(match event {
+                    StatusProgress::Cli { .. } => "cli",
+                    StatusProgress::Rules { scope, .. } => match scope {
+                        Scope::User => "rules:user",
+                        Scope::Project => "rules:project",
+                        _ => "rules:other",
+                    },
+                    StatusProgress::Mcp { scope, .. } => match scope {
+                        Scope::User => "mcp:user",
+                        Scope::Project => "mcp:project",
+                        _ => "mcp:other",
+                    },
+                })
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            events,
+            vec![
+                "cli",
+                "rules:user",
+                "mcp:user",
+                "rules:project",
+                "mcp:project"
+            ]
+        );
+    }
+
+    fn screen(width: Option<usize>, height: Option<usize>) -> LiveScreen {
+        LiveScreen {
+            width,
+            height,
+            drawn: 0,
+        }
+    }
+
+    #[test]
+    fn the_first_frame_is_written_where_the_cursor_already_is() {
+        let mut output = Vec::new();
+
+        screen(None, None)
+            .draw(&mut output, &["one".to_owned(), "two".to_owned()])
+            .unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "\rone\u{1b}[K\n\rtwo\u{1b}[K\n"
+        );
+    }
+
+    #[test]
+    fn every_later_frame_rewinds_over_the_rows_it_drew() {
+        let mut output = Vec::new();
+        let mut screen = screen(None, None);
+        let lines = ["one".to_owned(), "two".to_owned()];
+
+        screen.draw(&mut io::sink(), &lines).unwrap();
+        screen.draw(&mut output, &lines).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "\u{1b}[2A\rone\u{1b}[K\n\rtwo\u{1b}[K\n"
+        );
+    }
+
+    #[test]
+    fn lines_are_clipped_to_the_terminal_width_ansi_aside() {
+        let mut output = Vec::new();
+
+        screen(Some(9), None)
+            .draw(&mut output, &["\u{1b}[1msome very long line".to_owned()])
+            .unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("some very") && !rendered.contains("long"),
+            "{rendered:?} should keep nine visible columns"
+        );
+    }
+
+    #[test]
+    fn a_block_taller_than_the_terminal_is_animated_within_the_viewport() {
+        let lines: Vec<String> = (0..8).map(|row| format!("row {row}")).collect();
+
+        assert_eq!(
+            super::clip_height(&lines, Some(3)),
+            vec!["row 0", "row 1", "… 6 more"]
+        );
+        assert_eq!(super::clip_height(&lines, Some(8)), lines);
+        assert_eq!(super::clip_height(&lines, None), lines);
+    }
+
+    #[test]
+    fn the_finished_report_erases_the_clipped_frames_before_printing_in_full() {
+        let mut output = Vec::new();
+        let mut screen = screen(None, Some(2));
+        let lines = ["one".to_owned(), "two".to_owned(), "three".to_owned()];
+
+        screen.draw(&mut io::sink(), &lines).unwrap();
+        screen.finish(&mut output, &lines).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "\u{1b}[2A\r\u{1b}[J\rone\u{1b}[K\n\rtwo\u{1b}[K\n\rthree\u{1b}[K\n"
+        );
     }
 }

@@ -51,10 +51,12 @@ Supported targets:
 | `gemini` | `project`, `user` | `project` | `gemini mcp` | `GEMINI.md` |
 | `cursor` | `project`, `user` | `project` | JSON file | `.cursor/rules/ah.mdc` |
 | `copilot` | `project` | `project` | JSON file | `.github/copilot-instructions.md` |
+| `opencode` | `project`, `user` | `project` | JSON/JSONC files | `AGENTS.md` |
 
 Project and local scopes place files next to the repository; the user scope
 places them in the agent's home directory (`~/.claude/`, `~/.codex/`,
-`~/.gemini/`, `~/.cursor/`).
+`~/.gemini/`, `~/.cursor/`, `~/.config/opencode/`).
+OpenCode uses `$XDG_CONFIG_HOME/opencode/` instead when `XDG_CONFIG_HOME` is set.
 
 ### Registration is delegated when the agent has a CLI
 
@@ -72,10 +74,15 @@ Consequences:
 - presence checks stay read-only. Claude is probed by reading its JSON config,
   Codex through `codex mcp list --json`, Gemini by reading `settings.json`.
 
-`cursor` ships only an editor launcher and Copilot has no CLI, so their JSON
-configurations are merged directly: AIHelper replaces only its own entry and
-preserves every other server and unrelated key. A file that exists but does not
-parse fails with `AI_CONFIG_UNPARSABLE` and is left untouched.
+`cursor` ships only an editor launcher, and Copilot and OpenCode do not expose
+an MCP registration CLI used here, so their configurations are merged directly:
+AIHelper replaces only its own entry and preserves every other server and
+unrelated key. OpenCode's `opencode.jsonc` comments are preserved. A file that
+exists but does not parse fails with `AI_CONFIG_UNPARSABLE` and is left untouched.
+OpenCode lookup follows its JSON/JSONC precedence within the selected scope,
+including project `.opencode/` files and the legacy global `config.json`;
+uninstall removes AIHelper from every matching layer so a lower entry cannot
+become active again.
 
 Codex keeps MCP servers in a single global list, so `--scope project` still
 registers the server in the user scope and reports a warning. The rules file
@@ -153,6 +160,14 @@ Releases before the `aihelper` name registered the server as `ah`. Both
 does not leave the agent holding two identical servers. `ah ai status` reports a
 legacy registration when it finds one.
 
+The block points at `ah ai info` rather than copying it, and carries only the
+invariants a per-command description cannot: that `context.cwd` is required over
+MCP, that typed arguments are closed and long work belongs to `ah.job.*`, that
+paths resolve against `context.cwd` and must exist, that secret values are never
+readable and a missing one is the user's to add, that `401`/`403` means a
+missing scope rather than a retry, and that the MCP server is never started by
+hand.
+
 The rules block is delimited by `<!-- ah:begin ... -->` and `<!-- ah:end -->`.
 A re-run replaces the block in place and leaves user-authored content in the
 file untouched. An unbalanced marker pair fails with
@@ -182,14 +197,49 @@ ah ai status [TARGET] [--json]
 Reports, per target: whether the agent CLI is available, or that the target is
 file-backed; whether the MCP server is registered and with which transport;
 whether a legacy registration is still present; and whether the rules block is
-installed. It performs no mutation.
+installed in each supported environment. It performs no mutation.
+
+| target | rules environments | MCP environments |
+| --- | --- | --- |
+| `claude` | system, user, project, local | system, user, project, local |
+| `codex` | user, project | user, project; system on Unix |
+| `gemini` | user, project | system, user, project |
+| `cursor` | user, project | user, project |
+| `copilot` (VS Code) | project | user, project |
+| `opencode` | user, project | system, user, project |
+
+Project and local environments are omitted when the current directory is not a
+project. An unsupported component is reported as `not supported`; Cursor user
+rules are `unknown` because they live in editor settings rather than an
+inspectable file. In an interactive terminal the complete layout appears
+immediately, checks run in parallel, and each spinner is replaced as its result
+arrives. Every environment takes one row, its two components side by side:
+
+```
+opencode (config file)
+  system  :: mcp not present       rules not supported
+  user    :: mcp installed (http)  rules not present
+  project :: mcp not present       rules not present
+```
+
+The `mcp` column is as wide as the widest state a finished check can produce, so
+the `rules` column stays put when a spinner is replaced by a result. A legacy
+registration is reported on the target heading, next to the CLI state.
+
+The animation is kept inside the terminal — a scrolled block can
+no longer be overwritten — so lines longer than the terminal are clipped and a
+report taller than it animates in a viewport whose last row counts the rows that
+did not fit; the finished report then replaces that viewport in full. JSON,
+redirected, and piped output remains a single deterministic report. Agent CLI
+probes have no timeout and wait until the agent returns a result.
 
 ## Integration output and diagnostics
 
-`--json` emits schema version 1 with `command`, `schema_version`, `target`,
-`scope`, `changed`, `dry_run`, `mcp`, `rules`, `managed_service`, and
-`warnings`. Component actions are `installed`, `updated`, `unchanged`,
-`removed`, `not_present`, and `skipped`. `mcp.registrar` is `cli` or `file`;
+`--json` keeps the schema-version-1 target fields and adds a `scopes` array to
+`ai.status`; each entry contains `scope`, `mcp`, and `rules`. Component actions
+include `installed`, `not_present`, and, for uninspectable rules, `unknown`.
+Install and uninstall reports also use `updated`, `unchanged`, `removed`, and
+`skipped`. `mcp.registrar` is `cli` or `file`;
 `mcp.path` is set only for file-backed targets. `managed_service` is `null`
 unless the managed transport was used, and otherwise carries `already_running`,
 `started`, or `installed`. `--quiet` suppresses successful output on both
@@ -209,3 +259,5 @@ Diagnostics:
 - `AI_RULES_BLOCK_MALFORMED`
 - `AI_URL_NOT_LOOPBACK`
 - `AI_PROMPT_FAILED`
+- `AI_STATUS_RENDER_FAILED`
+- `AI_STATUS_WORKER_FAILED`

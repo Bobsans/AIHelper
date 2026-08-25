@@ -7,6 +7,7 @@ use crate::error::AppError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
+    System,
     Local,
     Project,
     User,
@@ -15,6 +16,7 @@ pub enum Scope {
 impl Scope {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::System => "system",
             Self::Local => "local",
             Self::Project => "project",
             Self::User => "user",
@@ -23,6 +25,7 @@ impl Scope {
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "system" => Some(Self::System),
             "local" => Some(Self::Local),
             "project" => Some(Self::Project),
             "user" => Some(Self::User),
@@ -132,12 +135,16 @@ pub enum ProbeKind {
     CodexList,
     /// A plain JSON configuration read without ever writing it.
     Json,
+    /// OpenCode's comment-preserving JSONC configuration.
+    OpenCode,
 }
 
 #[derive(Debug)]
 pub struct Target {
     pub name: &'static str,
     pub scopes: &'static [Scope],
+    pub status_rules_scopes: &'static [Scope],
+    pub status_mcp_scopes: &'static [Scope],
     pub default_scope: Scope,
     /// Set when the agent keeps MCP servers in exactly one scope regardless of
     /// where its rules file lives.
@@ -156,10 +163,17 @@ pub const SERVER_NAME: &str = "aihelper";
 /// leaving a duplicate registration behind.
 pub const LEGACY_SERVER_NAMES: &[&str] = &["ah"];
 
+#[cfg(windows)]
+const CODEX_STATUS_MCP_SCOPES: &[Scope] = &[Scope::User, Scope::Project];
+#[cfg(not(windows))]
+const CODEX_STATUS_MCP_SCOPES: &[Scope] = &[Scope::System, Scope::User, Scope::Project];
+
 pub const TARGETS: &[Target] = &[
     Target {
         name: "claude",
         scopes: &[Scope::Local, Scope::Project, Scope::User],
+        status_rules_scopes: &[Scope::System, Scope::User, Scope::Project, Scope::Local],
+        status_mcp_scopes: &[Scope::System, Scope::User, Scope::Project, Scope::Local],
         default_scope: Scope::Local,
         forced_mcp_scope: None,
         rules_file: "CLAUDE.md",
@@ -174,6 +188,8 @@ pub const TARGETS: &[Target] = &[
     Target {
         name: "codex",
         scopes: &[Scope::Project, Scope::User],
+        status_rules_scopes: &[Scope::User, Scope::Project],
+        status_mcp_scopes: CODEX_STATUS_MCP_SCOPES,
         default_scope: Scope::Project,
         forced_mcp_scope: Some(Scope::User),
         rules_file: "AGENTS.md",
@@ -188,6 +204,8 @@ pub const TARGETS: &[Target] = &[
     Target {
         name: "gemini",
         scopes: &[Scope::Project, Scope::User],
+        status_rules_scopes: &[Scope::User, Scope::Project],
+        status_mcp_scopes: &[Scope::System, Scope::User, Scope::Project],
         default_scope: Scope::Project,
         forced_mcp_scope: None,
         rules_file: "GEMINI.md",
@@ -206,6 +224,8 @@ pub const TARGETS: &[Target] = &[
     Target {
         name: "cursor",
         scopes: &[Scope::Project, Scope::User],
+        status_rules_scopes: &[Scope::User, Scope::Project],
+        status_mcp_scopes: &[Scope::User, Scope::Project],
         default_scope: Scope::Project,
         forced_mcp_scope: None,
         rules_file: ".cursor/rules/ah.mdc",
@@ -221,6 +241,8 @@ pub const TARGETS: &[Target] = &[
     Target {
         name: "copilot",
         scopes: &[Scope::Project],
+        status_rules_scopes: &[Scope::Project],
+        status_mcp_scopes: &[Scope::User, Scope::Project],
         default_scope: Scope::Project,
         forced_mcp_scope: None,
         rules_file: ".github/copilot-instructions.md",
@@ -232,6 +254,19 @@ pub const TARGETS: &[Target] = &[
             project_path: Some(".vscode/mcp.json"),
             user_path: None,
         }),
+    },
+    Target {
+        name: "opencode",
+        scopes: &[Scope::Project, Scope::User],
+        status_rules_scopes: &[Scope::User, Scope::Project],
+        status_mcp_scopes: &[Scope::System, Scope::User, Scope::Project],
+        default_scope: Scope::Project,
+        forced_mcp_scope: None,
+        rules_file: "AGENTS.md",
+        user_dir: ".config/opencode",
+        registrar: Registrar::File,
+        probe: ProbeKind::OpenCode,
+        json: None,
     },
 ];
 
@@ -280,6 +315,14 @@ impl Target {
         self.scopes.contains(&scope)
     }
 
+    pub fn supports_status_rules(&self, scope: Scope) -> bool {
+        self.status_rules_scopes.contains(&scope)
+    }
+
+    pub fn supports_status_mcp(&self, scope: Scope) -> bool {
+        self.status_mcp_scopes.contains(&scope)
+    }
+
     pub fn require_scope(&self, scope: Scope) -> Result<(), AppError> {
         if self.supports(scope) {
             return Ok(());
@@ -307,13 +350,17 @@ impl Target {
     }
 
     pub fn rules_path(&self, scope: Scope, project_root: &Path) -> Result<PathBuf, AppError> {
-        if scope.is_project_local() {
-            return Ok(join_relative(project_root, self.rules_file));
+        match scope {
+            Scope::Local | Scope::Project => Ok(join_relative(project_root, self.rules_file)),
+            Scope::User => Ok(join_relative(
+                &join_relative(&home_dir()?, self.user_dir),
+                self.rules_file,
+            )),
+            Scope::System => Err(AppError::external(
+                "AI_TARGET_SCOPE_UNSUPPORTED",
+                format!("{} has no installable system rules path", self.name),
+            )),
         }
-        Ok(join_relative(
-            &home_dir()?.join(self.user_dir),
-            self.rules_file,
-        ))
     }
 }
 
@@ -372,6 +419,15 @@ mod tests {
             .expect_err("copilot has no user scope");
         assert_eq!(error.code(), "AI_TARGET_SCOPE_UNSUPPORTED");
         assert_eq!(copilot.json_config().expect("json layout").key, "servers");
+    }
+
+    #[test]
+    fn opencode_supports_project_and_user_configuration() {
+        let opencode = find("opencode").expect("opencode target exists");
+        assert!(opencode.supports(Scope::Project));
+        assert!(opencode.supports(Scope::User));
+        assert_eq!(opencode.rules_file, "AGENTS.md");
+        assert!(opencode.cli_program().is_none());
     }
 
     #[test]

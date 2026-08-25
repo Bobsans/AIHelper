@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use super::common::IsolatedAhCommand as Command;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
@@ -287,6 +291,229 @@ fn ai_install_cursor_merges_its_json_configuration() {
 }
 
 #[test]
+fn ai_install_opencode_preserves_jsonc_comments_and_existing_servers() {
+    let (project, home) = workspace();
+    let config = project.path().join("opencode.jsonc");
+    fs::write(
+        &config,
+        r#"{
+  // Keep this server and comment.
+  "mcp": {
+    "other": {
+      "type": "local",
+      "command": ["node", "server.js"],
+      "enabled": true,
+    },
+  },
+}
+"#,
+    )
+    .expect("seed OpenCode config");
+
+    sandboxed(project.path(), home.path())
+        .args([
+            "ai",
+            "install",
+            "opencode",
+            "--mcp-only",
+            "--transport",
+            "http",
+            "--url",
+            "http://127.0.0.1:9123/mcp",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("mcp installed"));
+
+    let contents = fs::read_to_string(&config).expect("OpenCode config should exist");
+    assert!(contents.contains("// Keep this server and comment."));
+    assert!(contents.contains("\"other\""));
+    assert!(contents.contains("\"aihelper\""));
+    assert!(contents.contains("\"type\": \"remote\""));
+    assert!(contents.contains("\"url\": \"http://127.0.0.1:9123/mcp\""));
+    assert!(contents.contains("\"enabled\": true"));
+}
+
+#[test]
+fn ai_uninstall_opencode_removes_only_aihelper_from_jsonc() {
+    let (project, home) = workspace();
+    let config = project.path().join("opencode.jsonc");
+    fs::write(
+        &config,
+        r#"{
+  // Preserve this comment.
+  "mcp": {
+    "other": { "type": "local", "command": ["node", "server.js"] },
+    "aihelper": { "type": "remote", "url": "http://127.0.0.1:8787/mcp" },
+  },
+}
+"#,
+    )
+    .expect("seed OpenCode config");
+
+    sandboxed(project.path(), home.path())
+        .args(["ai", "uninstall", "opencode"])
+        .assert()
+        .success()
+        .stdout(contains("mcp removed"));
+
+    let contents = fs::read_to_string(&config).expect("OpenCode config should remain");
+    assert!(contents.contains("// Preserve this comment."));
+    assert!(contents.contains("\"other\""));
+    assert!(!contents.contains("\"aihelper\""));
+}
+
+#[test]
+fn ai_status_reports_opencode_jsonc_registration() {
+    let (project, home) = workspace();
+    fs::write(
+        project.path().join("opencode.jsonc"),
+        r#"{
+  // Status must accept JSONC.
+  "mcp": {
+    "aihelper": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8787/mcp",
+      "enabled": true,
+    },
+  },
+}
+"#,
+    )
+    .expect("seed OpenCode config");
+
+    sandboxed(project.path(), home.path())
+        .args(["--json", "ai", "status", "opencode"])
+        .assert()
+        .success()
+        .stdout(contains("\"target\": \"opencode\""))
+        .stdout(contains("\"transport\": \"http\""))
+        .stdout(contains("\"action\": \"installed\""));
+}
+
+#[test]
+fn ai_install_opencode_leaves_malformed_jsonc_untouched() {
+    let (project, home) = workspace();
+    let config = project.path().join("opencode.jsonc");
+    fs::write(&config, "{ invalid jsonc").expect("seed malformed OpenCode config");
+
+    sandboxed(project.path(), home.path())
+        .args(["ai", "install", "opencode", "--mcp-only"])
+        .assert()
+        .failure()
+        .stderr(contains("not valid JSONC"));
+
+    assert_eq!(
+        fs::read_to_string(config).expect("config should remain"),
+        "{ invalid jsonc"
+    );
+}
+
+#[test]
+fn ai_install_opencode_reenables_a_disabled_matching_server() {
+    let (project, home) = workspace();
+    let config = project.path().join("opencode.jsonc");
+    fs::write(
+        &config,
+        r#"{"mcp":{"aihelper":{"type":"remote","url":"http://127.0.0.1:8787/mcp","enabled":false}}}"#,
+    )
+    .expect("seed disabled OpenCode server");
+
+    let output = sandboxed(project.path(), home.path())
+        .args(["--json", "ai", "status", "opencode"])
+        .output()
+        .expect("status should run");
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    assert_eq!(status["targets"][0]["mcp"]["action"], "not_present");
+
+    sandboxed(project.path(), home.path())
+        .args([
+            "ai",
+            "install",
+            "opencode",
+            "--mcp-only",
+            "--transport",
+            "http",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("mcp updated"));
+
+    assert!(
+        fs::read_to_string(config)
+            .expect("config should remain")
+            .contains("\"enabled\": true")
+    );
+}
+
+#[test]
+fn ai_uninstall_opencode_removes_all_project_config_layers() {
+    let (project, home) = workspace();
+    let root_config = project.path().join("opencode.json");
+    let directory_config = project.path().join(".opencode").join("opencode.jsonc");
+    fs::create_dir_all(directory_config.parent().expect("parent")).expect("create .opencode");
+    fs::write(
+        &root_config,
+        r#"{"mcp":{"aihelper":{"type":"remote","url":"http://127.0.0.1:8787/mcp"}}}"#,
+    )
+    .expect("seed root OpenCode layer");
+    fs::write(
+        &directory_config,
+        r#"{"mcp":{"aihelper":{"enabled":false}}}"#,
+    )
+    .expect("seed higher OpenCode layer");
+
+    let output = sandboxed(project.path(), home.path())
+        .args(["--json", "ai", "status", "opencode"])
+        .output()
+        .expect("status should run");
+    let status: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(status["targets"][0]["mcp"]["action"], "not_present");
+
+    sandboxed(project.path(), home.path())
+        .args(["ai", "uninstall", "opencode"])
+        .assert()
+        .success()
+        .stdout(contains("mcp removed"));
+
+    for path in [root_config, directory_config] {
+        assert!(!fs::read_to_string(path).unwrap().contains("aihelper"));
+    }
+}
+
+#[test]
+fn ai_install_and_uninstall_opencode_user_scope_honor_xdg_config_home() {
+    let (project, home) = workspace();
+    let xdg = home.path().join("xdg");
+
+    sandboxed(project.path(), home.path())
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["ai", "install", "opencode", "--scope", "user", "--mcp-only"])
+        .assert()
+        .success();
+
+    let directory = xdg.join("opencode");
+    let current = directory.join("opencode.jsonc");
+    let legacy = directory.join("config.json");
+    assert!(current.is_file());
+    fs::write(
+        &legacy,
+        r#"{"mcp":{"aihelper":{"type":"remote","url":"http://127.0.0.1:8787/mcp"}}}"#,
+    )
+    .expect("seed legacy global config");
+
+    sandboxed(project.path(), home.path())
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["ai", "uninstall", "opencode", "--scope", "user"])
+        .assert()
+        .success();
+
+    assert!(!fs::read_to_string(current).unwrap().contains("aihelper"));
+    assert!(!fs::read_to_string(legacy).unwrap().contains("aihelper"));
+}
+
+#[test]
 fn ai_install_cursor_creates_the_nested_rules_file() {
     let (project, home) = workspace();
 
@@ -442,6 +669,327 @@ fn ai_status_reports_file_backed_targets_and_legacy_registrations() {
         .stdout(contains("\"registrar\": \"file\""))
         .stdout(contains("\"legacy_server\": \"ah\""))
         .stdout(contains("\"cli\": null"));
+}
+
+#[test]
+fn ai_status_waits_for_a_slow_agent_probe() {
+    let (project, home) = workspace();
+    #[cfg(windows)]
+    {
+        fs::write(
+            project.path().join("codex.cmd"),
+            "@echo off\r\necho called>>\"%~f0.calls\"\r\n\"%SystemRoot%\\System32\\ping.exe\" -n 7 127.0.0.1 >NUL\r\necho []\r\n",
+        )
+        .expect("write codex shim");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let shim = project.path().join("codex");
+        fs::write(
+            &shim,
+            "#!/bin/sh\nprintf 'called\\n' >> \"$0.calls\"\nsleep 6\nprintf '[]\\n'\n",
+        )
+        .expect("write codex shim");
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))
+            .expect("make codex shim executable");
+    }
+
+    let mut command = sandboxed(project.path(), home.path());
+    command
+        .env("PATH", project.path())
+        .env("PATHEXT", ".CMD")
+        .args(["ai", "status", "codex"]);
+    let started = Instant::now();
+    let output = command.output().expect("AIHelper should run");
+
+    assert!(
+        output.status.success(),
+        "a slow probe must finish successfully"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("codex"),
+        "the completed status should be rendered"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_secs(5),
+        "status returned before the slow probe: {:?}",
+        started.elapsed()
+    );
+    #[cfg(windows)]
+    let calls = project.path().join("codex.cmd.calls");
+    #[cfg(unix)]
+    let calls = project.path().join("codex.calls");
+    assert_eq!(
+        fs::read_to_string(calls)
+            .expect("probe calls should be recorded")
+            .lines()
+            .count(),
+        1,
+        "status should query Codex only once"
+    );
+}
+
+#[test]
+fn ai_status_reports_codex_user_and_project_rules_separately() {
+    let (project, home) = workspace();
+    fs::create_dir(project.path().join(".git")).expect("mark the project root");
+    let user_rules = home.path().join(".codex").join("AGENTS.md");
+    fs::create_dir_all(user_rules.parent().expect("user rules parent")).expect("create Codex home");
+    fs::write(
+        &user_rules,
+        "<!-- ah:begin (managed by `ah ai install`) -->\nmanaged\n<!-- ah:end -->\n",
+    )
+    .expect("seed user rules");
+    fs::write(project.path().join("AGENTS.md"), "# Project rules\n")
+        .expect("seed unmanaged project rules");
+
+    #[cfg(windows)]
+    fs::write(project.path().join("codex.cmd"), "@echo off\r\necho []\r\n")
+        .expect("write codex shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let shim = project.path().join("codex");
+        fs::write(&shim, "#!/bin/sh\nprintf '[]\\n'\n").expect("write codex shim");
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))
+            .expect("make codex shim executable");
+    }
+
+    let output = sandboxed(project.path(), home.path())
+        .env("PATH", project.path())
+        .env("PATHEXT", ".CMD")
+        .args(["--json", "ai", "status", "codex"])
+        .output()
+        .expect("status should run");
+    assert!(output.status.success(), "status should succeed");
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    let scopes = status["targets"][0]["scopes"]
+        .as_array()
+        .expect("scoped status should be present");
+    let user = scopes
+        .iter()
+        .find(|entry| entry["scope"] == "user")
+        .expect("user status should be present");
+    let project = scopes
+        .iter()
+        .find(|entry| entry["scope"] == "project")
+        .expect("project status should be present");
+
+    assert_eq!(user["rules"]["action"], "installed");
+    assert_eq!(user["rules"]["path"], user_rules.display().to_string());
+    assert_eq!(project["rules"]["action"], "not_present");
+}
+
+#[test]
+fn ai_status_reports_codex_mcp_origin_by_scope() {
+    let (project, home) = workspace();
+    fs::create_dir(project.path().join(".git")).expect("mark the project root");
+    let user_config = home.path().join(".codex").join("config.toml");
+    fs::create_dir_all(user_config.parent().expect("user config parent"))
+        .expect("create Codex home");
+    fs::write(
+        user_config,
+        "[mcp_servers.aihelper]\nurl = \"http://127.0.0.1:8787/mcp\"\n",
+    )
+    .expect("seed user MCP config");
+    let project_config = project.path().join(".codex").join("config.toml");
+    fs::create_dir_all(project_config.parent().expect("project config parent"))
+        .expect("create project Codex config");
+    fs::write(project_config, "[mcp_servers.other]\ncommand = \"other\"\n")
+        .expect("seed project MCP config");
+
+    #[cfg(windows)]
+    fs::write(project.path().join("codex.cmd"), "@echo off\r\necho []\r\n")
+        .expect("write codex shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let shim = project.path().join("codex");
+        fs::write(&shim, "#!/bin/sh\nprintf '[]\\n'\n").expect("write codex shim");
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))
+            .expect("make codex shim executable");
+    }
+
+    let output = sandboxed(project.path(), home.path())
+        .env("PATH", project.path())
+        .env("PATHEXT", ".CMD")
+        .args(["--json", "ai", "status", "codex"])
+        .output()
+        .expect("status should run");
+    assert!(output.status.success(), "status should succeed");
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    let scopes = status["targets"][0]["scopes"]
+        .as_array()
+        .expect("scoped status should be present");
+    let user = scopes
+        .iter()
+        .find(|entry| entry["scope"] == "user")
+        .expect("user scope should be present");
+    let project = scopes
+        .iter()
+        .find(|entry| entry["scope"] == "project")
+        .expect("project scope should be present");
+
+    assert_eq!(user["mcp"]["action"], "installed");
+    assert_eq!(project["mcp"]["action"], "not_present");
+}
+
+#[test]
+fn ai_status_renders_cursor_user_and_project_components_by_scope() {
+    let (project, home) = workspace();
+    fs::create_dir(project.path().join(".git")).expect("mark the project root");
+    let user_config = home.path().join(".cursor").join("mcp.json");
+    fs::create_dir_all(user_config.parent().expect("user config parent"))
+        .expect("create Cursor home");
+    fs::write(
+        user_config,
+        r#"{"mcpServers":{"aihelper":{"url":"http://127.0.0.1:8787/mcp"}}}"#,
+    )
+    .expect("seed user MCP config");
+    let project_rules = project.path().join(".cursor").join("rules").join("ah.mdc");
+    fs::create_dir_all(project_rules.parent().expect("project rules parent"))
+        .expect("create project rules directory");
+    fs::write(
+        &project_rules,
+        "<!-- ah:begin (managed by `ah ai install`) -->\nmanaged\n<!-- ah:end -->\n",
+    )
+    .expect("seed project rules");
+
+    sandboxed(project.path(), home.path())
+        .args(["ai", "status", "cursor"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "cursor (config file)\n  user\n    mcp   installed (http)\n    rules unknown (Cursor settings)\n  project\n    mcp   not present\n    rules installed",
+        ));
+}
+
+#[test]
+fn ai_status_reports_an_unreadable_scope_as_unknown() {
+    let (project, home) = workspace();
+    fs::create_dir(project.path().join(".git")).expect("mark the project root");
+    fs::create_dir_all(home.path().join(".cursor").join("mcp.json"))
+        .expect("make the user MCP path unreadable as a file");
+
+    let output = sandboxed(project.path(), home.path())
+        .args(["--json", "ai", "status", "cursor"])
+        .output()
+        .expect("status should run");
+    assert!(
+        output.status.success(),
+        "one unreadable scope must not fail status"
+    );
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    let user = status["targets"][0]["scopes"]
+        .as_array()
+        .expect("scoped status should be present")
+        .iter()
+        .find(|entry| entry["scope"] == "user")
+        .expect("user scope should be present");
+
+    assert_eq!(user["mcp"]["action"], "unknown");
+}
+
+#[cfg(windows)]
+#[test]
+fn ai_status_reads_the_default_vscode_user_mcp_file_for_copilot() {
+    let (project, home) = workspace();
+    fs::create_dir(project.path().join(".git")).expect("mark the project root");
+    let app_data = home.path().join("AppData").join("Roaming");
+    let user_config = app_data.join("Code").join("User").join("mcp.json");
+    fs::create_dir_all(user_config.parent().expect("VS Code config parent"))
+        .expect("create VS Code user config directory");
+    fs::write(
+        user_config,
+        r#"{"servers":{"aihelper":{"type":"http","url":"http://127.0.0.1:8787/mcp"}}}"#,
+    )
+    .expect("seed VS Code user MCP config");
+
+    let output = sandboxed(project.path(), home.path())
+        .env("APPDATA", app_data)
+        .args(["--json", "ai", "status", "copilot"])
+        .output()
+        .expect("status should run");
+    assert!(output.status.success(), "status should succeed");
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    let scopes = status["targets"][0]["scopes"]
+        .as_array()
+        .expect("scoped status should be present");
+    let user = scopes
+        .iter()
+        .find(|entry| entry["scope"] == "user")
+        .expect("user scope should be present");
+    let project = scopes
+        .iter()
+        .find(|entry| entry["scope"] == "project")
+        .expect("project scope should be present");
+
+    assert_eq!(user["mcp"]["action"], "installed");
+    assert_eq!(project["mcp"]["action"], "not_present");
+}
+
+#[test]
+fn ai_status_omits_project_scopes_outside_a_project() {
+    let (directory, home) = workspace();
+
+    let output = sandboxed(directory.path(), home.path())
+        .args(["--json", "ai", "status", "cursor"])
+        .output()
+        .expect("status should run");
+    assert!(output.status.success(), "status should succeed");
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    let scopes = status["targets"][0]["scopes"]
+        .as_array()
+        .expect("scoped status should be present");
+
+    assert_eq!(scopes.len(), 1);
+    assert_eq!(scopes[0]["scope"], "user");
+}
+
+#[cfg(windows)]
+#[test]
+fn ai_status_reports_claude_managed_system_paths() {
+    let (project, home) = workspace();
+    fs::create_dir(project.path().join(".git")).expect("mark the project root");
+    fs::write(project.path().join("claude.cmd"), "@echo off\r\n").expect("write Claude shim");
+
+    let output = sandboxed(project.path(), home.path())
+        .env("PATH", project.path())
+        .env("PATHEXT", ".CMD")
+        .args(["--json", "ai", "status", "claude"])
+        .output()
+        .expect("status should run");
+    assert!(output.status.success(), "status should succeed");
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status should be JSON");
+    let system = status["targets"][0]["scopes"]
+        .as_array()
+        .expect("scoped status should be present")
+        .iter()
+        .find(|entry| entry["scope"] == "system")
+        .expect("managed system scope should be present");
+
+    assert!(
+        system["mcp"]["path"]
+            .as_str()
+            .expect("MCP path should be present")
+            .ends_with("ClaudeCode\\managed-mcp.json")
+    );
+    assert!(
+        system["rules"]["path"]
+            .as_str()
+            .expect("rules path should be present")
+            .ends_with("ClaudeCode\\CLAUDE.md")
+    );
 }
 
 #[cfg(windows)]

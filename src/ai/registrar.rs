@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::error::AppError;
 
 use super::{
-    json_config,
+    json_config, opencode_config,
     targets::{CliStyle, ProbeKind, Scope, ServerSpec, Target, home_dir},
 };
 
@@ -166,7 +166,18 @@ fn resolve_program(program: &str) -> Option<PathBuf> {
 
 #[cfg(not(windows))]
 fn resolve_program(program: &str) -> Option<PathBuf> {
-    Some(PathBuf::from(program))
+    let candidate = Path::new(program);
+    if candidate.components().count() > 1 {
+        return candidate.is_file().then(|| candidate.to_path_buf());
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+pub fn available(program: &str) -> bool {
+    resolve_program(program).is_some()
 }
 
 pub fn run(invocation: &Invocation) -> Result<String, AppError> {
@@ -211,13 +222,17 @@ pub fn probe(
 ) -> Result<Option<ServerSpec>, AppError> {
     match target.probe {
         ProbeKind::ClaudeConfig => probe_claude_config(scope, name, project_root),
-        ProbeKind::CodexList => probe_codex_list(target, name),
+        ProbeKind::CodexList => Ok(probe_codex_list(target, &[name])?
+            .into_iter()
+            .next()
+            .flatten()),
         ProbeKind::Json => {
             let config = target.json_config()?;
             let path = config.path(scope, project_root)?;
             Ok(json_config::read(&path)?
                 .and_then(|document| json_config::lookup(&document, &config, name)))
         }
+        ProbeKind::OpenCode => opencode_config::lookup(scope, project_root, name),
     }
 }
 
@@ -231,7 +246,7 @@ fn probe_claude_config(
         return Ok(None);
     };
     let servers = match scope {
-        Scope::Project | Scope::User => document.get("mcpServers"),
+        Scope::System | Scope::Project | Scope::User => document.get("mcpServers"),
         Scope::Local => {
             project_entry(&document, project_root).and_then(|entry| entry.get("mcpServers"))
         }
@@ -245,6 +260,10 @@ pub fn claude_config_path(scope: Scope, project_root: &Path) -> Result<PathBuf, 
     match scope {
         Scope::Project => Ok(project_root.join(".mcp.json")),
         Scope::Local | Scope::User => Ok(home_dir()?.join(".claude.json")),
+        Scope::System => Err(AppError::external(
+            "AI_TARGET_SCOPE_UNSUPPORTED",
+            "managed Claude MCP is read only by ai status",
+        )),
     }
 }
 
@@ -282,7 +301,10 @@ fn claude_spec(entry: &Value) -> Option<ServerSpec> {
     })
 }
 
-fn probe_codex_list(target: &Target, name: &str) -> Result<Option<ServerSpec>, AppError> {
+pub fn probe_codex_list(
+    target: &Target,
+    names: &[&str],
+) -> Result<Vec<Option<ServerSpec>>, AppError> {
     let invocation = Invocation {
         program: target
             .cli_program()
@@ -300,14 +322,19 @@ fn probe_codex_list(target: &Target, name: &str) -> Result<Option<ServerSpec>, A
             ),
         )
     })?;
-    Ok(servers
-        .as_array()
-        .and_then(|servers| {
+    let servers = servers.as_array();
+    Ok(names
+        .iter()
+        .map(|name| {
             servers
-                .iter()
-                .find(|server| server.get("name").and_then(Value::as_str) == Some(name))
+                .and_then(|servers| {
+                    servers
+                        .iter()
+                        .find(|server| server.get("name").and_then(Value::as_str) == Some(*name))
+                })
+                .and_then(codex_spec)
         })
-        .and_then(codex_spec))
+        .collect())
 }
 
 fn codex_spec(entry: &Value) -> Option<ServerSpec> {
@@ -537,7 +564,7 @@ mod tests {
 
     #[test]
     fn a_file_backed_target_has_no_cli_program() {
-        for name in ["cursor", "copilot"] {
+        for name in ["cursor", "copilot", "opencode"] {
             let target = find(name).expect("target exists");
             assert!(
                 target.cli_program().is_none(),
