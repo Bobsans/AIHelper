@@ -17,9 +17,9 @@ use ah_plugin_api::{
     AH_PLUGIN_MANUAL_JSON_V1_SYMBOL, AH_PLUGIN_METADATA_JSON_V1_SYMBOL, AhPluginCancelCommandV1,
     AhPluginCommandCatalogJsonV1, AhPluginEntryV1, AhPluginInvokeCommandJsonV1,
     AhPluginManualJsonV1, AhPluginMetadataJsonV1, CommandCatalog, CommandDescriptor, CommandError,
-    GlobalOptionsWire, InvocationRequest, InvocationResponse, PluginManual, PluginMetadata,
-    RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
-    c_ptr_to_string, plugin_capabilities,
+    ErrorDiagnostic, GlobalOptionsWire, InvocationRequest, InvocationResponse, PluginManual,
+    PluginMetadata, RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest,
+    TypedInvocationResponse, c_ptr_to_string, plugin_capabilities,
 };
 use libloading::Library;
 use thiserror::Error;
@@ -127,6 +127,262 @@ pub enum RuntimeError {
         tool: String,
         reason: String,
     },
+}
+
+/// Per-variant error facts, produced by the single exhaustive match over
+/// `RuntimeError` in [`RuntimeError::describe`].
+///
+/// `diagnostic` is the diagnostic currency every surface consumes. The
+/// `agent_*` fields record the handful of places where the frozen MCP wire
+/// contract disagrees with the host contract, and `retryable` is meaningful
+/// only to MCP clients — the CLI never retries a failed command.
+struct RuntimeDiagnostic {
+    diagnostic: ErrorDiagnostic,
+    agent_code: Option<&'static str>,
+    agent_exit_code_hint: i32,
+    retryable: bool,
+}
+
+impl RuntimeDiagnostic {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            diagnostic: ErrorDiagnostic::new(None, None, code, message.clone(), message, 1),
+            agent_code: None,
+            agent_exit_code_hint: 1,
+            retryable: false,
+        }
+    }
+
+    fn cause(mut self, cause: impl Into<String>) -> Self {
+        self.diagnostic.cause = cause.into();
+        self
+    }
+
+    fn domain(mut self, domain: Option<String>) -> Self {
+        self.diagnostic.domain = domain;
+        self
+    }
+
+    fn operation(mut self, operation: Option<String>) -> Self {
+        self.diagnostic.operation = operation;
+        self
+    }
+
+    fn agent_code(mut self, code: &'static str) -> Self {
+        self.agent_code = Some(code);
+        self
+    }
+
+    fn agent_exit_code_hint(mut self, hint: i32) -> Self {
+        self.agent_exit_code_hint = hint;
+        self
+    }
+
+    fn retryable(mut self) -> Self {
+        self.retryable = true;
+        self
+    }
+}
+
+fn command_domain(command: &str) -> Option<String> {
+    command.split_once('.').map(|(domain, _)| domain.to_owned())
+}
+
+impl RuntimeError {
+    /// The one translation table from `RuntimeError` to the diagnostic
+    /// currency. Every surface — CLI, MCP, event log — projects from here, so
+    /// adding a variant breaks exactly this match.
+    ///
+    /// Credential identifiers, credential kinds and accepted-kind lists are
+    /// deliberately dropped from the secret and vault arms: `Display` may name
+    /// them for local debugging, but a diagnostic is rendered to users, written
+    /// to the event log and handed to MCP clients, so it never carries them.
+    fn describe(&self) -> RuntimeDiagnostic {
+        match self {
+            Self::DomainNotFound(domain) => RuntimeDiagnostic::new(
+                "DOMAIN_NOT_FOUND",
+                format!("unknown command domain: {domain}"),
+            )
+            .domain(Some(domain.clone()))
+            .agent_exit_code_hint(2),
+            Self::LibraryLoad { path, source } => RuntimeDiagnostic::new(
+                "PLUGIN_LIBRARY_LOAD_FAILED",
+                format!(
+                    "failed to load plugin library '{}': {source}",
+                    path.display()
+                ),
+            ),
+            Self::SymbolLoad { path, source } => RuntimeDiagnostic::new(
+                "PLUGIN_SYMBOL_LOAD_FAILED",
+                format!(
+                    "failed to load plugin entrypoint '{}': {source}",
+                    path.display()
+                ),
+            ),
+            Self::AbiVersionMismatch {
+                path,
+                found,
+                expected,
+            } => RuntimeDiagnostic::new(
+                "PLUGIN_ABI_MISMATCH",
+                format!(
+                    "plugin '{}' has incompatible ABI version {found}; expected {expected}",
+                    path.display()
+                ),
+            ),
+            Self::ApiVersionMismatch {
+                path,
+                found_major,
+                found_minor,
+                supported_major,
+                supported_minor,
+            } => RuntimeDiagnostic::new(
+                "PLUGIN_API_MISMATCH",
+                format!(
+                    "plugin '{}' requires unsupported Plugin API version {found_major}.{found_minor}; host supports {supported_major}.{supported_minor}",
+                    path.display()
+                ),
+            ),
+            Self::InvalidMetadata { path, reason } => RuntimeDiagnostic::new(
+                "PLUGIN_METADATA_INVALID",
+                format!(
+                    "plugin '{}' returned invalid metadata: {reason}",
+                    path.display()
+                ),
+            ),
+            Self::Invocation(message) => {
+                RuntimeDiagnostic::new("PLUGIN_INVOCATION_FAILED", message.clone())
+            }
+            Self::ResponseParse(message) => {
+                RuntimeDiagnostic::new("PLUGIN_RESPONSE_PARSE_FAILED", message.clone())
+                    .agent_code("PLUGIN_RESPONSE_INVALID")
+            }
+            Self::InvalidCommandCatalog { domain, reason } => RuntimeDiagnostic::new(
+                "COMMAND_CATALOG_INVALID",
+                format!("invalid typed command catalog for domain '{domain}': {reason}"),
+            ),
+            Self::TypedCommandNotFound(command) => RuntimeDiagnostic::new(
+                "TYPED_COMMAND_NOT_FOUND",
+                format!("typed command not found: {command}"),
+            )
+            .domain(command_domain(command))
+            .operation(Some(command.clone()))
+            .agent_code("COMMAND_NOT_FOUND")
+            .agent_exit_code_hint(2)
+            .retryable(),
+            Self::TypedInvocation(message) => {
+                RuntimeDiagnostic::new("TYPED_INVOCATION_FAILED", message.clone())
+            }
+            Self::SecretRequired { command, slot } => RuntimeDiagnostic::new(
+                "SECRET_REQUIRED",
+                format!("required credential slot '{slot}' is missing for '{command}'"),
+            ),
+            Self::SecretNotFound { command, slot, .. } => RuntimeDiagnostic::new(
+                "SECRET_NOT_FOUND",
+                format!("credential for slot '{slot}' was not found for '{command}'"),
+            ),
+            Self::SecretKindMismatch { .. } => RuntimeDiagnostic::new(
+                "SECRET_KIND_MISMATCH",
+                "credential kind does not match the required credential slot",
+            ),
+            Self::VaultLocked { command, slot, .. } => RuntimeDiagnostic::new(
+                "VAULT_LOCKED",
+                format!(
+                    "vault is locked while resolving credential for slot '{slot}' in '{command}'"
+                ),
+            ),
+            Self::VaultKeyUnavailable { command, slot, .. } => RuntimeDiagnostic::new(
+                "VAULT_KEY_UNAVAILABLE",
+                format!(
+                    "vault key is unavailable while resolving credential for slot '{slot}' in '{command}'"
+                ),
+            ),
+            Self::TypedResponseValidation { command, reason } => RuntimeDiagnostic::new(
+                "OUTPUT_SCHEMA_VIOLATION",
+                format!("typed command response failed validation for '{command}': {reason}"),
+            ),
+            Self::InvalidExecutionRequest(message) => {
+                RuntimeDiagnostic::new("EXECUTION_REQUEST_INVALID", message.clone())
+            }
+            Self::ExecutionCapacityFull { capacity } => RuntimeDiagnostic::new(
+                "EXECUTION_CAPACITY_FULL",
+                format!("typed execution capacity is full (maximum active {capacity})"),
+            )
+            .retryable(),
+            Self::ExecutionCancelled { request_id } => RuntimeDiagnostic::new(
+                "EXECUTION_CANCELLED",
+                format!("typed execution request '{request_id}' was cancelled"),
+            )
+            .agent_code("CANCELLED"),
+            Self::ExecutionTimeout { request_id } => RuntimeDiagnostic::new(
+                "EXECUTION_TIMEOUT",
+                format!("typed execution request '{request_id}' timed out"),
+            )
+            .agent_code("TIMEOUT")
+            .retryable(),
+            Self::ExecutorShuttingDown => {
+                RuntimeDiagnostic::new("EXECUTOR_SHUTTING_DOWN", "typed executor is shutting down")
+            }
+            Self::ExecutionWorker(message) => {
+                RuntimeDiagnostic::new("EXECUTION_WORKER_FAILED", message.clone())
+            }
+            Self::ExecutionPanic { request_id } => RuntimeDiagnostic::new(
+                "EXECUTION_HANDLER_PANIC",
+                format!("typed execution handler panicked for request '{request_id}'"),
+            )
+            .agent_code("HANDLER_PANIC"),
+            Self::DomainDisabled(domain) => RuntimeDiagnostic::new(
+                "DOMAIN_DISABLED",
+                format!("plugin domain is disabled: {domain}"),
+            )
+            .domain(Some(domain.clone()))
+            .agent_exit_code_hint(2),
+            Self::DependencyMissing {
+                domain,
+                operation,
+                tool,
+                reason,
+            } => RuntimeDiagnostic::new(
+                "DEPENDENCY_MISSING",
+                format!("required external tool not found: {tool}"),
+            )
+            .cause(reason.clone())
+            .domain(Some(domain.clone()))
+            .operation(operation.clone()),
+        }
+    }
+
+    /// Host-facing diagnostic: the currency `AppError` and the event log speak.
+    pub fn diagnostic(&self) -> ErrorDiagnostic {
+        self.describe().diagnostic
+    }
+
+    /// MCP-facing error: the same facts plus the retryability an agent needs,
+    /// under the code strings the MCP wire contract froze.
+    pub fn command_error(&self) -> CommandError {
+        let described = self.describe();
+        let agent_code = described.agent_code;
+        let exit_code_hint = described.agent_exit_code_hint;
+        let mut error = CommandError::from_diagnostic(described.diagnostic, described.retryable);
+        if let Some(code) = agent_code {
+            error.code = code.to_owned();
+        }
+        error.exit_code_hint = exit_code_hint;
+        error
+    }
+}
+
+impl From<RuntimeError> for ErrorDiagnostic {
+    fn from(error: RuntimeError) -> Self {
+        error.diagnostic()
+    }
+}
+
+impl From<RuntimeError> for CommandError {
+    fn from(error: RuntimeError) -> Self {
+        error.command_error()
+    }
 }
 
 pub trait BuiltinPlugin: Send + Sync {
@@ -2608,5 +2864,135 @@ mod tests {
         } else {
             "so"
         }
+    }
+    /// Credential ids, credential kinds and accepted-kind lists appear in
+    /// `Display` but must never reach a diagnostic — neither the host-facing
+    /// one nor the MCP-facing one, which is serialized into the tool response.
+    #[test]
+    fn secret_diagnostics_redact_credential_details_on_every_surface() {
+        let id = "runtime-private-credential-id";
+        let kind = "runtime-unexpected-private-kind";
+        let accepted = "runtime-accepted-private-kind";
+        let errors = [
+            RuntimeError::SecretNotFound {
+                command: "http.get".to_owned(),
+                slot: "basic".to_owned(),
+                id: id.to_owned(),
+            },
+            RuntimeError::SecretKindMismatch {
+                command: "http.get".to_owned(),
+                slot: "basic".to_owned(),
+                id: id.to_owned(),
+                kind: kind.to_owned(),
+                accepted_kinds: vec![accepted.to_owned()],
+            },
+            RuntimeError::VaultLocked {
+                command: "http.get".to_owned(),
+                slot: "basic".to_owned(),
+                id: id.to_owned(),
+            },
+            RuntimeError::VaultKeyUnavailable {
+                command: "http.get".to_owned(),
+                slot: "basic".to_owned(),
+                id: id.to_owned(),
+            },
+        ];
+
+        for error in errors {
+            assert!(
+                error.to_string().contains(id),
+                "the test only proves something if Display still leaks: {error}"
+            );
+            let diagnostic = error.diagnostic();
+            let command_error = error.command_error();
+            for secret in [id, kind, accepted] {
+                for field in [
+                    &diagnostic.message,
+                    &diagnostic.cause,
+                    &command_error.message,
+                    &command_error.cause,
+                ] {
+                    assert!(!field.contains(secret), "'{secret}' leaked into '{field}'");
+                }
+            }
+        }
+    }
+
+    /// The MCP wire contract froze code strings that differ from the host's,
+    /// and a retryability flag the host has no concept of.
+    #[test]
+    fn command_errors_keep_the_frozen_mcp_contract() {
+        let cases = [
+            (
+                RuntimeError::ResponseParse("bad json".to_owned()),
+                "PLUGIN_RESPONSE_PARSE_FAILED",
+                "PLUGIN_RESPONSE_INVALID",
+                false,
+            ),
+            (
+                RuntimeError::TypedCommandNotFound("probe.run".to_owned()),
+                "TYPED_COMMAND_NOT_FOUND",
+                "COMMAND_NOT_FOUND",
+                true,
+            ),
+            (
+                RuntimeError::ExecutionCancelled {
+                    request_id: "req-1".to_owned(),
+                },
+                "EXECUTION_CANCELLED",
+                "CANCELLED",
+                false,
+            ),
+            (
+                RuntimeError::ExecutionTimeout {
+                    request_id: "req-1".to_owned(),
+                },
+                "EXECUTION_TIMEOUT",
+                "TIMEOUT",
+                true,
+            ),
+            (
+                RuntimeError::ExecutionPanic {
+                    request_id: "req-1".to_owned(),
+                },
+                "EXECUTION_HANDLER_PANIC",
+                "HANDLER_PANIC",
+                false,
+            ),
+            (
+                RuntimeError::ExecutionCapacityFull { capacity: 4 },
+                "EXECUTION_CAPACITY_FULL",
+                "EXECUTION_CAPACITY_FULL",
+                true,
+            ),
+            (
+                RuntimeError::DomainDisabled("git".to_owned()),
+                "DOMAIN_DISABLED",
+                "DOMAIN_DISABLED",
+                false,
+            ),
+        ];
+
+        for (error, host_code, agent_code, retryable) in cases {
+            let diagnostic = error.diagnostic();
+            // Exercise the `From` impls the call sites actually use.
+            let command_error = CommandError::from(error);
+            assert_eq!(diagnostic.code, host_code);
+            assert_eq!(command_error.code, agent_code);
+            assert_eq!(command_error.retryable, retryable, "for {agent_code}");
+        }
+    }
+
+    /// Not-found and disabled keep the exit hint an MCP client sees, while the
+    /// host diagnostic keeps the hint that matches `AppError::exit_code`.
+    #[test]
+    fn exit_code_hints_stay_per_surface() {
+        let error = RuntimeError::DomainDisabled("git".to_owned());
+        assert_eq!(error.diagnostic().exit_code_hint, 1);
+        assert_eq!(error.command_error().exit_code_hint, 2);
+
+        let error = RuntimeError::ExecutionWorker("worker gone".to_owned());
+        assert_eq!(error.diagnostic().exit_code_hint, 1);
+        assert_eq!(error.command_error().exit_code_hint, 1);
     }
 }

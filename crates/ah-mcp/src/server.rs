@@ -510,7 +510,7 @@ impl McpServer {
             Ok(handle) => handle,
             Err(error) => {
                 self.shared.jobs.rollback(reservation);
-                return Ok(command_error_result(runtime_command_error(error)));
+                return Ok(command_error_result(CommandError::from(error)));
             }
         };
         let shared = Arc::downgrade(&self.shared);
@@ -518,7 +518,7 @@ impl McpServer {
         let snapshot = self.shared.jobs.attach(
             reservation,
             handle,
-            runtime_command_error,
+            CommandError::from,
             event_context,
             Some(completion_hook),
         );
@@ -555,11 +555,11 @@ impl McpServer {
                 "job control tools accept only 'job_id'",
             )));
         }
-        match self.shared.jobs.cancel(
-            &job_id,
-            self.shared.executor.as_ref(),
-            runtime_command_error,
-        ) {
+        match self
+            .shared
+            .jobs
+            .cancel(&job_id, self.shared.executor.as_ref(), CommandError::from)
+        {
             Ok(snapshot) => Ok(job_snapshot_result(&snapshot, false)),
             Err(error) => Ok(command_error_result(job_registry_error(error))),
         }
@@ -616,7 +616,7 @@ impl McpServer {
         let observed = self.shared.executor.execute_observed(request).await;
         let result = match observed.result {
             Ok(response) => Ok(typed_response_result(response, &request_id)),
-            Err(error) => Ok(command_error_result(runtime_command_error(error))),
+            Err(error) => Ok(command_error_result(CommandError::from(error))),
         };
         ToolCallOutcome {
             result,
@@ -2416,137 +2416,6 @@ fn adapter_command_error(
         1,
         false,
     )
-}
-
-fn runtime_command_error(error: RuntimeError) -> CommandError {
-    match error {
-        RuntimeError::DomainNotFound(domain) => CommandError::new(
-            Some(domain),
-            None,
-            "DOMAIN_NOT_FOUND",
-            "Command domain was not found",
-            "the plugin registry does not contain the requested domain",
-            2,
-            false,
-        ),
-        RuntimeError::TypedCommandNotFound(command) => CommandError::new(
-            command_domain(&command),
-            Some(command),
-            "COMMAND_NOT_FOUND",
-            "Typed command was not found",
-            "the command catalog changed before execution",
-            2,
-            true,
-        ),
-        RuntimeError::DomainDisabled(domain) => CommandError::new(
-            Some(domain),
-            None,
-            "DOMAIN_DISABLED",
-            "Command domain is disabled",
-            "enable the plugin domain before retrying",
-            2,
-            false,
-        ),
-        RuntimeError::DependencyMissing {
-            domain,
-            operation,
-            tool,
-            reason,
-        } => CommandError::new(
-            Some(domain),
-            operation,
-            "DEPENDENCY_MISSING",
-            format!("Required external tool not found: {tool}"),
-            reason,
-            1,
-            false,
-        ),
-        RuntimeError::ExecutionCapacityFull { capacity } => CommandError::new(
-            None,
-            None,
-            "EXECUTION_CAPACITY_FULL",
-            "MCP execution capacity is full",
-            format!("all {capacity} execution slots are active or draining"),
-            1,
-            true,
-        ),
-        RuntimeError::ExecutionCancelled { request_id } => CommandError::new(
-            None,
-            None,
-            "CANCELLED",
-            "Command execution was cancelled",
-            format!("request '{request_id}' was cancelled"),
-            1,
-            false,
-        ),
-        RuntimeError::ExecutionTimeout { request_id } => CommandError::new(
-            None,
-            None,
-            "TIMEOUT",
-            "Command execution timed out",
-            format!("request '{request_id}' exceeded its deadline"),
-            1,
-            true,
-        ),
-        RuntimeError::ExecutorShuttingDown => CommandError::new(
-            None,
-            None,
-            "EXECUTOR_SHUTTING_DOWN",
-            "MCP executor is shutting down",
-            "new execution admission is closed",
-            1,
-            false,
-        ),
-        RuntimeError::ExecutionPanic { request_id } => CommandError::new(
-            None,
-            None,
-            "HANDLER_PANIC",
-            "Command handler panicked",
-            format!("request '{request_id}' ended with a handler panic"),
-            1,
-            false,
-        ),
-        other => CommandError::new(
-            None,
-            None,
-            runtime_error_code(&other),
-            "Command execution failed",
-            other.to_string(),
-            1,
-            false,
-        ),
-    }
-}
-
-fn runtime_error_code(error: &RuntimeError) -> &'static str {
-    match error {
-        RuntimeError::LibraryLoad { .. } => "PLUGIN_LIBRARY_LOAD_FAILED",
-        RuntimeError::SymbolLoad { .. } => "PLUGIN_SYMBOL_LOAD_FAILED",
-        RuntimeError::AbiVersionMismatch { .. } => "PLUGIN_ABI_MISMATCH",
-        RuntimeError::ApiVersionMismatch { .. } => "PLUGIN_API_MISMATCH",
-        RuntimeError::InvalidMetadata { .. } => "PLUGIN_METADATA_INVALID",
-        RuntimeError::Invocation(_) => "PLUGIN_INVOCATION_FAILED",
-        RuntimeError::ResponseParse(_) => "PLUGIN_RESPONSE_INVALID",
-        RuntimeError::InvalidCommandCatalog { .. } => "COMMAND_CATALOG_INVALID",
-        RuntimeError::TypedInvocation(_) => "TYPED_INVOCATION_FAILED",
-        RuntimeError::SecretRequired { .. } => "SECRET_REQUIRED",
-        RuntimeError::SecretNotFound { .. } => "SECRET_NOT_FOUND",
-        RuntimeError::SecretKindMismatch { .. } => "SECRET_KIND_MISMATCH",
-        RuntimeError::VaultLocked { .. } => "VAULT_LOCKED",
-        RuntimeError::VaultKeyUnavailable { .. } => "VAULT_KEY_UNAVAILABLE",
-        RuntimeError::TypedResponseValidation { .. } => "OUTPUT_SCHEMA_VIOLATION",
-        RuntimeError::InvalidExecutionRequest(_) => "EXECUTION_REQUEST_INVALID",
-        RuntimeError::ExecutionWorker(_) => "EXECUTION_WORKER_FAILED",
-        RuntimeError::ExecutorShuttingDown => "EXECUTOR_SHUTTING_DOWN",
-        RuntimeError::DomainNotFound(_)
-        | RuntimeError::TypedCommandNotFound(_)
-        | RuntimeError::DomainDisabled(_)
-        | RuntimeError::DependencyMissing { .. }
-        | RuntimeError::ExecutionCapacityFull { .. }
-        | RuntimeError::ExecutionCancelled { .. }
-        | RuntimeError::ExecutionTimeout { .. }
-        | RuntimeError::ExecutionPanic { .. } => "COMMAND_EXECUTION_FAILED",
-    }
 }
 
 fn command_domain(command: &str) -> Option<String> {

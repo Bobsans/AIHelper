@@ -46,7 +46,7 @@ readiness probing. Cursor control and redraw logic sit next to registrar mutatio
 An error value is data; how it is shown is a policy of the presentation layer.
 This is why `error.rs` is 1 113 lines for 15 variants.
 
-### 4.4 Three error taxonomies, two hand-written translation tables
+### 4.4 Three error taxonomies, two hand-written translation tables *(consolidated — see status)*
 
 | Layer | Type | Variants |
 |---|---|---|
@@ -70,6 +70,37 @@ crates, and the compiler only catches two of them if the matches are exhaustive.
 absorbs everything — which means the host error type has effectively degenerated
 into a stringly-typed pair, while still carrying 14 structured variants for
 filesystem errors.
+
+**Status:** the three tables are one. `RuntimeError::describe` in `ah-runtime` is
+now the only exhaustive match over the variants; `RuntimeError::diagnostic()` and
+`RuntimeError::command_error()` project from it, exposed as
+`From<RuntimeError> for ErrorDiagnostic` and `From<RuntimeError> for CommandError`.
+`map_runtime_error` is four lines, `runtime_command_error` and `runtime_error_code`
+are gone, and adding a variant now breaks exactly one match, in `ah-runtime`.
+
+Two things §B below did not anticipate, and which the table records explicitly
+rather than flattening:
+
+- The two surfaces froze **different code strings** for the same five variants
+  (`EXECUTION_CANCELLED`/`CANCELLED`, `EXECUTION_TIMEOUT`/`TIMEOUT`,
+  `EXECUTION_HANDLER_PANIC`/`HANDLER_PANIC`, `TYPED_COMMAND_NOT_FOUND`/`COMMAND_NOT_FOUND`,
+  `PLUGIN_RESPONSE_PARSE_FAILED`/`PLUGIN_RESPONSE_INVALID`). Both sets are public,
+  so neither could move; the table carries the host code and an MCP override.
+- **`retryable` is not a property of the error**, it is a property of the MCP
+  transport, so it stays off `ErrorDiagnostic` and is applied when projecting to
+  `CommandError`. `exit_code_hint` is likewise per-surface: the host reports 1
+  because `AppError::exit_code` is always 1, MCP keeps its 2 for the
+  not-found/disabled cases.
+
+The consolidation also closed a leak: the old MCP fallback arm used
+`RuntimeError`'s `Display` as the `cause`, so credential ids reached MCP clients
+for `SecretNotFound`, `SecretKindMismatch`, `VaultLocked` and `VaultKeyUnavailable`.
+Redaction was only ever implemented on the CLI arm; it now lives in the shared
+table and covers both surfaces.
+
+What remains: `AppError::External` is still the universal fallback for
+non-runtime errors, and `AppError` still owns its own 15-variant rendering — see
+4.3 and step 6 below.
 
 ### 4.5 Error values are large enough to be suppressed rather than fixed
 
@@ -181,7 +212,8 @@ added) and a future fuzz target (group 08).
 3. Migrate the remaining domains, then `src/ai.rs` and `mcp_service/output.rs`.
 4. Separate `ai/install.rs` live rendering into a `progress` module that writes
    through the emitter; installation logic returns events, the renderer consumes them.
-5. Add `From<RuntimeError> for ErrorDiagnostic`; delete the three mapping functions.
+5. ~~Add `From<RuntimeError> for ErrorDiagnostic`; delete the three mapping functions~~
+   **(done)** — see the status note under 4.4.
 6. Move error rendering out of `error.rs`.
 7. Box error payloads; remove the `result_large_err` allows; add `-D warnings` to CI
    (group 09).

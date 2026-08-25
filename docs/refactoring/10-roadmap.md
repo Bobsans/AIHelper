@@ -73,7 +73,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 | Runtime-owned cancellation; delete five global registries                                   | 02     |
 | Delete `AH_*_TEST_*` environment seams                                                      | 02, 08 |
 | `Emitter<W>`; remove `println!` from adapters; single `--quiet` handling                    | 04     |
-| `From<RuntimeError> for ErrorDiagnostic`; delete three mapping tables                       | 04     |
+| ~~`From<RuntimeError> for ErrorDiagnostic`; delete three mapping tables~~ **(done)**        | 04     |
 | Box error payloads; remove `result_large_err` allows                                        | 04, 09 |
 
 **Exit criterion:** adding a command is a one-file change; no security-relevant code

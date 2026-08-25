@@ -422,7 +422,18 @@ impl AppError {
 
     pub fn diagnostic(&self) -> ErrorDiagnostic {
         match self {
-            Self::Diagnostic { diagnostic } => diagnostic.clone(),
+            // A carried diagnostic gets the same code-based domain/operation
+            // inference as every other variant when it did not name its own.
+            Self::Diagnostic { diagnostic } => {
+                let mut diagnostic = diagnostic.clone();
+                if diagnostic.domain.is_none() {
+                    diagnostic.domain = infer_domain(&diagnostic.code);
+                }
+                if diagnostic.operation.is_none() {
+                    diagnostic.operation = infer_operation(&diagnostic.code);
+                }
+                diagnostic
+            }
             Self::SuggestionContext { source, .. } => source.diagnostic(),
             _ => {
                 let rendered = self.rendered();

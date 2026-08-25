@@ -25,7 +25,7 @@ use std::{
     sync::Arc,
 };
 
-use ah_plugin_api::{ErrorDiagnostic, InvocationResponse, RequiredTool, ResolvedSecret};
+use ah_plugin_api::{InvocationResponse, RequiredTool, ResolvedSecret};
 use ah_runtime::{PluginManager, PluginSource, RuntimeError, SecretResolver, SecretResolverError};
 use serde::Serialize;
 
@@ -390,137 +390,11 @@ fn handle_response(
 }
 
 fn map_runtime_error(error: RuntimeError) -> AppError {
+    // `RuntimeError::diagnostic` is the whole taxonomy; the host only overrides
+    // the one variant that has a richer console rendering (suggestions, usage).
     match error {
         RuntimeError::DomainNotFound(domain) => AppError::unknown_command(domain, None),
-        RuntimeError::DomainDisabled(domain) => AppError::external(
-            "DOMAIN_DISABLED",
-            format!("plugin domain is disabled: {domain}"),
-        ),
-        RuntimeError::DependencyMissing {
-            domain,
-            operation,
-            tool,
-            reason,
-        } => AppError::from_diagnostic(ErrorDiagnostic::new(
-            Some(domain),
-            operation,
-            "DEPENDENCY_MISSING",
-            format!("required external tool not found: {tool}"),
-            reason,
-            1,
-        )),
-        RuntimeError::LibraryLoad { path, source } => AppError::external(
-            "PLUGIN_LIBRARY_LOAD_FAILED",
-            format!(
-                "failed to load plugin library '{}': {source}",
-                path.display()
-            ),
-        ),
-        RuntimeError::SymbolLoad { path, source } => AppError::external(
-            "PLUGIN_SYMBOL_LOAD_FAILED",
-            format!(
-                "failed to load plugin entrypoint '{}': {source}",
-                path.display()
-            ),
-        ),
-        RuntimeError::AbiVersionMismatch {
-            path,
-            found,
-            expected,
-        } => AppError::external(
-            "PLUGIN_ABI_MISMATCH",
-            format!(
-                "plugin '{}' has incompatible ABI version {found}; expected {expected}",
-                path.display()
-            ),
-        ),
-        RuntimeError::ApiVersionMismatch {
-            path,
-            found_major,
-            found_minor,
-            supported_major,
-            supported_minor,
-        } => AppError::external(
-            "PLUGIN_API_MISMATCH",
-            format!(
-                "plugin '{}' requires unsupported Plugin API version {found_major}.{found_minor}; host supports {supported_major}.{supported_minor}",
-                path.display()
-            ),
-        ),
-        RuntimeError::InvalidMetadata { path, reason } => AppError::external(
-            "PLUGIN_METADATA_INVALID",
-            format!(
-                "plugin '{}' returned invalid metadata: {reason}",
-                path.display()
-            ),
-        ),
-        RuntimeError::Invocation(message) => {
-            AppError::external("PLUGIN_INVOCATION_FAILED", message)
-        }
-        RuntimeError::ResponseParse(message) => {
-            AppError::external("PLUGIN_RESPONSE_PARSE_FAILED", message)
-        }
-        RuntimeError::InvalidCommandCatalog { domain, reason } => AppError::external(
-            "COMMAND_CATALOG_INVALID",
-            format!("invalid typed command catalog for domain '{domain}': {reason}"),
-        ),
-        RuntimeError::TypedCommandNotFound(command) => AppError::external(
-            "TYPED_COMMAND_NOT_FOUND",
-            format!("typed command not found: {command}"),
-        ),
-        RuntimeError::TypedInvocation(message) => {
-            AppError::external("TYPED_INVOCATION_FAILED", message)
-        }
-        error @ RuntimeError::SecretRequired { .. } => {
-            AppError::external("SECRET_REQUIRED", error.to_string())
-        }
-        RuntimeError::SecretNotFound { command, slot, .. } => AppError::external(
-            "SECRET_NOT_FOUND",
-            format!("credential for slot '{slot}' was not found for '{command}'"),
-        ),
-        RuntimeError::SecretKindMismatch { .. } => AppError::external(
-            "SECRET_KIND_MISMATCH",
-            "credential kind does not match the required credential slot",
-        ),
-        RuntimeError::VaultLocked { command, slot, .. } => AppError::external(
-            "VAULT_LOCKED",
-            format!("vault is locked while resolving credential for slot '{slot}' in '{command}'"),
-        ),
-        RuntimeError::VaultKeyUnavailable { command, slot, .. } => AppError::external(
-            "VAULT_KEY_UNAVAILABLE",
-            format!(
-                "vault key is unavailable while resolving credential for slot '{slot}' in '{command}'"
-            ),
-        ),
-        RuntimeError::TypedResponseValidation { command, reason } => AppError::external(
-            "OUTPUT_SCHEMA_VIOLATION",
-            format!("typed command response failed validation for '{command}': {reason}"),
-        ),
-        RuntimeError::InvalidExecutionRequest(message) => {
-            AppError::external("EXECUTION_REQUEST_INVALID", message)
-        }
-        RuntimeError::ExecutionCapacityFull { capacity } => AppError::external(
-            "EXECUTION_CAPACITY_FULL",
-            format!("typed execution capacity is full (maximum active {capacity})"),
-        ),
-        RuntimeError::ExecutionCancelled { request_id } => AppError::external(
-            "EXECUTION_CANCELLED",
-            format!("typed execution request '{request_id}' was cancelled"),
-        ),
-        RuntimeError::ExecutionTimeout { request_id } => AppError::external(
-            "EXECUTION_TIMEOUT",
-            format!("typed execution request '{request_id}' timed out"),
-        ),
-        RuntimeError::ExecutorShuttingDown => {
-            AppError::external("EXECUTOR_SHUTTING_DOWN", "typed executor is shutting down")
-        }
-        RuntimeError::ExecutionWorker(message) => {
-            AppError::external("EXECUTION_WORKER_FAILED", message)
-        }
-        RuntimeError::ExecutionPanic { request_id } => AppError::external(
-            "EXECUTION_HANDLER_PANIC",
-            format!("typed execution handler panicked for request '{request_id}'"),
-        ),
+        other => AppError::from_diagnostic(other.diagnostic()),
     }
 }
 
