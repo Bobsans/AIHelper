@@ -1,0 +1,16 @@
+# Error payloads returned by value get a budget rather than a blanket
+# `#![allow(clippy::result_large_err)]`, which used to sit at the root of six
+# crates and hid every future regression along with the current state.
+#
+# 136 bytes is what the two remaining offenders actually need:
+#
+# - `ah_plugin_api::CommandError` and `ErrorDiagnostic` are flat wire structs of
+#   required strings - domain, operation, code, message, cause - that cross the
+#   plugin ABI as JSON. There is no large element inside to box, and wrapping
+#   them at the 25 `Result` sites would obscure the API to save eight bytes.
+# - `ah_mcp::McpAdapterError` inlines `RuntimeError`, which is sized by its
+#   widest variant, `SecretKindMismatch`.
+#
+# Anything larger than this is new and should be boxed, the way
+# `AppError::Diagnostic` and `InvocationResponse::diagnostic` are.
+large-error-threshold = 136

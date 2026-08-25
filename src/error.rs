@@ -20,8 +20,10 @@ pub enum AppError {
         suggestion_description: Option<String>,
         follow_up: Option<FollowUpSuggestion>,
     },
+    // Boxed: this payload alone is as large as the whole enum, and every
+    // `Result<_, AppError>` in the crate pays for the largest variant.
     #[error("{diagnostic}")]
-    Diagnostic { diagnostic: ErrorDiagnostic },
+    Diagnostic { diagnostic: Box<ErrorDiagnostic> },
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
     #[error("failed to change working directory to {path:?}: {source}")]
@@ -175,7 +177,9 @@ impl AppError {
     }
 
     pub fn from_diagnostic(diagnostic: ErrorDiagnostic) -> Self {
-        Self::Diagnostic { diagnostic }
+        Self::Diagnostic {
+            diagnostic: Box::new(diagnostic),
+        }
     }
 
     pub fn cwd(path: PathBuf, source: io::Error) -> Self {
@@ -432,7 +436,7 @@ impl AppError {
                 if diagnostic.operation.is_none() {
                     diagnostic.operation = infer_operation(&diagnostic.code);
                 }
-                diagnostic
+                *diagnostic
             }
             Self::SuggestionContext { source, .. } => source.diagnostic(),
             _ => {

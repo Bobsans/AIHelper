@@ -102,7 +102,7 @@ What remains: `AppError::External` is still the universal fallback for
 non-runtime errors, and `AppError` still owns its own 15-variant rendering — see
 4.3 and step 6 below.
 
-### 4.5 Error values are large enough to be suppressed rather than fixed
+### 4.5 Error values are large enough to be suppressed rather than fixed *(resolved)*
 
 `#![allow(clippy::result_large_err)]` appears at the crate root of `src/lib.rs`,
 `crates/ah-mcp/src/server.rs`, and all four plugins, plus six targeted `#[allow]`s
@@ -110,6 +110,15 @@ in `ah-plugin-api`. The lint is correct: `AppError` embeds `ErrorDiagnostic`
 (five `String`s plus options) and `Box<AppError>`, and `InvocationResponse` is
 returned by value from every plugin entry point. Every `Result` in the codebase
 pays that size. The allow silences the signal instead of boxing the payload.
+
+**Status:** all thirteen allows are gone. Measured with the lint enabled, 625
+call sites were over the 128-byte threshold. Boxing the two payloads that were
+genuinely oversized - `AppError::Diagnostic` and `InvocationResponse::diagnostic`,
+each inlining a whole `ErrorDiagnostic` - removed 599 of them. The remaining 26
+are `CommandError` and `McpAdapterError` at exactly 128 bytes, which have no
+large element inside to box: they are flat wire structs of required strings.
+Those get a documented 136-byte budget in `clippy.toml` instead, so growth beyond
+today's shape is still caught.
 
 ### 4.6 Redaction is implemented three times *(engine extracted — see status)*
 

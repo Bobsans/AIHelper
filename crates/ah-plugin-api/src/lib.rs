@@ -150,7 +150,6 @@ pub struct InvocationNormalization {
 
 /// Normalizes invocation arguments before plugin parsing, extracting supported
 /// global flags from `argv` into `globals`.
-#[allow(clippy::result_large_err)]
 pub fn normalize_invocation_argv(
     argv: &[String],
     mut globals: GlobalOptionsWire,
@@ -199,7 +198,6 @@ pub fn normalize_invocation_argv(
     })
 }
 
-#[allow(clippy::result_large_err)]
 fn parse_limit(value: &str) -> Result<usize, InvocationResponse> {
     let parsed = value.parse::<usize>().map_err(|_| {
         InvocationResponse::error(
@@ -222,7 +220,9 @@ pub struct InvocationResponse {
     pub message: Option<String>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
-    pub diagnostic: Option<ErrorDiagnostic>,
+    // Boxed: an inline diagnostic more than doubles the size of every
+    // `InvocationResponse`, which every plugin entry point returns by value.
+    pub diagnostic: Option<Box<ErrorDiagnostic>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -294,14 +294,14 @@ impl InvocationResponse {
             message: None,
             error_code: Some(code.clone()),
             error_message: Some(message.clone()),
-            diagnostic: Some(ErrorDiagnostic::new(
+            diagnostic: Some(Box::new(ErrorDiagnostic::new(
                 None,
                 None,
                 code,
                 message.clone(),
                 message,
                 1,
-            )),
+            ))),
         }
     }
 
@@ -311,20 +311,20 @@ impl InvocationResponse {
             message: None,
             error_code: Some(diagnostic.code.clone()),
             error_message: Some(diagnostic.message.clone()),
-            diagnostic: Some(diagnostic),
+            diagnostic: Some(Box::new(diagnostic)),
         }
     }
 
     pub fn with_error_domain(mut self, domain: impl Into<String>) -> Self {
         if let Some(diagnostic) = self.diagnostic.take() {
-            self.diagnostic = Some(diagnostic.with_domain(domain));
+            self.diagnostic = Some(Box::new(diagnostic.with_domain(domain)));
         }
         self
     }
 
     pub fn with_error_operation(mut self, operation: impl Into<String>) -> Self {
         if let Some(diagnostic) = self.diagnostic.take() {
-            self.diagnostic = Some(diagnostic.with_operation(operation));
+            self.diagnostic = Some(Box::new(diagnostic.with_operation(operation)));
         }
         self
     }
@@ -852,7 +852,6 @@ pub unsafe fn free_c_string_ptr(value: *mut c_char) {
 /// rejects credentials rather than silently dropping them, so a domain only
 /// accepts a slot it actually knows.
 pub trait BindResolvedSecrets: Sized {
-    #[allow(clippy::result_large_err)]
     fn bind_resolved_secrets(
         &mut self,
         secrets: &BTreeMap<String, ResolvedSecret>,
@@ -870,7 +869,6 @@ pub trait BindResolvedSecrets: Sized {
 /// Converts a raw invocation request into a typed response using the plugin-local
 /// argument parser and command executor.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[allow(clippy::result_large_err)]
 pub fn invoke_request_with_parser<TArgs, TParse, TExecute>(
     expected_domain: &str,
     request_json: *const c_char,
@@ -930,7 +928,6 @@ where
 }
 
 /// Runs a plugin parser and executor without allowing an unwind to cross the C ABI boundary.
-#[allow(clippy::result_large_err)]
 pub fn invoke_request_with_parser_catch_unwind<TArgs, TParse, TExecute>(
     expected_domain: &str,
     request_json: *const c_char,
@@ -1537,7 +1534,6 @@ mod tests {
     impl BindResolvedSecrets for () {}
 
     #[test]
-    #[allow(clippy::result_large_err)]
     fn plugin_parser_panic_becomes_structured_error() {
         let request = InvocationRequest::new("test", vec!["run".to_owned()], base_globals());
         let raw = CString::new(serde_json::to_string(&request).expect("request should serialize"))
@@ -1561,7 +1557,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::result_large_err)]
     fn plugin_executor_panic_does_not_poison_later_invocation() {
         let request = InvocationRequest::new("test", vec!["run".to_owned()], base_globals());
         let raw = CString::new(serde_json::to_string(&request).expect("request should serialize"))

@@ -1,5 +1,3 @@
-#![allow(clippy::result_large_err)]
-
 pub mod ai;
 pub mod cli;
 pub mod commands;
@@ -387,7 +385,7 @@ fn handle_response(
     }
 
     if let Some(diagnostic) = response.diagnostic {
-        return Err(AppError::from_diagnostic(diagnostic));
+        return Err(AppError::from_diagnostic(*diagnostic));
     }
 
     let code = response

@@ -74,7 +74,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 | Delete `AH_*_TEST_*` environment seams                                                      | 02, 08 |
 | `Emitter<W>`; remove `println!` from adapters; single `--quiet` handling                    | 04     |
 | ~~`From<RuntimeError> for ErrorDiagnostic`; delete three mapping tables~~ **(done)**        | 04     |
-| Box error payloads; remove `result_large_err` allows                                        | 04, 09 |
+| ~~Box error payloads; remove `result_large_err` allows~~ **(done)**                         | 04, 09 |
 
 **Exit criterion:** adding a command is a one-file change; no security-relevant code
 exists in more than one copy; output is testable in-process.

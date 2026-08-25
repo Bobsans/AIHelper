@@ -1,5 +1,3 @@
-#![allow(clippy::result_large_err)]
-
 use std::{
     env, fmt,
     fs::{self, File, OpenOptions},

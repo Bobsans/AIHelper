@@ -1,5 +1,3 @@
-#![allow(clippy::result_large_err)]
-
 use std::{
     env, fs,
     io::{BufRead, BufReader, Read, Write},
