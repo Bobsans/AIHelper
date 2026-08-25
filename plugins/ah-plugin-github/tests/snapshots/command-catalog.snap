@@ -40,7 +40,6 @@
             "type": "boolean"
           }
         },
-        "required": [],
         "type": "object"
       },
       "output_schema": {
@@ -149,6 +148,7 @@
             "type": "string"
           },
           "labels": {
+            "default": [],
             "description": "Issue labels.",
             "items": {
               "type": "string"
@@ -197,7 +197,6 @@
             "type": "boolean"
           }
         },
-        "required": [],
         "type": "object"
       },
       "output_schema": {
@@ -655,6 +654,7 @@
             "type": "string"
           },
           "assignees": {
+            "default": [],
             "description": "Assignees to set.",
             "items": {
               "type": "string"
@@ -670,6 +670,7 @@
             "type": "string"
           },
           "labels": {
+            "default": [],
             "description": "Labels to set.",
             "items": {
               "type": "string"
@@ -899,6 +900,7 @@
             "type": "string"
           },
           "assignees": {
+            "default": [],
             "items": {
               "type": "string"
             },
@@ -914,6 +916,7 @@
             "type": "string"
           },
           "labels": {
+            "default": [],
             "items": {
               "type": "string"
             },
@@ -2248,7 +2251,6 @@
             "type": "boolean"
           }
         },
-        "required": [],
         "type": "object"
       },
       "output_schema": {
@@ -2350,6 +2352,7 @@
             "type": "string"
           },
           "inputs": {
+            "default": [],
             "description": "Workflow inputs encoded as KEY=VALUE.",
             "items": {
               "pattern": "^[^=]+=.*$",
@@ -2506,7 +2509,6 @@
             "type": "string"
           }
         },
-        "required": [],
         "type": "object"
       },
       "output_schema": {

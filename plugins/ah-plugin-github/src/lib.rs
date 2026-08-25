@@ -85,15 +85,27 @@ struct GithubCli {
     command: GithubCommand,
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Deserialize, JsonSchema)]
 struct GithubConnectionArgs {
     #[arg(long, global = true, value_name = "OWNER/REPO")]
+    #[schemars(
+        description = "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd."
+    )]
     repo: Option<String>,
     #[arg(long, global = true, default_value = DEFAULT_REMOTE, value_name = "NAME")]
+    #[serde(default = "default_remote")]
+    #[schemars(default = "default_remote", length(min = 1))]
     remote: String,
     #[arg(long, global = true, default_value = DEFAULT_API_URL, value_name = "URL")]
+    #[serde(default = "default_api_url")]
+    #[schemars(
+        default = "default_api_url",
+        length(min = 1),
+        description = "GitHub-compatible API base URL. A supplied token is sent to this host."
+    )]
     api_url: String,
     #[arg(long, global = true, value_name = "TOKEN")]
+    #[schemars(description = "Explicit GitHub token; prefer environment-based authentication.")]
     token: Option<String>,
     #[arg(
         long,
@@ -103,11 +115,40 @@ struct GithubConnectionArgs {
         num_args = 0..=1,
         default_missing_value = "true"
     )]
+    #[serde(default = "enabled")]
+    #[schemars(
+        default = "enabled",
+        description = "Use Git credential helper lookup as the final fallback."
+    )]
     use_git_credential: bool,
     #[arg(long, global = true, default_value_t = DEFAULT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_timeout_secs")]
+    #[schemars(
+        default = "default_timeout_secs",
+        range(min = 1),
+        description = "Per-request HTTP timeout."
+    )]
     timeout_secs: u64,
+    // Supplied by the execution context, never by the caller.
     #[arg(skip)]
+    #[serde(skip)]
     cwd: Option<PathBuf>,
+}
+
+fn default_remote() -> String {
+    DEFAULT_REMOTE.to_owned()
+}
+
+fn default_api_url() -> String {
+    DEFAULT_API_URL.to_owned()
+}
+
+fn enabled() -> bool {
+    true
+}
+
+fn default_timeout_secs() -> u64 {
+    DEFAULT_TIMEOUT_SECS
 }
 
 #[derive(Debug, Subcommand)]
@@ -130,20 +171,33 @@ enum GithubCommand {
     Run(RunArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssuesArgs {
     #[arg(long, default_value = "open", value_parser = ["open", "closed", "all"])]
+    #[serde(default = "default_issue_state")]
+    #[schemars(default = "default_issue_state", extend("enum" = ["open", "closed", "all"]))]
     state: String,
     #[arg(long = "label", value_name = "LABEL")]
+    #[serde(default)]
+    #[schemars(description = "Issue labels.")]
     labels: Vec<String>,
     #[arg(long)]
+    #[schemars(description = "Assignee login.")]
     assignee: Option<String>,
     #[arg(long)]
+    #[schemars(description = "Author login.")]
     author: Option<String>,
     #[arg(long)]
+    #[schemars(description = "ISO date or timestamp.")]
     since: Option<String>,
     #[arg(long)]
+    #[schemars(description = "GitHub search query.")]
     search: Option<String>,
+}
+
+fn default_issue_state() -> String {
+    "open".to_owned()
 }
 
 #[derive(Debug, Args)]
@@ -168,57 +222,85 @@ enum IssueCommand {
     Comments(IssueNumberArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueNumberArgs {
+    #[schemars(range(min = 1), description = "Issue number.")]
     number: u64,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CreateIssueArgs {
     #[arg(long)]
+    #[schemars(length(min = 1), description = "Issue title.")]
     title: String,
     #[arg(long, value_name = "TEXT")]
+    #[schemars(description = "Inline text.")]
     body: Option<String>,
     #[arg(long, value_name = "PATH")]
+    #[schemars(description = "UTF-8 text file resolved against the execution cwd.")]
     body_file: Option<String>,
     #[arg(long = "label", value_name = "LABEL")]
+    #[serde(default)]
+    #[schemars(description = "Labels to set.")]
     labels: Vec<String>,
     #[arg(long = "assignee", value_name = "USER")]
+    #[serde(default)]
+    #[schemars(description = "Assignees to set.")]
     assignees: Vec<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct UpdateIssueArgs {
+    #[schemars(range(min = 1), description = "Issue number.")]
     number: u64,
     #[arg(long)]
+    #[schemars(description = "Replacement title.")]
     title: Option<String>,
     #[arg(long, value_name = "TEXT")]
+    #[schemars(description = "Inline text.")]
     body: Option<String>,
     #[arg(long, value_name = "PATH")]
+    #[schemars(description = "UTF-8 text file resolved against the execution cwd.")]
     body_file: Option<String>,
     #[arg(long, value_parser = ["open", "closed"])]
+    #[schemars(extend("enum" = ["open", "closed"]))]
     state: Option<String>,
     #[arg(long = "label", value_name = "LABEL")]
+    #[serde(default)]
+    #[schemars(length(min = 1))]
     labels: Vec<String>,
     #[arg(long = "assignee", value_name = "USER")]
+    #[serde(default)]
+    #[schemars(length(min = 1))]
     assignees: Vec<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CloseIssueArgs {
+    #[schemars(range(min = 1), description = "Issue number.")]
     number: u64,
     #[arg(long, value_name = "TEXT")]
+    #[schemars(description = "Inline text.")]
     comment: Option<String>,
     #[arg(long, value_name = "PATH")]
+    #[schemars(description = "UTF-8 text file resolved against the execution cwd.")]
     comment_file: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CommentIssueArgs {
+    #[schemars(range(min = 1), description = "Issue number.")]
     number: u64,
     #[arg(long, value_name = "TEXT")]
+    #[schemars(description = "Inline text.")]
     body: Option<String>,
     #[arg(long, value_name = "PATH")]
+    #[schemars(description = "UTF-8 text file resolved against the execution cwd.")]
     body_file: Option<String>,
 }
 
@@ -238,25 +320,37 @@ enum ReleaseCommand {
     Create(CreateReleaseArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TagArgs {
+    #[schemars(length(min = 1), description = "Release tag.")]
     tag: String,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CreateReleaseArgs {
+    #[schemars(length(min = 1), description = "Release tag.")]
     tag: String,
     #[arg(long)]
+    #[schemars(description = "Release title.")]
     title: Option<String>,
     #[arg(long, value_name = "TEXT")]
+    #[schemars(description = "Inline text.")]
     notes: Option<String>,
     #[arg(long, value_name = "PATH")]
+    #[schemars(description = "UTF-8 text file resolved against the execution cwd.")]
     notes_file: Option<String>,
     #[arg(long)]
+    #[schemars(description = "Target commit-ish.")]
     target: Option<String>,
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default, description = "Create as draft.")]
     draft: bool,
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default, description = "Mark as prerelease.")]
     prerelease: bool,
 }
 
@@ -272,20 +366,31 @@ enum WorkflowCommand {
     Run(WorkflowRunArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WorkflowRunArgs {
+    #[schemars(length(min = 1), description = "Workflow id or file name.")]
     workflow: String,
     #[arg(long, value_name = "REF")]
+    #[schemars(length(min = 1), description = "Git reference to dispatch.")]
     r#ref: String,
     #[arg(long = "input", value_name = "KEY=VALUE")]
+    #[serde(default)]
+    #[schemars(
+        inner(pattern(r"^[^=]+=.*$")),
+        description = "Workflow inputs encoded as KEY=VALUE."
+    )]
     inputs: Vec<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RunsArgs {
     #[arg(long, value_name = "WORKFLOW")]
+    #[schemars(description = "Workflow id or file.")]
     workflow: Option<String>,
     #[arg(long, value_name = "BRANCH")]
+    #[schemars(description = "Head branch filter.")]
     branch: Option<String>,
 }
 
@@ -311,48 +416,101 @@ enum RunCommand {
     Artifacts(RunIdArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RunIdArgs {
+    #[schemars(range(min = 1), description = "Workflow run id.")]
     run_id: u64,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WaitRunArgs {
+    #[schemars(range(min = 1), description = "Workflow run id.")]
     run_id: u64,
     #[arg(long, default_value_t = DEFAULT_WAIT_INTERVAL_SECS, value_name = "SECONDS")]
+    #[serde(default = "default_wait_interval_secs")]
+    #[schemars(
+        default = "default_wait_interval_secs",
+        range(min = 1),
+        description = "Polling interval."
+    )]
     interval_secs: u64,
     #[arg(long, default_value_t = DEFAULT_WAIT_TIMEOUT_SECS, value_name = "SECONDS")]
+    #[serde(rename = "wait_timeout_secs", default = "default_wait_timeout_secs")]
+    #[schemars(
+        default = "default_wait_timeout_secs",
+        range(min = 1),
+        description = "Maximum wait duration."
+    )]
     timeout_secs: u64,
     #[arg(long)]
+    #[serde(default)]
+    #[schemars(default, description = "Return an error for a non-success conclusion.")]
     fail_on_failure: bool,
 }
 
-#[derive(Debug, Args)]
+fn default_wait_interval_secs() -> u64 {
+    DEFAULT_WAIT_INTERVAL_SECS
+}
+
+fn default_wait_timeout_secs() -> u64 {
+    DEFAULT_WAIT_TIMEOUT_SECS
+}
+
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
 struct LogArgs {
+    #[schemars(range(min = 1), description = "Workflow run id.")]
     run_id: u64,
     #[arg(long)]
+    #[schemars(description = "Optional text filter.")]
     grep: Option<String>,
     #[command(flatten)]
+    #[serde(flatten)]
     limits: LogLimitArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
 struct LogReadArgs {
+    #[schemars(range(min = 1), description = "Workflow run id.")]
     run_id: u64,
     #[command(flatten)]
+    #[serde(flatten)]
     limits: LogLimitArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
 struct LogLimitArgs {
     #[arg(long, default_value_t = DEFAULT_MAX_LOG_BODY_BYTES, value_name = "BYTES")]
+    #[serde(default = "default_max_log_body_bytes")]
+    #[schemars(
+        default = "default_max_log_body_bytes",
+        range(min = 1),
+        description = "Maximum compressed response bytes."
+    )]
     max_body_bytes: usize,
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_EXPANDED_LOG_BYTES,
         value_name = "BYTES"
     )]
+    #[serde(default = "default_max_expanded_log_bytes")]
+    #[schemars(
+        default = "default_max_expanded_log_bytes",
+        range(min = 1),
+        description = "Maximum expanded archive bytes."
+    )]
     max_expanded_bytes: usize,
+}
+
+fn default_max_log_body_bytes() -> usize {
+    DEFAULT_MAX_LOG_BODY_BYTES
+}
+
+fn default_max_expanded_log_bytes() -> usize {
+    DEFAULT_MAX_EXPANDED_LOG_BYTES
 }
 
 #[derive(Debug, Clone)]

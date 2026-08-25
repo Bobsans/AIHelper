@@ -3,11 +3,47 @@ use std::path::{Path, PathBuf};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
     GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse, cancellation, schema::output_schema_for,
+    TypedInvocationResponse, cancellation,
+    schema::{input_schema_for, output_schema_for},
 };
-use serde_json::{Map, Value, json};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::Value;
 
 use super::*;
+
+// Every command takes the same connection block plus its own arguments.
+// `deny_unknown_fields` cannot be derived through `flatten`, so the closed-object
+// rule is stated for the schema and the runtime rejects unknown properties
+// against it before dispatch.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
+struct Wire<T> {
+    #[serde(flatten)]
+    connection: GithubConnectionArgs,
+    #[serde(flatten)]
+    command: T,
+}
+
+// A command whose only arguments are the connection block.
+#[derive(Debug, Deserialize, JsonSchema)]
+struct NoArgs {}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(
+    request: &TypedInvocationRequest,
+) -> Result<Wire<T>, CommandError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        command_error(
+            request,
+            "INVALID_ARGUMENT",
+            "GitHub command arguments are invalid",
+            error.to_string(),
+            false,
+        )
+    })
+}
 
 pub(super) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new(
@@ -75,133 +111,176 @@ fn invoke_inner(request: &TypedInvocationRequest) -> TypedInvocationResponse {
 }
 
 fn typed_cli(request: &TypedInvocationRequest) -> Result<GithubCli, CommandError> {
-    let arguments = &request.arguments;
     let cwd = PathBuf::from(&request.context.cwd);
-    let connection = typed_connection(request)?;
-    let command = match request.command.as_str() {
-        "github.repo" => GithubCommand::Repo,
-        "github.issues" => GithubCommand::Issues(IssuesArgs {
-            state: string_or(arguments, "state", "open"),
-            labels: string_array(arguments, "labels"),
-            assignee: optional_string(arguments, "assignee"),
-            author: optional_string(arguments, "author"),
-            since: optional_string(arguments, "since"),
-            search: optional_string(arguments, "search"),
-        }),
-        "github.issue.view" => GithubCommand::Issue(IssueArgs {
-            command: IssueCommand::View(IssueNumberArgs {
-                number: required_u64(arguments, "number", request)?,
-            }),
-        }),
-        "github.issue.create" => GithubCommand::Issue(IssueArgs {
-            command: IssueCommand::Create(CreateIssueArgs {
-                title: required_string(arguments, "title", request)?,
-                body: optional_string(arguments, "body"),
-                body_file: optional_file(arguments, "body_file", &cwd),
-                labels: string_array(arguments, "labels"),
-                assignees: string_array(arguments, "assignees"),
-            }),
-        }),
-        "github.issue.update" => GithubCommand::Issue(IssueArgs {
-            command: IssueCommand::Update(UpdateIssueArgs {
-                number: required_u64(arguments, "number", request)?,
-                title: optional_string(arguments, "title"),
-                body: optional_string(arguments, "body"),
-                body_file: optional_file(arguments, "body_file", &cwd),
-                state: optional_string(arguments, "state"),
-                labels: string_array(arguments, "labels"),
-                assignees: string_array(arguments, "assignees"),
-            }),
-        }),
-        "github.issue.close" => GithubCommand::Issue(IssueArgs {
-            command: IssueCommand::Close(CloseIssueArgs {
-                number: required_u64(arguments, "number", request)?,
-                comment: optional_string(arguments, "comment"),
-                comment_file: optional_file(arguments, "comment_file", &cwd),
-            }),
-        }),
-        "github.issue.comment" => GithubCommand::Issue(IssueArgs {
-            command: IssueCommand::Comment(CommentIssueArgs {
-                number: required_u64(arguments, "number", request)?,
-                body: optional_string(arguments, "body"),
-                body_file: optional_file(arguments, "body_file", &cwd),
-            }),
-        }),
-        "github.issue.comments" => GithubCommand::Issue(IssueArgs {
-            command: IssueCommand::Comments(IssueNumberArgs {
-                number: required_u64(arguments, "number", request)?,
-            }),
-        }),
-        "github.release.get" => GithubCommand::Release(ReleaseArgs {
-            command: ReleaseCommand::Get(TagArgs {
-                tag: required_string(arguments, "tag", request)?,
-            }),
-        }),
-        "github.release.assets" => GithubCommand::Release(ReleaseArgs {
-            command: ReleaseCommand::Assets(TagArgs {
-                tag: required_string(arguments, "tag", request)?,
-            }),
-        }),
-        "github.release.create" => GithubCommand::Release(ReleaseArgs {
-            command: ReleaseCommand::Create(CreateReleaseArgs {
-                tag: required_string(arguments, "tag", request)?,
-                title: optional_string(arguments, "title"),
-                notes: optional_string(arguments, "notes"),
-                notes_file: optional_file(arguments, "notes_file", &cwd),
-                target: optional_string(arguments, "target"),
-                draft: bool_or(arguments, "draft", false),
-                prerelease: bool_or(arguments, "prerelease", false),
-            }),
-        }),
-        "github.workflows" => GithubCommand::Workflows,
-        "github.workflow.run" => GithubCommand::Workflow(WorkflowArgs {
-            command: WorkflowCommand::Run(WorkflowRunArgs {
-                workflow: required_string(arguments, "workflow", request)?,
-                r#ref: required_string(arguments, "ref", request)?,
-                inputs: string_array(arguments, "inputs"),
-            }),
-        }),
-        "github.runs" => GithubCommand::Runs(RunsArgs {
-            workflow: optional_string(arguments, "workflow"),
-            branch: optional_string(arguments, "branch"),
-        }),
-        "github.run.get" => GithubCommand::Run(RunArgs {
-            command: RunCommand::Get(RunIdArgs {
-                run_id: required_u64(arguments, "run_id", request)?,
-            }),
-        }),
-        "github.run.wait" => GithubCommand::Run(RunArgs {
-            command: RunCommand::Wait(WaitRunArgs {
-                run_id: required_u64(arguments, "run_id", request)?,
-                interval_secs: u64_or(arguments, "interval_secs", DEFAULT_WAIT_INTERVAL_SECS),
-                timeout_secs: u64_or(arguments, "wait_timeout_secs", DEFAULT_WAIT_TIMEOUT_SECS)
-                    .min(remaining_seconds(request)),
-                fail_on_failure: bool_or(arguments, "fail_on_failure", false),
-            }),
-        }),
-        "github.run.jobs" => GithubCommand::Run(RunArgs {
-            command: RunCommand::Jobs(RunIdArgs {
-                run_id: required_u64(arguments, "run_id", request)?,
-            }),
-        }),
-        "github.run.logs" => GithubCommand::Run(RunArgs {
-            command: RunCommand::Logs(LogArgs {
-                run_id: required_u64(arguments, "run_id", request)?,
-                grep: optional_string(arguments, "grep"),
-                limits: log_limits(arguments),
-            }),
-        }),
-        "github.run.warnings" => GithubCommand::Run(RunArgs {
-            command: RunCommand::Warnings(LogReadArgs {
-                run_id: required_u64(arguments, "run_id", request)?,
-                limits: log_limits(arguments),
-            }),
-        }),
-        "github.run.artifacts" => GithubCommand::Run(RunArgs {
-            command: RunCommand::Artifacts(RunIdArgs {
-                run_id: required_u64(arguments, "run_id", request)?,
-            }),
-        }),
+
+    macro_rules! decoded {
+        ($args:ty) => {{
+            let wire: Wire<$args> = decode(request)?;
+            (wire.connection, wire.command)
+        }};
+    }
+
+    let (connection, command) = match request.command.as_str() {
+        "github.repo" => (decoded!(NoArgs).0, GithubCommand::Repo),
+        "github.workflows" => (decoded!(NoArgs).0, GithubCommand::Workflows),
+        "github.issues" => {
+            let (connection, args) = decoded!(IssuesArgs);
+            (connection, GithubCommand::Issues(args))
+        }
+        "github.issue.view" => {
+            let (connection, args) = decoded!(IssueNumberArgs);
+            (
+                connection,
+                GithubCommand::Issue(IssueArgs {
+                    command: IssueCommand::View(args),
+                }),
+            )
+        }
+        "github.issue.create" => {
+            let (connection, mut args) = decoded!(CreateIssueArgs);
+            args.body_file = resolve_file(args.body_file, &cwd);
+            (
+                connection,
+                GithubCommand::Issue(IssueArgs {
+                    command: IssueCommand::Create(args),
+                }),
+            )
+        }
+        "github.issue.update" => {
+            let (connection, mut args) = decoded!(UpdateIssueArgs);
+            args.body_file = resolve_file(args.body_file, &cwd);
+            (
+                connection,
+                GithubCommand::Issue(IssueArgs {
+                    command: IssueCommand::Update(args),
+                }),
+            )
+        }
+        "github.issue.close" => {
+            let (connection, mut args) = decoded!(CloseIssueArgs);
+            args.comment_file = resolve_file(args.comment_file, &cwd);
+            (
+                connection,
+                GithubCommand::Issue(IssueArgs {
+                    command: IssueCommand::Close(args),
+                }),
+            )
+        }
+        "github.issue.comment" => {
+            let (connection, mut args) = decoded!(CommentIssueArgs);
+            args.body_file = resolve_file(args.body_file, &cwd);
+            (
+                connection,
+                GithubCommand::Issue(IssueArgs {
+                    command: IssueCommand::Comment(args),
+                }),
+            )
+        }
+        "github.issue.comments" => {
+            let (connection, args) = decoded!(IssueNumberArgs);
+            (
+                connection,
+                GithubCommand::Issue(IssueArgs {
+                    command: IssueCommand::Comments(args),
+                }),
+            )
+        }
+        "github.release.get" => {
+            let (connection, args) = decoded!(TagArgs);
+            (
+                connection,
+                GithubCommand::Release(ReleaseArgs {
+                    command: ReleaseCommand::Get(args),
+                }),
+            )
+        }
+        "github.release.assets" => {
+            let (connection, args) = decoded!(TagArgs);
+            (
+                connection,
+                GithubCommand::Release(ReleaseArgs {
+                    command: ReleaseCommand::Assets(args),
+                }),
+            )
+        }
+        "github.release.create" => {
+            let (connection, mut args) = decoded!(CreateReleaseArgs);
+            args.notes_file = resolve_file(args.notes_file, &cwd);
+            (
+                connection,
+                GithubCommand::Release(ReleaseArgs {
+                    command: ReleaseCommand::Create(args),
+                }),
+            )
+        }
+        "github.workflow.run" => {
+            let (connection, args) = decoded!(WorkflowRunArgs);
+            (
+                connection,
+                GithubCommand::Workflow(WorkflowArgs {
+                    command: WorkflowCommand::Run(args),
+                }),
+            )
+        }
+        "github.runs" => {
+            let (connection, args) = decoded!(RunsArgs);
+            (connection, GithubCommand::Runs(args))
+        }
+        "github.run.get" => {
+            let (connection, args) = decoded!(RunIdArgs);
+            (
+                connection,
+                GithubCommand::Run(RunArgs {
+                    command: RunCommand::Get(args),
+                }),
+            )
+        }
+        "github.run.wait" => {
+            let (connection, mut args) = decoded!(WaitRunArgs);
+            args.timeout_secs = args.timeout_secs.min(remaining_seconds(request));
+            (
+                connection,
+                GithubCommand::Run(RunArgs {
+                    command: RunCommand::Wait(args),
+                }),
+            )
+        }
+        "github.run.jobs" => {
+            let (connection, args) = decoded!(RunIdArgs);
+            (
+                connection,
+                GithubCommand::Run(RunArgs {
+                    command: RunCommand::Jobs(args),
+                }),
+            )
+        }
+        "github.run.logs" => {
+            let (connection, args) = decoded!(LogArgs);
+            (
+                connection,
+                GithubCommand::Run(RunArgs {
+                    command: RunCommand::Logs(args),
+                }),
+            )
+        }
+        "github.run.warnings" => {
+            let (connection, args) = decoded!(LogReadArgs);
+            (
+                connection,
+                GithubCommand::Run(RunArgs {
+                    command: RunCommand::Warnings(args),
+                }),
+            )
+        }
+        "github.run.artifacts" => {
+            let (connection, args) = decoded!(RunIdArgs);
+            (
+                connection,
+                GithubCommand::Run(RunArgs {
+                    command: RunCommand::Artifacts(args),
+                }),
+            )
+        }
         _ => {
             return Err(command_error(
                 request,
@@ -212,33 +291,45 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<GithubCli, CommandError
             ));
         }
     };
+
     Ok(GithubCli {
-        connection,
+        connection: apply_context(connection, request, cwd)?,
         command,
     })
 }
 
-fn typed_connection(
-    request: &TypedInvocationRequest,
-) -> Result<GithubConnectionArgs, CommandError> {
-    let arguments = &request.arguments;
-    let token = connection_token(request)?;
-    Ok(GithubConnectionArgs {
-        repo: optional_string(arguments, "repo"),
-        remote: string_or(arguments, "remote", DEFAULT_REMOTE),
-        api_url: string_or(arguments, "api_url", DEFAULT_API_URL),
-        token,
-        use_git_credential: bool_or(arguments, "use_git_credential", true),
-        timeout_secs: u64_or(arguments, "timeout_secs", DEFAULT_TIMEOUT_SECS)
-            .min(remaining_seconds(request)),
-        cwd: Some(PathBuf::from(&request.context.cwd)),
+/// A relative text-file argument is resolved against the execution cwd.
+fn resolve_file(path: Option<String>, cwd: &Path) -> Option<String> {
+    path.map(|value| {
+        let path = Path::new(&value);
+        if path.is_absolute() {
+            value
+        } else {
+            cwd.join(path).to_string_lossy().into_owned()
+        }
     })
+}
+
+/// Fill in what the caller cannot supply: the cwd, the request deadline, and a
+/// token resolved from the vault.
+fn apply_context(
+    mut connection: GithubConnectionArgs,
+    request: &TypedInvocationRequest,
+    cwd: PathBuf,
+) -> Result<GithubConnectionArgs, CommandError> {
+    let inline = connection.token.take();
+    connection.token = connection_token(request, inline)?;
+    connection.timeout_secs = connection.timeout_secs.min(remaining_seconds(request));
+    connection.cwd = Some(cwd);
+    Ok(connection)
 }
 
 /// The vault credential and an inline token are mutually exclusive; a resolved
 /// credential always wins over nothing, never over an explicit argument.
-fn connection_token(request: &TypedInvocationRequest) -> Result<Option<String>, CommandError> {
-    let inline = optional_string(&request.arguments, "token");
+fn connection_token(
+    request: &TypedInvocationRequest,
+    inline: Option<String>,
+) -> Result<Option<String>, CommandError> {
     let resolved = resolved_token(request)?;
     if inline.is_some() && resolved.is_some() {
         return Err(command_error(
@@ -260,17 +351,6 @@ fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
         .checked_div(1_000)
         .unwrap_or(1)
         .max(1)
-}
-
-fn log_limits(arguments: &Value) -> LogLimitArgs {
-    LogLimitArgs {
-        max_body_bytes: usize_or(arguments, "max_body_bytes", DEFAULT_MAX_LOG_BODY_BYTES),
-        max_expanded_bytes: usize_or(
-            arguments,
-            "max_expanded_bytes",
-            DEFAULT_MAX_EXPANDED_LOG_BYTES,
-        ),
-    }
 }
 
 fn invocation_response(
@@ -453,102 +533,12 @@ fn command_error(
     )
 }
 
-fn required_string(
-    arguments: &Value,
-    name: &str,
-    request: &TypedInvocationRequest,
-) -> Result<String, CommandError> {
-    optional_string(arguments, name).ok_or_else(|| {
-        command_error(
-            request,
-            "INVALID_ARGUMENT",
-            format!("Missing {name}"),
-            format!("typed input requires '{name}'"),
-            false,
-        )
-    })
-}
-
-fn required_u64(
-    arguments: &Value,
-    name: &str,
-    request: &TypedInvocationRequest,
-) -> Result<u64, CommandError> {
-    arguments.get(name).and_then(Value::as_u64).ok_or_else(|| {
-        command_error(
-            request,
-            "INVALID_ARGUMENT",
-            format!("Missing {name}"),
-            format!("typed input requires positive integer '{name}'"),
-            false,
-        )
-    })
-}
-
-fn optional_string(arguments: &Value, name: &str) -> Option<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn optional_file(arguments: &Value, name: &str, cwd: &Path) -> Option<String> {
-    optional_string(arguments, name).map(|value| {
-        let path = Path::new(&value);
-        if path.is_absolute() {
-            value
-        } else {
-            cwd.join(path).to_string_lossy().into_owned()
-        }
-    })
-}
-
-fn string_or(arguments: &Value, name: &str, default: &str) -> String {
-    optional_string(arguments, name).unwrap_or_else(|| default.to_owned())
-}
-
-fn string_array(arguments: &Value, name: &str) -> Vec<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn bool_or(arguments: &Value, name: &str, default: bool) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(default)
-}
-
-fn u64_or(arguments: &Value, name: &str, default: u64) -> u64 {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .unwrap_or(default)
-}
-
-fn usize_or(arguments: &Value, name: &str, default: usize) -> usize {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(default)
-}
-
 fn repo_descriptor() -> CommandDescriptor {
     descriptor(
         "github.repo",
         "Inspect GitHub repository",
         "Detect the GitHub repository and return remote plus API metadata.",
-        input_schema(Map::new(), Vec::new()),
+        input_schema_for::<Wire<NoArgs>>(),
         output_schema_for::<RepoOutput>("github.repo"),
         read_effects(
             "May run Git repository detection and sends a read request to the configured API URL; a supplied token is sent to that host.",
@@ -557,30 +547,11 @@ fn repo_descriptor() -> CommandDescriptor {
 }
 
 fn issues_descriptor() -> CommandDescriptor {
-    let mut properties = Map::new();
-    properties.insert(
-        "state".to_owned(),
-        json!({"type": "string", "enum": ["open", "closed", "all"], "default": "open"}),
-    );
-    properties.insert("labels".to_owned(), string_array_schema("Issue labels."));
-    properties.insert(
-        "assignee".to_owned(),
-        optional_text_schema("Assignee login."),
-    );
-    properties.insert("author".to_owned(), optional_text_schema("Author login."));
-    properties.insert(
-        "since".to_owned(),
-        optional_text_schema("ISO date or timestamp."),
-    );
-    properties.insert(
-        "search".to_owned(),
-        optional_text_schema("GitHub search query."),
-    );
     descriptor(
         "github.issues",
         "List GitHub issues",
         "List or search repository issues with filters and the shared result limit.",
-        input_schema(properties, Vec::new()),
+        input_schema_for::<Wire<IssuesArgs>>(),
         output_schema_for::<IssuesOutput>("github.issues"),
         read_effects(
             "Reads issue metadata from the configured GitHub API and may expose private repository data.",
@@ -593,25 +564,18 @@ fn issue_view_descriptor() -> CommandDescriptor {
         "github.issue.view",
         "View GitHub issue",
         "Return one GitHub issue by repository issue number.",
-        input_schema(number_properties(), vec!["number"]),
+        input_schema_for::<Wire<IssueNumberArgs>>(),
         output_schema_for::<IssueOutput>("github.issue.view"),
         read_effects("Reads one issue and its metadata from the configured GitHub API."),
     )
 }
 
 fn issue_create_descriptor() -> CommandDescriptor {
-    let mut properties = text_body_properties("body", "body_file");
-    properties.insert("title".to_owned(), required_text_schema("Issue title."));
-    properties.insert("labels".to_owned(), string_array_schema("Labels to set."));
-    properties.insert(
-        "assignees".to_owned(),
-        string_array_schema("Assignees to set."),
-    );
     descriptor(
         "github.issue.create",
         "Create GitHub issue",
         "Create a repository issue with optional body, labels, and assignees. Use body or body_file, not both.",
-        input_schema(properties, vec!["title"]),
+        input_schema_for::<Wire<CreateIssueArgs>>(),
         output_schema_for::<IssueOutput>("github.issue.create"),
         write_effects(
             "Creates a persistent issue and may notify repository participants; body files are read from the execution cwd.",
@@ -620,29 +584,11 @@ fn issue_create_descriptor() -> CommandDescriptor {
 }
 
 fn issue_update_descriptor() -> CommandDescriptor {
-    let mut properties = number_properties();
-    properties.extend(text_body_properties("body", "body_file"));
-    properties.insert(
-        "title".to_owned(),
-        optional_text_schema("Replacement title."),
-    );
-    properties.insert(
-        "state".to_owned(),
-        json!({"type": "string", "enum": ["open", "closed"]}),
-    );
-    properties.insert(
-        "labels".to_owned(),
-        json!({"type": "array", "minItems": 1, "items": {"type": "string"}}),
-    );
-    properties.insert(
-        "assignees".to_owned(),
-        json!({"type": "array", "minItems": 1, "items": {"type": "string"}}),
-    );
     descriptor(
         "github.issue.update",
         "Update GitHub issue",
         "Update one or more issue fields. At least one update field is required; use body or body_file, not both.",
-        input_schema(properties, vec!["number"]),
+        input_schema_for::<Wire<UpdateIssueArgs>>(),
         output_schema_for::<IssueOutput>("github.issue.update"),
         write_effects(
             "Mutates a persistent issue and may change workflow state or notify participants.",
@@ -651,13 +597,11 @@ fn issue_update_descriptor() -> CommandDescriptor {
 }
 
 fn issue_close_descriptor() -> CommandDescriptor {
-    let mut properties = number_properties();
-    properties.extend(text_body_properties("comment", "comment_file"));
     descriptor(
         "github.issue.close",
         "Close GitHub issue",
         "Close an issue, optionally adding a comment first. Use comment or comment_file, not both.",
-        input_schema(properties, vec!["number"]),
+        input_schema_for::<Wire<CloseIssueArgs>>(),
         output_schema_for::<IssueOutput>("github.issue.close"),
         write_effects(
             "May create a comment, closes a persistent issue, and may notify participants.",
@@ -666,13 +610,11 @@ fn issue_close_descriptor() -> CommandDescriptor {
 }
 
 fn issue_comment_descriptor() -> CommandDescriptor {
-    let mut properties = number_properties();
-    properties.extend(text_body_properties("body", "body_file"));
     descriptor(
         "github.issue.comment",
         "Comment on GitHub issue",
         "Create a comment on one repository issue. Exactly one of body or body_file is required.",
-        input_schema(properties, vec!["number"]),
+        input_schema_for::<Wire<CommentIssueArgs>>(),
         output_schema_for::<IssueCommentOutput>("github.issue.comment"),
         write_effects("Creates a persistent issue comment and may notify repository participants."),
     )
@@ -683,7 +625,7 @@ fn issue_comments_descriptor() -> CommandDescriptor {
         "github.issue.comments",
         "List GitHub issue comments",
         "List comments for one issue with the shared result limit.",
-        input_schema(number_properties(), vec!["number"]),
+        input_schema_for::<Wire<IssueNumberArgs>>(),
         output_schema_for::<IssueCommentsOutput>("github.issue.comments"),
         read_effects("Reads issue comments and author metadata from the configured GitHub API."),
     )
@@ -694,7 +636,7 @@ fn release_get_descriptor() -> CommandDescriptor {
         "github.release.get",
         "Get GitHub release",
         "Return GitHub release metadata by tag.",
-        input_schema(tag_properties(), vec!["tag"]),
+        input_schema_for::<Wire<TagArgs>>(),
         output_schema_for::<ReleaseOutput>("github.release.get"),
         read_effects("Reads release metadata and asset URLs from the configured GitHub API."),
     )
@@ -705,7 +647,7 @@ fn release_assets_descriptor() -> CommandDescriptor {
         "github.release.assets",
         "List GitHub release assets",
         "List assets attached to a release tag.",
-        input_schema(tag_properties(), vec!["tag"]),
+        input_schema_for::<Wire<TagArgs>>(),
         output_schema_for::<ReleaseAssetsOutput>("github.release.assets"),
         read_effects(
             "Reads release asset metadata and download URLs from the configured GitHub API.",
@@ -714,26 +656,11 @@ fn release_assets_descriptor() -> CommandDescriptor {
 }
 
 fn release_create_descriptor() -> CommandDescriptor {
-    let mut properties = tag_properties();
-    properties.extend(text_body_properties("notes", "notes_file"));
-    properties.insert("title".to_owned(), optional_text_schema("Release title."));
-    properties.insert(
-        "target".to_owned(),
-        optional_text_schema("Target commit-ish."),
-    );
-    properties.insert(
-        "draft".to_owned(),
-        boolean_schema(false, "Create as draft."),
-    );
-    properties.insert(
-        "prerelease".to_owned(),
-        boolean_schema(false, "Mark as prerelease."),
-    );
     descriptor(
         "github.release.create",
         "Create GitHub release",
         "Create a GitHub release for a tag with optional notes and flags. Use notes or notes_file, not both.",
-        input_schema(properties, vec!["tag"]),
+        input_schema_for::<Wire<CreateReleaseArgs>>(),
         output_schema_for::<ReleaseOutput>("github.release.create"),
         write_effects(
             "Creates a persistent release and may create or resolve a tag target; release notes files are read from the execution cwd.",
@@ -746,7 +673,7 @@ fn workflows_descriptor() -> CommandDescriptor {
         "github.workflows",
         "List GitHub workflows",
         "List GitHub Actions workflows in the repository.",
-        input_schema(Map::new(), Vec::new()),
+        input_schema_for::<Wire<NoArgs>>(),
         output_schema_for::<WorkflowsOutput>("github.workflows"),
         read_effects(
             "Reads workflow names, paths, states, and URLs from the configured GitHub API.",
@@ -755,28 +682,11 @@ fn workflows_descriptor() -> CommandDescriptor {
 }
 
 fn workflow_run_descriptor() -> CommandDescriptor {
-    let mut properties = Map::new();
-    properties.insert(
-        "workflow".to_owned(),
-        required_text_schema("Workflow id or file name."),
-    );
-    properties.insert(
-        "ref".to_owned(),
-        required_text_schema("Git reference to dispatch."),
-    );
-    properties.insert(
-        "inputs".to_owned(),
-        json!({
-            "type": "array",
-            "items": {"type": "string", "pattern": "^[^=]+=.*$"},
-            "description": "Workflow inputs encoded as KEY=VALUE."
-        }),
-    );
     descriptor(
         "github.workflow.run",
         "Dispatch GitHub workflow",
         "Dispatch a GitHub Actions workflow on a reference. Dispatching needs a token carrying the actions write scope, which the git credential helper usually does not: on HTTP 401 stop and ask the user for a github-token secret rather than retrying.",
-        input_schema(properties, vec!["workflow", "ref"]),
+        input_schema_for::<Wire<WorkflowRunArgs>>(),
         output_schema_for::<WorkflowDispatchOutput>("github.workflow.run"),
         write_effects(
             "Starts an external workflow that may execute arbitrary repository automation and consume billed resources.",
@@ -785,20 +695,11 @@ fn workflow_run_descriptor() -> CommandDescriptor {
 }
 
 fn runs_descriptor() -> CommandDescriptor {
-    let mut properties = Map::new();
-    properties.insert(
-        "workflow".to_owned(),
-        optional_text_schema("Workflow id or file."),
-    );
-    properties.insert(
-        "branch".to_owned(),
-        optional_text_schema("Head branch filter."),
-    );
     descriptor(
         "github.runs",
         "List GitHub workflow runs",
         "List workflow runs with optional workflow and branch filters.",
-        input_schema(properties, Vec::new()),
+        input_schema_for::<Wire<RunsArgs>>(),
         output_schema_for::<RunsOutput>("github.runs"),
         read_effects(
             "Reads workflow run status, commit SHA, and URLs from the configured GitHub API.",
@@ -811,7 +712,7 @@ fn run_get_descriptor() -> CommandDescriptor {
         "github.run.get",
         "Get GitHub workflow run",
         "Return one workflow run by numeric id.",
-        input_schema(run_id_properties(), vec!["run_id"]),
+        input_schema_for::<Wire<RunIdArgs>>(),
         output_schema_for::<RunOutput>("github.run.get"),
         read_effects(
             "Reads one workflow run and its commit/status metadata from the configured GitHub API.",
@@ -820,24 +721,11 @@ fn run_get_descriptor() -> CommandDescriptor {
 }
 
 fn run_wait_descriptor() -> CommandDescriptor {
-    let mut properties = run_id_properties();
-    properties.insert(
-        "interval_secs".to_owned(),
-        positive_integer_schema(DEFAULT_WAIT_INTERVAL_SECS, "Polling interval."),
-    );
-    properties.insert(
-        "wait_timeout_secs".to_owned(),
-        positive_integer_schema(DEFAULT_WAIT_TIMEOUT_SECS, "Maximum wait duration."),
-    );
-    properties.insert(
-        "fail_on_failure".to_owned(),
-        boolean_schema(false, "Return an error for a non-success conclusion."),
-    );
     descriptor(
         "github.run.wait",
         "Wait for GitHub workflow run",
         "Poll a workflow run until completion, timeout, or cancellation.",
-        input_schema(properties, vec!["run_id"]),
+        input_schema_for::<Wire<WaitRunArgs>>(),
         output_schema_for::<WaitRunOutput>("github.run.wait"),
         read_effects(
             "Repeatedly reads external workflow state until completion and may consume API rate limits.",
@@ -850,7 +738,7 @@ fn run_jobs_descriptor() -> CommandDescriptor {
         "github.run.jobs",
         "List GitHub workflow jobs",
         "List jobs belonging to one workflow run.",
-        input_schema(run_id_properties(), vec!["run_id"]),
+        input_schema_for::<Wire<RunIdArgs>>(),
         output_schema_for::<JobsOutput>("github.run.jobs"),
         read_effects(
             "Reads workflow job names, status, timestamps, and URLs from the configured GitHub API.",
@@ -864,27 +752,6 @@ fn run_logs_descriptor(warnings: bool) -> CommandDescriptor {
     } else {
         "github.run.logs"
     };
-    let mut properties = run_id_properties();
-    if !warnings {
-        properties.insert(
-            "grep".to_owned(),
-            optional_text_schema("Optional text filter."),
-        );
-    }
-    properties.insert(
-        "max_body_bytes".to_owned(),
-        positive_integer_schema(
-            DEFAULT_MAX_LOG_BODY_BYTES as u64,
-            "Maximum compressed response bytes.",
-        ),
-    );
-    properties.insert(
-        "max_expanded_bytes".to_owned(),
-        positive_integer_schema(
-            DEFAULT_MAX_EXPANDED_LOG_BYTES as u64,
-            "Maximum expanded archive bytes.",
-        ),
-    );
     descriptor(
         id,
         if warnings {
@@ -897,7 +764,11 @@ fn run_logs_descriptor(warnings: bool) -> CommandDescriptor {
         } else {
             "Read or filter lines from one workflow run log archive. The archive exists only once the run has finished and until GitHub expires it, so an unfinished or expired run answers 404: check github.run.get, or wait with github.run.wait, instead of retrying."
         },
-        input_schema(properties, vec!["run_id"]),
+        if warnings {
+            input_schema_for::<Wire<LogReadArgs>>()
+        } else {
+            input_schema_for::<Wire<LogArgs>>()
+        },
         output_schema_for::<LogsOutput>(id),
         read_effects(
             "Downloads and expands workflow logs, which may contain secrets or untrusted build output.",
@@ -910,7 +781,7 @@ fn run_artifacts_descriptor() -> CommandDescriptor {
         "github.run.artifacts",
         "List GitHub workflow artifacts",
         "List artifacts produced by one workflow run.",
-        input_schema(run_id_properties(), vec!["run_id"]),
+        input_schema_for::<Wire<RunIdArgs>>(),
         output_schema_for::<ArtifactsOutput>("github.run.artifacts"),
         read_effects(
             "Reads artifact names, sizes, expiry state, and archive URLs from the configured GitHub API.",
@@ -973,117 +844,12 @@ fn write_effects(impact: &str) -> CommandEffects {
     )
 }
 
-fn input_schema(mut properties: Map<String, Value>, required: Vec<&str>) -> Value {
-    properties.insert(
-        "repo".to_owned(),
-        optional_text_schema(
-            "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
-        ),
-    );
-    properties.insert(
-        "remote".to_owned(),
-        json!({"type": "string", "minLength": 1, "default": DEFAULT_REMOTE}),
-    );
-    properties.insert(
-        "api_url".to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "default": DEFAULT_API_URL,
-            "description": "GitHub-compatible API base URL. A supplied token is sent to this host."
-        }),
-    );
-    properties.insert(
-        "token".to_owned(),
-        optional_text_schema("Explicit GitHub token; prefer environment-based authentication."),
-    );
-    properties.insert(
-        "use_git_credential".to_owned(),
-        boolean_schema(
-            true,
-            "Use Git credential helper lookup as the final fallback.",
-        ),
-    );
-    properties.insert(
-        "timeout_secs".to_owned(),
-        positive_integer_schema(DEFAULT_TIMEOUT_SECS, "Per-request HTTP timeout."),
-    );
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn number_properties() -> Map<String, Value> {
-    let mut properties = Map::new();
-    properties.insert(
-        "number".to_owned(),
-        json!({"type": "integer", "minimum": 1, "description": "Issue number."}),
-    );
-    properties
-}
-
-fn run_id_properties() -> Map<String, Value> {
-    let mut properties = Map::new();
-    properties.insert(
-        "run_id".to_owned(),
-        json!({"type": "integer", "minimum": 1, "description": "Workflow run id."}),
-    );
-    properties
-}
-
-fn tag_properties() -> Map<String, Value> {
-    let mut properties = Map::new();
-    properties.insert("tag".to_owned(), required_text_schema("Release tag."));
-    properties
-}
-
-fn text_body_properties(inline: &str, file: &str) -> Map<String, Value> {
-    let mut properties = Map::new();
-    properties.insert(inline.to_owned(), optional_text_schema("Inline text."));
-    properties.insert(
-        file.to_owned(),
-        optional_text_schema("UTF-8 text file resolved against the execution cwd."),
-    );
-    properties
-}
-
-fn required_text_schema(description: &str) -> Value {
-    json!({"type": "string", "minLength": 1, "description": description})
-}
-
-fn optional_text_schema(description: &str) -> Value {
-    json!({"type": "string", "description": description})
-}
-
-fn string_array_schema(description: &str) -> Value {
-    json!({
-        "type": "array",
-        "items": {"type": "string"},
-        "description": description
-    })
-}
-
-fn boolean_schema(default: bool, description: &str) -> Value {
-    json!({"type": "boolean", "default": default, "description": description})
-}
-
-fn positive_integer_schema(default: u64, description: &str) -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 1,
-        "default": default,
-        "description": description
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use ah_plugin_api::{ExecutionContextWire, ResolvedSecret};
+    use serde_json::json;
 
     use super::*;
 
@@ -1121,6 +887,14 @@ mod tests {
         }
     }
 
+    /// The connection block is no longer built by a function of its own; it
+    /// comes out of the decoded wire type, so exercise it through that.
+    fn connection_of(
+        request: &TypedInvocationRequest,
+    ) -> Result<GithubConnectionArgs, CommandError> {
+        typed_cli(request).map(|cli| cli.connection)
+    }
+
     #[test]
     fn typed_connection_binds_a_matching_resolved_token() {
         let request =
@@ -1129,7 +903,7 @@ mod tests {
                 resolved_secret("github-token", "vault-token-sentinel"),
             )]));
 
-        let connection = typed_connection(&request).expect("credential should bind");
+        let connection = connection_of(&request).expect("credential should bind");
 
         assert_eq!(connection.token.as_deref(), Some("vault-token-sentinel"));
     }
@@ -1151,7 +925,7 @@ mod tests {
             resolved_secret("github-token", "vault-token-sentinel"),
         )]));
 
-        let error = typed_connection(&request).expect_err("token sources must conflict");
+        let error = connection_of(&request).expect_err("token sources must conflict");
         let serialized = serde_json::to_string(&error).expect("error serializes");
 
         assert_eq!(error.code, "INVALID_ARGUMENT");
@@ -1163,7 +937,7 @@ mod tests {
     fn typed_connection_rejects_unresolved_and_mismatched_credentials() {
         let unresolved = token_request(json!({"repo": "owner/repo"}));
         assert_eq!(
-            typed_connection(&unresolved)
+            connection_of(&unresolved)
                 .expect_err("public id requires private resolution")
                 .code,
             "SECRET_REQUIRED"
@@ -1174,7 +948,7 @@ mod tests {
                 "token".to_owned(),
                 resolved_secret("http-basic", "wrong-kind-sentinel"),
             )]));
-        let error = typed_connection(&wrong_kind).expect_err("kind must match");
+        let error = connection_of(&wrong_kind).expect_err("kind must match");
         let serialized = serde_json::to_string(&error).expect("error serializes");
 
         assert_eq!(error.code, "SECRET_KIND_MISMATCH");
@@ -1206,7 +980,7 @@ mod tests {
             ExecutionContextWire::new("github-default-auth", ".", None, 2_000),
         );
 
-        assert!(typed_connection(&request).unwrap().use_git_credential);
+        assert!(connection_of(&request).unwrap().use_git_credential);
         assert_eq!(
             command_catalog().commands[0].input_schema["properties"]["use_git_credential"]["default"],
             true
