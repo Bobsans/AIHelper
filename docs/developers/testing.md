@@ -70,6 +70,18 @@ AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots
 
 State the reason for any snapshot diff in the pull request description.
 
+Deriving a schema from its Rust type reorders the `required` array, which JSON
+Schema treats as a set. That noise hides real diffs, so compare the catalog with
+`required` canonicalised instead of reading `git diff`:
+
+```bash
+cp tests/snapshots/typed-command-catalog.snap target/catalog_prev.snap
+AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots
+python scripts/catalog_delta.py
+```
+
+Anything that prints is a genuine change to the published contract.
+
 ## Portable Fixtures
 
 Use `tempfile` fixtures and derive expected paths from the fixture instead of
