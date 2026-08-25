@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     GlobalOptionsWire, InvocationResponse, Reversibility, RiskLevel, SecretSlot,
-    TypedInvocationRequest, TypedInvocationResponse,
+    TypedInvocationRequest, TypedInvocationResponse, schema::output_schema_for,
 };
 use serde_json::{Map, Value, json};
 
@@ -536,7 +536,7 @@ fn tool_status_descriptor() -> CommandDescriptor {
         "Inspect PostgreSQL toolchain",
         "Resolve psql candidates and report the selected client toolchain.",
         tool_path_input(),
-        tool_status_output(),
+        output_schema_for::<ToolStatusOutput>("postgres.tool.status"),
         CommandEffects::new(
             true,
             false,
@@ -581,18 +581,7 @@ fn tool_download_descriptor() -> CommandDescriptor {
         "Download PostgreSQL toolchain",
         "Download, verify, and unpack the supported PostgreSQL client toolchain.",
         object_input(properties, Vec::new()),
-        top_output(
-            "postgres.tool.download",
-            &[
-                ("version", string_schema()),
-                ("url", string_schema()),
-                ("sha256", string_schema()),
-                ("cache_path", string_schema()),
-                ("bin_dir", string_schema()),
-                ("psql_path", string_schema()),
-                ("downloaded", boolean_value_schema()),
-            ],
-        ),
+        output_schema_for::<ToolDownloadOutput>("postgres.tool.download"),
         CommandEffects::new(
             false,
             false,
@@ -623,15 +612,7 @@ fn tool_use_descriptor() -> CommandDescriptor {
             )]),
             vec!["path"],
         ),
-        top_output(
-            "postgres.tool.use",
-            &[
-                ("path", string_schema()),
-                ("psql_path", string_schema()),
-                ("version", tool_version_schema()),
-                ("config_path", string_schema()),
-            ],
-        ),
+        output_schema_for::<ToolUseOutput>("postgres.tool.use"),
         CommandEffects::new(
             false,
             false,
@@ -663,13 +644,7 @@ fn tool_cleanup_descriptor() -> CommandDescriptor {
             )]),
             Vec::new(),
         ),
-        top_output(
-            "postgres.tool.cleanup",
-            &[(
-                "removed",
-                json!({"type": "array", "items": string_schema()}),
-            )],
-        ),
+        output_schema_for::<ToolCleanupOutput>("postgres.tool.cleanup"),
         CommandEffects::new(
             false,
             true,
@@ -689,7 +664,7 @@ fn ping_descriptor() -> CommandDescriptor {
         "Ping PostgreSQL",
         "Connect and return server plus session identity metadata.",
         Map::new(),
-        info_output("postgres.ping"),
+        output_schema_for::<InfoOutput>("postgres.ping"),
         "Reads server/session metadata. ensure_tool=true may first download and write a shared client toolchain.",
     )
 }
@@ -700,36 +675,34 @@ fn info_descriptor() -> CommandDescriptor {
         "Inspect PostgreSQL session",
         "Return selected server and session metadata.",
         Map::new(),
-        info_output("postgres.info"),
+        output_schema_for::<InfoOutput>("postgres.info"),
         "Reads server/session metadata. ensure_tool=true may first download and write a shared client toolchain.",
     )
 }
 
 fn databases_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<DatabaseRow>(
         "postgres.databases",
         "List PostgreSQL databases",
         Map::new(),
-        database_row_schema(),
         "Reads database names, owners, encodings, connection flags, and visible size information.",
     )
 }
 
 fn schemas_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<SchemaRow>(
         "postgres.schemas",
         "List PostgreSQL schemas",
         Map::from_iter([(
             "include_system".to_owned(),
             boolean_schema(false, "Include system schemas."),
         )]),
-        schema_row_schema(),
         "Reads schema names and owners, optionally including system schemas.",
     )
 }
 
 fn relations_descriptor(id: &str, title: &str) -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<RelationRow>(
         id,
         title,
         Map::from_iter([
@@ -742,7 +715,6 @@ fn relations_descriptor(id: &str, title: &str) -> CommandDescriptor {
                 boolean_schema(false, "Include system relations."),
             ),
         ]),
-        relation_row_schema(),
         "Reads relation names, owners, row estimates, and total sizes.",
     )
 }
@@ -756,30 +728,13 @@ fn describe_descriptor() -> CommandDescriptor {
             "object".to_owned(),
             required_text_schema("Relation name as NAME or SCHEMA.NAME."),
         )]),
-        top_output(
-            "postgres.describe",
-            &[
-                ("relation", describe_relation_schema()),
-                (
-                    "columns",
-                    json!({"type": "array", "items": column_row_schema()}),
-                ),
-                (
-                    "indexes",
-                    json!({"type": "array", "items": index_row_schema()}),
-                ),
-                (
-                    "constraints",
-                    json!({"type": "array", "items": constraint_row_schema()}),
-                ),
-            ],
-        ),
+        output_schema_for::<DescribeOutput>("postgres.describe"),
         "Reads relation, column, index, and constraint definitions that may reveal database structure.",
     )
 }
 
 fn indexes_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<IndexRow>(
         "postgres.indexes",
         "List PostgreSQL indexes",
         Map::from_iter([
@@ -792,20 +747,18 @@ fn indexes_descriptor() -> CommandDescriptor {
                 optional_text_schema("Restrict results to this table."),
             ),
         ]),
-        index_row_schema(),
         "Reads index names and full definitions.",
     )
 }
 
 fn extensions_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<ExtensionRow>(
         "postgres.extensions",
         "List PostgreSQL extensions",
         Map::from_iter([(
             "available".to_owned(),
             boolean_schema(false, "Include available but not installed extensions."),
         )]),
-        extension_row_schema(),
         "Reads installed extension metadata or the server's available extension catalog.",
     )
 }
@@ -816,13 +769,7 @@ fn query_descriptor() -> CommandDescriptor {
         "Query PostgreSQL",
         "Run SQL restricted to SELECT, WITH, TABLE, or VALUES in a read-only transaction.",
         database_input(sql_source_properties(), vec![]),
-        top_output(
-            "postgres.query",
-            &[
-                ("row_count", nonnegative_integer_schema()),
-                ("rows", json!({"type": "array", "items": {}})),
-            ],
-        ),
+        output_schema_for::<QueryOutput>("postgres.query"),
         CommandEffects::new(
             false,
             false,
@@ -860,10 +807,7 @@ fn exec_descriptor() -> CommandDescriptor {
         "Execute PostgreSQL SQL",
         "Execute explicitly confirmed SQL mutations or administrative commands.",
         database_input(properties, vec!["yes"]),
-        top_output(
-            "postgres.exec",
-            &[("stdout", string_schema()), ("stderr", string_schema())],
-        ),
+        output_schema_for::<ExecOutput>("postgres.exec"),
         CommandEffects::new(
             false,
             true,
@@ -911,14 +855,7 @@ fn explain_descriptor() -> CommandDescriptor {
         "Explain PostgreSQL SQL",
         "Return a query plan; analyze=true executes the supplied SQL.",
         schema,
-        top_output(
-            "postgres.explain",
-            &[
-                ("analyze", boolean_value_schema()),
-                ("buffers", boolean_value_schema()),
-                ("plan", json!({})),
-            ],
-        ),
+        output_schema_for::<ExplainOutput>("postgres.explain"),
         CommandEffects::new(
             false,
             true,
@@ -941,7 +878,7 @@ fn explain_descriptor() -> CommandDescriptor {
 }
 
 fn activity_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<ActivityRow>(
         "postgres.activity",
         "Inspect PostgreSQL activity",
         Map::from_iter([
@@ -954,26 +891,24 @@ fn activity_descriptor() -> CommandDescriptor {
                 boolean_schema(false, "Show only sessions idle in a transaction."),
             ),
         ]),
-        activity_row_schema(),
         "Reads session identities, client addresses, wait states, timestamps, and truncated SQL text from pg_stat_activity.",
     )
 }
 
 fn locks_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<LockRow>(
         "postgres.locks",
         "Inspect PostgreSQL locks",
         Map::from_iter([(
             "blocking".to_owned(),
             boolean_schema(false, "Return only locks with a known blocking session."),
         )]),
-        lock_row_schema(),
         "Reads blocked and blocking session identities plus truncated SQL text.",
     )
 }
 
 fn size_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<SizeRow>(
         "postgres.size",
         "Inspect PostgreSQL sizes",
         Map::from_iter([
@@ -986,29 +921,26 @@ fn size_descriptor() -> CommandDescriptor {
                 optional_text_schema("Show table size; may be NAME or SCHEMA.NAME."),
             ),
         ]),
-        size_row_schema(),
         "Reads database, schema, or relation size statistics.",
     )
 }
 
 fn settings_descriptor() -> CommandDescriptor {
-    rows_descriptor(
+    rows_descriptor::<SettingRow>(
         "postgres.settings",
         "Inspect PostgreSQL settings",
         Map::from_iter([(
             "changed".to_owned(),
             boolean_schema(false, "Return only settings whose source is not default."),
         )]),
-        setting_row_schema(),
         "Reads server settings, sources, units, and descriptions; configuration values may contain sensitive operational details.",
     )
 }
 
-fn rows_descriptor(
+fn rows_descriptor<T: schemars::JsonSchema>(
     id: &str,
     title: &str,
     properties: Map<String, Value>,
-    row_schema: Value,
     impact: &str,
 ) -> CommandDescriptor {
     database_descriptor(
@@ -1016,7 +948,7 @@ fn rows_descriptor(
         title,
         title,
         properties,
-        rows_output(id, row_schema),
+        output_schema_for::<RowsOutput<T>>(id),
         impact,
     )
 }
@@ -1189,242 +1121,6 @@ fn positive_integer_default(default: u64, description: &str) -> Value {
         "default": default,
         "description": description
     })
-}
-
-fn string_schema() -> Value {
-    json!({"type": "string"})
-}
-
-fn boolean_value_schema() -> Value {
-    json!({"type": "boolean"})
-}
-
-fn integer_schema() -> Value {
-    json!({"type": "integer"})
-}
-
-fn positive_integer_schema() -> Value {
-    json!({"type": "integer", "minimum": 1})
-}
-
-fn nonnegative_integer_schema() -> Value {
-    json!({"type": "integer", "minimum": 0})
-}
-
-fn nullable(schema: Value) -> Value {
-    json!({"oneOf": [schema, {"type": "null"}]})
-}
-
-fn exact_object(fields: &[(&str, Value)]) -> Value {
-    let mut properties = Map::new();
-    let mut required = Vec::new();
-    for (name, schema) in fields {
-        properties.insert((*name).to_owned(), schema.clone());
-        required.push(*name);
-    }
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn top_output(command: &str, fields: &[(&str, Value)]) -> Value {
-    let mut all_fields = vec![("command", json!({"type": "string", "const": command}))];
-    all_fields.extend(fields.iter().cloned());
-    exact_object(&all_fields)
-}
-
-fn rows_output(command: &str, row_schema: Value) -> Value {
-    top_output(
-        command,
-        &[
-            ("count", nonnegative_integer_schema()),
-            ("rows", json!({"type": "array", "items": row_schema})),
-        ],
-    )
-}
-
-fn info_output(command: &str) -> Value {
-    top_output(
-        command,
-        &[
-            ("server_version", string_schema()),
-            ("current_database", string_schema()),
-            ("current_user", string_schema()),
-            ("session_user", string_schema()),
-            ("current_schema", nullable(string_schema())),
-            ("server_encoding", string_schema()),
-            ("inet_server_addr", nullable(string_schema())),
-            ("inet_server_port", nullable(integer_schema())),
-        ],
-    )
-}
-
-fn candidate_schema() -> Value {
-    exact_object(&[
-        ("source", string_schema()),
-        ("path", string_schema()),
-        ("psql_path", nullable(string_schema())),
-        ("bin_dir", nullable(string_schema())),
-        ("version_raw", nullable(string_schema())),
-        ("version_major", nullable(positive_integer_schema())),
-        ("accepted", boolean_value_schema()),
-        ("reason", nullable(string_schema())),
-    ])
-}
-
-fn tool_version_schema() -> Value {
-    exact_object(&[
-        ("raw", string_schema()),
-        ("major", nullable(positive_integer_schema())),
-    ])
-}
-
-fn tool_status_output() -> Value {
-    top_output(
-        "postgres.tool.status",
-        &[
-            ("available", boolean_value_schema()),
-            ("selected", nullable(candidate_schema())),
-            (
-                "candidates",
-                json!({"type": "array", "items": candidate_schema()}),
-            ),
-            ("target_version", string_schema()),
-            ("minimum_major", positive_integer_schema()),
-            ("cache_dir", nullable(string_schema())),
-            ("config_path", nullable(string_schema())),
-            ("remediation", nullable(string_schema())),
-        ],
-    )
-}
-
-fn database_row_schema() -> Value {
-    exact_object(&[
-        ("name", string_schema()),
-        ("owner", string_schema()),
-        ("encoding", string_schema()),
-        ("allow_connections", boolean_value_schema()),
-        ("size", nullable(string_schema())),
-    ])
-}
-
-fn schema_row_schema() -> Value {
-    exact_object(&[("name", string_schema()), ("owner", string_schema())])
-}
-
-fn relation_row_schema() -> Value {
-    exact_object(&[
-        ("schema", string_schema()),
-        ("name", string_schema()),
-        ("kind", string_schema()),
-        ("owner", string_schema()),
-        ("rows_estimate", nullable(integer_schema())),
-        ("size", string_schema()),
-    ])
-}
-
-fn column_row_schema() -> Value {
-    exact_object(&[
-        ("ordinal", integer_schema()),
-        ("name", string_schema()),
-        ("data_type", string_schema()),
-        ("nullable", boolean_value_schema()),
-        ("default", nullable(string_schema())),
-        ("comment", nullable(string_schema())),
-    ])
-}
-
-fn index_row_schema() -> Value {
-    exact_object(&[
-        ("schema", string_schema()),
-        ("table", string_schema()),
-        ("name", string_schema()),
-        ("primary", boolean_value_schema()),
-        ("unique", boolean_value_schema()),
-        ("definition", string_schema()),
-    ])
-}
-
-fn constraint_row_schema() -> Value {
-    exact_object(&[
-        ("name", string_schema()),
-        ("constraint_type", string_schema()),
-        ("definition", string_schema()),
-    ])
-}
-
-fn describe_relation_schema() -> Value {
-    exact_object(&[
-        ("schema", string_schema()),
-        ("name", string_schema()),
-        ("kind", string_schema()),
-        ("owner", string_schema()),
-        ("rows_estimate", nullable(integer_schema())),
-        ("total_size", string_schema()),
-    ])
-}
-
-fn extension_row_schema() -> Value {
-    exact_object(&[
-        ("name", string_schema()),
-        ("installed_version", nullable(string_schema())),
-        ("default_version", nullable(string_schema())),
-        ("schema", nullable(string_schema())),
-        ("comment", nullable(string_schema())),
-    ])
-}
-
-fn activity_row_schema() -> Value {
-    exact_object(&[
-        ("pid", integer_schema()),
-        ("user", nullable(string_schema())),
-        ("database", nullable(string_schema())),
-        ("application_name", nullable(string_schema())),
-        ("client_addr", nullable(string_schema())),
-        ("state", nullable(string_schema())),
-        ("wait_event_type", nullable(string_schema())),
-        ("wait_event", nullable(string_schema())),
-        ("query_start", nullable(string_schema())),
-        ("state_change", nullable(string_schema())),
-        ("query", nullable(string_schema())),
-    ])
-}
-
-fn lock_row_schema() -> Value {
-    exact_object(&[
-        ("blocked_pid", integer_schema()),
-        ("blocked_user", nullable(string_schema())),
-        ("blocking_pid", nullable(integer_schema())),
-        ("blocking_user", nullable(string_schema())),
-        ("lock_type", string_schema()),
-        ("mode", string_schema()),
-        ("relation", nullable(string_schema())),
-        ("blocked_query", nullable(string_schema())),
-        ("blocking_query", nullable(string_schema())),
-    ])
-}
-
-fn size_row_schema() -> Value {
-    exact_object(&[
-        ("scope", string_schema()),
-        ("schema", nullable(string_schema())),
-        ("name", string_schema()),
-        ("size", string_schema()),
-        ("bytes", integer_schema()),
-    ])
-}
-
-fn setting_row_schema() -> Value {
-    exact_object(&[
-        ("name", string_schema()),
-        ("setting", string_schema()),
-        ("unit", nullable(string_schema())),
-        ("source", string_schema()),
-        ("short_desc", string_schema()),
-    ])
 }
 
 #[cfg(test)]

@@ -114,20 +114,7 @@ pub fn normalize_output(schema: Value) -> Value {
 /// output types for deserialization, so `schemars` emits one; drop it rather
 /// than publish a default nobody can supply.
 fn strip_defaults(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            map.remove("default");
-            for nested in map.values_mut() {
-                strip_defaults(nested);
-            }
-        }
-        Value::Array(values) => {
-            for nested in values {
-                strip_defaults(nested);
-            }
-        }
-        _ => {}
-    }
+    strip_keywords(value, &["default"]);
 }
 
 /// Reshape a derived schema into catalog form, keeping the derived `required` list.
@@ -308,32 +295,43 @@ fn substitute_refs(value: &mut Value, definitions: &Map<String, Value>) {
 /// below, which is exactly what happened to `gitlab.issue.create.title`.
 const NAME_KEYED: &[&str] = &["properties", "patternProperties", "$defs", "definitions"];
 
-/// Remove keys that describe the Rust type rather than the JSON contract.
-fn strip_annotations(value: &mut Value) {
+/// Walk every subschema, removing `keywords` from each.
+///
+/// The distinction that matters: under a name-keyed map, the keys are *property
+/// names*, not schema keywords. Removing `title` or `default` there deletes a
+/// legitimate property - which is precisely what happened to
+/// `gitlab.issue.create.title` and `postgres.describe.columns[].default` before
+/// this walk knew the difference.
+fn strip_keywords(value: &mut Value, keywords: &[&str]) {
     match value {
         Value::Object(map) => {
-            map.remove("$schema");
-            map.remove("title");
-            map.remove("format");
+            for keyword in keywords {
+                map.remove(*keyword);
+            }
             for (key, nested) in map.iter_mut() {
                 if NAME_KEYED.contains(&key.as_str()) {
                     if let Value::Object(named) = nested {
                         for subschema in named.values_mut() {
-                            strip_annotations(subschema);
+                            strip_keywords(subschema, keywords);
                         }
                     }
                 } else {
-                    strip_annotations(nested);
+                    strip_keywords(nested, keywords);
                 }
             }
         }
         Value::Array(values) => {
             for nested in values {
-                strip_annotations(nested);
+                strip_keywords(nested, keywords);
             }
         }
         _ => {}
     }
+}
+
+/// Remove keys that describe the Rust type rather than the JSON contract.
+fn strip_annotations(value: &mut Value) {
+    strip_keywords(value, &["$schema", "title", "format"]);
 }
 
 /// Rewrite the nullable-wrapper `anyOf` that `schemars` emits for `Option<T>`.
@@ -569,6 +567,39 @@ mod tests {
             "`title` is a property name here, not a schema annotation"
         );
         assert_eq!(derived["properties"]["format"], json!({"type": "string"}));
+    }
+
+    #[derive(JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct KeywordNamedColumn {
+        name: String,
+        default: Option<String>,
+    }
+
+    #[derive(JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct KeywordNamedOutput {
+        command: String,
+        columns: Vec<KeywordNamedColumn>,
+    }
+
+    #[test]
+    fn an_output_property_named_default_survives() {
+        let derived = output_schema_for::<KeywordNamedOutput>("postgres.describe");
+        let column = &derived["properties"]["columns"]["items"];
+        assert_eq!(
+            column["properties"]["default"],
+            json!({"type": ["string", "null"]}),
+            "`default` is a column name here, not a schema keyword"
+        );
+        assert!(
+            column["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|name| name == "default")),
+            "a property the payload always sends must stay required"
+        );
     }
 
     #[test]

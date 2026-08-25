@@ -157,6 +157,33 @@ Each step is independently shippable and behavior-preserving.
 8. **Repeat for dynamic plugins**, which benefit most (142 `json!` literals in the
    GitHub plugin alone).
 
+## What the conversion has actually found
+
+Deriving is not only cheaper to maintain; it surfaced defects that the
+hand-written schemas had been hiding.
+
+- **`gitlab.issues` and `gitlab.pipelines` published schemas that rejected their
+  own payload.** Both listed four properties with `additionalProperties: false`
+  while the payload type serialized ten and five. The runtime validates every
+  typed response against the descriptor, so both commands returned
+  `OUTPUT_SCHEMA_VIOLATION` on every call. Neither is covered by a test, because
+  both need the network. This is finding 1.2 happening in production.
+- **Two enums existed only in prose.** `file.stat.kind` and
+  `plugins.list.source`/`state` were `&'static str` whose legal values lived in
+  the schema alone. They are real enums now.
+- **The normalizer itself had a bug of the same shape, twice.** Stripping
+  `title`/`format` and stripping `default` both recursed into `properties`
+  without knowing its keys are *property names*, so a property genuinely called
+  `title` or `default` was deleted from the published schema while remaining in
+  `required`. It hit `gitlab.issue.create.title` and
+  `postgres.describe.columns[].default`. Both walks now share one traversal that
+  knows which keywords are name-keyed maps, with regression tests.
+
+The last one is worth stating plainly: a generator can be wrong in ways a
+hand-written literal cannot. What makes it better is not that it cannot fail, but
+that when it does, it fails the same way everywhere and one fix covers every
+command — and the golden snapshots make the failure visible.
+
 ## Risks and invariants
 
 - **Schema byte-stability.** `schemars` output ordering and phrasing will not match

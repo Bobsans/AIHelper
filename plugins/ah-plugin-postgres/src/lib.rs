@@ -14,6 +14,7 @@ use ah_plugin_api::{
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::blocking::Client;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -346,38 +347,45 @@ impl ToolSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolVersion {
     raw: String,
+    #[schemars(range(min = 1))]
     major: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CandidateStatus {
     source: &'static str,
     path: PathBuf,
     psql_path: Option<PathBuf>,
     bin_dir: Option<PathBuf>,
     version_raw: Option<String>,
+    #[schemars(range(min = 1))]
     version_major: Option<u32>,
     accepted: bool,
     reason: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolStatusOutput {
     command: &'static str,
     available: bool,
     selected: Option<CandidateStatus>,
     candidates: Vec<CandidateStatus>,
     target_version: &'static str,
+    #[schemars(range(min = 1))]
     minimum_major: u32,
     cache_dir: Option<PathBuf>,
     config_path: Option<PathBuf>,
     remediation: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolDownloadOutput {
     command: &'static str,
     version: String,
@@ -389,7 +397,8 @@ struct ToolDownloadOutput {
     downloaded: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolUseOutput {
     command: &'static str,
     path: PathBuf,
@@ -398,13 +407,15 @@ struct ToolUseOutput {
     config_path: PathBuf,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ToolCleanupOutput {
     command: &'static str,
     removed: Vec<PathBuf>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct MissingToolOutput {
     available: bool,
     required: String,
@@ -419,7 +430,8 @@ struct ToolConfig {
     path: Option<PathBuf>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct InfoRow {
     server_version: String,
     current_database: String,
@@ -431,14 +443,16 @@ struct InfoRow {
     inet_server_port: Option<i32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct InfoOutput {
     command: &'static str,
     #[serde(flatten)]
     info: InfoRow,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct DatabaseRow {
     name: String,
     owner: String,
@@ -447,13 +461,15 @@ struct DatabaseRow {
     size: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct SchemaRow {
     name: String,
     owner: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct RelationRow {
     schema: String,
     name: String,
@@ -463,7 +479,8 @@ struct RelationRow {
     size: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ColumnRow {
     ordinal: i32,
     name: String,
@@ -473,7 +490,8 @@ struct ColumnRow {
     comment: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct IndexRow {
     schema: String,
     table: String,
@@ -483,14 +501,16 @@ struct IndexRow {
     definition: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ConstraintRow {
     name: String,
     constraint_type: String,
     definition: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct DescribeRelationRow {
     schema: String,
     name: String,
@@ -500,7 +520,8 @@ struct DescribeRelationRow {
     total_size: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct DescribeOutput {
     command: String,
     relation: DescribeRelationRow,
@@ -509,7 +530,8 @@ struct DescribeOutput {
     constraints: Vec<ConstraintRow>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ExtensionRow {
     name: String,
     installed_version: Option<String>,
@@ -518,7 +540,8 @@ struct ExtensionRow {
     comment: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct ActivityRow {
     pid: i32,
     user: Option<String>,
@@ -533,7 +556,8 @@ struct ActivityRow {
     query: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct LockRow {
     blocked_pid: i32,
     blocked_user: Option<String>,
@@ -546,7 +570,8 @@ struct LockRow {
     blocking_query: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct SizeRow {
     scope: String,
     schema: Option<String>,
@@ -555,7 +580,8 @@ struct SizeRow {
     bytes: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct SettingRow {
     name: String,
     setting: String,
@@ -564,32 +590,48 @@ struct SettingRow {
     short_desc: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RowsOutput<T> {
     command: &'static str,
     count: usize,
     rows: Vec<T>,
 }
 
-#[derive(Debug, Serialize)]
+/// A result set the caller's own SQL shapes: rows may be anything.
+fn any_array(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": "array", "items": {}})
+}
+
+/// An `EXPLAIN` plan, whose shape PostgreSQL owns and varies by version.
+fn any_value(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({})
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct QueryOutput {
     command: &'static str,
     row_count: usize,
+    #[schemars(schema_with = "any_array")]
     rows: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ExecOutput {
     command: &'static str,
     stdout: String,
     stderr: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ExplainOutput {
     command: &'static str,
     analyze: bool,
     buffers: bool,
+    #[schemars(schema_with = "any_value")]
     plan: Value,
 }
 

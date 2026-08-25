@@ -24,13 +24,9 @@
             "type": "boolean"
           },
           "cache_dir": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "candidates": {
@@ -41,72 +37,52 @@
                   "type": "boolean"
                 },
                 "bin_dir": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "path": {
                   "type": "string"
                 },
                 "psql_path": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "reason": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "source": {
                   "type": "string"
                 },
                 "version_major": {
-                  "oneOf": [
-                    {
-                      "minimum": 1,
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "minimum": 1,
+                  "type": [
+                    "integer",
+                    "null"
                   ]
                 },
                 "version_raw": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
-                "source",
+                "accepted",
+                "bin_dir",
                 "path",
                 "psql_path",
-                "bin_dir",
-                "version_raw",
+                "reason",
+                "source",
                 "version_major",
-                "accepted",
-                "reason"
+                "version_raw"
               ],
               "type": "object"
             },
@@ -117,13 +93,9 @@
             "type": "string"
           },
           "config_path": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "minimum_major": {
@@ -131,13 +103,9 @@
             "type": "integer"
           },
           "remediation": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "selected": {
@@ -149,72 +117,52 @@
                     "type": "boolean"
                   },
                   "bin_dir": {
-                    "oneOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "path": {
                     "type": "string"
                   },
                   "psql_path": {
-                    "oneOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "reason": {
-                    "oneOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "source": {
                     "type": "string"
                   },
                   "version_major": {
-                    "oneOf": [
-                      {
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
                     ]
                   },
                   "version_raw": {
-                    "oneOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   }
                 },
                 "required": [
-                  "source",
+                  "accepted",
+                  "bin_dir",
                   "path",
                   "psql_path",
-                  "bin_dir",
-                  "version_raw",
+                  "reason",
+                  "source",
                   "version_major",
-                  "accepted",
-                  "reason"
+                  "version_raw"
                 ],
                 "type": "object"
               },
@@ -228,15 +176,15 @@
           }
         },
         "required": [
-          "command",
           "available",
-          "selected",
-          "candidates",
-          "target_version",
-          "minimum_major",
           "cache_dir",
+          "candidates",
+          "command",
           "config_path",
-          "remediation"
+          "minimum_major",
+          "remediation",
+          "selected",
+          "target_version"
         ],
         "type": "object"
       },
@@ -314,14 +262,14 @@
           }
         },
         "required": [
-          "command",
-          "version",
-          "url",
-          "sha256",
-          "cache_path",
           "bin_dir",
+          "cache_path",
+          "command",
+          "downloaded",
           "psql_path",
-          "downloaded"
+          "sha256",
+          "url",
+          "version"
         ],
         "type": "object"
       },
@@ -381,14 +329,10 @@
             "additionalProperties": false,
             "properties": {
               "major": {
-                "oneOf": [
-                  {
-                    "minimum": 1,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
                 ]
               },
               "raw": {
@@ -396,18 +340,18 @@
               }
             },
             "required": [
-              "raw",
-              "major"
+              "major",
+              "raw"
             ],
             "type": "object"
           }
         },
         "required": [
           "command",
+          "config_path",
           "path",
           "psql_path",
-          "version",
-          "config_path"
+          "version"
         ],
         "type": "object"
       },
@@ -556,36 +500,24 @@
             "type": "string"
           },
           "current_schema": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "current_user": {
             "type": "string"
           },
           "inet_server_addr": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "inet_server_port": {
-            "oneOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "integer",
+              "null"
             ]
           },
           "server_encoding": {
@@ -600,14 +532,14 @@
         },
         "required": [
           "command",
-          "server_version",
           "current_database",
-          "current_user",
-          "session_user",
           "current_schema",
-          "server_encoding",
+          "current_user",
           "inet_server_addr",
-          "inet_server_port"
+          "inet_server_port",
+          "server_encoding",
+          "server_version",
+          "session_user"
         ],
         "type": "object"
       },
@@ -718,36 +650,24 @@
             "type": "string"
           },
           "current_schema": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "current_user": {
             "type": "string"
           },
           "inet_server_addr": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "inet_server_port": {
-            "oneOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "integer",
+              "null"
             ]
           },
           "server_encoding": {
@@ -762,14 +682,14 @@
         },
         "required": [
           "command",
-          "server_version",
           "current_database",
-          "current_user",
-          "session_user",
           "current_schema",
-          "server_encoding",
+          "current_user",
           "inet_server_addr",
-          "inet_server_port"
+          "inet_server_port",
+          "server_encoding",
+          "server_version",
+          "session_user"
         ],
         "type": "object"
       },
@@ -897,21 +817,17 @@
                   "type": "string"
                 },
                 "size": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
+                "allow_connections",
+                "encoding",
                 "name",
                 "owner",
-                "encoding",
-                "allow_connections",
                 "size"
               ],
               "type": "object"
@@ -1195,13 +1111,9 @@
                   "type": "string"
                 },
                 "rows_estimate": {
-                  "oneOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "integer",
+                    "null"
                   ]
                 },
                 "schema": {
@@ -1212,11 +1124,11 @@
                 }
               },
               "required": [
-                "schema",
-                "name",
                 "kind",
+                "name",
                 "owner",
                 "rows_estimate",
+                "schema",
                 "size"
               ],
               "type": "object"
@@ -1361,13 +1273,9 @@
                   "type": "string"
                 },
                 "rows_estimate": {
-                  "oneOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "integer",
+                    "null"
                   ]
                 },
                 "schema": {
@@ -1378,11 +1286,11 @@
                 }
               },
               "required": [
-                "schema",
-                "name",
                 "kind",
+                "name",
                 "owner",
                 "rows_estimate",
+                "schema",
                 "size"
               ],
               "type": "object"
@@ -1506,26 +1414,18 @@
               "additionalProperties": false,
               "properties": {
                 "comment": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "data_type": {
                   "type": "string"
                 },
                 "default": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "name": {
@@ -1539,12 +1439,12 @@
                 }
               },
               "required": [
-                "ordinal",
-                "name",
+                "comment",
                 "data_type",
-                "nullable",
                 "default",
-                "comment"
+                "name",
+                "nullable",
+                "ordinal"
               ],
               "type": "object"
             },
@@ -1569,9 +1469,9 @@
                 }
               },
               "required": [
-                "name",
                 "constraint_type",
-                "definition"
+                "definition",
+                "name"
               ],
               "type": "object"
             },
@@ -1601,12 +1501,12 @@
                 }
               },
               "required": [
-                "schema",
-                "table",
+                "definition",
                 "name",
                 "primary",
-                "unique",
-                "definition"
+                "schema",
+                "table",
+                "unique"
               ],
               "type": "object"
             },
@@ -1625,13 +1525,9 @@
                 "type": "string"
               },
               "rows_estimate": {
-                "oneOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "integer",
+                  "null"
                 ]
               },
               "schema": {
@@ -1642,22 +1538,22 @@
               }
             },
             "required": [
-              "schema",
-              "name",
               "kind",
+              "name",
               "owner",
               "rows_estimate",
+              "schema",
               "total_size"
             ],
             "type": "object"
           }
         },
         "required": [
-          "command",
-          "relation",
           "columns",
+          "command",
+          "constraints",
           "indexes",
-          "constraints"
+          "relation"
         ],
         "type": "object"
       },
@@ -1800,12 +1696,12 @@
                 }
               },
               "required": [
-                "schema",
-                "table",
+                "definition",
                 "name",
                 "primary",
-                "unique",
-                "definition"
+                "schema",
+                "table",
+                "unique"
               ],
               "type": "object"
             },
@@ -1936,55 +1832,39 @@
               "additionalProperties": false,
               "properties": {
                 "comment": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "default_version": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "installed_version": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "name": {
                   "type": "string"
                 },
                 "schema": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
-                "name",
-                "installed_version",
+                "comment",
                 "default_version",
-                "schema",
-                "comment"
+                "installed_version",
+                "name",
+                "schema"
               ],
               "type": "object"
             },
@@ -2264,8 +2144,8 @@
         },
         "required": [
           "command",
-          "stdout",
-          "stderr"
+          "stderr",
+          "stdout"
         ],
         "type": "object"
       },
@@ -2404,9 +2284,9 @@
           "plan": {}
         },
         "required": [
-          "command",
           "analyze",
           "buffers",
+          "command",
           "plan"
         ],
         "type": "object"
@@ -2533,121 +2413,81 @@
               "additionalProperties": false,
               "properties": {
                 "application_name": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "client_addr": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "database": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "pid": {
                   "type": "integer"
                 },
                 "query": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "query_start": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "state": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "state_change": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "user": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "wait_event": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "wait_event_type": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
-                "pid",
-                "user",
-                "database",
                 "application_name",
                 "client_addr",
-                "state",
-                "wait_event_type",
-                "wait_event",
+                "database",
+                "pid",
+                "query",
                 "query_start",
+                "state",
                 "state_change",
-                "query"
+                "user",
+                "wait_event",
+                "wait_event_type"
               ],
               "type": "object"
             },
@@ -2781,53 +2621,33 @@
                   "type": "integer"
                 },
                 "blocked_query": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "blocked_user": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "blocking_pid": {
-                  "oneOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "integer",
+                    "null"
                   ]
                 },
                 "blocking_query": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "blocking_user": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "lock_type": {
@@ -2837,26 +2657,22 @@
                   "type": "string"
                 },
                 "relation": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
                 "blocked_pid",
+                "blocked_query",
                 "blocked_user",
                 "blocking_pid",
+                "blocking_query",
                 "blocking_user",
                 "lock_type",
                 "mode",
-                "relation",
-                "blocked_query",
-                "blocking_query"
+                "relation"
               ],
               "type": "object"
             },
@@ -2996,13 +2812,9 @@
                   "type": "string"
                 },
                 "schema": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "scope": {
@@ -3013,11 +2825,11 @@
                 }
               },
               "required": [
-                "scope",
-                "schema",
+                "bytes",
                 "name",
-                "size",
-                "bytes"
+                "schema",
+                "scope",
+                "size"
               ],
               "type": "object"
             },
@@ -3160,22 +2972,18 @@
                   "type": "string"
                 },
                 "unit": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
                 "name",
                 "setting",
-                "unit",
+                "short_desc",
                 "source",
-                "short_desc"
+                "unit"
               ],
               "type": "object"
             },
