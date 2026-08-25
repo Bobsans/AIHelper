@@ -62,83 +62,60 @@
             "type": "string"
           },
           "default_branch": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "host": {
             "type": "string"
           },
           "id": {
-            "oneOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
             ]
           },
           "path_with_namespace": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "project": {
             "type": "string"
           },
           "remote_url": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "visibility": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "web_url": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
         "required": [
-          "command",
-          "project",
-          "remote_url",
-          "host",
           "api_url",
+          "command",
+          "default_branch",
+          "host",
           "id",
           "path_with_namespace",
-          "web_url",
-          "default_branch",
-          "visibility"
+          "project",
+          "remote_url",
+          "visibility",
+          "web_url"
         ],
         "type": "object"
       },
@@ -585,6 +562,18 @@
       "output_schema": {
         "additionalProperties": false,
         "properties": {
+          "assignee": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "command": {
             "const": "gitlab.issues",
             "type": "string"
@@ -600,15 +589,42 @@
             },
             "type": "array"
           },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "project": {
+            "type": "string"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
             "type": "string"
           }
         },
         "required": [
+          "assignee",
+          "author",
           "command",
-          "project",
           "issue_count",
-          "issues"
+          "issues",
+          "labels",
+          "project",
+          "search",
+          "since",
+          "state"
         ],
         "type": "object"
       },
@@ -912,8 +928,8 @@
         },
         "required": [
           "command",
-          "project",
-          "issue"
+          "issue",
+          "project"
         ],
         "type": "object"
       },
@@ -1052,8 +1068,8 @@
         },
         "required": [
           "command",
-          "project",
-          "issue"
+          "issue",
+          "project"
         ],
         "type": "object"
       },
@@ -1166,8 +1182,8 @@
         },
         "required": [
           "command",
-          "project",
-          "issue"
+          "issue",
+          "project"
         ],
         "type": "object"
       },
@@ -1284,9 +1300,9 @@
         },
         "required": [
           "command",
-          "project",
+          "comment",
           "iid",
-          "comment"
+          "project"
         ],
         "type": "object"
       },
@@ -1402,10 +1418,10 @@
         },
         "required": [
           "command",
-          "project",
-          "iid",
           "comment_count",
-          "comments"
+          "comments",
+          "iid",
+          "project"
         ],
         "type": "object"
       },
@@ -1492,6 +1508,12 @@
       "output_schema": {
         "additionalProperties": false,
         "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "command": {
             "const": "gitlab.pipelines",
             "type": "string"
@@ -1512,10 +1534,11 @@
           }
         },
         "required": [
+          "branch",
           "command",
-          "project",
           "pipeline_count",
-          "pipelines"
+          "pipelines",
+          "project"
         ],
         "type": "object"
       },
@@ -1618,8 +1641,8 @@
         },
         "required": [
           "command",
-          "project",
-          "pipeline"
+          "pipeline",
+          "project"
         ],
         "type": "object"
       },
@@ -1743,9 +1766,9 @@
         },
         "required": [
           "command",
-          "project",
+          "elapsed_secs",
           "pipeline",
-          "elapsed_secs"
+          "project"
         ],
         "type": "object"
       },
@@ -1868,10 +1891,10 @@
         },
         "required": [
           "command",
-          "project",
-          "pipeline_id",
           "job_count",
-          "jobs"
+          "jobs",
+          "pipeline_id",
+          "project"
         ],
         "type": "object"
       },
@@ -1975,13 +1998,9 @@
             "type": "string"
           },
           "grep": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "job_id": {
@@ -2021,12 +2040,12 @@
         },
         "required": [
           "command",
-          "project",
-          "job_id",
           "grep",
+          "job_id",
           "match_count",
-          "truncated",
-          "matches"
+          "matches",
+          "project",
+          "truncated"
         ],
         "type": "object"
       },
@@ -2126,13 +2145,9 @@
             "type": "string"
           },
           "grep": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "job_id": {
@@ -2172,12 +2187,12 @@
         },
         "required": [
           "command",
-          "project",
-          "job_id",
           "grep",
+          "job_id",
           "match_count",
-          "truncated",
-          "matches"
+          "matches",
+          "project",
+          "truncated"
         ],
         "type": "object"
       },

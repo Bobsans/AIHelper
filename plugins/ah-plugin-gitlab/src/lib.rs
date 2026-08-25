@@ -14,6 +14,7 @@ use ah_plugin_api::{
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 #[cfg(test)]
@@ -387,7 +388,8 @@ struct GitlabContext {
     remote_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ProjectOutput {
     command: &'static str,
     project: String,
@@ -436,7 +438,8 @@ struct IssueResponse {
     closed_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssuesOutput {
     command: &'static str,
     project: String,
@@ -447,13 +450,16 @@ struct IssuesOutput {
     since: Option<String>,
     search: Option<String>,
     issue_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     issues: Vec<IssueResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueOutput {
     command: &'static str,
     project: String,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_object")]
     issue: IssueResponse,
 }
 
@@ -468,20 +474,26 @@ struct IssueNoteResponse {
     web_url: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueNotesOutput {
     command: &'static str,
     project: String,
+    #[schemars(range(min = 1))]
     iid: u64,
     comment_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     comments: Vec<IssueNoteResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueNoteOutput {
     command: &'static str,
     project: String,
+    #[schemars(range(min = 1))]
     iid: u64,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_object")]
     comment: IssueNoteResponse,
 }
 
@@ -538,16 +550,21 @@ struct IssueDesignConnection {
     nodes: Vec<IssueDesignResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IssueFullOutput {
     command: &'static str,
     project: String,
+    #[schemars(range(min = 1))]
     iid: u64,
     full: bool,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_object")]
     issue: IssueResponse,
     comment_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     comments: Vec<IssueNoteResponse>,
     design_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     designs: Vec<IssueDesignResponse>,
     warnings: Vec<String>,
 }
@@ -563,18 +580,22 @@ struct ReleaseResponse {
     assets: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ReleasesOutput {
     command: &'static str,
     project: String,
     release_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     releases: Vec<ReleaseResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ReleaseOutput {
     command: &'static str,
     project: String,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_object")]
     release: ReleaseResponse,
 }
 
@@ -592,26 +613,32 @@ struct PipelineResponse {
     updated_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct PipelinesOutput {
     command: &'static str,
     project: String,
     branch: Option<String>,
     pipeline_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     pipelines: Vec<PipelineResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct PipelineOutput {
     command: &'static str,
     project: String,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_object")]
     pipeline: PipelineResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WaitPipelineOutput {
     command: &'static str,
     project: String,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_object")]
     pipeline: PipelineResponse,
     elapsed_secs: u64,
 }
@@ -630,25 +657,32 @@ struct JobResponse {
     finished_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct JobsOutput {
     command: &'static str,
     project: String,
+    #[schemars(range(min = 1))]
     pipeline_id: u64,
     job_count: usize,
+    #[schemars(schema_with = "ah_plugin_api::schema::external_array")]
     jobs: Vec<JobResponse>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TraceLine {
+    #[schemars(range(min = 1))]
     line: usize,
     text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TraceOutput {
     command: &'static str,
     project: String,
+    #[schemars(range(min = 1))]
     job_id: u64,
     grep: Option<String>,
     match_count: usize,

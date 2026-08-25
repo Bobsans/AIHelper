@@ -59,6 +59,32 @@ pub fn input_schema_for<T: JsonSchema>() -> Value {
     normalize_input(raw_schema::<T>())
 }
 
+/// Schema for a field carrying a payload from an external API.
+///
+/// A plugin that mirrors GitHub, GitLab or PostgreSQL does not own the shape it
+/// returns: the service can add a field at any time. Deriving the DTO would
+/// publish a closed schema claiming otherwise, and would bury the command's own
+/// contract under hundreds of upstream fields.
+///
+/// ```ignore
+/// #[schemars(schema_with = "external_object")]
+/// release: ReleaseResponse,
+/// ```
+pub fn external_object(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "additionalProperties": true
+    })
+}
+
+/// [`external_object`] for a field holding a list of them.
+pub fn external_array(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "array",
+        "items": external_object(generator)
+    })
+}
+
 /// An input schema for a command that takes no arguments.
 pub fn empty_input_schema() -> Value {
     serde_json::json!({
@@ -475,6 +501,39 @@ mod tests {
             derived["properties"]["name"],
             json!({"type": "string"}),
             "an optional argument may be omitted, but not sent as an explicit null"
+        );
+    }
+
+    #[derive(JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct ReleaseResponse {
+        id: u64,
+        tag_name: String,
+    }
+
+    #[derive(JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct ReleasesOutput {
+        command: String,
+        project: String,
+        #[schemars(schema_with = "external_array")]
+        releases: Vec<ReleaseResponse>,
+    }
+
+    #[test]
+    fn an_external_payload_stays_open() {
+        let derived = output_schema_for::<ReleasesOutput>("gitlab.releases");
+        assert_eq!(
+            derived["properties"]["releases"],
+            json!({"type": "array", "items": {"type": "object", "additionalProperties": true}}),
+            "the plugin does not own this shape, so it must not publish a closed one"
+        );
+        // The command's own fields are still derived exactly.
+        assert_eq!(
+            derived["properties"]["command"],
+            json!({"type": "string", "const": "gitlab.releases"})
         );
     }
 

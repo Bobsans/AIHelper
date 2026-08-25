@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse, cancellation,
+    TypedInvocationResponse, cancellation, schema::output_schema_for,
 };
 use serde_json::{Map, Value, json};
 
@@ -532,20 +532,7 @@ fn project_descriptor() -> CommandDescriptor {
         "Inspect GitLab project",
         "Detect the GitLab project and return remote plus API metadata.",
         input_schema(Map::new(), Vec::new()),
-        top_output(
-            "gitlab.project",
-            &[
-                ("project", string_schema()),
-                ("remote_url", nullable(string_schema())),
-                ("host", string_schema()),
-                ("api_url", string_schema()),
-                ("id", nullable(integer_schema())),
-                ("path_with_namespace", nullable(string_schema())),
-                ("web_url", nullable(string_schema())),
-                ("default_branch", nullable(string_schema())),
-                ("visibility", nullable(string_schema())),
-            ],
-        ),
+        output_schema_for::<ProjectOutput>("gitlab.project"),
         read_effects(
             "May run Git project detection and sends a read request to the configured API URL; a supplied token is sent to that host.",
         ),
@@ -558,7 +545,7 @@ fn releases_descriptor() -> CommandDescriptor {
         "List GitLab releases",
         "List project releases with the shared result limit.",
         input_schema(Map::new(), Vec::new()),
-        list_output("gitlab.releases", "release_count", "releases"),
+        output_schema_for::<ReleasesOutput>("gitlab.releases"),
         read_effects("Reads release metadata and assets from the configured GitLab API."),
     )
 }
@@ -569,7 +556,7 @@ fn release_get_descriptor() -> CommandDescriptor {
         "Get GitLab release",
         "Return one GitLab release by tag.",
         input_schema(tag_properties(), vec!["tag"]),
-        item_output("gitlab.release.get", "release"),
+        output_schema_for::<ReleaseOutput>("gitlab.release.get"),
         read_effects("Reads release metadata and asset links from the configured GitLab API."),
     )
 }
@@ -587,7 +574,7 @@ fn release_create_descriptor() -> CommandDescriptor {
         "Create GitLab release",
         "Create a project release with optional description and target reference. Use description or description_file, not both.",
         input_schema(properties, vec!["tag"]),
-        item_output("gitlab.release.create", "release"),
+        output_schema_for::<ReleaseOutput>("gitlab.release.create"),
         write_effects(
             "Creates a persistent release and may create a tag; description files are read from the execution cwd.",
         ),
@@ -612,7 +599,7 @@ fn issues_descriptor() -> CommandDescriptor {
         "List GitLab issues",
         "List project issues with state, label, author, assignee, date, and search filters.",
         input_schema(properties, Vec::new()),
-        list_output("gitlab.issues", "issue_count", "issues"),
+        output_schema_for::<IssuesOutput>("gitlab.issues"),
         read_effects(
             "Reads issue metadata from the configured GitLab API and may expose private project data.",
         ),
@@ -630,6 +617,9 @@ fn issue_view_descriptor() -> CommandDescriptor {
         "View GitLab issue",
         "Return one issue, optionally with comments, designs, and warnings.",
         input_schema(properties, vec!["iid"]),
+        // Hand-written: `gitlab.issue.view` returns one of two payloads
+        // depending on `full`, so no single type describes it. Deriving would
+        // need an untagged enum, whose `anyOf` is not the published `oneOf`.
         json!({
             "type": "object",
             "oneOf": [
@@ -666,7 +656,7 @@ fn issue_create_descriptor() -> CommandDescriptor {
         "Create GitLab issue",
         "Create a project issue with optional description, labels, and assignees. Use description or description_file, not both.",
         input_schema(properties, vec!["title"]),
-        item_output("gitlab.issue.create", "issue"),
+        output_schema_for::<IssueOutput>("gitlab.issue.create"),
         write_effects(
             "Creates a persistent issue and may notify project participants; description files are read from the execution cwd.",
         ),
@@ -697,7 +687,7 @@ fn issue_update_descriptor() -> CommandDescriptor {
         "Update GitLab issue",
         "Update one or more fields on a project issue. At least one update field is required; use description or description_file, not both.",
         input_schema(properties, vec!["iid"]),
-        item_output("gitlab.issue.update", "issue"),
+        output_schema_for::<IssueOutput>("gitlab.issue.update"),
         write_effects(
             "Mutates a persistent issue and may change workflow state or notify participants.",
         ),
@@ -712,7 +702,7 @@ fn issue_close_descriptor() -> CommandDescriptor {
         "Close GitLab issue",
         "Close an issue, optionally adding a comment first. Use comment or comment_file, not both.",
         input_schema(properties, vec!["iid"]),
-        item_output("gitlab.issue.close", "issue"),
+        output_schema_for::<IssueOutput>("gitlab.issue.close"),
         write_effects("May create a note, closes a persistent issue, and may notify participants."),
     )
 }
@@ -725,14 +715,7 @@ fn issue_comment_descriptor() -> CommandDescriptor {
         "Comment on GitLab issue",
         "Create a note on one project issue. Exactly one of body or body_file is required.",
         input_schema(properties, vec!["iid"]),
-        top_output(
-            "gitlab.issue.comment",
-            &[
-                ("project", string_schema()),
-                ("iid", positive_integer_schema()),
-                ("comment", external_object_schema()),
-            ],
-        ),
+        output_schema_for::<IssueNoteOutput>("gitlab.issue.comment"),
         write_effects("Creates a persistent issue note and may notify project participants."),
     )
 }
@@ -743,15 +726,7 @@ fn issue_comments_descriptor() -> CommandDescriptor {
         "List GitLab issue comments",
         "List notes for one project issue with the shared result limit.",
         input_schema(iid_properties(), vec!["iid"]),
-        top_output(
-            "gitlab.issue.comments",
-            &[
-                ("project", string_schema()),
-                ("iid", positive_integer_schema()),
-                ("comment_count", nonnegative_integer_schema()),
-                ("comments", external_array_schema()),
-            ],
-        ),
+        output_schema_for::<IssueNotesOutput>("gitlab.issue.comments"),
         read_effects("Reads issue notes and author metadata from the configured GitLab API."),
     )
 }
@@ -764,7 +739,7 @@ fn pipelines_descriptor() -> CommandDescriptor {
         "List GitLab pipelines",
         "List project pipelines with an optional branch filter.",
         input_schema(properties, Vec::new()),
-        list_output("gitlab.pipelines", "pipeline_count", "pipelines"),
+        output_schema_for::<PipelinesOutput>("gitlab.pipelines"),
         read_effects(
             "Reads pipeline status, commit SHA, references, and URLs from the configured GitLab API.",
         ),
@@ -777,7 +752,7 @@ fn pipeline_get_descriptor() -> CommandDescriptor {
         "Get GitLab pipeline",
         "Return one project pipeline by id.",
         input_schema(pipeline_id_properties(), vec!["pipeline_id"]),
-        item_output("gitlab.pipeline.get", "pipeline"),
+        output_schema_for::<PipelineOutput>("gitlab.pipeline.get"),
         read_effects(
             "Reads one pipeline and its commit/status metadata from the configured GitLab API.",
         ),
@@ -803,14 +778,7 @@ fn pipeline_wait_descriptor() -> CommandDescriptor {
         "Wait for GitLab pipeline",
         "Poll a pipeline until completion, timeout, or cancellation. pipeline_id is a pipeline id from gitlab.pipelines, not a job id and not a merge request iid.",
         input_schema(properties, vec!["pipeline_id"]),
-        top_output(
-            "gitlab.pipeline.wait",
-            &[
-                ("project", string_schema()),
-                ("pipeline", external_object_schema()),
-                ("elapsed_secs", nonnegative_integer_schema()),
-            ],
-        ),
+        output_schema_for::<WaitPipelineOutput>("gitlab.pipeline.wait"),
         read_effects("Repeatedly reads external pipeline state and may consume API rate limits."),
     )
     .with_example(CommandExample::new(
@@ -825,15 +793,7 @@ fn pipeline_jobs_descriptor() -> CommandDescriptor {
         "List GitLab pipeline jobs",
         "List jobs belonging to one project pipeline.",
         input_schema(pipeline_id_properties(), vec!["pipeline_id"]),
-        top_output(
-            "gitlab.pipeline.jobs",
-            &[
-                ("project", string_schema()),
-                ("pipeline_id", positive_integer_schema()),
-                ("job_count", nonnegative_integer_schema()),
-                ("jobs", external_array_schema()),
-            ],
-        ),
+        output_schema_for::<JobsOutput>("gitlab.pipeline.jobs"),
         read_effects(
             "Reads job names, stages, statuses, timestamps, and URLs from the configured GitLab API.",
         ),
@@ -873,31 +833,7 @@ fn job_trace_descriptor(warnings: bool) -> CommandDescriptor {
             "Read or filter one job trace."
         },
         input_schema(properties, vec!["job_id"]),
-        top_output(
-            id,
-            &[
-                ("project", string_schema()),
-                ("job_id", positive_integer_schema()),
-                ("grep", nullable(string_schema())),
-                ("match_count", nonnegative_integer_schema()),
-                ("truncated", json!({"type": "boolean"})),
-                (
-                    "matches",
-                    json!({
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "line": positive_integer_schema(),
-                                "text": string_schema()
-                            },
-                            "required": ["line", "text"],
-                            "additionalProperties": false
-                        }
-                    }),
-                ),
-            ],
-        ),
+        output_schema_for::<TraceOutput>(id),
         read_effects("Downloads a job trace that may contain secrets or untrusted build output."),
     )
 }
@@ -1076,20 +1012,12 @@ fn string_schema() -> Value {
     json!({"type": "string"})
 }
 
-fn integer_schema() -> Value {
-    json!({"type": "integer"})
-}
-
 fn positive_integer_schema() -> Value {
     json!({"type": "integer", "minimum": 1})
 }
 
 fn nonnegative_integer_schema() -> Value {
     json!({"type": "integer", "minimum": 0})
-}
-
-fn nullable(schema: Value) -> Value {
-    json!({"oneOf": [schema, {"type": "null"}]})
 }
 
 fn external_object_schema() -> Value {
@@ -1117,17 +1045,6 @@ fn top_output(command: &str, fields: &[(&str, Value)]) -> Value {
         "required": required,
         "additionalProperties": false
     })
-}
-
-fn list_output(command: &str, count: &str, items: &str) -> Value {
-    top_output(
-        command,
-        &[
-            ("project", string_schema()),
-            (count, nonnegative_integer_schema()),
-            (items, external_array_schema()),
-        ],
-    )
 }
 
 fn item_output(command: &str, item: &str) -> Value {

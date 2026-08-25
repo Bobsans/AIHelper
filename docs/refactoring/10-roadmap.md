@@ -66,7 +66,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 | ~~`schemars`-derived input schemas and `typed_args` for seven built-in domains~~ **(done)** | 01     |
 | ~~`http` input schemas: wire type separate from the CLI type~~ **(done)**                   | 01     |
 | ~~Host command schemas, input and output~~ **(done)**                                       | 01     |
-| Schemas for the four dynamic plugins                                                        | 01     |
+| Schemas for the dynamic plugins: ~~ollama~~, gitlab output; gitlab input, postgres, github  | 01     |
 | ~~Tie the manual to the CLI it documents~~ **(done; generating it would rewrite prose)**    | 01     |
 | Generate `docs/reference/*.md`; CI diff check                                               | 01     |
 | `ah-plugin-sdk`: `render`, `http`, `credentials`, `process`                                 | 02     |
