@@ -4,6 +4,33 @@ Sequencing for the findings in groups 01–09. The ordering is chosen so that ev
 phase leaves the project shippable, and so that each phase makes the next one
 cheaper rather than harder.
 
+## Status
+
+**Phase 0 is complete.** What changed, and what it bought:
+
+| Item | Outcome |
+|---|---|
+| Golden snapshots | `tests/snapshots/` freezes the typed command catalog, the plugin manuals, the whole CLI help tree, and the error-code table. Generated in-process by `src/snapshots.rs`, so they need no terminal, no git repository and no plugin directory. Regenerate with `AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots`. |
+| `ah-redact` extracted | The redaction engine and the credential detectors moved out of `src/event_log.rs` and `crates/ah-mcp/src/server.rs` into one crate with 13 dedicated tests, including generated-secret leak properties and a hostile-input case. `event_log.rs`: 1 845 → 1 195 lines. |
+| Workspace dependency management | `[workspace.package]` and `[workspace.dependencies]` added. `sha2` drift resolved (0.10.9 → 0.11), removing the duplicate `sha2`/`digest`/`block-buffer` trees from `Cargo.lock`. |
+| Toolchain and MSRV | `rust-toolchain.toml` pins 1.97.1. `rust-version = "1.88"` is declared and **verified by building it** — the metadata-derived guess of 1.86 was wrong, because `jsonc-parser` uses let-chains. |
+| CI as a gate | clippy `-D warnings` on all three platforms, a macOS runner, an MSRV job, a release build, `cargo doc -D warnings`, and `cargo deny`. |
+| Clippy clean | 12 findings fixed, including an unset `truncate` on the vault lock file and two `MutexGuard`s held across await points. |
+| `ConfigSource` | Deleted. All five variants and all three accessors were dead code, and two variants had no producer at all. |
+| `transaction.rs` collision | Renamed to `ah-updater-core::plan` (the model) and `ah-update-helper::apply` (the execution), each with a module doc stating the split. |
+
+Deliberately **not** done in phase 0:
+
+- Rendered text/JSON output snapshots per domain. They belong with the `Emitter`
+  migration in phase 1, where they can validate something instead of just
+  recording the status quo.
+- Converging the three redaction *policies*. The engine is shared now; merging the
+  field-selection logic is a semantic change, not a move, so it does not belong in
+  a safety-net phase.
+- A `cargo-fuzz` target for the redaction engine and the parsers. It needs a
+  nightly toolchain and a separate CI lane; the generated-input tests cover the
+  leak property in the meantime.
+
 ## Guiding rule
 
 **Build the safety net, then remove duplication, then move code, then add capability.**
@@ -22,7 +49,7 @@ No architectural change. Everything here is mechanical and independently valuabl
 | CI: clippy (allows retained), macOS, release build, `cargo deny`/`audit` | 09 | turns CI into a gate |
 | Delete or implement `ConfigSource::Flags`/`Project` | 03 | stops the code describing a system that does not exist |
 | Rename the two `transaction.rs` files | 07 | zero risk, immediate clarity |
-| Extract `ah-redact` with property + fuzz tests | 04, 05, 08 | highest security value per line moved |
+| Extract `ah-redact` with property tests | 04, 05, 08 | highest security value per line moved |
 
 **Exit criterion:** a byte-level snapshot exists for every user-visible artifact, and
 CI fails on clippy regressions.

@@ -16,6 +16,8 @@ pub mod plugins;
 mod runtime_flow;
 pub mod safety;
 pub mod secrets;
+#[cfg(test)]
+mod snapshots;
 pub(crate) mod updater;
 
 use std::{

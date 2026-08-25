@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use ah_update_helper::transaction::{
+use ah_update_helper::apply::{
     TransactionPaths, inspect_transaction, load_recovery_transaction, recover_transaction,
     remove_completed_transaction,
 };
@@ -157,7 +157,7 @@ fn recover_pending_for(
                     ah_updater_core::UpdateOperation::Upgrade
                         | ah_updater_core::UpdateOperation::Version
                 ) {
-                ah_update_helper::transaction::load_transaction(&paths, trust)
+                ah_update_helper::apply::load_transaction(&paths, trust)
             } else {
                 load_recovery_transaction(&paths, trust)
             }
@@ -175,7 +175,7 @@ fn recover_pending_for(
 }
 
 fn recovery_helper_path(
-    transaction: &ah_update_helper::transaction::LoadedTransaction,
+    transaction: &ah_update_helper::apply::LoadedTransaction,
 ) -> Result<PathBuf, AppError> {
     let use_candidate = transaction.journal().state == TransactionStateV1::Committed
         && matches!(
@@ -196,13 +196,13 @@ fn recovery_helper_path(
     {
         super::activate::cleanup_activation_helpers(transaction.paths().installation_state_root())
             .map_err(map_updater_error)?;
-        return super::activate::copy_activation_helper(
+        super::activate::copy_activation_helper(
             &root,
             manifest,
             transaction.paths().installation_state_root(),
             Uuid::new_v4(),
         )
-        .map_err(map_updater_error);
+        .map_err(map_updater_error)
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
@@ -409,7 +409,7 @@ mod tests {
         SCHEMA_VERSION, SIGNING_ALGORITHM, SIGNING_DOMAIN, SignatureAlgorithm, SigningMetadata,
         TrustedKey, key_id_for_public_key,
     };
-    use ah_update_helper::transaction::{
+    use ah_update_helper::apply::{
         FailureInjector, FailurePoint, TransactionRunError, activate_transaction_with_injector,
         prepare_transaction,
     };
@@ -547,7 +547,7 @@ mod tests {
             matches!(
                 point,
                 FailurePoint::AfterFileMutation {
-                    phase: ah_update_helper::transaction::FileMutationPhase::ActivateManaged,
+                    phase: ah_update_helper::apply::FileMutationPhase::ActivateManaged,
                     index: 0,
                     ..
                 }

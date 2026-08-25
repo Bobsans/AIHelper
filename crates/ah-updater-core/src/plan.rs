@@ -1,3 +1,9 @@
+//! Update transaction *model*: the plan, the journal, and the state machine
+//! that constrains transitions between them.
+//!
+//! This module is pure policy. Applying a plan to the filesystem is the job of
+//! `ah-update-helper::apply`.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 

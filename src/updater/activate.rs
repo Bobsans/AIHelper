@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use ah_update_helper::transaction::{
+use ah_update_helper::apply::{
     TransactionPaths, load_permanent_backup, prepare_transaction, remove_completed_transaction,
 };
 use ah_updater_core::{

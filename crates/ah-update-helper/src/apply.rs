@@ -1,3 +1,9 @@
+//! Update transaction *execution*: prepare, activate, commit, roll back and
+//! recover a plan against the real filesystem.
+//!
+//! The plan and journal types this module drives live in
+//! `ah-updater-core::plan`.
+
 use std::{
     fmt::Write as _,
     fs::{self, File, OpenOptions},

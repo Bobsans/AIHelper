@@ -6,7 +6,7 @@ use std::{
 
 use ah_updater_core::{FilePurpose, UpdaterError, UpdaterErrorCode};
 
-use crate::{restart_manager, transaction::LoadedTransaction};
+use crate::{apply::LoadedTransaction, restart_manager};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 

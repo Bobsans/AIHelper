@@ -99,7 +99,7 @@ impl Drop for LeaseHolder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SchedulerEvent {
     Inspect { task_path: String },
-    Register { desired: DesiredTaskSpec },
+    Register { desired: Box<DesiredTaskSpec> },
     Run { task_path: String },
     Instances { task_path: String },
     StopInstance { target: SchedulerStopTarget },
@@ -409,7 +409,7 @@ impl SchedulerAdapter for ScriptedScheduler {
         push_event(
             &self.journal,
             AdapterEvent::Scheduler(SchedulerEvent::Register {
-                desired: desired.clone(),
+                desired: Box::new(desired.clone()),
             }),
         );
         let mut state = lock_unpoisoned(&self.state);

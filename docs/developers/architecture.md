@@ -15,6 +15,12 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
   - C ABI structures (`AhPluginApiV1`) and symbol constants
   - transport-neutral typed command descriptors, effects, execution context,
     and structured errors
+- `crates/ah-redact`:
+  - the single redaction engine: rewriters (`sanitize_*`) for sinks that record a
+    value, detectors (`url_contains_userinfo`, `curl_contains_auth`,
+    `is_authorization_header`) for callers that must reject one
+  - consumed by the event log, the CLI argv logger, and the MCP adapter, so a
+    heuristic added once protects every sink
 - `crates/ah-runtime`:
   - plugin manager
   - built-in + dynamic plugin registry

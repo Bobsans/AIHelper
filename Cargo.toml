@@ -1,14 +1,21 @@
 [package]
 name = "aihelper"
 version = "1.4.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "AIHelper CLI toolbox for AI agents and developers"
 default-run = "ah"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
 
 [workspace]
 members = [
     "crates/ah-mcp",
     "crates/ah-plugin-api",
+    "crates/ah-redact",
     "crates/ah-release-manifest",
     "crates/ah-release-tool",
     "crates/ah-runtime",
@@ -21,10 +28,47 @@ members = [
 ]
 resolver = "2"
 
+# Package metadata shared by every workspace member.
+#
+# `version` is deliberately NOT inherited: the release workflow discovers and
+# rewrites each manifest through `ah project version`, which reads a literal
+# `version = "..."` from the `[package]` section. Hoisting it would require
+# teaching that parser workspace inheritance first.
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/Bobsans/AIHelper"
+
+# Single source of truth for every dependency used by more than one member.
+# Members may add features on top with `features = [...]`; they must not
+# override the version.
+[workspace.dependencies]
+assert_cmd = "2.0.17"
+base64 = "0.22"
+clap = { version = "4.5.39", features = ["derive"] }
+command-group = "5.0.1"
+ed25519-dalek = "3"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
+semver = "1"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+serde_yaml = "0.9.34"
+sha2 = "0.11"
+shell-words = "1.1.0"
+tempfile = "3.20.0"
+thiserror = "2.0.12"
+tokio = "1.52.1"
+url = "2"
+urlencoding = "2.1.3"
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
+windows-sys = "0.61.2"
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+
 [dependencies]
 aes-gcm = { version = "0.10.3", features = ["aes"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
-clap = { version = "4.5.39", features = ["derive", "string"] }
+clap = { workspace = true, features = ["string"] }
 console = "0.16.4"
 dialoguer = "0.12.0"
 fs2 = "0.4.3"
@@ -34,24 +78,25 @@ jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 libc = "0.2.185"
 regex = "1.12.2"
-semver = "1"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
-serde_yaml = "0.9.34"
-shell-words = "1.1.0"
-thiserror = "2.0.12"
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+shell-words.workspace = true
+thiserror.workspace = true
 walkdir = "2.5.0"
-reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-sha2 = "0.11"
-tempfile = "3.20.0"
-zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+reqwest = { workspace = true, features = ["json"] }
+sha2.workspace = true
+tempfile.workspace = true
+zip.workspace = true
 ah-plugin-api = { path = "crates/ah-plugin-api" }
+ah-redact = { path = "crates/ah-redact" }
 ah-runtime = { path = "crates/ah-runtime" }
 ah-mcp = { path = "crates/ah-mcp" }
 ah-update-helper = { path = "crates/ah-update-helper" }
 ah-updater-core = { path = "crates/ah-updater-core" }
-tokio = { version = "1.52.1", features = ["io-std", "rt-multi-thread", "time"] }
-uuid = { version = "1.24.0", features = ["serde", "v4"] }
+tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "time"] }
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
@@ -68,7 +113,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Variant",
     "Win32_UI_Shell",
 ] }
-windows-sys = { version = "0.61.2", features = [
+windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
@@ -79,14 +124,14 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [target.'cfg(not(windows))'.dependencies]
-command-group = "5.0.1"
+command-group.workspace = true
 
 [dev-dependencies]
 ah-release-manifest = { path = "crates/ah-release-manifest" }
-assert_cmd = "2.0.17"
-base64 = "0.22"
-command-group = "5.0.1"
-ed25519-dalek = "3"
+assert_cmd.workspace = true
+base64.workspace = true
+command-group.workspace = true
+ed25519-dalek.workspace = true
 predicates = "3.1.3"
 
 [[bin]]

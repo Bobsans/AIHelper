@@ -9,7 +9,7 @@ use ah_release_manifest::{
     SCHEMA_VERSION, SIGNING_ALGORITHM, SIGNING_DOMAIN, SignatureAlgorithm, SigningMetadata,
     TrustedKey, key_id_for_public_key,
 };
-use ah_update_helper::transaction::{
+use ah_update_helper::apply::{
     FailureInjector, FailurePoint, LoadedTransaction, TransactionPaths, TransactionRunError,
     activate_transaction, activate_transaction_with_injector, commit_transaction,
     commit_transaction_with_injector, finalize_completed_transaction, load_permanent_backup,
@@ -232,7 +232,7 @@ fn prepare_user_rollback(fixture: &Fixture) -> TransactionPaths {
 
 fn load_fixture_backup(
     fixture: &Fixture,
-) -> Result<ah_update_helper::transaction::PermanentBackup, ah_updater_core::UpdaterError> {
+) -> Result<ah_update_helper::apply::PermanentBackup, ah_updater_core::UpdaterError> {
     load_permanent_backup(
         &fixture.installation_root,
         fixture.paths.installation_state_root(),
@@ -510,7 +510,7 @@ impl FailureInjector for CreateForeignAfterFirstMutation {
             && matches!(
                 point,
                 FailurePoint::AfterFileMutation {
-                    phase: ah_update_helper::transaction::FileMutationPhase::ActivateManaged,
+                    phase: ah_update_helper::apply::FileMutationPhase::ActivateManaged,
                     index: 0,
                     ..
                 }

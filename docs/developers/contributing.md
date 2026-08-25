@@ -2,9 +2,18 @@
 
 ## Prerequisites
 
-- Rust stable toolchain
+- `rustup` (the toolchain version is pinned by `rust-toolchain.toml` and is
+  installed automatically on the first `cargo` invocation)
 - `cargo` available in PATH
 - Git
+
+The workspace MSRV is declared once in `[workspace.package]` and is lower than
+the pinned toolchain. CI verifies it separately, so a change that relies on a
+newer language feature must raise `rust-version` deliberately.
+
+Dependency versions are declared once in `[workspace.dependencies]`. Members
+inherit them with `dep.workspace = true` and may add features on top; they must
+not pin a different version.
 
 ## Local development
 
@@ -39,6 +48,7 @@ cargo run --bin ah -- --help
 
 ```bash
 cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked
 cargo build --locked
 ```
@@ -47,6 +57,23 @@ For release-sensitive changes, also run:
 
 ```bash
 cargo build --release --locked
+```
+
+When a change alters the command catalog, the manuals, the CLI help tree, or an
+error code, the golden snapshots in `tests/snapshots/` will fail. Regenerate and
+review them as part of the change:
+
+```bash
+AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots
+```
+
+A pull request that updates a snapshot must say why in its description. An
+unexplained snapshot diff is a regression until proven otherwise.
+
+When dependencies change, also run:
+
+```bash
+cargo deny --workspace check
 ```
 
 Keep pull requests focused, explain the motivation and compatibility impact,

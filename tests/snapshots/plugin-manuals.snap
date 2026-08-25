@@ -1,0 +1,599 @@
+[
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "pack",
+              "src",
+              "docs",
+              "--preset",
+              "review"
+            ],
+            "description": "Pack codebase context for review"
+          }
+        ],
+        "name": "pack",
+        "summary": "Create compact digest for files/directories.",
+        "usage": "pack <path...> [--preset <summary|review|debug>] [--max-bytes BYTES] [--follow-symlinks]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "symbols",
+              "src/commands",
+              "--preset",
+              "summary"
+            ],
+            "description": "Extract symbols from commands module"
+          }
+        ],
+        "name": "symbols",
+        "summary": "Extract code, config, and document symbols from file or directory.",
+        "usage": "symbols <path> [--preset <summary|review|debug>] [--max-bytes BYTES] [--follow-symlinks]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "changed"
+            ],
+            "description": "Collect changed paths before review"
+          }
+        ],
+        "name": "changed",
+        "summary": "Show changed files from git status.",
+        "usage": "changed"
+      }
+    ],
+    "description": "Context-reduction helpers for AI workflows.",
+    "domain": "ctx",
+    "notes": [
+      "Presets tune default limits and symbol density.",
+      "Symbol extraction uses lightweight heuristics across common programming, infra, config, and script files.",
+      "Pair with --json for downstream prompt assembly."
+    ],
+    "plugin_name": "builtin-ctx"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "read",
+              "src/main.rs",
+              "-n",
+              "--from",
+              "1",
+              "--to",
+              "120"
+            ],
+            "description": "Read first 120 lines with source numbers"
+          },
+          {
+            "argv": [
+              "read",
+              "README.md",
+              "--max-bytes",
+              "1048576",
+              "--follow-symlinks"
+            ],
+            "description": "Read with explicit size/symlink policy"
+          }
+        ],
+        "name": "read",
+        "summary": "Read file content with optional line range and numbering.",
+        "usage": "read <path> [-n] [--from N] [--to N] [--max-bytes BYTES] [--follow-symlinks]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "head",
+              "src/lib.rs",
+              "--lines",
+              "40",
+              "-n"
+            ],
+            "description": "Preview first 40 lines"
+          }
+        ],
+        "name": "head",
+        "summary": "Return first N lines.",
+        "usage": "head <path> [--lines N] [-n] [--max-bytes BYTES] [--follow-symlinks]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "tail",
+              "CHANGELOG.md",
+              "--lines",
+              "30"
+            ],
+            "description": "Inspect file tail"
+          }
+        ],
+        "name": "tail",
+        "summary": "Return last N lines.",
+        "usage": "tail <path> [--lines N] [-n] [--max-bytes BYTES] [--follow-symlinks]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "stat",
+              "Cargo.toml"
+            ],
+            "description": "Inspect metadata"
+          }
+        ],
+        "name": "stat",
+        "summary": "Show file metadata.",
+        "usage": "stat <path>"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "tree",
+              "src",
+              "--depth",
+              "2"
+            ],
+            "description": "Show compact source tree"
+          }
+        ],
+        "name": "tree",
+        "summary": "Render directory tree.",
+        "usage": "tree [path] [--depth N] [--follow-symlinks]"
+      }
+    ],
+    "description": "Read and inspect files and directory trees.",
+    "domain": "file",
+    "notes": [
+      "Prefer narrow ranges and --limit to reduce context size.",
+      "Use --json for machine-readable chaining."
+    ],
+    "plugin_name": "builtin-file"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "status"
+            ],
+            "description": "Inspect branch, upstream, counts, commit, and tag"
+          }
+        ],
+        "name": "status",
+        "summary": "Show compact repository status summary.",
+        "usage": "status"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "tags"
+            ],
+            "description": "List tags"
+          },
+          {
+            "argv": [
+              "tags",
+              "--latest"
+            ],
+            "description": "Show latest tag only"
+          }
+        ],
+        "name": "tags",
+        "summary": "List tags newest-first.",
+        "usage": "tags [--latest]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "tag",
+              "create",
+              "v1.0.0",
+              "--message",
+              "v1.0.0"
+            ],
+            "description": "Create an annotated release tag"
+          }
+        ],
+        "name": "tag create",
+        "summary": "Create a lightweight or annotated git tag.",
+        "usage": "tag create <tag> [--message TEXT] [--ref REF]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "remotes"
+            ],
+            "description": "Inspect remotes"
+          }
+        ],
+        "name": "remotes",
+        "summary": "List configured git remotes with provider hint.",
+        "usage": "remotes"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "changed"
+            ],
+            "description": "List changed files"
+          }
+        ],
+        "name": "changed",
+        "summary": "Summarize working tree changes.",
+        "usage": "changed"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "diff",
+              "--path",
+              "src/cli.rs"
+            ],
+            "description": "Review diff for one file"
+          }
+        ],
+        "name": "diff",
+        "summary": "Show local diff (optionally filtered by path).",
+        "usage": "diff [--path <path>]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "blame",
+              "src/commands/search.rs",
+              "--line",
+              "120"
+            ],
+            "description": "Inspect ownership of a specific line"
+          }
+        ],
+        "name": "blame",
+        "summary": "Show blame data for file or single line.",
+        "usage": "blame <path> [--line N]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "commit-info",
+              "HEAD"
+            ],
+            "description": "Inspect the latest commit"
+          }
+        ],
+        "name": "commit-info",
+        "summary": "Show commit metadata, touched files, and line stats.",
+        "usage": "commit-info [ref]"
+      }
+    ],
+    "description": "Git-oriented context helpers for working tree and history.",
+    "domain": "git",
+    "notes": [
+      "Useful for quick change-attribution in AI review loops."
+    ],
+    "plugin_name": "builtin-git"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "request",
+              "--method",
+              "GET",
+              "https://example.com/health",
+              "--expect-status",
+              "200"
+            ],
+            "description": "Basic request with status check"
+          }
+        ],
+        "name": "request",
+        "summary": "Send HTTP request with explicit method.",
+        "usage": "request --method <METHOD> <url> [--header \"K: V\"] [--query \"KEY=VALUE\"] [--timeout-secs N] [--bearer TOKEN] [--basic USER:PASS] [--json <JSON>|--json-file <PATH>] [--body <TEXT>|--body-file <PATH>] [--expect-status <code|range>] [--expect-header \"K: V\"] [--expect-body-contains <TEXT>] [--expect-json <PATH:OP[:VALUE]>]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "get",
+              "https://example.com/api/version",
+              "--expect-status",
+              "2xx"
+            ],
+            "description": "GET JSON endpoint"
+          }
+        ],
+        "name": "get",
+        "summary": "Shortcut for GET request.",
+        "usage": "get <url> [request/expect flags]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "post",
+              "https://example.com/api/items",
+              "--json",
+              "{\"name\":\"demo\"}",
+              "--expect-status",
+              "201"
+            ],
+            "description": "POST JSON payload"
+          }
+        ],
+        "name": "post",
+        "summary": "Shortcut for POST request.",
+        "usage": "post <url> [request/expect flags]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "replay",
+              "--curl",
+              "curl -X GET https://example.com/health -H 'accept: application/json'"
+            ],
+            "description": "Replay existing curl command"
+          }
+        ],
+        "name": "replay",
+        "summary": "Replay supported curl command form.",
+        "usage": "replay --curl \"<curl ...>\" [request/expect flags]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "assert",
+              "api/health.yaml",
+              "--report",
+              "json"
+            ],
+            "description": "Run assertions with machine output"
+          }
+        ],
+        "name": "assert",
+        "summary": "Run API assertions from YAML/JSON spec.",
+        "usage": "assert <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "run",
+              "api/health.yaml",
+              "--fail-fast"
+            ],
+            "description": "Alias usage"
+          }
+        ],
+        "name": "run",
+        "summary": "Alias for assert.",
+        "usage": "run <spec-path> [--var KEY=VALUE ...] [--fail-fast] [--report text|json|junit]"
+      }
+    ],
+    "description": "HTTP request and API assertion helpers.",
+    "domain": "http",
+    "notes": [
+      "Spec format is YAML-first with JSON compatibility.",
+      "Global --json maps assert/run report format to json.",
+      "Retries and atomic cross-case extract variables are supported."
+    ],
+    "plugin_name": "builtin-http"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "detect"
+            ],
+            "description": "Detect current project"
+          }
+        ],
+        "name": "detect",
+        "summary": "Detect ecosystems, tools, roles, grouped files, versions, and commands.",
+        "usage": "detect [path]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "commands"
+            ],
+            "description": "Suggest commands for current project"
+          }
+        ],
+        "name": "commands",
+        "summary": "Suggest likely install, test, build, release, and infra commands.",
+        "usage": "commands [path]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "version"
+            ],
+            "description": "Detect current project version"
+          }
+        ],
+        "name": "version",
+        "summary": "Detect project version from common manifest files.",
+        "usage": "version [path]"
+      }
+    ],
+    "description": "Detect project ecosystems, tools, roles, versions, and suggested commands.",
+    "domain": "project",
+    "notes": [
+      "Detection is heuristic and does not execute package managers or infra tools.",
+      "JSON detect output includes compatibility fields plus richer grouped snapshot fields.",
+      "Use with ah run check to execute suggested commands explicitly."
+    ],
+    "plugin_name": "builtin-project"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "check",
+              "cargo",
+              "test"
+            ],
+            "description": "Run cargo tests"
+          },
+          {
+            "argv": [
+              "check",
+              "--timeout-secs",
+              "60",
+              "cargo",
+              "build"
+            ],
+            "description": "Run command with timeout"
+          }
+        ],
+        "name": "check",
+        "summary": "Run a command and report success, exit code, duration, stdout, and stderr.",
+        "usage": "check [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--tail-lines N] <command...>"
+      }
+    ],
+    "description": "Run explicit commands with timeout and bounded output.",
+    "domain": "run",
+    "notes": [
+      "Command is executed directly without a shell.",
+      "The ah command itself exits successfully; inspect success=false for checked command failures."
+    ],
+    "plugin_name": "builtin-run"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "text",
+              "PluginManager",
+              "src",
+              "--glob",
+              "*.rs",
+              "--context",
+              "1"
+            ],
+            "description": "Literal search in Rust files"
+          },
+          {
+            "argv": [
+              "text",
+              "fn\\s+execute",
+              "src",
+              "--regex",
+              "--context",
+              "2"
+            ],
+            "description": "Regex search for function declarations"
+          }
+        ],
+        "name": "text",
+        "summary": "Search text in files (literal by default, regex with --regex).",
+        "usage": "text <pattern> [path...] [--glob ...] [--ignore-case] [--context N] [--regex] [--max-bytes BYTES] [--follow-symlinks]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "files",
+              "plugin",
+              "docs"
+            ],
+            "description": "Find docs related to plugins"
+          }
+        ],
+        "name": "files",
+        "summary": "Find file paths containing substring.",
+        "usage": "files <query> [path...] [--follow-symlinks]"
+      }
+    ],
+    "description": "Find text matches and file paths quickly.",
+    "domain": "search",
+    "notes": [
+      "Binary and oversized files are skipped by policy.",
+      "Use --regex only when needed; literal mode is usually faster."
+    ],
+    "plugin_name": "builtin-search"
+  },
+  {
+    "commands": [
+      {
+        "examples": [
+          {
+            "argv": [
+              "save",
+              "print-working-dir",
+              "pwd"
+            ],
+            "description": "Save quick status workflow"
+          }
+        ],
+        "name": "save",
+        "summary": "Create or update task recipe.",
+        "usage": "save <name> <command>"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "run",
+              "print-working-dir"
+            ],
+            "description": "Execute saved workflow"
+          }
+        ],
+        "name": "run",
+        "summary": "Run saved task by name.",
+        "usage": "run <name> [--timeout-secs SECONDS] [--max-output-bytes BYTES]"
+      },
+      {
+        "examples": [
+          {
+            "argv": [
+              "list"
+            ],
+            "description": "Inspect available recipes"
+          }
+        ],
+        "name": "list",
+        "summary": "List available task recipes.",
+        "usage": "list"
+      }
+    ],
+    "description": "Save and execute reusable local command recipes.",
+    "domain": "task",
+    "notes": [
+      "Task commands execute through system shell."
+    ],
+    "plugin_name": "builtin-task"
+  }
+]

@@ -400,7 +400,7 @@ pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString>
         // An unknown option may carry a secret, so its argument is redacted even
         // when the value itself looks like an option.
         if redact_next {
-            *argument = OsString::from("[REDACTED]");
+            *argument = OsString::from(ah_redact::REDACTED);
             redact_next = false;
             continue;
         }
@@ -419,14 +419,14 @@ pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString>
             if known_value {
                 preserve_next = !assigned;
             } else if assigned {
-                *argument = OsString::from(format!("--{name}=[REDACTED]"));
+                *argument = OsString::from(format!("--{name}={}", ah_redact::REDACTED));
             } else if !matches!(name, "open" | "json" | "quiet" | "help") {
                 redact_next = true;
             }
             continue;
         }
         if id_seen {
-            *argument = OsString::from("[REDACTED]");
+            *argument = OsString::from(ah_redact::REDACTED);
         } else {
             id_seen = true;
         }
@@ -577,7 +577,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right.len()]
 }
 
-fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
+pub(crate) fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
     let mut command = Command::new("ah")
         .version(env!("CARGO_PKG_VERSION"))
         .about("AIHelper CLI toolbox for AI agents and developers")

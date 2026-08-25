@@ -80,7 +80,7 @@ in `ah-plugin-api`. The lint is correct: `AppError` embeds `ErrorDiagnostic`
 returned by value from every plugin entry point. Every `Result` in the codebase
 pays that size. The allow silences the signal instead of boxing the payload.
 
-### 4.6 Redaction is implemented three times
+### 4.6 Redaction is implemented three times *(engine extracted — see status)*
 
 Secret redaction — the most security-sensitive cross-cutting concern here — has
 three independent implementations:
@@ -95,6 +95,12 @@ three independent implementations:
 
 Three code paths, three sets of heuristics, one shared risk: a secret leaking
 through whichever path was not updated.
+
+**Status:** the engine and the detectors now live in `crates/ah-redact`, with the
+event-log rewriters and the MCP detectors moved there verbatim and covered by a
+dedicated test suite. What remains is the *policy* layer: the three callers still
+decide independently which fields to look at. That is a semantic merge, not a
+move, so it stays out of the safety-net phase — see step 1 below.
 
 ## Why it hurts
 
@@ -156,17 +162,20 @@ Change `Result<T, AppError>` payloads to `Box`-ed inner data (or reduce
 `ErrorDiagnostic` to `Box<DiagnosticInner>`), then delete every
 `allow(clippy::result_large_err)` and enable the lint as a denial.
 
-### E. Extract `ah-redact`
+### E. One redaction engine, thin policies
 
-One crate, one implementation, consumed by CLI argv redaction, the event log and
-the MCP adapter. This is the correct place for property tests and a fuzz target
-(group 08). Any new sink gets redaction for free instead of reimplementing it.
+`ah-redact` owns the engine and the detectors; each sink keeps only its own
+policy — which fields it inspects and whether it rewrites or rejects. The three
+policies should converge on a shared field vocabulary rather than three private
+lists of names, and the crate is the right place for the property tests (already
+added) and a future fuzz target (group 08).
 
 ## Migration
 
-1. Extract `ah-redact` first — smallest blast radius, largest security payoff.
-   Move the `event_log.rs` implementation as-is, port the other two call sites to
-   it, keep every existing test.
+1. ~~Extract `ah-redact`~~ **(done)** — the engine, the detectors, the marker and
+   the bounds moved as-is; `event_log.rs` went from 1 845 to 1 195 lines and the
+   MCP adapter no longer defines its own credential detectors. Next: converge the
+   three field-selection policies onto one vocabulary.
 2. Introduce `Emitter`; migrate one domain (`git`, the largest output surface) and
    convert its output tests from `assert_cmd` to in-process assertions.
 3. Migrate the remaining domains, then `src/ai.rs` and `mcp_service/output.rs`.

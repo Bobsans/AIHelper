@@ -46,6 +46,9 @@ have no outcome.
 
 ## Redaction and Bounds
 
+Redaction lives in `crates/ah-redact` and is shared by every sink; do not add a
+local redaction helper to a sink.
+
 Redaction happens before an event reaches the dispatcher or writer. Sanitize
 sensitive JSON keys, CLI flags, headers, URL credentials and query values, plus
 diagnostic messages and causes. Apply these limits after redaction:

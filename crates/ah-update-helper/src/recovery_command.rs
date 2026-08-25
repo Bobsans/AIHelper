@@ -7,8 +7,8 @@ use std::{
 use ah_updater_core::{ReleaseTrust, TransactionStateV1, UpdaterError, UpdaterErrorCode};
 
 use crate::{
+    apply::{TransactionPaths, load_recovery_transaction, recover_transaction},
     process::quiesce_transaction_blockers,
-    transaction::{TransactionPaths, load_recovery_transaction, recover_transaction},
 };
 
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);

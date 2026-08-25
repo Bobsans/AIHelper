@@ -45,12 +45,12 @@ input — are buried where they get no focused review.
 `http::assert` (DSL + evaluation), `http::spec` (runner + reporters).
 Consider whether `jsonpath` should be a dependency rather than an implementation.
 
-### 5.3 `src/event_log.rs` — 1 845 lines, logging plus a redaction engine
+### 5.3 `src/event_log.rs` — logging plus a redaction engine *(engine extracted)*
 
-Lines 448–1000 are a redaction engine (URL/userinfo/header/curl/JSON/percent-decode
-heuristics), lines 1092–1290 are record bounding, rotation and file locking, and the
-logger itself is comparatively small. See group 04 for the extraction proposal
-(`ah-redact`); the remainder splits cleanly into `event_log::sink` and
+The redaction engine (URL/userinfo/header/curl/JSON/percent-decode heuristics) has
+moved to `crates/ah-redact`, taking the file from 1 845 to 1 195 lines. What is
+left still mixes three concerns — the logger, record bounding/compaction, and
+rotation with file locking — and splits cleanly into `event_log::sink` and
 `event_log::rotation`.
 
 ### 5.4 `src/mcp_service/lifecycle.rs` — 2 029 lines
@@ -139,7 +139,7 @@ Ordering is chosen so that each split is mechanical and low-risk:
 
 1. `ctx_symbols` → table-driven (self-contained, well covered by existing tests).
 2. `project/rules` → table-driven (same).
-3. `event_log` → extract `ah-redact` (see group 04), then split sink/rotation.
+3. ~~`event_log` → extract `ah-redact`~~ **(done)**; still to do: split sink/rotation.
 4. `http/domain` → extract `curl`, `jsonpath`, `assert`, `spec` as sibling modules;
    add focused unit tests and a fuzz target for the two parsers.
 5. `ah-mcp/server` → move the setup UI out first (largest, most orthogonal chunk),

@@ -48,9 +48,15 @@ Use the smallest relevant check while iterating, then run the applicable workspa
 
 ```text
 ah run check cargo fmt --all -- --check
+ah run check cargo clippy --workspace --all-targets --locked -- -D warnings
 ah run check cargo test --workspace --all-targets --locked
 ah run check cargo build --locked
 ```
+
+The golden snapshots in `tests/snapshots/` fail whenever the command catalog,
+the manuals, the CLI help tree, or an error code changes. Regenerate them with
+`AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots` and state the reason for the
+diff; never regenerate them to make a failing check pass.
 
 For release-sensitive work, also run:
 

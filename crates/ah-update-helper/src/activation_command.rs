@@ -11,13 +11,13 @@ use ah_updater_core::{
 #[cfg(windows)]
 use crate::recovery_command::wait_for_process_exit;
 use crate::{
-    bounded_process::{self, EnvironmentOverride},
-    process::quiesce_transaction_blockers,
-    recovery_command::RecoveryCommand,
-    transaction::{
+    apply::{
         activate_transaction, commit_transaction, finalize_completed_transaction,
         inspect_transaction, load_prepared_transaction, rollback_transaction,
     },
+    bounded_process::{self, EnvironmentOverride},
+    process::quiesce_transaction_blockers,
+    recovery_command::RecoveryCommand,
 };
 
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -137,9 +137,7 @@ fn rollback_after_failure(
         })
 }
 
-fn run_installed_smoke(
-    transaction: &crate::transaction::LoadedTransaction,
-) -> Result<(), UpdaterError> {
+fn run_installed_smoke(transaction: &crate::apply::LoadedTransaction) -> Result<(), UpdaterError> {
     let executable = main_executable(
         transaction.paths().installation_root(),
         transaction.new_manifest(),

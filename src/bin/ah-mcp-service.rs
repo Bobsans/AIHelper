@@ -61,10 +61,7 @@ mod windows_launcher {
         }
 
         let arguments = env::args_os().skip(1).collect::<Vec<_>>();
-        run_with_retry(
-            || run_once(&executable, &arguments),
-            |delay| thread::sleep(delay),
-        )
+        run_with_retry(|| run_once(&executable, &arguments), thread::sleep)
     }
 
     fn run_with_retry(
@@ -82,7 +79,7 @@ mod windows_launcher {
     }
 
     fn run_once(executable: &Path, arguments: &[OsString]) -> io::Result<u32> {
-        let mut command_line = command_line(&executable, &arguments)?;
+        let mut command_line = command_line(executable, arguments)?;
         let application = wide_null(executable.as_os_str())?;
         let job = create_job()?;
         let mut attributes = AttributeList::new(1)?;

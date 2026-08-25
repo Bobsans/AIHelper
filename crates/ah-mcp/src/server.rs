@@ -19,6 +19,7 @@ use ah_plugin_api::{
     CommandDescriptor, CommandError, ExecutionContextWire, TypedInvocationRequest,
     TypedInvocationResponse,
 };
+use ah_redact::{REDACTED, curl_contains_auth, is_authorization_header, url_contains_userinfo};
 use ah_runtime::{
     InvocationOutcome, PluginManager, RegisteredCommand, RunCheckOutcome, RuntimeError,
     executor::{ExecutionTelemetry, Executor},
@@ -76,7 +77,6 @@ const JOB_RESULT_TOOL: &str = "ah.job.result";
 const JOB_CANCEL_TOOL: &str = "ah.job.cancel";
 const PEER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-const REDACTED_MCP_VALUE: &str = "[REDACTED]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpCommandStatus {
@@ -1912,89 +1912,28 @@ fn mcp_plaintext_auth_error() -> CommandError {
     )
 }
 
-fn is_authorization_header(value: &str) -> bool {
-    value
-        .split_once(':')
-        .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("authorization"))
-}
-
-fn curl_contains_auth(value: &str) -> bool {
-    let tokens = match shell_words::split(value) {
-        Ok(tokens) => tokens,
-        Err(_) => {
-            let normalized = value.to_ascii_lowercase();
-            return normalized.contains("--user")
-                || normalized.contains("authorization:")
-                || normalized.split_whitespace().any(|token| token == "-u")
-                || value.split_whitespace().any(url_contains_userinfo);
-        }
-    };
-    let mut tokens = tokens.iter();
-    while let Some(token) = tokens.next() {
-        if matches!(token.as_str(), "-u" | "--user")
-            || token.starts_with("--user=")
-            || token
-                .strip_prefix("-u")
-                .is_some_and(|value| !value.is_empty())
-            || url_contains_userinfo(token)
-        {
-            return true;
-        }
-        if matches!(token.as_str(), "-H" | "--header") {
-            if tokens
-                .next()
-                .is_some_and(|value| is_authorization_header(value))
-            {
-                return true;
-            }
-        } else if token
-            .strip_prefix("--header=")
-            .is_some_and(is_authorization_header)
-            || token
-                .strip_prefix("-H")
-                .is_some_and(|value| !value.is_empty() && is_authorization_header(value))
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn url_contains_userinfo(value: &str) -> bool {
-    let Some((_, remainder)) = value.split_once("://") else {
-        return false;
-    };
-    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
-    authority
-        .rsplit_once('@')
-        .is_some_and(|(userinfo, host)| !userinfo.is_empty() && !host.is_empty())
-}
-
 fn redact_mcp_plaintext_auth(arguments: &mut JsonObject) {
     for name in ["bearer", "basic", "token"] {
         if arguments.contains_key(name) {
-            arguments.insert(
-                name.to_owned(),
-                Value::String(REDACTED_MCP_VALUE.to_owned()),
-            );
+            arguments.insert(name.to_owned(), Value::String(REDACTED.to_owned()));
         }
     }
     if let Some(Value::Array(headers)) = arguments.get_mut("headers") {
         for header in headers {
             if header.as_str().is_some_and(is_authorization_header) {
-                *header = Value::String(format!("Authorization: {REDACTED_MCP_VALUE}"));
+                *header = Value::String(format!("Authorization: {REDACTED}"));
             }
         }
     }
     if let Some(Value::String(url)) = arguments.get_mut("url")
         && url_contains_userinfo(url)
     {
-        *url = REDACTED_MCP_VALUE.to_owned();
+        *url = REDACTED.to_owned();
     }
     if let Some(Value::String(curl)) = arguments.get_mut("curl")
         && curl_contains_auth(curl)
     {
-        *curl = REDACTED_MCP_VALUE.to_owned();
+        *curl = REDACTED.to_owned();
     }
     if let Some(Value::Object(nested)) = arguments.get_mut("arguments") {
         redact_mcp_plaintext_auth(nested);
@@ -2712,13 +2651,13 @@ mod tests {
 
     use super::{
         EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
-        McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
-        REDACTED_MCP_VALUE, RISK_META_KEY, SecretSetupField, SecretSetupForm, SecretSetupMetadata,
-        ShutdownReader, ShutdownTracker, event_parameters, extract_context,
-        peer_generation_matches, redact_mcp_plaintext_auth, refresh_catalog_after_job,
-        render_secret_setup_form, render_secret_setup_success, requires_explicit_cwd,
-        run_check_outcome, spawn_best_effort_notification, validate_mcp_plaintext_auth,
-        wait_for_transport, wants_html,
+        McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig, REDACTED,
+        RISK_META_KEY, SecretSetupField, SecretSetupForm, SecretSetupMetadata, ShutdownReader,
+        ShutdownTracker, event_parameters, extract_context, peer_generation_matches,
+        redact_mcp_plaintext_auth, refresh_catalog_after_job, render_secret_setup_form,
+        render_secret_setup_success, requires_explicit_cwd, run_check_outcome,
+        spawn_best_effort_notification, validate_mcp_plaintext_auth, wait_for_transport,
+        wants_html,
     };
     use axum::http::{HeaderMap, HeaderValue, header::ACCEPT};
 
@@ -3751,7 +3690,7 @@ mod tests {
         // Inline tokens stay redacted in the events recorded for the rejection.
         let mut parameters = arguments(json!({"token": "event-token-sentinel"}));
         redact_mcp_plaintext_auth(&mut parameters);
-        assert_eq!(parameters["token"], json!(REDACTED_MCP_VALUE));
+        assert_eq!(parameters["token"], json!(REDACTED));
     }
 
     #[test]
@@ -3774,7 +3713,7 @@ mod tests {
         ] {
             let rendered = event_parameters(&arguments(value)).to_string();
             assert!(!rendered.contains("event-sentinel"));
-            assert!(rendered.contains(REDACTED_MCP_VALUE));
+            assert!(rendered.contains(REDACTED));
         }
     }
 
@@ -3795,14 +3734,15 @@ mod tests {
                 .unwrap();
 
             assert_eq!(result.is_error, Some(false));
-            let requests = received.lock().unwrap();
-            assert_eq!(requests.len(), 1);
-            assert_eq!(requests[0].arguments["credentials"]["database"], "qa-lms");
-            assert_eq!(
-                requests[0].resolved_secrets["database"].values["password"],
-                "private-password"
-            );
-            drop(requests);
+            {
+                let requests = received.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0].arguments["credentials"]["database"], "qa-lms");
+                assert_eq!(
+                    requests[0].resolved_secrets["database"].values["password"],
+                    "private-password"
+                );
+            }
 
             wait_for_recorded_events(&sink, 1).await;
             let events = sink.events.lock().unwrap();
@@ -3852,15 +3792,16 @@ mod tests {
             })
             .await
             .expect("detached credential invocation should execute");
-            let requests = received.lock().unwrap();
-            assert_eq!(requests.len(), 1);
-            assert_eq!(requests[0].arguments["credentials"]["database"], "qa-lms");
-            assert_eq!(requests[0].resolved_secrets["database"].id, "qa-lms");
-            assert_eq!(
-                requests[0].resolved_secrets["database"].values["password"],
-                "private-password"
-            );
-            drop(requests);
+            {
+                let requests = received.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0].arguments["credentials"]["database"], "qa-lms");
+                assert_eq!(requests[0].resolved_secrets["database"].id, "qa-lms");
+                assert_eq!(
+                    requests[0].resolved_secrets["database"].values["password"],
+                    "private-password"
+                );
+            }
 
             wait_for_recorded_events(&sink, 2).await;
             let events = sink.events.lock().unwrap();

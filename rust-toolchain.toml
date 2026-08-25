@@ -1,0 +1,10 @@
+# Pinned so a stable-channel release cannot change build results without a
+# deliberate commit. Bumping this file is a normal PR; run the full workspace
+# checks in AGENTS.md before merging one.
+#
+# The workspace MSRV (`rust-version` in `[workspace.package]`) is separate and
+# lower: it is the oldest toolchain the crates are expected to compile on, and
+# it is verified by the `msrv` CI job.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]

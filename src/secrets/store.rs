@@ -166,6 +166,7 @@ impl VaultStore {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&self.lock_path)
             .map_err(|_| VaultError::io())?;
         FileExt::lock_exclusive(&lock).map_err(|_| VaultError::io())?;

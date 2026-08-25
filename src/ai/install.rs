@@ -626,22 +626,20 @@ fn install_mcp(
                     commands.extend(apply_remove(target, mcp_scope, root, SERVER_NAME, dry_run)?);
                 }
                 let invocation = registrar::add_invocation(target, mcp_scope, SERVER_NAME, spec);
-                if !dry_run {
-                    if let Err(error) = registrar::run(&invocation) {
-                        if let Some(previous) = existing.as_ref() {
-                            let rollback =
-                                registrar::add_invocation(target, mcp_scope, SERVER_NAME, previous);
-                            if let Err(rollback_error) = registrar::run(&rollback) {
-                                return Err(AppError::external(
-                                    "AI_AGENT_CLI_FAILED",
-                                    format!(
-                                        "{error}; restoring the previous registration also failed: {rollback_error}"
-                                    ),
-                                ));
-                            }
+                if !dry_run && let Err(error) = registrar::run(&invocation) {
+                    if let Some(previous) = existing.as_ref() {
+                        let rollback =
+                            registrar::add_invocation(target, mcp_scope, SERVER_NAME, previous);
+                        if let Err(rollback_error) = registrar::run(&rollback) {
+                            return Err(AppError::external(
+                                "AI_AGENT_CLI_FAILED",
+                                format!(
+                                    "{error}; restoring the previous registration also failed: {rollback_error}"
+                                ),
+                            ));
                         }
-                        return Err(error);
                     }
+                    return Err(error);
                 }
                 commands.push(invocation);
             }
@@ -866,13 +864,13 @@ fn status_target(
                 detail: Some(error.code().to_owned()),
             }),
         };
-        if target.name != "codex" {
-            if let Some(report) = &mcp {
-                progress(StatusProgress::Mcp {
-                    scope: status_scope,
-                    report: report.clone(),
-                });
-            }
+        if target.name != "codex"
+            && let Some(report) = &mcp
+        {
+            progress(StatusProgress::Mcp {
+                scope: status_scope,
+                report: report.clone(),
+            });
         }
         scopes.push(ScopeStatus {
             scope: status_scope,
@@ -1100,7 +1098,7 @@ fn system_mcp_status(target: &Target) -> Result<(Option<ServerSpec>, PathBuf), A
 fn copilot_user_mcp_path() -> Result<PathBuf, AppError> {
     #[cfg(windows)]
     {
-        return std::env::var_os("APPDATA")
+        std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
             .map(|path| path.join("Code").join("User").join("mcp.json"))
@@ -1109,7 +1107,7 @@ fn copilot_user_mcp_path() -> Result<PathBuf, AppError> {
                     "AI_HOME_UNRESOLVED",
                     "unable to resolve %APPDATA% for VS Code configuration",
                 )
-            });
+            })
     }
     #[cfg(target_os = "macos")]
     {
@@ -1223,22 +1221,22 @@ fn system_config_directory(target: &Target) -> Result<PathBuf, AppError> {
                     format!("unable to resolve %ProgramData% for {}", target.name),
                 )
             })?;
-        return Ok(base.join(match target.name {
+        Ok(base.join(match target.name {
             "claude" => "ClaudeCode",
             "gemini" => "gemini-cli",
             "opencode" => "opencode",
             _ => target.name,
-        }));
+        }))
     }
     #[cfg(target_os = "macos")]
     {
-        return Ok(
+        Ok(
             PathBuf::from("/Library/Application Support").join(match target.name {
                 "claude" => "ClaudeCode",
                 "gemini" => "GeminiCli",
                 _ => target.name,
             }),
-        );
+        )
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1265,7 +1263,6 @@ fn parallel_map<T: Sync, R: Send>(values: &[T], work: impl Fn(&T) -> R + Sync) -
 
 struct LiveTarget {
     target: &'static Target,
-    primary_scope: Scope,
     cli: Option<(Option<&'static str>, bool)>,
     scopes: Vec<LiveScope>,
     legacy_server: Option<&'static str>,
@@ -1284,11 +1281,6 @@ impl LiveTarget {
     fn new(target: &'static Target, in_project: bool) -> Self {
         Self {
             target,
-            primary_scope: if !in_project && target.supports(Scope::User) {
-                Scope::User
-            } else {
-                target.default_scope
-            },
             cli: None,
             scopes: status_scopes(target, in_project)
                 .into_iter()

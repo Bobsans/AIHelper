@@ -1434,7 +1434,7 @@ fn download_archive(
             )
         })?;
     }
-    let actual = format!("{:x}", hasher.finalize());
+    let actual = encode_lower_hex(hasher.finalize());
     if actual != expected_sha256 {
         let _ = fs::remove_file(archive_path);
         return Err(InvocationResponse::error(
@@ -1445,6 +1445,15 @@ fn download_archive(
         ));
     }
     Ok(())
+}
+
+/// `sha2` 0.11 digest output no longer implements `LowerHex`, so encode by hand.
+fn encode_lower_hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), InvocationResponse> {

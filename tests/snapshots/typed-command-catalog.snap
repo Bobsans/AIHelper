@@ -1,0 +1,5808 @@
+[
+  {
+    "descriptor": {
+      "description": "Return the AI-oriented manual for all enabled domains or one selected domain.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "configuration_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads the in-memory command registry and returns documentation only.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "ai.info",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "description": "Optional domain filter.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "ai.info",
+            "type": "string"
+          },
+          "domain_filter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "global_options": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "flag": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "flag",
+                "description"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "host_commands": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "examples": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "description",
+                      "command"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "usage": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "summary",
+                "usage",
+                "examples"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "plugin_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "plugins": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "commands": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "examples": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "argv": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "description": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "description",
+                            "argv"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "type": "string"
+                      },
+                      "usage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "summary",
+                      "usage",
+                      "examples"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "domain": {
+                  "type": "string"
+                },
+                "notes": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "plugin_name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "plugin_name",
+                "domain",
+                "description",
+                "commands",
+                "notes"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "domain_filter",
+          "global_options",
+          "host_commands",
+          "plugin_count",
+          "plugins"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "AIHelper agent manual"
+    },
+    "domain": "ai",
+    "plugin": "host-ai"
+  },
+  {
+    "descriptor": {
+      "description": "Return changed paths from the Git working tree rooted at the execution cwd.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git repository checks and reads working-tree status.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "ctx.changed",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changed_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "command": {
+            "const": "ctx.changed",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "old_path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "path",
+                "old_path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "changed_count",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List changed context paths"
+    },
+    "domain": "ctx",
+    "plugin": "builtin-ctx"
+  },
+  {
+    "descriptor": {
+      "description": "Create a compact metadata and symbol digest for files and directories.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads metadata and eligible text content under the requested paths; following symlinks may read outside those path trees.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "paths": [
+              "src",
+              "docs"
+            ],
+            "preset": "review"
+          },
+          "description": "Pack source and documentation for review"
+        }
+      ],
+      "id": "ctx.pack",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Follow symlinked files and directories.",
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "default": 8388608,
+            "description": "Skip text files larger than this byte size.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "paths": {
+            "description": "Files or directories to pack; defaults to the context cwd.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "preset": {
+            "default": "review",
+            "description": "Controls default limits and symbol density.",
+            "enum": [
+              "summary",
+              "review",
+              "debug"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "ctx.pack",
+            "type": "string"
+          },
+          "directory_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "file_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "item_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "line_count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "size_bytes": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "symbol_count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "symbols": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "line": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "kind",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "path",
+                "kind",
+                "size_bytes",
+                "line_count",
+                "symbol_count",
+                "symbols"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skipped_binary_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_large_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_symlink_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "symbol_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "preset",
+          "roots",
+          "item_count",
+          "file_count",
+          "directory_count",
+          "symbol_count",
+          "skipped_binary_files",
+          "skipped_large_files",
+          "skipped_symlink_files",
+          "truncated",
+          "items"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Pack context metadata"
+    },
+    "domain": "ctx",
+    "plugin": "builtin-ctx"
+  },
+  {
+    "descriptor": {
+      "description": "Extract code, configuration, and document symbols from one file or directory.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads eligible text files under the requested path; following symlinks may read outside that path tree.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "path": "src/commands",
+            "preset": "summary"
+          },
+          "description": "Extract summary symbols from commands"
+        }
+      ],
+      "id": "ctx.symbols",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Follow symlinked files and directories.",
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "default": 8388608,
+            "description": "Skip text files larger than this byte size.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "File or directory to inspect.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "preset": {
+            "default": "review",
+            "description": "Controls default limits and symbol density.",
+            "enum": [
+              "summary",
+              "review",
+              "debug"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "ctx.symbols",
+            "type": "string"
+          },
+          "file_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "symbol_count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "symbols": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "line": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "kind",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "path",
+                "symbol_count",
+                "symbols"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "skipped_binary_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_large_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_symlink_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "symbol_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "preset",
+          "root",
+          "file_count",
+          "symbol_count",
+          "skipped_binary_files",
+          "skipped_large_files",
+          "skipped_symlink_files",
+          "truncated",
+          "files"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Extract context symbols"
+    },
+    "domain": "ctx",
+    "plugin": "builtin-ctx"
+  },
+  {
+    "descriptor": {
+      "description": "Read the first requested number of UTF-8 text lines from a file.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads the beginning of the requested file; enabling symlink following may read an external target.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "lines": 40,
+            "number_lines": true,
+            "path": "src/lib.rs"
+          },
+          "description": "Read the first 40 numbered lines"
+        }
+      ],
+      "id": "file.head",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Allow reading or traversing symlink targets.",
+            "type": "boolean"
+          },
+          "lines": {
+            "default": 20,
+            "description": "Number of lines requested.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "default": 8388608,
+            "description": "Reject a file larger than this byte size.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "number_lines": {
+            "default": false,
+            "description": "Prefix returned content lines with source line numbers.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "UTF-8 text file to read.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "file.head",
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "from": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "line_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "numbered": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "to": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "from",
+          "to",
+          "numbered",
+          "line_count",
+          "truncated",
+          "content"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Read file head"
+    },
+    "domain": "file",
+    "plugin": "builtin-file"
+  },
+  {
+    "descriptor": {
+      "description": "Read UTF-8 text from a file with an optional inclusive line range.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads the requested file; enabling symlink following may read a target outside its apparent path.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "from": 1,
+            "number_lines": true,
+            "path": "src/main.rs",
+            "to": 120
+          },
+          "description": "Read the first 120 numbered lines"
+        }
+      ],
+      "id": "file.read",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Allow reading or traversing symlink targets.",
+            "type": "boolean"
+          },
+          "from": {
+            "description": "Inclusive one-based start line.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "default": 8388608,
+            "description": "Reject a file larger than this byte size.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "number_lines": {
+            "default": false,
+            "description": "Prefix returned content lines with source line numbers.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "UTF-8 text file to read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "to": {
+            "description": "Inclusive one-based end line.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "file.read",
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "from": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "line_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "numbered": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "to": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "from",
+          "to",
+          "numbered",
+          "line_count",
+          "truncated",
+          "content"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Read file lines"
+    },
+    "domain": "file",
+    "plugin": "builtin-file"
+  },
+  {
+    "descriptor": {
+      "description": "Return filesystem metadata for one file, directory, symlink, or other path.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads filesystem metadata for the requested path only.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "path": "Cargo.toml"
+          },
+          "description": "Inspect Cargo.toml metadata"
+        }
+      ],
+      "id": "file.stat",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Filesystem path to inspect.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "file.stat",
+            "type": "string"
+          },
+          "created_unix_seconds": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "file",
+              "directory",
+              "symlink",
+              "other"
+            ],
+            "type": "string"
+          },
+          "modified_unix_seconds": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "readonly": {
+            "type": "boolean"
+          },
+          "size_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "kind",
+          "size_bytes",
+          "readonly",
+          "modified_unix_seconds",
+          "created_unix_seconds"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Inspect file metadata"
+    },
+    "domain": "file",
+    "plugin": "builtin-file"
+  },
+  {
+    "descriptor": {
+      "description": "Read the last requested number of UTF-8 text lines from a file.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads the requested file to determine its final lines; enabling symlink following may read an external target.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "lines": 30,
+            "path": "CHANGELOG.md"
+          },
+          "description": "Read the last 30 lines"
+        }
+      ],
+      "id": "file.tail",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Allow reading or traversing symlink targets.",
+            "type": "boolean"
+          },
+          "lines": {
+            "default": 20,
+            "description": "Number of lines requested.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "default": 8388608,
+            "description": "Reject a file larger than this byte size.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "number_lines": {
+            "default": false,
+            "description": "Prefix returned content lines with source line numbers.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "UTF-8 text file to read.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "file.tail",
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "from": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "line_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "numbered": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "to": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "from",
+          "to",
+          "numbered",
+          "line_count",
+          "truncated",
+          "content"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Read file tail"
+    },
+    "domain": "file",
+    "plugin": "builtin-file"
+  },
+  {
+    "descriptor": {
+      "description": "Return a deterministic directory tree with optional depth and output limits.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads directory metadata recursively; enabling symlink following may traverse outside the requested tree.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "depth": 2,
+            "path": "src"
+          },
+          "description": "List the source tree two levels deep"
+        }
+      ],
+      "id": "file.tree",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "depth": {
+            "description": "Maximum traversal depth, including zero for the root only.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "follow_symlinks": {
+            "default": false,
+            "description": "Allow reading or traversing symlink targets.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Tree root; defaults to the context cwd.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "file.tree",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "depth": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "enum": [
+                    "file",
+                    "directory",
+                    "symlink",
+                    "other"
+                  ],
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "depth",
+                "kind",
+                "name",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "entry_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_depth": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "max_depth",
+          "entry_count",
+          "truncated",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List directory tree"
+    },
+    "domain": "file",
+    "plugin": "builtin-file"
+  },
+  {
+    "descriptor": {
+      "description": "Return blame metadata for a repository file or one selected line.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git blame and exposes commit authorship metadata and source text.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "git.blame",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "line": {
+            "description": "Optional one-based source line.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Repository-relative file path.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "git.blame",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "author": {
+                  "type": "string"
+                },
+                "author_mail": {
+                  "type": "string"
+                },
+                "author_time": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "commit": {
+                  "type": "string"
+                },
+                "line": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "line",
+                "commit",
+                "author",
+                "author_mail",
+                "author_time",
+                "summary",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "entry_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line_filter": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "line_filter",
+          "entry_count",
+          "truncated",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Read Git blame"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Return bounded staged, unstaged, untracked, and renamed paths.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git status and returns changed repository paths.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "git.changed",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changed_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "command": {
+            "const": "git.changed",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "old_path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "path",
+                "old_path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "changed_count",
+          "truncated",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List Git working-tree changes"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Return commit metadata, message, changed files, and line statistics.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git history queries and exposes commit authors, messages, and paths.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "reference": "HEAD"
+          },
+          "description": "Inspect the latest commit"
+        }
+      ],
+      "id": "git.commit-info",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "reference": {
+            "default": "HEAD",
+            "description": "Commit-ish to inspect.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "git.commit-info",
+            "type": "string"
+          },
+          "commit": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "additions": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "author": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "email"
+                    ],
+                    "type": "object"
+                  },
+                  "author_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "committer": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "email"
+                    ],
+                    "type": "object"
+                  },
+                  "committer_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "deletions": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "file_count": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "files": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "additions": {
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "deletions": {
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "old_path": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "path": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "path",
+                        "old_path",
+                        "additions",
+                        "deletions"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "hash": {
+                    "type": "string"
+                  },
+                  "short_hash": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "hash",
+                  "short_hash",
+                  "author",
+                  "author_date",
+                  "committer",
+                  "committer_date",
+                  "subject",
+                  "body",
+                  "file_count",
+                  "additions",
+                  "deletions",
+                  "files",
+                  "truncated"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "reference",
+          "commit"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Read Git commit information"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Return the unstaged local Git diff, optionally restricted to one path.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git diff and may expose uncommitted source or secrets.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "git.diff",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Optional repository-relative path filter.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "git.diff",
+            "type": "string"
+          },
+          "diff": {
+            "type": "string"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "line_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path_filter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "path_filter",
+          "line_count",
+          "truncated",
+          "diff"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Read local Git diff"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Return configured fetch and push URLs with provider hints.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git configuration inspection and may reveal remote URLs.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "git.remotes",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "git.remotes",
+            "type": "string"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "remote_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remotes": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "fetch_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "push_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "fetch_url",
+                "push_url",
+                "provider"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "remote_count",
+          "remotes"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List Git remotes"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Return branch, upstream, working-tree counts, latest commit, and latest tag.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git commands and reads repository metadata and status.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "git.status",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "ahead": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "behind": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "clean": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "git.status",
+            "type": "string"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "latest_commit": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "hash": {
+                    "type": "string"
+                  },
+                  "short_hash": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hash",
+                  "short_hash",
+                  "subject"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_tag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "staged_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unstaged_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "untracked_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "upstream": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "branch",
+          "upstream",
+          "ahead",
+          "behind",
+          "clean",
+          "staged_count",
+          "unstaged_count",
+          "untracked_count",
+          "changed_count",
+          "latest_commit",
+          "latest_tag"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Git repository status"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Create a lightweight or annotated local Git tag at a reference.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_write",
+          "process_spawn"
+        ],
+        "idempotent": false,
+        "impact": "Creates a persistent local Git reference; a conflicting tag fails and reversal requires deleting the tag.",
+        "open_world": false,
+        "read_only": false,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "message": "v1.0.0",
+            "tag": "v1.0.0"
+          },
+          "description": "Create an annotated release tag"
+        }
+      ],
+      "id": "git.tag.create",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "description": "Annotation message; omission creates a lightweight tag.",
+            "type": "string"
+          },
+          "reference": {
+            "default": "HEAD",
+            "description": "Commit-ish to tag.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "tag": {
+            "description": "Tag name to create.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "annotated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "git.tag.create",
+            "type": "string"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "target_commit": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "hash": {
+                    "type": "string"
+                  },
+                  "short_hash": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hash",
+                  "short_hash",
+                  "subject"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "tag",
+          "reference",
+          "annotated",
+          "target_commit"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Create Git tag"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "List repository tags newest-first with optional latest-only and output limits.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "idempotent": true,
+        "impact": "Runs read-only Git tag enumeration in the repository.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "git.tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "latest": {
+            "default": false,
+            "description": "Return at most the newest tag.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "git.tags",
+            "type": "string"
+          },
+          "in_git_repo": {
+            "type": "boolean"
+          },
+          "latest": {
+            "type": "boolean"
+          },
+          "tag_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "in_git_repo",
+          "latest",
+          "tag_count",
+          "truncated",
+          "tags"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List Git tags"
+    },
+    "domain": "git",
+    "plugin": "builtin-git"
+  },
+  {
+    "descriptor": {
+      "description": "Execute all HTTP cases in a YAML or JSON assertion spec.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write"
+        ],
+        "idempotent": false,
+        "impact": "Reads a local spec and payload files, then sends every declared HTTP method, credential, and payload to declared URLs; cases may mutate external systems.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.assert",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "fail_fast": {
+            "default": false,
+            "description": "Stop after the first failed case.",
+            "type": "boolean"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts per case for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "spec_path": {
+            "description": "YAML or JSON spec path resolved against the execution cwd.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "vars": {
+            "description": "Template variables encoded as KEY=VALUE.",
+            "items": {
+              "pattern": "^[^=]+=.*$",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "spec_path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cases": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "duration_ms": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "failures": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "maximum": 599,
+                  "minimum": 100,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "passed",
+                "status",
+                "duration_ms",
+                "failures"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "http.assert",
+            "type": "string"
+          },
+          "fail_fast": {
+            "type": "boolean"
+          },
+          "spec_path": {
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_ms": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "duration_ms"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "spec_path",
+          "fail_fast",
+          "summary",
+          "cases"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Run HTTP assertions"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Send an HTTP DELETE request with payload, authentication, and expectations.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write",
+          "filesystem_read"
+        ],
+        "idempotent": false,
+        "impact": "Sends an HTTP DELETE request and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.delete",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.delete",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Send HTTP DELETE"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Send an HTTP GET request with payload, authentication, and expectations.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "external_read",
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Sends an HTTP GET request and optional credentials to an arbitrary URL; servers can still implement side effects for GET.",
+        "open_world": true,
+        "read_only": true,
+        "reversibility": "unknown",
+        "risk": "medium"
+      },
+      "examples": [],
+      "id": "http.get",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.get",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [
+        {
+          "accepted_kinds": [
+            "http-basic"
+          ],
+          "description": "HTTP Basic credential.",
+          "name": "basic",
+          "required": false
+        }
+      ],
+      "title": "Send HTTP GET"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Send an HTTP PATCH request with payload, authentication, and expectations.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write",
+          "filesystem_read"
+        ],
+        "idempotent": false,
+        "impact": "Sends an HTTP PATCH request and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.patch",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.patch",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Send HTTP PATCH"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Send an HTTP POST request with payload, authentication, and expectations.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write",
+          "filesystem_read"
+        ],
+        "idempotent": false,
+        "impact": "Sends an HTTP POST request and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.post",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.post",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [
+        {
+          "accepted_kinds": [
+            "http-basic"
+          ],
+          "description": "HTTP Basic credential.",
+          "name": "basic",
+          "required": false
+        }
+      ],
+      "title": "Send HTTP POST"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Send an HTTP PUT request with payload, authentication, and expectations.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write",
+          "filesystem_read"
+        ],
+        "idempotent": false,
+        "impact": "Sends an HTTP PUT request and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.put",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.put",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Send HTTP PUT"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Parse and replay a supported curl command with optional expectation overrides.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write",
+          "filesystem_read"
+        ],
+        "idempotent": false,
+        "impact": "Replays an arbitrary HTTP request encoded in curl syntax and may send embedded credentials or mutate a remote service.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.replay",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "curl": {
+            "description": "Supported curl command form.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "curl"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.replay",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [
+        {
+          "accepted_kinds": [
+            "http-basic"
+          ],
+          "description": "HTTP Basic credential.",
+          "name": "basic",
+          "required": false
+        }
+      ],
+      "title": "Replay curl request"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Send an HTTP request with explicit method, payload, authentication, and expectations.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write",
+          "filesystem_read"
+        ],
+        "idempotent": false,
+        "impact": "Sends an arbitrary HTTP method and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.request",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
+        "properties": {
+          "basic": {
+            "description": "Basic credentials as USER:PASS.",
+            "type": "string"
+          },
+          "bearer": {
+            "description": "Bearer token sent to the target URL.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Raw text request payload.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "Raw text payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "expect_body_contains": {
+            "description": "Required body substrings.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_headers": {
+            "description": "Expected headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_json": {
+            "description": "JSON checks as PATH:OP[:VALUE].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expect_status": {
+            "description": "Expected status code, class, or range.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "HTTP headers as K: V.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "json": {
+            "description": "JSON request payload."
+          },
+          "json_file": {
+            "description": "JSON payload file.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_response_bytes": {
+            "default": 8388608,
+            "description": "Maximum response body bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "method": {
+            "description": "HTTP method.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "query": {
+            "description": "Query parameters as KEY=VALUE.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 30,
+            "description": "HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "url"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assertions": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failures": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "failures"
+            ],
+            "type": "object"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "http.request",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "method",
+          "url",
+          "status",
+          "ok",
+          "duration_ms",
+          "truncated",
+          "body_truncated",
+          "headers",
+          "body",
+          "assertions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [
+        {
+          "accepted_kinds": [
+            "http-basic"
+          ],
+          "description": "HTTP Basic credential.",
+          "name": "basic",
+          "required": false
+        }
+      ],
+      "title": "Send HTTP request"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Execute all HTTP cases in a YAML or JSON assertion spec.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "network_read",
+          "network_write",
+          "external_read",
+          "external_write"
+        ],
+        "idempotent": false,
+        "impact": "Reads a local spec and payload files, then sends every declared HTTP method, credential, and payload to declared URLs; cases may mutate external systems.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [],
+      "id": "http.run",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "fail_fast": {
+            "default": false,
+            "description": "Stop after the first failed case.",
+            "type": "boolean"
+          },
+          "retry": {
+            "default": 0,
+            "description": "Additional attempts per case for transport failures, timeouts, response read failures, and HTTP 5xx.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_delay_ms": {
+            "default": 0,
+            "description": "Fixed delay in milliseconds between retry attempts.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "spec_path": {
+            "description": "YAML or JSON spec path resolved against the execution cwd.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "vars": {
+            "description": "Template variables encoded as KEY=VALUE.",
+            "items": {
+              "pattern": "^[^=]+=.*$",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "spec_path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cases": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "duration_ms": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "failures": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "maximum": 599,
+                  "minimum": 100,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "passed",
+                "status",
+                "duration_ms",
+                "failures"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "http.assert",
+            "type": "string"
+          },
+          "fail_fast": {
+            "type": "boolean"
+          },
+          "spec_path": {
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_ms": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "passed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "duration_ms"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "spec_path",
+          "fail_fast",
+          "summary",
+          "cases"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Run HTTP assertion alias"
+    },
+    "domain": "http",
+    "plugin": "builtin-http"
+  },
+  {
+    "descriptor": {
+      "description": "Disable one loaded plugin domain and persist the override.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "configuration_write",
+          "filesystem_write"
+        ],
+        "idempotent": true,
+        "impact": "Removes the domain's tools from the live MCP catalog and writes the plugin settings file.",
+        "open_world": false,
+        "read_only": false,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [],
+      "id": "plugins.disable",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "description": "Loaded plugin domain.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "disabled_domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "domain",
+          "changed",
+          "config_path",
+          "disabled_domains"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Disable AIHelper plugin"
+    },
+    "domain": "plugins",
+    "plugin": "host-plugins"
+  },
+  {
+    "descriptor": {
+      "description": "Enable one loaded plugin domain and persist the override.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "configuration_write",
+          "filesystem_write"
+        ],
+        "idempotent": true,
+        "impact": "May add tools to the live MCP catalog and writes the plugin settings file.",
+        "open_world": false,
+        "read_only": false,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [],
+      "id": "plugins.enable",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "description": "Loaded plugin domain.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "disabled_domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "domain",
+          "changed",
+          "config_path",
+          "disabled_domains"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Enable AIHelper plugin"
+    },
+    "domain": "plugins",
+    "plugin": "host-plugins"
+  },
+  {
+    "descriptor": {
+      "description": "List registered plugins, live enabled state, and MCP exposure status.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "configuration_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads the loaded plugin registry and persisted enabled-state overrides.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "plugins.list",
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Exactly one of domain or all=true is required.",
+        "properties": {
+          "state": {
+            "description": "Optional enabled-state filter.",
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "plugins": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "abi_version": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "domain": {
+                  "type": "string"
+                },
+                "mcp_exposed": {
+                  "type": "boolean"
+                },
+                "mcp_omission_reason": {
+                  "type": "string"
+                },
+                "plugin_name": {
+                  "type": "string"
+                },
+                "required_tools": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "check_args": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "check_args",
+                      "reason"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "source": {
+                  "enum": [
+                    "builtin",
+                    "dynamic"
+                  ],
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "enabled",
+                    "disabled"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "plugin_name",
+                "domain",
+                "description",
+                "abi_version",
+                "required_tools",
+                "source",
+                "state",
+                "mcp_exposed"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "plugins"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List AIHelper plugins"
+    },
+    "domain": "plugins",
+    "plugin": "host-plugins"
+  },
+  {
+    "descriptor": {
+      "description": "Reset one plugin domain override or all overrides to the default enabled state.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "configuration_write",
+          "filesystem_write"
+        ],
+        "idempotent": true,
+        "impact": "May add multiple tools to the live MCP catalog and writes the plugin settings file.",
+        "open_world": false,
+        "read_only": false,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [],
+      "id": "plugins.reset",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "all": {
+            "const": true,
+            "description": "Reset every plugin domain override.",
+            "type": "boolean"
+          },
+          "domain": {
+            "description": "Plugin domain to reset.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "disabled_domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "domain",
+          "changed",
+          "config_path",
+          "disabled_domains"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Reset AIHelper plugin overrides"
+    },
+    "domain": "plugins",
+    "plugin": "host-plugins"
+  },
+  {
+    "descriptor": {
+      "description": "Suggest common commands from detected manifests and tooling without executing them.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Recursively reads recognized project manifests and metadata below the selected path; it does not execute suggested commands or modify files.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "project.commands",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "default": ".",
+            "description": "Project path resolved against the execution cwd.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "project.commands",
+            "type": "string"
+          },
+          "commands": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "confidence": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "command",
+                "confidence",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ecosystems": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "root",
+          "ecosystems",
+          "tools",
+          "roles",
+          "commands"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Suggest project commands"
+    },
+    "domain": "project",
+    "plugin": "builtin-project"
+  },
+  {
+    "descriptor": {
+      "description": "Detect ecosystems, tools, roles, important files, versions, and suggested commands.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Recursively reads recognized project manifests and metadata below the selected path; it does not execute suggested commands or modify files.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "path": "."
+          },
+          "description": "Detect the current project"
+        }
+      ],
+      "id": "project.detect",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "default": ".",
+            "description": "Project path resolved against the execution cwd.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changelog_files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ci_files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "project.detect",
+            "type": "string"
+          },
+          "commands": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "confidence": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "command",
+                "confidence",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "docs_files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ecosystems": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "files": {
+            "additionalProperties": false,
+            "properties": {
+              "changelogs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "ci": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "config": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "deploy": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "docs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "infra": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "locks": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "packages": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "security": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "packages",
+              "locks",
+              "ci",
+              "docs",
+              "changelogs",
+              "deploy",
+              "infra",
+              "config",
+              "quality",
+              "security"
+            ],
+            "type": "object"
+          },
+          "package_files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "versions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "confidence": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "version": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "path",
+                "name",
+                "version",
+                "confidence"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "root",
+          "ecosystems",
+          "tools",
+          "roles",
+          "files",
+          "versions",
+          "commands",
+          "package_files",
+          "ci_files",
+          "docs_files",
+          "changelog_files"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Detect project"
+    },
+    "domain": "project",
+    "plugin": "builtin-project"
+  },
+  {
+    "descriptor": {
+      "description": "Read common manifest files and return detected names and versions.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Recursively reads recognized project manifests and metadata below the selected path; it does not execute suggested commands or modify files.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [],
+      "id": "project.version",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "default": ".",
+            "description": "Project path resolved against the execution cwd.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "project.version",
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "version_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "versions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "confidence": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "version": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "path",
+                "name",
+                "version",
+                "confidence"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "root",
+          "version_count",
+          "truncated",
+          "versions"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Detect project versions"
+    },
+    "domain": "project",
+    "plugin": "builtin-project"
+  },
+  {
+    "descriptor": {
+      "description": "Run one non-interactive child process, capture bounded output, and return its exit status.",
+      "effects": {
+        "destructive": true,
+        "effects": [
+          "process_spawn",
+          "filesystem_read",
+          "filesystem_write",
+          "filesystem_delete",
+          "network_read",
+          "network_write",
+          "configuration_read",
+          "configuration_write",
+          "external_read",
+          "external_write"
+        ],
+        "idempotent": false,
+        "impact": "Executes an arbitrary program in context.cwd with the server environment. The child can read, modify, or delete files, access the network, change external systems, and expose inherited secrets. Stdin is closed; timeout or cancellation terminates its process group.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "critical"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "command": [
+              "cargo",
+              "check"
+            ],
+            "timeout_secs": 120
+          },
+          "description": "Run a Rust check"
+        }
+      ],
+      "id": "run.check",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "Program followed by its arguments; no shell parsing is performed.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "max_output_bytes": {
+            "default": 65536,
+            "description": "Maximum captured bytes for each output stream.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tail_lines": {
+            "description": "Return only the last N captured lines from each stream.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 600,
+            "description": "Process timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "argv": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "run.check",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exit_code": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stderr_truncated": {
+            "type": "boolean"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stdout_truncated": {
+            "type": "boolean"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "timed_out": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "argv",
+          "success",
+          "timed_out",
+          "exit_code",
+          "duration_ms",
+          "stdout",
+          "stderr",
+          "stdout_truncated",
+          "stderr_truncated"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Run command"
+    },
+    "domain": "run",
+    "plugin": "builtin-run"
+  },
+  {
+    "descriptor": {
+      "description": "Find normalized file paths containing a substring.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Recursively reads file paths and, for text search, file contents below the selected roots. follow_symlinks=true can traverse linked directories outside those roots; no files are modified.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [],
+      "id": "search.files",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Follow symlink directories during traversal.",
+            "type": "boolean"
+          },
+          "paths": {
+            "default": [],
+            "description": "Files or directories resolved against context.cwd; empty searches context.cwd.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "query": {
+            "description": "Case-sensitive substring matched against normalized paths; empty lists all files.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "type": "string"
+          },
+          "command": {
+            "const": "search.files",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "match_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "backend",
+          "root",
+          "roots",
+          "query",
+          "match_count",
+          "truncated",
+          "files"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Search file paths"
+    },
+    "domain": "search",
+    "plugin": "builtin-search"
+  },
+  {
+    "descriptor": {
+      "description": "Search literal text or a regular expression across files.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read"
+        ],
+        "idempotent": true,
+        "impact": "Recursively reads file paths and, for text search, file contents below the selected roots. follow_symlinks=true can traverse linked directories outside those roots; no files are modified.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "globs": [
+              "**/*.rs"
+            ],
+            "paths": [
+              "src"
+            ],
+            "pattern": "TODO"
+          },
+          "description": "Find TODOs in Rust files"
+        }
+      ],
+      "id": "search.text",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "context_lines": {
+            "description": "Context lines before and after each match.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "follow_symlinks": {
+            "default": false,
+            "description": "Follow symlink directories during traversal.",
+            "type": "boolean"
+          },
+          "globs": {
+            "description": "Optional glob filters relative to each search root.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ignore_case": {
+            "default": false,
+            "description": "Use case-insensitive matching.",
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "default": 8388608,
+            "description": "Skip files larger than this many bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "paths": {
+            "default": [],
+            "description": "Files or directories resolved against context.cwd; empty searches context.cwd.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pattern": {
+            "description": "Literal text or regular expression to find.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "regex": {
+            "default": false,
+            "description": "Interpret pattern as a regular expression.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "type": "string"
+          },
+          "command": {
+            "const": "search.text",
+            "type": "string"
+          },
+          "context": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "file_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ignore_case": {
+            "type": "boolean"
+          },
+          "match_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "column": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "context_after": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "line": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "context_before": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "line": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "line": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "line",
+                "column",
+                "text",
+                "context_before",
+                "context_after"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "regex": {
+            "type": "boolean"
+          },
+          "root": {
+            "type": "string"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skipped_binary_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_large_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_symlink_files": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "backend",
+          "root",
+          "roots",
+          "pattern",
+          "regex",
+          "ignore_case",
+          "context",
+          "match_count",
+          "file_count",
+          "skipped_binary_files",
+          "skipped_large_files",
+          "skipped_symlink_files",
+          "truncated",
+          "matches"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Search file text"
+    },
+    "domain": "search",
+    "plugin": "builtin-search"
+  },
+  {
+    "descriptor": {
+      "description": "List secret metadata without secret values or field-state information.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "configuration_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads and decrypts the local vault, then returns redacted metadata only.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "low"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "kind": "postgres"
+          },
+          "description": "Filter PostgreSQL secrets"
+        }
+      ],
+      "id": "secrets.list",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Optional secret-kind filter.",
+            "enum": [
+              "postgres",
+              "http-basic",
+              "ssh-key",
+              "github-token",
+              "gitlab-token"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "secrets": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "postgres",
+                    "http-basic",
+                    "ssh-key",
+                    "github-token",
+                    "gitlab-token"
+                  ],
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "label",
+                "description"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "secrets"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List redacted secrets"
+    },
+    "domain": "secrets",
+    "plugin": "host-secrets"
+  },
+  {
+    "descriptor": {
+      "description": "Read saved task definitions from context.cwd/.ah/tasks.json.",
+      "effects": {
+        "destructive": false,
+        "effects": [
+          "filesystem_read",
+          "configuration_read"
+        ],
+        "idempotent": true,
+        "impact": "Reads and returns every saved shell command in context.cwd/.ah/tasks.json; commands may contain sensitive arguments.",
+        "open_world": false,
+        "read_only": true,
+        "reversibility": "yes",
+        "risk": "medium"
+      },
+      "examples": [],
+      "id": "task.list",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "task.list",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "store_path": {
+            "type": "string"
+          },
+          "tasks": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "updated_unix_seconds": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "command",
+                "updated_unix_seconds"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "store_path",
+          "count",
+          "truncated",
+          "tasks"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "List saved tasks"
+    },
+    "domain": "task",
+    "plugin": "builtin-task"
+  },
+  {
+    "descriptor": {
+      "description": "Load a named task and execute its command through the platform shell.",
+      "effects": {
+        "destructive": true,
+        "effects": [
+          "process_spawn",
+          "filesystem_read",
+          "filesystem_write",
+          "filesystem_delete",
+          "network_read",
+          "network_write",
+          "configuration_read",
+          "configuration_write",
+          "external_read",
+          "external_write"
+        ],
+        "idempotent": false,
+        "impact": "Executes the saved text through PowerShell or sh in context.cwd with the server environment. Shell expansion can run arbitrary programs, read or change files, access networks and external systems, and expose inherited secrets. Timeout or cancellation terminates the process group.",
+        "open_world": true,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "critical"
+      },
+      "examples": [],
+      "id": "task.run",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_output_bytes": {
+            "default": 65536,
+            "description": "Maximum captured bytes per output stream.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Task name.",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 600,
+            "description": "Process timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "task.run",
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "task_command": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "name",
+          "task_command",
+          "exit_code",
+          "success",
+          "truncated",
+          "stdout",
+          "stderr"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Run saved task"
+    },
+    "domain": "task",
+    "plugin": "builtin-task"
+  },
+  {
+    "descriptor": {
+      "description": "Create or replace a named shell command in context.cwd/.ah/tasks.json.",
+      "effects": {
+        "destructive": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_write"
+        ],
+        "idempotent": false,
+        "impact": "Creates or rewrites context.cwd/.ah/tasks.json and may replace an existing task definition shared by later invocations. The command is stored but not executed.",
+        "open_world": false,
+        "read_only": false,
+        "reversibility": "unknown",
+        "risk": "high"
+      },
+      "examples": [
+        {
+          "arguments": {
+            "command": "cargo test --workspace",
+            "name": "test"
+          },
+          "description": "Save a test task"
+        }
+      ],
+      "id": "task.save",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "Shell command stored verbatim; it is not executed by this tool.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "description": "Task name.",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "task.save",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "store_path": {
+            "type": "string"
+          },
+          "task_command": {
+            "type": "string"
+          },
+          "updated_unix_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command",
+          "name",
+          "task_command",
+          "store_path",
+          "updated_unix_seconds"
+        ],
+        "type": "object"
+      },
+      "secret_slots": [],
+      "title": "Save task"
+    },
+    "domain": "task",
+    "plugin": "builtin-task"
+  }
+]

@@ -1,15 +1,15 @@
 [package]
-name = "ah-plugin-api"
+name = "ah-redact"
 version = "1.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Stable plugin contract and C ABI types for AIHelper"
+description = "Secret redaction and credential detection shared by every AIHelper sink"
 # Distributed as signed binaries, not on crates.io. Publishing would also
 # require versioned path dependencies across the workspace.
 publish = false
 
 [dependencies]
-serde.workspace = true
 serde_json.workspace = true
+shell-words.workspace = true

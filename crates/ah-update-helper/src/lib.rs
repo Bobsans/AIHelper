@@ -38,8 +38,8 @@ mod bounded_process {
         ))
     }
 }
+pub mod apply;
 pub mod handoff;
 pub mod process;
 pub mod recovery_command;
 pub mod restart_manager;
-pub mod transaction;

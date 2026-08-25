@@ -1,19 +1,26 @@
 [package]
 name = "ah-mcp"
 version = "1.4.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "MCP stdio server for AIHelper typed commands"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
 
 [dependencies]
 ah-plugin-api = { path = "../ah-plugin-api" }
+ah-redact = { path = "../ah-redact" }
 ah-runtime = { path = "../ah-runtime" }
 axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 rmcp = { version = "=2.2.0", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0"
-shell-words = "1.1.0"
-thiserror = "2.0"
-tokio = { version = "1.52.1", features = ["io-std", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+serde.workspace = true
+serde_json.workspace = true
+shell-words.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-std", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 tower-http = { version = "0.6", features = ["limit"] }
-uuid = { version = "1.24.0", features = ["serde", "v4"] }
+uuid.workspace = true

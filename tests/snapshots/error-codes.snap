@@ -1,0 +1,206 @@
+[
+  {
+    "code": "DOMAIN_NOT_FOUND",
+    "detail_message": "unknown command domain: nope",
+    "origin": "RuntimeError",
+    "user_message": "unknown command domain: nope"
+  },
+  {
+    "code": "PLUGIN_ABI_MISMATCH",
+    "detail_message": "plugin 'plugin.dll' has incompatible ABI version 2; expected 1",
+    "origin": "RuntimeError",
+    "user_message": "plugin 'plugin.dll' has incompatible ABI version 2; expected 1"
+  },
+  {
+    "code": "PLUGIN_API_MISMATCH",
+    "detail_message": "plugin 'plugin.dll' requires unsupported Plugin API version 9.1; host supports 1.0",
+    "origin": "RuntimeError",
+    "user_message": "plugin 'plugin.dll' requires unsupported Plugin API version 9.1; host supports 1.0"
+  },
+  {
+    "code": "PLUGIN_METADATA_INVALID",
+    "detail_message": "plugin 'plugin.dll' returned invalid metadata: empty domain",
+    "origin": "RuntimeError",
+    "user_message": "plugin 'plugin.dll' returned invalid metadata: empty domain"
+  },
+  {
+    "code": "PLUGIN_INVOCATION_FAILED",
+    "detail_message": "boom",
+    "origin": "RuntimeError",
+    "user_message": "boom"
+  },
+  {
+    "code": "PLUGIN_RESPONSE_PARSE_FAILED",
+    "detail_message": "bad json",
+    "origin": "RuntimeError",
+    "user_message": "bad json"
+  },
+  {
+    "code": "COMMAND_CATALOG_INVALID",
+    "detail_message": "invalid typed command catalog for domain 'probe': duplicate id",
+    "origin": "RuntimeError",
+    "user_message": "invalid typed command catalog for domain 'probe': duplicate id"
+  },
+  {
+    "code": "TYPED_COMMAND_NOT_FOUND",
+    "detail_message": "typed command not found: probe.missing",
+    "origin": "RuntimeError",
+    "user_message": "typed command not found: probe.missing"
+  },
+  {
+    "code": "TYPED_INVOCATION_FAILED",
+    "detail_message": "bad arguments",
+    "origin": "RuntimeError",
+    "user_message": "bad arguments"
+  },
+  {
+    "code": "SECRET_REQUIRED",
+    "detail_message": "required credential slot 'basic' is missing for 'http.get'",
+    "origin": "RuntimeError",
+    "user_message": "required credential slot 'basic' is missing for 'http.get'"
+  },
+  {
+    "code": "SECRET_NOT_FOUND",
+    "detail_message": "credential for slot 'basic' was not found for 'http.get'",
+    "origin": "RuntimeError",
+    "user_message": "credential for slot 'basic' was not found for 'http.get'"
+  },
+  {
+    "code": "SECRET_KIND_MISMATCH",
+    "detail_message": "credential kind does not match the required credential slot",
+    "origin": "RuntimeError",
+    "user_message": "credential kind does not match the required credential slot"
+  },
+  {
+    "code": "VAULT_LOCKED",
+    "detail_message": "vault is locked while resolving credential for slot 'basic' in 'http.get'",
+    "origin": "RuntimeError",
+    "user_message": "vault is locked while resolving credential for slot 'basic' in 'http.get'"
+  },
+  {
+    "code": "VAULT_KEY_UNAVAILABLE",
+    "detail_message": "vault key is unavailable while resolving credential for slot 'basic' in 'http.get'",
+    "origin": "RuntimeError",
+    "user_message": "vault key is unavailable while resolving credential for slot 'basic' in 'http.get'"
+  },
+  {
+    "code": "OUTPUT_SCHEMA_VIOLATION",
+    "detail_message": "typed command response failed validation for 'probe.run': missing field",
+    "origin": "RuntimeError",
+    "user_message": "typed command response failed validation for 'probe.run': missing field"
+  },
+  {
+    "code": "EXECUTION_REQUEST_INVALID",
+    "detail_message": "empty command",
+    "origin": "RuntimeError",
+    "user_message": "empty command"
+  },
+  {
+    "code": "EXECUTION_CAPACITY_FULL",
+    "detail_message": "typed execution capacity is full (maximum active 4)",
+    "origin": "RuntimeError",
+    "user_message": "typed execution capacity is full (maximum active 4)"
+  },
+  {
+    "code": "EXECUTION_CANCELLED",
+    "detail_message": "typed execution request 'req-1' was cancelled",
+    "origin": "RuntimeError",
+    "user_message": "typed execution request 'req-1' was cancelled"
+  },
+  {
+    "code": "EXECUTION_TIMEOUT",
+    "detail_message": "typed execution request 'req-1' timed out",
+    "origin": "RuntimeError",
+    "user_message": "typed execution request 'req-1' timed out"
+  },
+  {
+    "code": "EXECUTOR_SHUTTING_DOWN",
+    "detail_message": "typed executor is shutting down",
+    "origin": "RuntimeError",
+    "user_message": "typed executor is shutting down"
+  },
+  {
+    "code": "EXECUTION_WORKER_FAILED",
+    "detail_message": "worker gone",
+    "origin": "RuntimeError",
+    "user_message": "worker gone"
+  },
+  {
+    "code": "EXECUTION_HANDLER_PANIC",
+    "detail_message": "typed execution handler panicked for request 'req-1'",
+    "origin": "RuntimeError",
+    "user_message": "typed execution handler panicked for request 'req-1'"
+  },
+  {
+    "code": "DOMAIN_DISABLED",
+    "detail_message": "plugin domain is disabled: git",
+    "origin": "RuntimeError",
+    "user_message": "plugin domain is disabled: git"
+  },
+  {
+    "code": "DEPENDENCY_MISSING",
+    "detail_message": "not on PATH",
+    "origin": "RuntimeError",
+    "user_message": "required external tool not found: git"
+  },
+  {
+    "code": "INVALID_RANGE",
+    "detail_message": "--limit must be >= 1",
+    "origin": "AppError",
+    "user_message": "--limit must be >= 1"
+  },
+  {
+    "code": "PROBE_FAILED",
+    "detail_message": "probe failed",
+    "origin": "AppError",
+    "user_message": "probe failed"
+  },
+  {
+    "code": "DOMAIN_NOT_FOUND",
+    "detail_message": "unknown command domain: serach",
+    "origin": "AppError",
+    "user_message": "unknown command domain: serach"
+  },
+  {
+    "code": "CWD_CHANGE_FAILED",
+    "detail_message": "failed to change working directory 'missing': entity not found",
+    "origin": "AppError",
+    "user_message": "failed to change working directory"
+  },
+  {
+    "code": "FILE_NOT_FOUND",
+    "detail_message": "failed to read file 'missing.txt': entity not found",
+    "origin": "AppError",
+    "user_message": "failed to read file"
+  },
+  {
+    "code": "FILE_WRITE_FAILED",
+    "detail_message": "failed to write file 'missing.txt': entity not found",
+    "origin": "AppError",
+    "user_message": "failed to write file"
+  },
+  {
+    "code": "FILE_NOT_FOUND",
+    "detail_message": "failed to read file metadata 'missing.txt': entity not found",
+    "origin": "AppError",
+    "user_message": "failed to read file metadata"
+  },
+  {
+    "code": "DIRECTORY_NOT_FOUND",
+    "detail_message": "failed to read directory 'missing': entity not found",
+    "origin": "AppError",
+    "user_message": "failed to read directory"
+  },
+  {
+    "code": "COMMAND_EXECUTION_FAILED",
+    "detail_message": "failed to execute command 'git status': entity not found",
+    "origin": "AppError",
+    "user_message": "failed to execute external command"
+  },
+  {
+    "code": "COMMAND_FAILED",
+    "detail_message": "command failed 'git status' (code: Some(128)): not a repository",
+    "origin": "AppError",
+    "user_message": "external command exited with failure status"
+  }
+]

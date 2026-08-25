@@ -1,0 +1,46 @@
+# cargo-deny configuration.
+#
+# AIHelper downloads, verifies and executes signed releases and handles user
+# credentials, so the dependency tree is part of the security surface. This file
+# is the gate: advisories fail the build, licenses are allow-listed, and new
+# duplicate versions are surfaced rather than accumulating silently.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+# A yank is worth surfacing, but it is usually unrelated to the pull request
+# that happens to run first after it, so it warns instead of blocking.
+yanked = "warn"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # webpki-roots (Mozilla CA bundle)
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

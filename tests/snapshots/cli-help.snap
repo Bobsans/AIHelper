@@ -1,0 +1,603 @@
+$ ah --help
+AIHelper CLI toolbox for AI agents and developers
+
+Usage: ah [OPTIONS] [COMMAND]
+
+Commands:
+  ai       AI-agent manual and agent integration
+  mcp      Model Context Protocol server
+  plugins  Plugin management commands
+  secrets  Encrypted secret vault management
+  upgrade  Check for and install trusted AIHelper releases
+  ctx      Context-reduction utilities
+  file     File utilities
+  git      Git-focused utilities
+  http     HTTP workflow utilities
+  project  Project detection utilities
+  run      Command execution check utilities
+  search   Search utilities
+  task     Task recipe utilities
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+  -V, --version     Print version
+
+$ ah ai --help
+AI-agent manual and agent integration
+
+Usage: ai [OPTIONS] [COMMAND]
+
+Commands:
+  info       Show full AI-agent manual for available commands
+  install    Register the AIHelper MCP server and rules block in an AI agent
+  uninstall  Remove the AIHelper MCP server and rules block from an AI agent
+  status     Report AIHelper integration state for known AI agents
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah ai help --help
+Print this message or the help of the given subcommand(s)
+
+Usage: help [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Print help for the subcommand(s)
+
+$ ah ai info --help
+Show full AI-agent manual for available commands
+
+Usage: info [OPTIONS]
+
+Options:
+      --domain <DOMAIN>  Show manual only for a single command domain
+      --json             Return machine-readable JSON output
+      --quiet            Suppress command output
+      --cwd <PATH>       Set working directory
+      --limit <N>        Cap output lines/items when supported
+  -h, --help             Print help
+
+$ ah ai install --help
+Register the AIHelper MCP server and rules block in an AI agent
+
+Usage: install [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  Agent target, for example claude or codex
+
+Options:
+      --json                   Return machine-readable JSON output
+      --scope <SCOPE>          Configuration scope understood by the target agent [possible values: local, project, user]
+      --quiet                  Suppress command output
+      --transport <TRANSPORT>  MCP transport written into the agent configuration;                              `managed` uses the Windows managed service endpoint [default: stdio] [possible values: stdio, http, managed]
+      --cwd <PATH>             Set working directory
+      --url <URL>              Loopback MCP endpoint; only valid with --transport http
+      --limit <N>              Cap output lines/items when supported
+      --mcp-only               Register the MCP server without touching the rules file
+      --rules-only             Install the rules block without registering the MCP server
+  -y, --yes                    Skip the interactive confirmation prompt
+      --dry-run                Report planned commands and file changes without performing them
+  -h, --help                   Print help
+
+$ ah ai status --help
+Report AIHelper integration state for known AI agents
+
+Usage: status [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]  Agent target, for example claude or codex
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah ai uninstall --help
+Remove the AIHelper MCP server and rules block from an AI agent
+
+Usage: uninstall [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  Agent target, for example claude or codex
+
+Options:
+      --json           Return machine-readable JSON output
+      --scope <SCOPE>  Configuration scope understood by the target agent [possible values: local, project, user]
+      --dry-run        Report planned commands and file changes without performing them
+      --quiet          Suppress command output
+      --cwd <PATH>     Set working directory
+      --limit <N>      Cap output lines/items when supported
+  -h, --help           Print help
+
+$ ah ctx --help
+Context-reduction utilities
+
+Usage: ctx [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah file --help
+File utilities
+
+Usage: file [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah git --help
+Git-focused utilities
+
+Usage: git [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah help --help
+Print this message or the help of the given subcommand(s)
+
+Usage: help [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Print help for the subcommand(s)
+
+$ ah http --help
+HTTP workflow utilities
+
+Usage: http [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah mcp --help
+Model Context Protocol server
+
+Usage: mcp [OPTIONS] [COMMAND]
+
+Commands:
+  serve    Serve typed AIHelper tools over MCP stdio or local HTTP
+  service  Manage the per-user Windows MCP service
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah mcp help --help
+Print this message or the help of the given subcommand(s)
+
+Usage: help [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Print help for the subcommand(s)
+
+$ ah mcp serve --help
+Serve typed AIHelper tools over MCP stdio or local HTTP
+
+Usage: serve [OPTIONS]
+
+Options:
+      --json
+          Return machine-readable JSON output
+      --transport <TRANSPORT>
+          MCP transport: stdio or local Streamable HTTP [default: stdio] [possible values: stdio, http]
+      --port <PORT>
+          Local HTTP port (default: 8787; HTTP transport only)
+      --quiet
+          Suppress command output
+      --cwd <PATH>
+          Set working directory
+      --max-active <N>
+          Maximum number of concurrently active command handlers [default: 32]
+      --limit <N>
+          Cap output lines/items when supported
+      --default-timeout-ms <MILLISECONDS>
+          Default command execution timeout [default: 300000]
+  -h, --help
+          Print help
+
+$ ah mcp service --help
+Manage the per-user Windows MCP service
+
+Usage: service [OPTIONS] [COMMAND]
+
+Commands:
+  install    Install or reconcile the managed MCP service
+  start      Start the managed MCP service
+  stop       Stop the managed MCP service
+  restart    Restart the managed MCP service
+  status     Inspect managed MCP service state
+  uninstall  Uninstall the managed MCP service
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah mcp service help --help
+Print this message or the help of the given subcommand(s)
+
+Usage: help [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Print help for the subcommand(s)
+
+$ ah mcp service install --help
+Install or reconcile the managed MCP service
+
+Usage: install [OPTIONS]
+
+Options:
+      --json                               Return machine-readable JSON output
+      --no-start                           Register the service without starting it
+      --port <PORT>                        [default: 8787]
+      --quiet                              Suppress command output
+      --cwd <PATH>                         Set working directory
+      --max-active <N>                     [default: 32]
+      --default-timeout-ms <MILLISECONDS>  [default: 300000]
+      --limit <N>                          Cap output lines/items when supported
+  -h, --help                               Print help
+
+$ ah mcp service restart --help
+Restart the managed MCP service
+
+Usage: restart [OPTIONS]
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah mcp service start --help
+Start the managed MCP service
+
+Usage: start [OPTIONS]
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah mcp service status --help
+Inspect managed MCP service state
+
+Usage: status [OPTIONS]
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah mcp service stop --help
+Stop the managed MCP service
+
+Usage: stop [OPTIONS]
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah mcp service uninstall --help
+Uninstall the managed MCP service
+
+Usage: uninstall [OPTIONS]
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah plugins --help
+Plugin management commands
+
+Usage: plugins [OPTIONS] [COMMAND]
+
+Commands:
+  list     List registered plugins
+  enable   Enable plugin domain
+  disable  Disable plugin domain
+  reset    Reset plugin domain override
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah plugins disable --help
+Disable plugin domain
+
+Usage: disable [OPTIONS] <DOMAIN>
+
+Arguments:
+  <DOMAIN>  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah plugins enable --help
+Enable plugin domain
+
+Usage: enable [OPTIONS] <DOMAIN>
+
+Arguments:
+  <DOMAIN>  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah plugins help --help
+Print this message or the help of the given subcommand(s)
+
+Usage: help [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Print help for the subcommand(s)
+
+$ ah plugins list --help
+List registered plugins
+
+Usage: list [OPTIONS]
+
+Options:
+      --json           Return machine-readable JSON output
+      --state <STATE>  Filter by plugin domain state [possible values: enabled, disabled]
+      --quiet          Suppress command output
+      --cwd <PATH>     Set working directory
+      --limit <N>      Cap output lines/items when supported
+  -h, --help           Print help
+
+$ ah plugins reset --help
+Reset plugin domain override
+
+Usage: reset [OPTIONS] <DOMAIN|--all>
+
+Arguments:
+  [DOMAIN]  
+
+Options:
+      --all         Reset all domain overrides
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah project --help
+Project detection utilities
+
+Usage: project [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah run --help
+Command execution check utilities
+
+Usage: run [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah search --help
+Search utilities
+
+Usage: search [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah secrets --help
+Encrypted secret vault management
+
+Usage: secrets [OPTIONS] [COMMAND]
+
+Commands:
+  init    Initialize the encrypted secret vault
+  list    List redacted secret metadata
+  add     Add a secret using hidden prompts
+  edit    Edit a secret using hidden prompts
+  remove  Remove a secret
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah secrets add --help
+Add a secret using hidden prompts
+
+Usage: add [OPTIONS] --kind <KIND> <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --json                Return machine-readable JSON output
+      --kind <KIND>         [possible values: postgres, http-basic, ssh-key, github-token, gitlab-token]
+      --open                Open a protected browser setup form
+      --quiet               Suppress command output
+      --cwd <PATH>          Set working directory
+      --label <TEXT>        Human-readable secret label
+      --description <TEXT>  Optional secret description
+      --limit <N>           Cap output lines/items when supported
+  -h, --help                Print help
+
+$ ah secrets edit --help
+Edit a secret using hidden prompts
+
+Usage: edit [OPTIONS] <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --json                Return machine-readable JSON output
+      --open                Open a protected browser setup form
+      --label <TEXT>        Human-readable secret label
+      --quiet               Suppress command output
+      --cwd <PATH>          Set working directory
+      --description <TEXT>  Optional secret description
+      --limit <N>           Cap output lines/items when supported
+  -h, --help                Print help
+
+$ ah secrets help --help
+Print this message or the help of the given subcommand(s)
+
+Usage: help [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Print help for the subcommand(s)
+
+$ ah secrets init --help
+Initialize the encrypted secret vault
+
+Usage: init [OPTIONS]
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah secrets list --help
+List redacted secret metadata
+
+Usage: list [OPTIONS]
+
+Options:
+      --json         Return machine-readable JSON output
+      --kind <KIND>  Filter by secret kind [possible values: postgres, http-basic, ssh-key, github-token, gitlab-token]
+      --quiet        Suppress command output
+      --cwd <PATH>   Set working directory
+      --limit <N>    Cap output lines/items when supported
+  -h, --help         Print help
+
+$ ah secrets remove --help
+Remove a secret
+
+Usage: remove [OPTIONS] <ID>
+
+Arguments:
+  <ID>  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+  -h, --help        Print help
+
+$ ah task --help
+Task recipe utilities
+
+Usage: task [OPTIONS] [argv]...
+
+Arguments:
+  [argv]...  
+
+Options:
+      --json        Return machine-readable JSON output
+      --quiet       Suppress command output
+      --cwd <PATH>  Set working directory
+      --limit <N>   Cap output lines/items when supported
+
+$ ah upgrade --help
+Check for and install trusted AIHelper releases
+
+Usage: upgrade [OPTIONS]
+
+Options:
+      --check              Check the highest stable signed release without mutation
+      --json               Return machine-readable JSON output
+      --quiet              Suppress command output
+      --version <VERSION>  Install one exact stable release without downgrade
+      --cwd <PATH>         Set working directory
+      --rollback           Restore and consume the single verified permanent backup
+      --limit <N>          Cap output lines/items when supported
+  -h, --help               Print help

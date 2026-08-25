@@ -1,17 +1,20 @@
 [package]
 name = "ah-update-helper"
 version = "1.4.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]
 ah-updater-core = { path = "../ah-updater-core" }
-serde_json = "1.0.140"
-sha2 = "0.11"
-uuid = { version = "1", features = ["serde", "v4"] }
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = [
+windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
@@ -23,6 +26,6 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 ah-release-manifest = { path = "../ah-release-manifest" }
-base64 = "0.22"
-ed25519-dalek = "3"
-tempfile = "3.20.0"
+base64.workspace = true
+ed25519-dalek.workspace = true
+tempfile.workspace = true

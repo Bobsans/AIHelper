@@ -8,23 +8,6 @@ use crate::error::AppError;
 const PLUGIN_SETTINGS_FILE: &str = "plugins.json";
 const LOG_DIR: &str = "logs";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfigSource {
-    Env,
-    Flags,
-    Project,
-    User,
-    Defaults,
-}
-
-pub const CONFIG_SOURCE_PRIORITY: &[ConfigSource] = &[
-    ConfigSource::Env,
-    ConfigSource::Flags,
-    ConfigSource::Project,
-    ConfigSource::User,
-    ConfigSource::Defaults,
-];
-
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
     pub config_dir: PathBuf,
@@ -35,13 +18,11 @@ pub struct ConfigPaths {
 #[derive(Debug, Clone)]
 pub struct ConfigContext {
     paths: ConfigPaths,
-    config_dir_source: ConfigSource,
-    plugin_dirs_source: ConfigSource,
 }
 
 impl ConfigContext {
     pub fn load() -> Result<Self, AppError> {
-        let (config_dir, config_dir_source) = resolve_config_dir()?;
+        let config_dir = resolve_config_dir()?;
         let plugin_dirs = resolve_plugin_dirs()?;
         let plugin_settings_file = config_dir.join(PLUGIN_SETTINGS_FILE);
 
@@ -51,29 +32,15 @@ impl ConfigContext {
                 plugin_settings_file,
                 plugin_dirs,
             },
-            config_dir_source,
-            plugin_dirs_source: ConfigSource::Defaults,
         })
     }
 
     pub fn paths(&self) -> &ConfigPaths {
         &self.paths
     }
-
-    pub fn config_dir_source(&self) -> ConfigSource {
-        self.config_dir_source
-    }
-
-    pub fn plugin_dirs_source(&self) -> ConfigSource {
-        self.plugin_dirs_source
-    }
-
-    pub fn source_priority() -> &'static [ConfigSource] {
-        CONFIG_SOURCE_PRIORITY
-    }
 }
 
-fn resolve_config_dir() -> Result<(PathBuf, ConfigSource), AppError> {
+fn resolve_config_dir() -> Result<PathBuf, AppError> {
     if let Some(value) = env::var_os("AH_CONFIG_DIR") {
         let path = PathBuf::from(value);
         if path.as_os_str().is_empty() {
@@ -81,16 +48,14 @@ fn resolve_config_dir() -> Result<(PathBuf, ConfigSource), AppError> {
                 "AH_CONFIG_DIR must not be empty",
             ));
         }
-        return Ok((path, ConfigSource::Env));
+        return Ok(path);
     }
 
-    default_config_dir().map(|path| (path, ConfigSource::User))
+    default_config_dir()
 }
 
 pub(crate) fn resolve_log_dir() -> Option<PathBuf> {
-    resolve_config_dir()
-        .ok()
-        .map(|(config_dir, _)| config_dir.join(LOG_DIR))
+    resolve_config_dir().ok().map(|dir| dir.join(LOG_DIR))
 }
 
 fn default_config_dir() -> Result<PathBuf, AppError> {

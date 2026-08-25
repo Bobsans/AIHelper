@@ -34,8 +34,41 @@ contracts while keeping the workspace green independently.
   specific to those global options.
 - For byte-bounded UTF-8 input, test 2-, 3-, and 4-byte characters split at the
   exact boundary separately from definite malformed sequences and NUL data.
-- Prefer semantic assertions over snapshots or a custom scenario DSL.
+- Prefer semantic assertions over snapshots or a custom scenario DSL when
+  testing the behavior of a single command. Whole-artifact snapshots are a
+  separate tool with a separate purpose; see **Golden Snapshots** below.
 - Do not weaken existing assertions when consolidating repeated setup.
+
+## Golden Snapshots
+
+`tests/snapshots/` holds whole-artifact snapshots of the contracts that must not
+move by accident:
+
+| Snapshot | Covers |
+|---|---|
+| `typed-command-catalog.snap` | every typed descriptor: schemas, effects, examples, secret slots |
+| `plugin-manuals.snap` | the manual returned by every enabled plugin |
+| `cli-help.snap` | the rendered `--help` output of the whole command tree |
+| `error-codes.snap` | the code and rendered message of every mapped error |
+
+They are generated in-process by `src/snapshots.rs`, so they run as unit tests
+and do not depend on a terminal, a git repository, or the plugin directory next
+to the test binary.
+
+Their purpose is refactoring safety, not behavior specification: a structural
+change that is meant to preserve behavior must leave every snapshot byte-identical,
+which turns "I believe this refactor is safe" into a check. They complement the
+semantic assertions above and never replace them — a snapshot proves nothing
+changed, while a semantic assertion proves the behavior is correct in the first
+place.
+
+Regenerate after an intentional change and review the diff:
+
+```bash
+AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots
+```
+
+State the reason for any snapshot diff in the pull request description.
 
 ## Portable Fixtures
 
