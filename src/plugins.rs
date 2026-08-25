@@ -654,7 +654,7 @@ impl BuiltinPlugin for SearchBuiltinPlugin {
     }
 
     fn cancel_typed(&self, request_id: &str) -> bool {
-        commands::search::cancel_typed(request_id)
+        ah_plugin_api::cancellation::cancel(request_id)
     }
 }
 
@@ -805,7 +805,7 @@ impl BuiltinPlugin for RunBuiltinPlugin {
     }
 
     fn cancel_typed(&self, request_id: &str) -> bool {
-        commands::run::cancel_typed(request_id)
+        ah_plugin_api::cancellation::cancel(request_id)
     }
 }
 
@@ -868,7 +868,7 @@ impl BuiltinPlugin for TaskBuiltinPlugin {
     }
 
     fn cancel_typed(&self, request_id: &str) -> bool {
-        commands::task::cancel_typed(request_id)
+        ah_plugin_api::cancellation::cancel(request_id)
     }
 }
 

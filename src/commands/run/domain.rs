@@ -50,7 +50,7 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
             tail_lines: args.tail_lines,
             cwd: args.cwd.as_deref(),
             environment: &[],
-            cancelled: super::current_request_cancelled,
+            cancelled: ah_plugin_api::cancellation::is_cancelled,
         },
     )?;
 

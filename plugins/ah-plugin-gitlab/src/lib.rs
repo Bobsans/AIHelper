@@ -70,7 +70,7 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     manual_fn: plugin_manual,
     typed_catalog_fn: typed::command_catalog,
     typed_execute_fn: typed::invoke,
-    typed_cancel_fn: typed::cancel,
+    typed_cancel_fn: ah_plugin_api::cancellation::cancel,
 );
 
 impl ah_plugin_api::BindResolvedSecrets for GitlabCli {
@@ -1243,7 +1243,7 @@ fn wait_pipeline(
         if elapsed >= timeout {
             return pipeline_timeout_response(&args);
         }
-        if typed::wait_or_cancel(interval.min(timeout - elapsed)) {
+        if ah_plugin_api::cancellation::wait_or_cancel(interval.min(timeout - elapsed)) {
             return InvocationResponse::error(
                 "CANCELLED",
                 format!("pipeline wait {} was cancelled", args.pipeline_id),

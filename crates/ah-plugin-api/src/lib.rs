@@ -22,6 +22,7 @@ pub const AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL: &[u8] = b"ah_plugin_cancel_command
 pub const AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_argv_to_typed_json_v1\0";
 pub const AH_VAULT_MASTER_KEY_ENV: &str = "AH_VAULT_MASTER_KEY";
 
+pub mod cancellation;
 pub mod schema;
 
 pub fn noninteractive_command<S: AsRef<OsStr>>(program: S) -> Command {

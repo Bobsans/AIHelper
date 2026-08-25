@@ -40,7 +40,8 @@ and credential handling is exactly the code that must not diverge.
 
 ### 2.2 Cross-cutting concerns are copy-pasted, not provided
 
-**Cancellation** is implemented five times, each with its own process-global
+**Cancellation** *(resolved: one implementation in `ah_plugin_api::cancellation`)*
+was implemented five times, each with its own process-global
 `static Mutex<HashSet<String>>` plus a thread-local current-request marker:
 
 - [`src/commands/run.rs:200`](../../src/commands/run.rs) `cancellation_requests`
@@ -97,23 +98,22 @@ domains, which have the same needs):
 |---|---|
 | `sdk::http` | blocking JSON client: retry policy, deadline, pagination, bounded response bodies, uniform error→`CommandError` mapping |
 | `sdk::credentials` | authority parsing, loopback checks, `git credential fill` with bounded child wait, env fallback, ambient-token policy |
-| `sdk::cancel` | `CancellationToken` handed to the handler; no globals, no thread-locals |
+| ~~`sdk::cancel`~~ | *done, as `ah_plugin_api::cancellation` — see B* |
 | `sdk::render` | table/list/keyvalue renderers built on `TextFormatter`, ANSI stripping, truncation |
 | `sdk::descriptor` | descriptor/manual builders (feeds group 01) |
 | `sdk::process` | injectable command runner (kills the test-only env vars) |
 
-### B. Cancellation belongs to the runtime
+### B. Cancellation belongs to one module *(done)*
 
-Extend the typed invocation contract so the host passes a cancellation signal into
-the request rather than having each plugin poll a global set:
+**Status:** the roadmap called for a token in the request context. That is not
+reachable: the host cancels by request id, across a C ABI that carries JSON and
+not pointers, so a handler cannot be handed anything. What it can have is one
+implementation of the two pieces of state it needs, and that now lives in
+`ah_plugin_api::cancellation` - `RequestScope`, `cancel`, `is_cancelled`, and
+`wait_or_cancel`, the last kept because two of the five copies used a `Condvar`
+so a poll interval wakes on cancellation instead of sleeping through it.
 
-- in-process built-ins: an `Arc<AtomicBool>` / token in the request context;
-- across the C ABI: keep `ah_plugin_cancel_command_v1` as the transport, but have the
-  SDK own the registry and expose a token to handler code.
-
-Every `cancellation_requests()` static and `current_request_cancelled()` helper is
-deleted. Note this also removes five pieces of process-global mutable state, which
-matters for group 03.
+Five registries became one; 389 lines net removed.
 
 ### C. A `Forge` abstraction for GitHub/GitLab
 

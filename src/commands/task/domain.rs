@@ -163,7 +163,7 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
             tail_lines: None,
             cwd: args.cwd.as_deref(),
             environment: &[],
-            cancelled: super::current_request_cancelled,
+            cancelled: ah_plugin_api::cancellation::is_cancelled,
         },
     )?;
     let stdout_raw = crate::commands::run::io::render_output(&output.stdout, None);

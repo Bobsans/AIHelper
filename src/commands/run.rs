@@ -1,13 +1,8 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    path::PathBuf,
-    sync::{Mutex, OnceLock},
-};
+use std::path::PathBuf;
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
-    Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse, cancellation,
     schema::{input_schema_for, output_schema_for},
 };
 use ah_runtime::RunCheckOutcome;
@@ -104,36 +99,6 @@ pub(crate) fn execute_observed(
     }
 }
 
-thread_local! {
-    static CURRENT_REQUEST_ID: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-struct RequestCancellationScope {
-    request_id: String,
-    previous_request_id: Option<String>,
-}
-
-impl RequestCancellationScope {
-    fn enter(request_id: String) -> Self {
-        let previous_request_id =
-            CURRENT_REQUEST_ID.with(|current| current.replace(Some(request_id.clone())));
-        Self {
-            request_id,
-            previous_request_id,
-        }
-    }
-}
-
-impl Drop for RequestCancellationScope {
-    fn drop(&mut self) {
-        CURRENT_REQUEST_ID.with(|current| current.replace(self.previous_request_id.take()));
-        cancellation_requests()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.request_id);
-    }
-}
-
 pub(crate) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new("builtin-run", "run", vec![check_descriptor()])
 }
@@ -150,8 +115,8 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
             false,
         ));
     }
-    let _cancellation_scope = RequestCancellationScope::enter(request.context.request_id.clone());
-    if current_request_cancelled() {
+    let _cancellation_scope = cancellation::RequestScope::enter(&request.context.request_id);
+    if cancellation::is_cancelled() {
         return cancelled_response(request);
     }
     let response = typed_check(request);
@@ -201,29 +166,6 @@ fn cancelled_response(request: &TypedInvocationRequest) -> TypedInvocationRespon
         1,
         false,
     ))
-}
-
-pub(crate) fn cancel_typed(request_id: &str) -> bool {
-    cancellation_requests()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(request_id.to_owned());
-    true
-}
-
-pub(crate) fn current_request_cancelled() -> bool {
-    let Some(request_id) = CURRENT_REQUEST_ID.with(|current| current.borrow().clone()) else {
-        return false;
-    };
-    cancellation_requests()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .contains(&request_id)
-}
-
-fn cancellation_requests() -> &'static Mutex<HashSet<String>> {
-    static REQUESTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn typed_check(request: &TypedInvocationRequest) -> Result<domain::RunCheckOutput, AppError> {
@@ -288,7 +230,7 @@ mod cancellation_tests {
     #[test]
     fn cancellation_delivered_before_handler_entry_is_preserved() {
         let request_id = "run-pre-cancelled";
-        assert!(cancel_typed(request_id));
+        assert!(cancellation::cancel(request_id));
         let request = TypedInvocationRequest::new(
             "run.check",
             json!({"command": ["ignored"]}),
@@ -302,7 +244,7 @@ mod cancellation_tests {
             response.error.as_ref().map(|error| error.code.as_str()),
             Some("EXECUTION_CANCELLED")
         );
-        assert!(!cancellation_requests().lock().unwrap().contains(request_id));
+        assert!(!cancellation::is_cancelled());
     }
 }
 

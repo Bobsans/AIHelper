@@ -84,7 +84,7 @@ pub(crate) fn collect_files_from_roots(
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
     for root in roots {
-        if crate::commands::search::current_request_cancelled() {
+        if ah_plugin_api::cancellation::is_cancelled() {
             return Err(AppError::external(
                 "EXECUTION_CANCELLED",
                 "search request was cancelled",
@@ -124,7 +124,7 @@ fn collect_files_ignore_aware(
         .add_custom_ignore_filename(".rgignore");
     let mut files = Vec::new();
     for entry in builder.build() {
-        if crate::commands::search::current_request_cancelled() {
+        if ah_plugin_api::cancellation::is_cancelled() {
             return Err(AppError::external(
                 "EXECUTION_CANCELLED",
                 "search request was cancelled",
@@ -158,7 +158,7 @@ pub(crate) fn collect_text_matches(
     let mut truncated = false;
 
     for path in files {
-        if crate::commands::search::current_request_cancelled() {
+        if ah_plugin_api::cancellation::is_cancelled() {
             return Err(AppError::external(
                 "EXECUTION_CANCELLED",
                 "search request was cancelled",
@@ -225,7 +225,7 @@ fn match_file(config: MatchFileConfig<'_>) -> Result<(Vec<TextMatch>, bool), App
     let mut matches = Vec::new();
     let normalized_path = display_path(config.path, config.root);
     for (index, line) in lines.iter().enumerate() {
-        if crate::commands::search::current_request_cancelled() {
+        if ah_plugin_api::cancellation::is_cancelled() {
             return Err(AppError::external(
                 "EXECUTION_CANCELLED",
                 "search request was cancelled",

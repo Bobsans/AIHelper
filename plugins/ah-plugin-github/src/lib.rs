@@ -51,7 +51,7 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     manual_fn: plugin_manual,
     typed_catalog_fn: typed::command_catalog,
     typed_execute_fn: typed::invoke,
-    typed_cancel_fn: typed::cancel,
+    typed_cancel_fn: ah_plugin_api::cancellation::cancel,
 );
 
 impl ah_plugin_api::BindResolvedSecrets for GithubCli {
@@ -1289,7 +1289,7 @@ fn wait_run(
         }
 
         let remaining = timeout - elapsed;
-        if typed::wait_or_cancel(interval.min(remaining)) {
+        if ah_plugin_api::cancellation::wait_or_cancel(interval.min(remaining)) {
             return InvocationResponse::error(
                 "CANCELLED",
                 format!("workflow run wait {} was cancelled", args.run_id),

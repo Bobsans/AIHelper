@@ -1,55 +1,13 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::{Condvar, Mutex, OnceLock},
-    time::Duration,
-};
+use std::path::{Path, PathBuf};
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
     GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse,
+    TypedInvocationResponse, cancellation,
 };
 use serde_json::{Map, Value, json};
 
 use super::*;
-
-thread_local! {
-    static CURRENT_REQUEST_ID: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-struct CancellationState {
-    request_ids: Mutex<HashSet<String>>,
-    changed: Condvar,
-}
-
-struct RequestCancellationScope {
-    request_id: String,
-    previous_request_id: Option<String>,
-}
-
-impl RequestCancellationScope {
-    fn enter(request_id: String) -> Self {
-        let previous_request_id =
-            CURRENT_REQUEST_ID.with(|current| current.replace(Some(request_id.clone())));
-        Self {
-            request_id,
-            previous_request_id,
-        }
-    }
-}
-
-impl Drop for RequestCancellationScope {
-    fn drop(&mut self) {
-        CURRENT_REQUEST_ID.with(|current| current.replace(self.previous_request_id.take()));
-        cancellation_state()
-            .request_ids
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.request_id);
-    }
-}
 
 pub(super) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new(
@@ -81,53 +39,11 @@ pub(super) fn command_catalog() -> CommandCatalog {
 }
 
 pub(super) fn invoke(request: &TypedInvocationRequest) -> TypedInvocationResponse {
-    let _cancellation_scope = RequestCancellationScope::enter(request.context.request_id.clone());
-    if current_request_cancelled() {
+    let _cancellation_scope = cancellation::RequestScope::enter(&request.context.request_id);
+    if cancellation::is_cancelled() {
         return cancelled_response(request);
     }
     invoke_inner(request)
-}
-
-pub(super) fn cancel(request_id: &str) -> bool {
-    let state = cancellation_state();
-    state
-        .request_ids
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(request_id.to_owned());
-    state.changed.notify_all();
-    true
-}
-
-pub(super) fn wait_or_cancel(duration: Duration) -> bool {
-    let Some(request_id) = CURRENT_REQUEST_ID.with(|current| current.borrow().clone()) else {
-        std::thread::sleep(duration);
-        return false;
-    };
-    let state = cancellation_state();
-    let cancelled = state
-        .request_ids
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cancelled.contains(&request_id) {
-        return true;
-    }
-    let (cancelled, _) = state
-        .changed
-        .wait_timeout_while(cancelled, duration, |ids| !ids.contains(&request_id))
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    cancelled.contains(&request_id)
-}
-
-fn current_request_cancelled() -> bool {
-    let Some(request_id) = CURRENT_REQUEST_ID.with(|current| current.borrow().clone()) else {
-        return false;
-    };
-    cancellation_state()
-        .request_ids
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .contains(&request_id)
 }
 
 fn cancelled_response(request: &TypedInvocationRequest) -> TypedInvocationResponse {
@@ -143,14 +59,6 @@ fn cancelled_response(request: &TypedInvocationRequest) -> TypedInvocationRespon
         1,
         false,
     ))
-}
-
-fn cancellation_state() -> &'static CancellationState {
-    static STATE: OnceLock<CancellationState> = OnceLock::new();
-    STATE.get_or_init(|| CancellationState {
-        request_ids: Mutex::new(HashSet::new()),
-        changed: Condvar::new(),
-    })
 }
 
 fn invoke_inner(request: &TypedInvocationRequest) -> TypedInvocationResponse {
@@ -1882,26 +1790,16 @@ mod tests {
 
     #[test]
     fn cancellation_wait_is_woken() {
-        let request_id = "github-cancel-test".to_owned();
-        CURRENT_REQUEST_ID.with(|current| {
-            current.replace(Some(request_id.clone()));
-        });
-        assert!(cancel(&request_id));
-        assert!(wait_or_cancel(Duration::from_secs(1)));
-        CURRENT_REQUEST_ID.with(|current| {
-            current.replace(None);
-        });
-        cancellation_state()
-            .request_ids
-            .lock()
-            .unwrap()
-            .remove(&request_id);
+        let request_id = "github-cancel-test";
+        let _scope = cancellation::RequestScope::enter(request_id);
+        assert!(cancellation::cancel(request_id));
+        assert!(cancellation::wait_or_cancel(Duration::from_secs(1)));
     }
 
     #[test]
     fn cancellation_delivered_before_handler_entry_is_preserved() {
         let request_id = "github-pre-cancelled";
-        assert!(cancel(request_id));
+        assert!(cancellation::cancel(request_id));
         let request = TypedInvocationRequest::new(
             "github.repo",
             json!({"repo": "owner/repo"}),
@@ -1915,12 +1813,6 @@ mod tests {
             response.error.as_ref().map(|error| error.code.as_str()),
             Some("EXECUTION_CANCELLED")
         );
-        assert!(
-            !cancellation_state()
-                .request_ids
-                .lock()
-                .unwrap()
-                .contains(request_id)
-        );
+        assert!(!cancellation::is_cancelled());
     }
 }
