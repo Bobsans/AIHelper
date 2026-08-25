@@ -139,9 +139,31 @@ pub fn render_block(domains: &[String]) -> String {
         "- Prefer `ah` over ad-hoc shell for file reads, file and text search, git",
         "  context, project detection, and checked command execution (`ah run check`).",
         "- `ah` output is deterministic and supports `--json` for machine reading.",
+        "- Read a command's own description and schema before calling it. Do not guess",
+        "  flags or parameter names; an unknown one is an error, not a default.",
+        "- `--domain` takes one of the domains listed above. The `ai`, `mcp`, `plugins`,",
+        "  and `secrets` commands are host commands and appear only in the unfiltered",
+        "  manual.",
+        "- Over MCP, pass `context.cwd` as the absolute project root on every call that",
+        "  touches the working tree. `context` accepts only `cwd`, `limit`, and",
+        "  `timeout_ms`.",
+        "- Typed arguments are closed: an invented parameter fails the call. For work",
+        "  that outlives one call use the MCP-only `ah.job.*` tools — `job.start`, then",
+        "  `job.status` and `job.result` — rather than a larger timeout, since",
+        "  `run check` is bounded by the request deadline as well.",
+        "- Paths resolve against `context.cwd` and must already exist. Confirm one with",
+        "  `file.stat` or `search.files` before reading it, and never carry a path over",
+        "  from another repository or worktree.",
         "- Secrets are exposed only as redacted identifiers through `secrets.list`.",
         "  Their values are never readable by an agent and must not be requested,",
-        "  echoed, or written into commands.",
+        "  echoed, or written into commands. A command that needs one names its",
+        "  credential slots; when no stored secret fits, stop and ask the user to add",
+        "  one — `ah secrets add` prompts, and `--open` needs their own terminal.",
+        "- Treat `401`/`403` from an external API as a missing scope, not a retry: the",
+        "  git credential helper is not an API token. Ask for a token secret instead of",
+        "  trying more ids, tags, or hosts.",
+        "- Never start or stop the MCP server itself. `ah mcp serve` collides with the",
+        "  running endpoint; use `ah mcp service status|start|restart`.",
         END_MARKER,
     ]
     .join("\n")
@@ -153,6 +175,22 @@ mod tests {
 
     fn block() -> String {
         render_block(&["file".to_owned(), "git".to_owned()])
+    }
+
+    #[test]
+    fn the_block_states_the_invariants_no_command_description_can_carry() {
+        let block = block();
+        for expected in [
+            "context.cwd",
+            "an invented parameter fails the call",
+            "`ah.job.*`",
+            "must already exist",
+            "`secrets.list`",
+            "missing scope",
+            "`ah mcp serve`",
+        ] {
+            assert!(block.contains(expected), "{expected} should be stated");
+        }
     }
 
     #[test]

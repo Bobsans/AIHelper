@@ -1125,7 +1125,7 @@ fn database_input(mut properties: Map<String, Value>, required: Vec<&str>) -> Va
     properties.insert(
         "password_env".to_owned(),
         optional_text_schema(
-            "For password-protected servers, name an existing environment variable whose value is passed to psql as PGPASSWORD. Never pass the password itself.",
+            "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
         ),
     );
     properties.insert(

@@ -125,7 +125,9 @@ session-local.
 HTTP commands that resolve project-relative paths, and every `ah.job.start`
 target, must provide a non-empty absolute `context.cwd`. Stateless commands
 fall back to the server default: `ai.*`, `plugins.*`, `ollama.*`, PostgreSQL
-commands without a relative tool path, and HTTP requests without file inputs.
+commands without a relative tool path, HTTP requests without file inputs, and
+`github.*` / `gitlab.*` calls that name their own `repo` / `project` and read no
+file input (`body_file`, `comment_file`, `description_file`, `notes_file`).
 
 The server binds only to `127.0.0.1`, validates `Host`, rejects nonlocal
 `Origin`, and does not enable CORS. It has no authentication or TLS. Loopback is

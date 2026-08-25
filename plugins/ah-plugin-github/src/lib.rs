@@ -1157,14 +1157,23 @@ fn create_release(
             );
         }
     };
-    let body = json!({
-        "tag_name": args.tag,
-        "target_commitish": args.target,
-        "name": args.title,
-        "body": notes,
-        "draft": args.draft,
-        "prerelease": args.prerelease,
-    });
+    // An omitted option has to stay out of the payload: GitHub rejects an
+    // explicit null with `nil is not a string` rather than falling back to its
+    // own default.
+    let mut body = serde_json::Map::new();
+    body.insert("tag_name".to_owned(), Value::String(args.tag));
+    body.insert("draft".to_owned(), Value::Bool(args.draft));
+    body.insert("prerelease".to_owned(), Value::Bool(args.prerelease));
+    for (key, value) in [
+        ("target_commitish", args.target),
+        ("name", args.title),
+        ("body", notes),
+    ] {
+        if let Some(value) = value {
+            body.insert(key.to_owned(), Value::String(value));
+        }
+    }
+    let body = Value::Object(body);
     let path = format!(
         "/repos/{}/{}/releases",
         context.repo.owner, context.repo.repo
@@ -3293,6 +3302,41 @@ mod tests {
         assert_eq!(body["body"], "release notes");
         assert_eq!(body["draft"], true);
         assert_eq!(body["prerelease"], false);
+    }
+
+    #[test]
+    fn release_create_omits_options_that_were_not_given() {
+        let server = MockServer::new(vec![MockResponse::json(
+            201,
+            r#"{
+                "id": 11,
+                "tag_name": "v1.0.1",
+                "name": null,
+                "draft": false,
+                "prerelease": false,
+                "html_url": "https://github.com/acme/tool/releases/tag/v1.0.1",
+                "published_at": null,
+                "assets": []
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--repo",
+            "acme/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "create",
+            "v1.0.1",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let body: Value =
+            serde_json::from_str(&only_request(&server).body).expect("body should be json");
+        assert_eq!(body["tag_name"], "v1.0.1");
+        for key in ["target_commitish", "name", "body"] {
+            assert!(body.get(key).is_none(), "{key} should be omitted: {body}");
+        }
     }
 
     #[test]

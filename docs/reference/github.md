@@ -167,6 +167,9 @@ ah github release create <tag> [--title TITLE] [--notes TEXT|--notes-file PATH] 
 
 This command does not bump versions, edit changelogs, commit, tag, or push. It only calls the GitHub Release API.
 
+Options left unset are omitted from the request, so GitHub applies its own
+defaults: no `--target` means the repository's default branch.
+
 ## `ah github workflows`
 
 List GitHub Actions workflows.

@@ -109,8 +109,10 @@ struct GitlabConnectionArgs {
     project: Option<String>,
     #[arg(long, global = true, default_value = DEFAULT_REMOTE, value_name = "NAME")]
     remote: String,
-    #[arg(long, global = true, default_value = DEFAULT_HOST, value_name = "URL")]
-    host: String,
+    /// Left unset the default is assumed, which also allows falling back to the
+    /// host named by the git remote.
+    #[arg(long, global = true, value_name = "URL")]
+    host: Option<String>,
     #[arg(long, global = true, value_name = "URL")]
     api_url: Option<String>,
     #[arg(long, global = true, value_name = "URL")]
@@ -1167,12 +1169,20 @@ fn create_release(
             );
         }
     };
-    let body = json!({
-        "tag_name": args.tag,
-        "name": args.name,
-        "description": description,
-        "ref": args.r#ref,
-    });
+    // An omitted option has to stay out of the payload rather than be sent as
+    // an explicit null, which GitLab reads as "clear this field".
+    let mut body = serde_json::Map::new();
+    body.insert("tag_name".to_owned(), Value::String(args.tag));
+    for (key, value) in [
+        ("name", args.name),
+        ("description", description),
+        ("ref", args.r#ref),
+    ] {
+        if let Some(value) = value {
+            body.insert(key.to_owned(), Value::String(value));
+        }
+    }
+    let body = Value::Object(body);
     let path = format!("/projects/{}/releases", context.project.encoded());
     let release = match gitlab_json::<ReleaseResponse>(context, Method::POST, &path, Some(body)) {
         Ok(value) => value,
@@ -1350,10 +1360,9 @@ fn get_pipeline(
 }
 
 fn gitlab_context(args: &GitlabConnectionArgs) -> Result<GitlabContext, InvocationResponse> {
-    let host = normalize_host(&args.host)?;
+    let (host, project, remote_url) = resolve_host_and_project(args)?;
     let api_url = normalize_api_url(args.api_url.as_deref(), &host)?;
     let graphql_url = normalize_graphql_url(args.graphql_url.as_deref(), &api_url, &host)?;
-    let (project, remote_url) = resolve_project(args, &host)?;
     let (token, token_authority) =
         resolve_token(args, &api_url, &graphql_url, remote_url.as_deref())?;
     let client = Client::builder()
@@ -1376,6 +1385,47 @@ fn gitlab_context(args: &GitlabConnectionArgs) -> Result<GitlabContext, Invocati
         project,
         remote_url,
     })
+}
+
+/// Detection is what pins the host: an unset `--host` starts as `gitlab.com`,
+/// and a remote pointing at a self-hosted instance names the real one instead of
+/// failing and making the caller repeat it on every command.
+fn resolve_host_and_project(
+    args: &GitlabConnectionArgs,
+) -> Result<(String, ProjectRef, Option<String>), InvocationResponse> {
+    let host = normalize_host(args.host.as_deref().unwrap_or(DEFAULT_HOST))?;
+    let error = match resolve_project(args, &host) {
+        Ok((project, remote_url)) => return Ok((host, project, remote_url)),
+        Err(error) => error,
+    };
+    if args.host.is_some() || args.project.is_some() {
+        return Err(error);
+    }
+    let Some(remote_url) = read_git_remote_url(&args.remote, args.cwd.as_deref()).ok() else {
+        return Err(error);
+    };
+    let Some(host) = remote_host(&remote_url).and_then(|host| normalize_host(&host).ok()) else {
+        return Err(error);
+    };
+    match parse_gitlab_remote_url(&remote_url, &host) {
+        Some(project) => Ok((host, project, Some(remote_url))),
+        None => Err(error),
+    }
+}
+
+/// The host a git remote itself names.
+fn remote_host(remote: &str) -> Option<String> {
+    let trimmed = remote.trim();
+    for scheme in ["https://", "http://"] {
+        if let Some(authority) = url_authority(trimmed, scheme) {
+            return Some(format!("{scheme}{authority}"));
+        }
+    }
+    // An ssh or scp-like remote carries an ssh port that says nothing about the
+    // web endpoint, so only the host survives.
+    let authority = remote_authority(trimmed)?;
+    let host = authority.split(':').next().unwrap_or(&authority);
+    (!host.is_empty()).then(|| format!("https://{host}"))
 }
 
 fn resolve_project(
@@ -2953,6 +3003,28 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_names_the_host_when_none_was_given() {
+        assert_eq!(
+            remote_host("https://gitlab.uco.co.il/fixdigital/lms.git").as_deref(),
+            Some("https://gitlab.uco.co.il")
+        );
+        assert_eq!(
+            remote_host("http://gitlab.internal:8080/group/tool.git").as_deref(),
+            Some("http://gitlab.internal:8080")
+        );
+        // An ssh port says nothing about the web endpoint.
+        assert_eq!(
+            remote_host("ssh://git@gitlab.example.com:2222/group/tool.git").as_deref(),
+            Some("https://gitlab.example.com")
+        );
+        assert_eq!(
+            remote_host("git@gitlab.example.com:group/tool.git").as_deref(),
+            Some("https://gitlab.example.com")
+        );
+        assert_eq!(remote_host("   ").as_deref(), None);
+    }
+
+    #[test]
     fn release_get_uses_encoded_project_and_private_token() {
         let server = MockServer::new(vec![MockResponse::json(
             200,
@@ -3034,6 +3106,40 @@ mod tests {
         assert_eq!(body["name"], "v1.0.1");
         assert_eq!(body["description"], "release notes");
         assert_eq!(body["ref"], "main");
+    }
+
+    #[test]
+    fn release_create_omits_options_that_were_not_given() {
+        let server = MockServer::new(vec![MockResponse::json(
+            201,
+            r#"{
+                "tag_name": "v1.0.1",
+                "name": "v1.0.1",
+                "description": null,
+                "created_at": "2026-05-07T00:00:00Z",
+                "released_at": null,
+                "upcoming_release": false,
+                "assets": {"links": []}
+            }"#,
+        )]);
+
+        let response = invoke_json(&[
+            "--project",
+            "group/tool",
+            "--api-url",
+            &server.url(),
+            "release",
+            "create",
+            "v1.0.1",
+        ]);
+
+        assert!(response.success, "{response:?}");
+        let body: Value =
+            serde_json::from_str(&only_request(&server).body).expect("body should be json");
+        assert_eq!(body["tag_name"], "v1.0.1");
+        for key in ["name", "description", "ref"] {
+            assert!(body.get(key).is_none(), "{key} should be omitted: {body}");
+        }
     }
 
     #[test]

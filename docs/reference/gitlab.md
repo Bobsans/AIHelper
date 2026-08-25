@@ -31,6 +31,10 @@ ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https:/
 ```
 
 If `--project` is omitted, the plugin tries to parse a GitLab project path from `git remote get-url origin`.
+When that remote points at a self-managed instance and `--host` was not given,
+the host is taken from the remote instead of failing with
+`GITLAB_PROJECT_UNDETECTED`. An explicit `--host` or `--project` is never
+overridden this way.
 
 Authentication uses `--token`, then `GITLAB_TOKEN`, then `GL_TOKEN`, then the Git
 credential helper.
@@ -70,7 +74,8 @@ given explicitly, so no remote is detected: `--token "$GITLAB_TOKEN"`.
 No token is ever sent to a cleartext `http://` URL unless the host is loopback;
 that combination fails with `GITLAB_INSECURE_TOKEN_TARGET`.
 
-Use `--host` for self-managed GitLab installations:
+Use `--host` for self-managed GitLab installations — needed when `--project` is
+given explicitly, since then no remote is read to derive it:
 
 ```bash
 ah gitlab --host https://gitlab.example.com project

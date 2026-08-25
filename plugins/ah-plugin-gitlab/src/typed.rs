@@ -7,7 +7,7 @@ use std::{
 };
 
 use ah_plugin_api::{
-    CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
+    CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
     TypedInvocationResponse,
 };
@@ -296,7 +296,7 @@ fn typed_connection(
     Ok(GitlabConnectionArgs {
         project: optional_string(arguments, "project"),
         remote: string_or(arguments, "remote", DEFAULT_REMOTE),
-        host: string_or(arguments, "host", DEFAULT_HOST),
+        host: optional_string(arguments, "host"),
         api_url: optional_string(arguments, "api_url"),
         graphql_url: optional_string(arguments, "graphql_url"),
         token,
@@ -893,7 +893,7 @@ fn pipeline_wait_descriptor() -> CommandDescriptor {
     descriptor(
         "gitlab.pipeline.wait",
         "Wait for GitLab pipeline",
-        "Poll a pipeline until completion, timeout, or cancellation.",
+        "Poll a pipeline until completion, timeout, or cancellation. pipeline_id is a pipeline id from gitlab.pipelines, not a job id and not a merge request iid.",
         input_schema(properties, vec!["pipeline_id"]),
         top_output(
             "gitlab.pipeline.wait",
@@ -905,6 +905,10 @@ fn pipeline_wait_descriptor() -> CommandDescriptor {
         ),
         read_effects("Repeatedly reads external pipeline state and may consume API rate limits."),
     )
+    .with_example(CommandExample::new(
+        "Wait for a pipeline of a project named outright, which needs no working directory",
+        json!({"project": "group/tool", "pipeline_id": 101919, "interval_secs": 30}),
+    ))
 }
 
 fn pipeline_jobs_descriptor() -> CommandDescriptor {
@@ -1048,7 +1052,9 @@ fn write_effects(impact: &str) -> CommandEffects {
 fn input_schema(mut properties: Map<String, Value>, required: Vec<&str>) -> Value {
     properties.insert(
         "project".to_owned(),
-        optional_text_schema("Project override as path or numeric id."),
+        optional_text_schema(
+            "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+        ),
     );
     properties.insert(
         "remote".to_owned(),
@@ -1056,7 +1062,12 @@ fn input_schema(mut properties: Map<String, Value>, required: Vec<&str>) -> Valu
     );
     properties.insert(
         "host".to_owned(),
-        json!({"type": "string", "minLength": 1, "default": DEFAULT_HOST}),
+        json!({
+            "type": "string",
+            "minLength": 1,
+            "default": DEFAULT_HOST,
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read."
+        }),
     );
     properties.insert(
         "api_url".to_owned(),

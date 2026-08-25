@@ -2263,8 +2263,37 @@ fn requires_explicit_cwd(
         command if command.starts_with("http.") => {
             has_relative_path(arguments, "json_file") || has_relative_path(arguments, "body_file")
         }
+        // A hosted API call reads nothing from disk once the caller names the
+        // project itself, and its credential lookup is bound to the API host
+        // rather than to a git remote.
+        command if command.starts_with("github.") => {
+            !has_text(arguments, "repo") || has_relative_input_file(arguments)
+        }
+        command if command.starts_with("gitlab.") => {
+            !has_text(arguments, "project") || has_relative_input_file(arguments)
+        }
         _ => true,
     }
+}
+
+/// The file-backed inputs a hosted API call can carry, all of them resolved
+/// against the working directory.
+fn has_relative_input_file(arguments: &JsonObject) -> bool {
+    [
+        "body_file",
+        "comment_file",
+        "description_file",
+        "notes_file",
+    ]
+    .into_iter()
+    .any(|field| has_relative_path(arguments, field))
+}
+
+fn has_text(arguments: &JsonObject, field: &str) -> bool {
+    arguments
+        .get(field)
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn has_relative_path(arguments: &JsonObject, field: &str) -> bool {
@@ -3929,6 +3958,48 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.code, "INVALID_CONTEXT");
+    }
+
+    #[test]
+    fn http_context_is_optional_for_a_hosted_api_call_that_names_its_project() {
+        for (command, arguments) in [
+            (
+                "gitlab.pipeline.wait",
+                json!({"project": "group/tool", "pipeline_id": 1}),
+            ),
+            (
+                "github.release.get",
+                json!({"repo": "acme/tool", "tag": "v1"}),
+            ),
+        ] {
+            let arguments = arguments.as_object().unwrap().clone();
+            assert!(
+                !requires_explicit_cwd(&descriptor(command), &arguments, true),
+                "{command} needs no working directory"
+            );
+        }
+    }
+
+    #[test]
+    fn http_context_is_required_when_a_hosted_api_call_needs_the_working_tree() {
+        for (command, arguments) in [
+            ("gitlab.pipeline.wait", json!({"pipeline_id": 1})),
+            ("github.release.get", json!({"tag": "v1"})),
+            (
+                "github.release.create",
+                json!({"repo": "acme/tool", "tag": "v1", "notes_file": "docs/notes.md"}),
+            ),
+            (
+                "gitlab.issue.create",
+                json!({"project": "group/tool", "description_file": "docs/issue.md"}),
+            ),
+        ] {
+            let arguments = arguments.as_object().unwrap().clone();
+            assert!(
+                requires_explicit_cwd(&descriptor(command), &arguments, true),
+                "{command} reads the working tree"
+            );
+        }
     }
 
     #[test]

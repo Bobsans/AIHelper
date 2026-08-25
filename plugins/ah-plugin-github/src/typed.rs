@@ -867,7 +867,7 @@ fn workflow_run_descriptor() -> CommandDescriptor {
     descriptor(
         "github.workflow.run",
         "Dispatch GitHub workflow",
-        "Dispatch a GitHub Actions workflow on a reference.",
+        "Dispatch a GitHub Actions workflow on a reference. Dispatching needs a token carrying the actions write scope, which the git credential helper usually does not: on HTTP 401 stop and ask the user for a github-token secret rather than retrying.",
         input_schema(properties, vec!["workflow", "ref"]),
         workflow_dispatch_output_schema(),
         write_effects(
@@ -985,9 +985,9 @@ fn run_logs_descriptor(warnings: bool) -> CommandDescriptor {
             "Search GitHub run logs"
         },
         if warnings {
-            "Extract warning-like lines from one workflow run log archive."
+            "Extract warning-like lines from one workflow run log archive. The archive exists only once the run has finished and until GitHub expires it, so an unfinished or expired run answers 404: check github.run.get, or wait with github.run.wait, instead of retrying."
         } else {
-            "Read or filter lines from one workflow run log archive."
+            "Read or filter lines from one workflow run log archive. The archive exists only once the run has finished and until GitHub expires it, so an unfinished or expired run answers 404: check github.run.get, or wait with github.run.wait, instead of retrying."
         },
         input_schema(properties, vec!["run_id"]),
         logs_output_schema(id),
@@ -1068,7 +1068,9 @@ fn write_effects(impact: &str) -> CommandEffects {
 fn input_schema(mut properties: Map<String, Value>, required: Vec<&str>) -> Value {
     properties.insert(
         "repo".to_owned(),
-        optional_text_schema("Repository override in OWNER/REPO form."),
+        optional_text_schema(
+            "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+        ),
     );
     properties.insert(
         "remote".to_owned(),
