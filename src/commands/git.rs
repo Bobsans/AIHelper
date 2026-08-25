@@ -1,12 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{cli::GlobalOptions, error::AppError};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
-    schema::{empty_input_schema, output_schema_for},
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Debug, Args)]
@@ -35,38 +37,60 @@ pub enum GitCommand {
     Tag(TagArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StatusArgs {}
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TagsArgs {
+    /// Return at most the newest tag.
     #[arg(long)]
+    #[serde(default)]
     pub latest: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemotesArgs {}
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ChangedArgs {}
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DiffArgs {
+    /// Optional repository-relative path filter.
     #[arg(long)]
+    #[schemars(extend("minLength" = 1))]
     pub path: Option<std::path::PathBuf>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BlameArgs {
+    /// Repository-relative file path.
+    #[schemars(extend("minLength" = 1))]
     pub path: std::path::PathBuf,
+    /// Optional one-based source line.
     #[arg(long)]
+    #[schemars(range(min = 1))]
     pub line: Option<usize>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CommitInfoArgs {
+    /// Commit-ish to inspect.
     #[arg(default_value = "HEAD", value_name = "ref")]
+    #[serde(default = "head_reference")]
+    #[schemars(default = "head_reference", length(min = 1))]
     pub reference: String,
+}
+
+fn head_reference() -> String {
+    "HEAD".to_owned()
 }
 
 #[derive(Debug, Args)]
@@ -81,12 +105,19 @@ pub enum TagCommand {
     Create(TagCreateArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TagCreateArgs {
+    /// Tag name to create.
+    #[schemars(length(min = 1))]
     pub tag: String,
+    /// Annotation message; omission creates a lightweight tag.
     #[arg(long, value_name = "TEXT")]
     pub message: Option<String>,
+    /// Commit-ish to tag.
     #[arg(long = "ref", default_value = "HEAD", value_name = "ref")]
+    #[serde(default = "head_reference")]
+    #[schemars(default = "head_reference", length(min = 1))]
     pub reference: String,
 }
 
@@ -145,32 +176,17 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
 }
 
 fn typed_args(request: &TypedInvocationRequest) -> Result<GitArgs, AppError> {
-    let arguments = &request.arguments;
     let command = match request.command.as_str() {
-        "git.status" => GitCommand::Status(StatusArgs {}),
-        "git.tags" => GitCommand::Tags(TagsArgs {
-            latest: typed_bool(arguments, "latest"),
-        }),
+        "git.status" => GitCommand::Status(decode(request)?),
+        "git.tags" => GitCommand::Tags(decode(request)?),
         "git.tag.create" => GitCommand::Tag(TagArgs {
-            command: TagCommand::Create(TagCreateArgs {
-                tag: required_string(arguments, "tag")?,
-                message: optional_string(arguments, "message"),
-                reference: optional_string(arguments, "reference")
-                    .unwrap_or_else(|| "HEAD".to_owned()),
-            }),
+            command: TagCommand::Create(decode(request)?),
         }),
-        "git.remotes" => GitCommand::Remotes(RemotesArgs {}),
-        "git.changed" => GitCommand::Changed(ChangedArgs {}),
-        "git.diff" => GitCommand::Diff(DiffArgs {
-            path: optional_string(arguments, "path").map(PathBuf::from),
-        }),
-        "git.blame" => GitCommand::Blame(BlameArgs {
-            path: PathBuf::from(required_string(arguments, "path")?),
-            line: typed_usize(arguments, "line"),
-        }),
-        "git.commit-info" => GitCommand::CommitInfo(CommitInfoArgs {
-            reference: optional_string(arguments, "reference").unwrap_or_else(|| "HEAD".to_owned()),
-        }),
+        "git.remotes" => GitCommand::Remotes(decode(request)?),
+        "git.changed" => GitCommand::Changed(decode(request)?),
+        "git.diff" => GitCommand::Diff(decode(request)?),
+        "git.blame" => GitCommand::Blame(decode(request)?),
+        "git.commit-info" => GitCommand::CommitInfo(decode(request)?),
         _ => {
             return Err(AppError::invalid_argument(format!(
                 "unknown typed git command: {}",
@@ -179,6 +195,17 @@ fn typed_args(request: &TypedInvocationRequest) -> Result<GitArgs, AppError> {
         }
     };
     Ok(GitArgs { command })
+}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
+    })
 }
 
 fn result_to_value(result: domain::GitResult) -> Result<Value, AppError> {
@@ -198,41 +225,12 @@ fn git_result_text(command: &str) -> String {
     format!("Completed {command}.")
 }
 
-fn typed_bool(arguments: &Value, name: &str) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn typed_usize(arguments: &Value, name: &str) -> Option<usize> {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-}
-
-fn required_string(arguments: &Value, name: &str) -> Result<String, AppError> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::invalid_argument(format!("missing {name}")))
-}
-
-fn optional_string(arguments: &Value, name: &str) -> Option<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
 fn status_descriptor() -> CommandDescriptor {
     CommandDescriptor::new(
         "git.status",
         "Git repository status",
         "Return branch, upstream, working-tree counts, latest commit, and latest tag.",
-        empty_input_schema(),
+        input_schema_for::<StatusArgs>(),
         output_schema_for::<domain::GitStatusOutput>("git.status"),
         git_read_effects("Runs read-only Git commands and reads repository metadata and status."),
     )
@@ -243,17 +241,7 @@ fn tags_descriptor() -> CommandDescriptor {
         "git.tags",
         "List Git tags",
         "List repository tags newest-first with optional latest-only and output limits.",
-        json!({
-            "type": "object",
-            "properties": {
-                "latest": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Return at most the newest tag."
-                }
-            },
-            "additionalProperties": false
-        }),
+        input_schema_for::<TagsArgs>(),
         output_schema_for::<domain::GitTagsOutput>("git.tags"),
         git_read_effects("Runs read-only Git tag enumeration in the repository."),
     )
@@ -264,28 +252,7 @@ fn tag_create_descriptor() -> CommandDescriptor {
         "git.tag.create",
         "Create Git tag",
         "Create a lightweight or annotated local Git tag at a reference.",
-        json!({
-            "type": "object",
-            "properties": {
-                "tag": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Tag name to create."
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Annotation message; omission creates a lightweight tag."
-                },
-                "reference": {
-                    "type": "string",
-                    "minLength": 1,
-                    "default": "HEAD",
-                    "description": "Commit-ish to tag."
-                }
-            },
-            "required": ["tag"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<TagCreateArgs>(),
         output_schema_for::<domain::GitTagCreateOutput>("git.tag.create"),
         CommandEffects::new(
             false,
@@ -309,7 +276,7 @@ fn remotes_descriptor() -> CommandDescriptor {
         "git.remotes",
         "List Git remotes",
         "Return configured fetch and push URLs with provider hints.",
-        empty_input_schema(),
+        input_schema_for::<RemotesArgs>(),
         output_schema_for::<domain::GitRemotesOutput>("git.remotes"),
         git_read_effects("Runs read-only Git configuration inspection and may reveal remote URLs."),
     )
@@ -320,7 +287,7 @@ fn changed_descriptor() -> CommandDescriptor {
         "git.changed",
         "List Git working-tree changes",
         "Return bounded staged, unstaged, untracked, and renamed paths.",
-        empty_input_schema(),
+        input_schema_for::<ChangedArgs>(),
         output_schema_for::<domain::GitChangedOutput>("git.changed"),
         git_read_effects("Runs read-only Git status and returns changed repository paths."),
     )
@@ -331,17 +298,7 @@ fn diff_descriptor() -> CommandDescriptor {
         "git.diff",
         "Read local Git diff",
         "Return the unstaged local Git diff, optionally restricted to one path.",
-        json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Optional repository-relative path filter."
-                }
-            },
-            "additionalProperties": false
-        }),
+        input_schema_for::<DiffArgs>(),
         output_schema_for::<domain::GitDiffOutput>("git.diff"),
         git_read_effects("Runs read-only Git diff and may expose uncommitted source or secrets."),
     )
@@ -352,23 +309,7 @@ fn blame_descriptor() -> CommandDescriptor {
         "git.blame",
         "Read Git blame",
         "Return blame metadata for a repository file or one selected line.",
-        json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Repository-relative file path."
-                },
-                "line": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Optional one-based source line."
-                }
-            },
-            "required": ["path"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<BlameArgs>(),
         output_schema_for::<domain::GitBlameOutput>("git.blame"),
         git_read_effects(
             "Runs read-only Git blame and exposes commit authorship metadata and source text.",
@@ -381,18 +322,7 @@ fn commit_info_descriptor() -> CommandDescriptor {
         "git.commit-info",
         "Read Git commit information",
         "Return commit metadata, message, changed files, and line statistics.",
-        json!({
-            "type": "object",
-            "properties": {
-                "reference": {
-                    "type": "string",
-                    "minLength": 1,
-                    "default": "HEAD",
-                    "description": "Commit-ish to inspect."
-                }
-            },
-            "additionalProperties": false
-        }),
+        input_schema_for::<CommitInfoArgs>(),
         output_schema_for::<domain::CommitInfoOutput>("git.commit-info"),
         git_read_effects(
             "Runs read-only Git history queries and exposes commit authors, messages, and paths.",

@@ -68,8 +68,77 @@ pub fn normalize_input(schema: Value) -> Value {
     let mut schema = inline_definitions(schema);
     strip_annotations(&mut schema);
     prefer_one_of_for_nullable(&mut schema);
+    drop_null_from_optional_arguments(&mut schema);
     ensure_object_properties(&mut schema);
     schema
+}
+
+/// An omitted argument and an explicit `null` are different things on the wire.
+///
+/// `Option<T>` means "may be omitted" for a command argument, and the catalog has
+/// always rejected an explicit `null` for one. `schemars` cannot tell the two
+/// apart, so the null branch is removed from every property that is already
+/// optional by virtue of not being required.
+fn drop_null_from_optional_arguments(schema: &mut Value) {
+    let Some(root) = schema.as_object_mut() else {
+        return;
+    };
+    let required = root
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let Some(properties) = root.get_mut("properties").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (name, property) in properties.iter_mut() {
+        if required.iter().any(|required_name| required_name == name) {
+            continue;
+        }
+        drop_null_branch(property);
+    }
+}
+
+fn drop_null_branch(property: &mut Value) {
+    let Some(map) = property.as_object_mut() else {
+        return;
+    };
+    if let Some(kinds) = map.get("type").and_then(Value::as_array) {
+        let remaining = kinds
+            .iter()
+            .filter(|kind| kind.as_str() != Some("null"))
+            .cloned()
+            .collect::<Vec<_>>();
+        if remaining.len() == 1 && remaining.len() < kinds.len() {
+            let only = remaining.into_iter().next().expect("checked above");
+            map.insert("type".to_owned(), only);
+        }
+        return;
+    }
+    let Some(variants) = map.get("oneOf").and_then(Value::as_array) else {
+        return;
+    };
+    let remaining = variants
+        .iter()
+        .filter(|variant| !is_null_schema(variant))
+        .cloned()
+        .collect::<Vec<_>>();
+    if remaining.len() != 1 || remaining.len() == variants.len() {
+        return;
+    }
+    map.remove("oneOf");
+    let Some(Value::Object(only)) = remaining.into_iter().next() else {
+        return;
+    };
+    for (key, value) in only {
+        map.entry(key).or_insert(value);
+    }
 }
 
 fn pin_command_discriminator(schema: &mut Value, command_id: &str) {
@@ -337,7 +406,8 @@ mod tests {
         assert_eq!(derived["additionalProperties"], json!(false));
         assert_eq!(
             derived["properties"]["name"],
-            json!({"type": ["string", "null"]})
+            json!({"type": "string"}),
+            "an optional argument may be omitted, but not sent as an explicit null"
         );
     }
 
