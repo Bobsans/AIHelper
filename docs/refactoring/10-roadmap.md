@@ -67,7 +67,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 | ~~`http` input schemas: wire type separate from the CLI type~~ **(done)**                   | 01     |
 | ~~Host command schemas, input and output~~ **(done)**                                       | 01     |
 | Schemas for the four dynamic plugins                                                        | 01     |
-| Generate manuals from descriptors; delete `src/plugins.rs` literals                         | 01     |
+| ~~Tie the manual to the CLI it documents~~ **(done; generating it would rewrite prose)**    | 01     |
 | Generate `docs/reference/*.md`; CI diff check                                               | 01     |
 | `ah-plugin-sdk`: `render`, `http`, `credentials`, `process`                                 | 02     |
 | Runtime-owned cancellation; delete five global registries                                   | 02     |

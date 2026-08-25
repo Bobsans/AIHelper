@@ -1434,11 +1434,40 @@ mod tests {
         assert_eq!(data["tasks"][0]["command"], "cargo check");
     }
 
+    /// Check a hand-written manual against the parser it documents.
+    ///
+    /// The manual is CLI-shaped prose that an agent reads before it picks a
+    /// command, and nothing in the type system ties it to the clap command it
+    /// describes. Every example already had to parse; a documented command that
+    /// no longer exists, or a `usage` line naming a flag that was renamed away,
+    /// used to go unnoticed.
+    ///
+    /// Wording is deliberately not compared: the manual `summary` and the clap
+    /// `about` say the same thing differently on purpose.
     fn assert_examples_parse<T>(manual: &PluginManual)
     where
         T: Parser + CommandFactory,
     {
+        let root: clap::Command = T::command();
         for command in &manual.commands {
+            let documented = resolve_subcommand(&root, &command.name);
+            assert!(
+                documented.is_some(),
+                "manual documents '{} {}', which the CLI does not have",
+                manual.domain,
+                command.name
+            );
+            if let Some(documented) = documented {
+                for flag in usage_flags(&command.usage) {
+                    assert!(
+                        accepts_flag(documented, &flag),
+                        "manual usage for '{} {}' names {flag}, which the command does not accept",
+                        manual.domain,
+                        command.name
+                    );
+                }
+            }
+
             for example in &command.examples {
                 let mut args = Vec::with_capacity(example.argv.len() + 1);
                 args.push(manual.domain.clone());
@@ -1453,6 +1482,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Walk a documented subcommand path, which may be nested like `tag create`.
+    fn resolve_subcommand<'a>(root: &'a clap::Command, name: &str) -> Option<&'a clap::Command> {
+        let mut command = root;
+        for segment in name.split_whitespace() {
+            command = command.find_subcommand(segment)?;
+        }
+        Some(command)
+    }
+
+    /// Pull `--from` and `-n` out of a usage line, ignoring `<path>`, `N`, `BYTES`.
+    fn usage_flags(usage: &str) -> Vec<String> {
+        usage
+            .split_whitespace()
+            .map(|token| token.trim_matches(['[', ']', '<', '>', '|', ',']))
+            .filter(|token| token.starts_with('-') && token.len() > 1)
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Global flags live on the root CLI, not on the per-domain parser.
+    const GLOBAL_FLAGS: &[&str] = &["--json", "--quiet", "--cwd", "--limit"];
+
+    fn accepts_flag(command: &clap::Command, flag: &str) -> bool {
+        if GLOBAL_FLAGS.contains(&flag) {
+            return true;
+        }
+        if let Some(long) = flag.strip_prefix("--") {
+            return command
+                .get_arguments()
+                .any(|argument| argument.get_long() == Some(long));
+        }
+        flag.strip_prefix('-')
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|short| {
+                command
+                    .get_arguments()
+                    .any(|argument| argument.get_short() == Some(short))
+            })
     }
 
     fn git_is_available() -> bool {

@@ -49,7 +49,26 @@ These are a worse `serde::Deserialize`, written by hand, per domain.
 
 [`src/plugins.rs:187–596`](../../src/plugins.rs) is ~400 lines of `PluginManual`
 literals whose descriptions duplicate the clap `about` strings and the descriptor
-summaries — with no mechanism keeping the three consistent.
+summaries.
+
+**Correction:** the original claim that nothing kept the three consistent was
+wrong. `assert_examples_parse` already ran every manual example through the
+domain's clap parser, for all eight domains — a stronger check than it looks,
+because it proves the documented argv is actually accepted.
+
+What genuinely had no mechanism was the rest of the entry: a documented command
+that no longer exists, and a `usage` line naming a flag that had been renamed
+away. Both are checked now, in the same helper.
+
+**What cannot be derived**, and why the roadmap row was wrong to say "generate
+from descriptors": the manual is CLI-shaped (`usage: "read <path> [-n] …"`,
+`argv: ["read", "src/main.rs", "-n"]`) while a descriptor is MCP-shaped (JSON
+arguments). Producing one from the other means synthesising CLI syntax from a
+JSON Schema. The clap command *can* supply `name`, `summary` and `usage` — but
+the manual summary and the clap `about` deliberately differ in wording
+("Read file content with optional line range and numbering." against
+"Read file content (supports line range and numbering)"), so generating them
+would rewrite agent-facing text. That is a product decision, not a refactor.
 
 ### 1.5 Documentation has no coupling to the code at all
 
