@@ -4,6 +4,7 @@ use std::{
 };
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -14,13 +15,15 @@ use super::{
     rules::{FileGroup, classify_file},
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DetectedFile {
     pub(crate) kind: String,
     pub(crate) path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SuggestedCommand {
     pub(crate) kind: String,
     pub(crate) command: Vec<String>,
@@ -28,7 +31,8 @@ pub(crate) struct SuggestedCommand {
     pub(crate) reason: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ProjectFileGroups {
     pub(crate) packages: Vec<DetectedFile>,
     pub(crate) locks: Vec<DetectedFile>,
@@ -53,7 +57,8 @@ struct ProjectSnapshot {
     commands: Vec<SuggestedCommand>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ProjectVersionEntry {
     pub(crate) kind: String,
     pub(crate) path: String,
@@ -62,7 +67,8 @@ pub(crate) struct ProjectVersionEntry {
     pub(crate) confidence: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ProjectDetectOutput {
     pub(crate) command: &'static str,
     pub(crate) root: String,
@@ -82,7 +88,8 @@ pub(crate) struct ProjectDetectOutput {
     pub(crate) changelog_files: Vec<DetectedFile>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ProjectCommandsOutput {
     pub(crate) command: &'static str,
     pub(crate) root: String,
@@ -92,7 +99,8 @@ pub(crate) struct ProjectCommandsOutput {
     pub(crate) commands: Vec<SuggestedCommand>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ProjectVersionOutput {
     pub(crate) command: &'static str,
     pub(crate) root: String,

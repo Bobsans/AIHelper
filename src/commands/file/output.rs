@@ -5,7 +5,7 @@ use crate::{
 };
 
 use crate::commands::file::domain::{
-    FileLinesOutput, FileResult, FileStatOutput, FileTreeOutput, TreeEntry,
+    FileKind, FileLinesOutput, FileResult, FileStatOutput, FileTreeOutput, TreeEntry,
 };
 
 pub(crate) fn emit(result: FileResult, options: &GlobalOptions) -> Result<(), AppError> {
@@ -82,7 +82,7 @@ fn render_stat_text(payload: &FileStatOutput, formatter: TextFormatter) -> Strin
         format!(
             "{} {}",
             formatter.paint(TextStyle::Muted, "kind:"),
-            formatter.paint(file_kind_style(payload.kind), payload.kind)
+            formatter.paint(file_kind_style(payload.kind), payload.kind.as_str())
         ),
         formatter.paint(
             TextStyle::Muted,
@@ -123,7 +123,7 @@ fn render_tree_text(entries: &[TreeEntry], formatter: TextFormatter) -> String {
         .iter()
         .map(|entry| {
             let mut label = entry.name.clone();
-            if entry.kind == "directory" {
+            if entry.kind == FileKind::Directory {
                 label.push('/');
             }
             let label = formatter.paint(file_kind_style(entry.kind), label);
@@ -137,12 +137,12 @@ fn render_tree_text(entries: &[TreeEntry], formatter: TextFormatter) -> String {
         .join("\n")
 }
 
-fn file_kind_style(kind: &str) -> TextStyle {
+fn file_kind_style(kind: FileKind) -> TextStyle {
     match kind {
-        "directory" => TextStyle::Heading,
-        "symlink" => TextStyle::Warning,
-        "file" => TextStyle::Key,
-        _ => TextStyle::Muted,
+        FileKind::Directory => TextStyle::Heading,
+        FileKind::Symlink => TextStyle::Warning,
+        FileKind::File => TextStyle::Key,
+        FileKind::Other => TextStyle::Muted,
     }
 }
 
@@ -156,7 +156,7 @@ fn optional_number(value: Option<u64>) -> String {
 mod tests {
     use super::{file_kind_style, render_stat_text, render_tree_text};
     use crate::{
-        commands::file::domain::{FileStatOutput, TreeEntry},
+        commands::file::domain::{FileKind, FileStatOutput, TreeEntry},
         output::{TextFormatter, TextStyle},
     };
 
@@ -165,7 +165,7 @@ mod tests {
         let payload = FileStatOutput {
             command: "file.stat",
             path: "src/lib.rs".to_owned(),
-            kind: "file",
+            kind: FileKind::File,
             size_bytes: 42,
             readonly: false,
             modified_unix_seconds: Some(10),
@@ -188,7 +188,7 @@ mod tests {
         let payload = FileStatOutput {
             command: "file.stat",
             path: "cache".to_owned(),
-            kind: "directory",
+            kind: FileKind::Directory,
             size_bytes: 0,
             readonly: true,
             modified_unix_seconds: None,
@@ -223,29 +223,29 @@ mod tests {
 
     #[test]
     fn file_kind_style_maps_semantic_kinds() {
-        assert_eq!(file_kind_style("directory"), TextStyle::Heading);
-        assert_eq!(file_kind_style("symlink"), TextStyle::Warning);
-        assert_eq!(file_kind_style("file"), TextStyle::Key);
-        assert_eq!(file_kind_style("other"), TextStyle::Muted);
+        assert_eq!(file_kind_style(FileKind::Directory), TextStyle::Heading);
+        assert_eq!(file_kind_style(FileKind::Symlink), TextStyle::Warning);
+        assert_eq!(file_kind_style(FileKind::File), TextStyle::Key);
+        assert_eq!(file_kind_style(FileKind::Other), TextStyle::Muted);
     }
 
     fn tree_entries() -> Vec<TreeEntry> {
         vec![
             TreeEntry {
                 depth: 0,
-                kind: "directory",
+                kind: FileKind::Directory,
                 name: "root".to_owned(),
                 path: "root".to_owned(),
             },
             TreeEntry {
                 depth: 1,
-                kind: "symlink",
+                kind: FileKind::Symlink,
                 name: "link".to_owned(),
                 path: "root/link".to_owned(),
             },
             TreeEntry {
                 depth: 1,
-                kind: "file",
+                kind: FileKind::File,
                 name: "main.rs".to_owned(),
                 path: "root/main.rs".to_owned(),
             },

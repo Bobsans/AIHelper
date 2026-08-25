@@ -4,6 +4,7 @@ use crate::{cli::GlobalOptions, error::AppError};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::output_schema_for,
 };
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
@@ -260,7 +261,7 @@ fn read_descriptor() -> CommandDescriptor {
         "Read file lines",
         "Read UTF-8 text from a file with an optional inclusive line range.",
         line_input_schema(false),
-        lines_output_schema("file.read"),
+        output_schema_for::<domain::FileLinesOutput>("file.read"),
         file_read_effects(
             "Reads the requested file; enabling symlink following may read a target outside its apparent path.",
         ),
@@ -277,7 +278,7 @@ fn head_descriptor() -> CommandDescriptor {
         "Read file head",
         "Read the first requested number of UTF-8 text lines from a file.",
         line_input_schema(true),
-        lines_output_schema("file.head"),
+        output_schema_for::<domain::FileLinesOutput>("file.head"),
         file_read_effects(
             "Reads the beginning of the requested file; enabling symlink following may read an external target.",
         ),
@@ -294,7 +295,7 @@ fn tail_descriptor() -> CommandDescriptor {
         "Read file tail",
         "Read the last requested number of UTF-8 text lines from a file.",
         line_input_schema(true),
-        lines_output_schema("file.tail"),
+        output_schema_for::<domain::FileLinesOutput>("file.tail"),
         file_read_effects(
             "Reads the requested file to determine its final lines; enabling symlink following may read an external target.",
         ),
@@ -311,31 +312,7 @@ fn stat_descriptor() -> CommandDescriptor {
         "Inspect file metadata",
         "Return filesystem metadata for one file, directory, symlink, or other path.",
         path_only_input_schema(),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "file.stat"},
-                "path": {"type": "string"},
-                "kind": {
-                    "type": "string",
-                    "enum": ["file", "directory", "symlink", "other"]
-                },
-                "size_bytes": {"type": "integer", "minimum": 0},
-                "readonly": {"type": "boolean"},
-                "modified_unix_seconds": {"type": ["integer", "null"], "minimum": 0},
-                "created_unix_seconds": {"type": ["integer", "null"], "minimum": 0}
-            },
-            "required": [
-                "command",
-                "path",
-                "kind",
-                "size_bytes",
-                "readonly",
-                "modified_unix_seconds",
-                "created_unix_seconds"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::FileStatOutput>("file.stat"),
         file_read_effects("Reads filesystem metadata for the requested path only."),
     )
     .with_example(CommandExample::new(
@@ -366,42 +343,7 @@ fn tree_descriptor() -> CommandDescriptor {
             },
             "additionalProperties": false
         }),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "file.tree"},
-                "path": {"type": "string"},
-                "max_depth": {"type": ["integer", "null"], "minimum": 0},
-                "entry_count": {"type": "integer", "minimum": 0},
-                "truncated": {"type": "boolean"},
-                "entries": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "depth": {"type": "integer", "minimum": 0},
-                            "kind": {
-                                "type": "string",
-                                "enum": ["file", "directory", "symlink", "other"]
-                            },
-                            "name": {"type": "string"},
-                            "path": {"type": "string"}
-                        },
-                        "required": ["depth", "kind", "name", "path"],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": [
-                "command",
-                "path",
-                "max_depth",
-                "entry_count",
-                "truncated",
-                "entries"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::FileTreeOutput>("file.tree"),
         file_read_effects(
             "Reads directory metadata recursively; enabling symlink following may traverse outside the requested tree.",
         ),
@@ -497,33 +439,6 @@ fn follow_symlinks_schema() -> Value {
         "type": "boolean",
         "default": false,
         "description": "Allow reading or traversing symlink targets."
-    })
-}
-
-fn lines_output_schema(command: &str) -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": command},
-            "path": {"type": "string"},
-            "from": {"type": ["integer", "null"], "minimum": 1},
-            "to": {"type": ["integer", "null"], "minimum": 1},
-            "numbered": {"type": "boolean"},
-            "line_count": {"type": "integer", "minimum": 0},
-            "truncated": {"type": "boolean"},
-            "content": {"type": "string"}
-        },
-        "required": [
-            "command",
-            "path",
-            "from",
-            "to",
-            "numbered",
-            "line_count",
-            "truncated",
-            "content"
-        ],
-        "additionalProperties": false
     })
 }
 

@@ -8,7 +8,7 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
     InvocationResponse, ResolvedSecret, Reversibility, RiskLevel, SecretSlot,
-    TypedInvocationRequest, TypedInvocationResponse,
+    TypedInvocationRequest, TypedInvocationResponse, schema::output_schema_for,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
@@ -539,7 +539,7 @@ fn request_descriptor() -> CommandDescriptor {
         "Send HTTP request",
         "Send an HTTP request with explicit method, payload, authentication, and expectations.",
         request_input_schema(properties, vec!["method", "url"]),
-        request_output_schema("http.request"),
+        output_schema_for::<domain::HttpRequestOutput>("http.request"),
         http_write_effects(
             "Sends an arbitrary HTTP method and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
         ),
@@ -555,7 +555,7 @@ fn shortcut_descriptor(command: &str, method: &str, read_only: bool) -> CommandD
         format!("Send HTTP {method}"),
         format!("Send an HTTP {method} request with payload, authentication, and expectations."),
         request_input_schema(properties, vec!["url"]),
-        request_output_schema(&format!("http.{command}")),
+        output_schema_for::<domain::HttpRequestOutput>(&format!("http.{command}")),
         if read_only {
             http_read_effects(
                 "Sends an HTTP GET request and optional credentials to an arbitrary URL; servers can still implement side effects for GET.",
@@ -584,7 +584,7 @@ fn replay_descriptor() -> CommandDescriptor {
         "Replay curl request",
         "Parse and replay a supported curl command with optional expectation overrides.",
         request_input_schema(properties, vec!["curl"]),
-        request_output_schema("http.replay"),
+        output_schema_for::<domain::HttpRequestOutput>("http.replay"),
         http_write_effects(
             "Replays an arbitrary HTTP request encoded in curl syntax and may send embedded credentials or mutate a remote service.",
         ),
@@ -639,7 +639,7 @@ fn assert_descriptor(command: &str) -> CommandDescriptor {
             "required": ["spec_path"],
             "additionalProperties": false
         }),
-        assert_output_schema(),
+        output_schema_for::<domain::HttpAssertOutput>("http.assert"),
         CommandEffects::new(
             false,
             false,
@@ -775,91 +775,6 @@ fn nonnegative_integer_with_default(default: u64, description: &str) -> Value {
         "minimum": 0,
         "default": default,
         "description": description
-    })
-}
-
-fn request_output_schema(command: &str) -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": command},
-            "method": {"type": "string"},
-            "url": {"type": "string"},
-            "status": {"type": "integer", "minimum": 100, "maximum": 599},
-            "ok": {"type": "boolean"},
-            "duration_ms": {"type": "integer", "minimum": 0},
-            "truncated": {"type": "boolean"},
-            "body_truncated": {"type": "boolean"},
-            "headers": {
-                "type": "object",
-                "additionalProperties": {"type": "string"}
-            },
-            "body": {"type": "string"},
-            "assertions": {
-                "type": "object",
-                "properties": {
-                    "total": {"type": "integer", "minimum": 0},
-                    "passed": {"type": "integer", "minimum": 0},
-                    "failed": {"type": "integer", "minimum": 0},
-                    "failures": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["total", "passed", "failed", "failures"],
-                "additionalProperties": false
-            }
-        },
-        "required": [
-            "command",
-            "method",
-            "url",
-            "status",
-            "ok",
-            "duration_ms",
-            "truncated",
-            "body_truncated",
-            "headers",
-            "body",
-            "assertions"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn assert_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "http.assert"},
-            "spec_path": {"type": "string"},
-            "fail_fast": {"type": "boolean"},
-            "summary": {
-                "type": "object",
-                "properties": {
-                    "total": {"type": "integer", "minimum": 0},
-                    "passed": {"type": "integer", "minimum": 0},
-                    "failed": {"type": "integer", "minimum": 0},
-                    "duration_ms": {"type": "integer", "minimum": 0}
-                },
-                "required": ["total", "passed", "failed", "duration_ms"],
-                "additionalProperties": false
-            },
-            "cases": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "passed": {"type": "boolean"},
-                        "status": {"type": ["integer", "null"], "minimum": 100, "maximum": 599},
-                        "duration_ms": {"type": "integer", "minimum": 0},
-                        "failures": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["name", "passed", "status", "duration_ms", "failures"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": ["command", "spec_path", "fail_fast", "summary", "cases"],
-        "additionalProperties": false
     })
 }
 

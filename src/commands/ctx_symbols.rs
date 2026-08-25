@@ -3,8 +3,10 @@ use std::{path::Path, sync::OnceLock};
 use regex::Regex;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Symbol {
+    #[schemars(range(min = 1))]
     pub line: usize,
     pub kind: String,
     pub name: String,

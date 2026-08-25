@@ -1,4 +1,5 @@
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::{path::Path, sync::OnceLock, thread};
 
@@ -13,14 +14,16 @@ use super::{
     TagCreateArgs, TagsArgs, adapters,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ChangedEntry {
     pub status: String,
     pub path: String,
     pub old_path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitChangedOutput {
     pub command: &'static str,
     pub in_git_repo: bool,
@@ -29,7 +32,8 @@ pub(crate) struct GitChangedOutput {
     pub entries: Vec<ChangedEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitStatusOutput {
     pub command: &'static str,
     pub in_git_repo: bool,
@@ -46,14 +50,16 @@ pub(crate) struct GitStatusOutput {
     pub latest_tag: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CommitSummary {
     pub(crate) hash: String,
     pub(crate) short_hash: String,
     pub(crate) subject: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CommitInfoOutput {
     pub command: &'static str,
     pub in_git_repo: bool,
@@ -61,7 +67,8 @@ pub(crate) struct CommitInfoOutput {
     pub commit: Option<CommitInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CommitInfo {
     pub(crate) hash: String,
     pub(crate) short_hash: String,
@@ -78,13 +85,15 @@ pub(crate) struct CommitInfo {
     pub(crate) truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitPerson {
     pub(crate) name: String,
     pub(crate) email: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CommitFile {
     pub(crate) status: Option<String>,
     pub(crate) path: String,
@@ -93,12 +102,14 @@ pub(crate) struct CommitFile {
     pub(crate) deletions: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TagEntry {
     pub(crate) name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitTagsOutput {
     pub command: &'static str,
     pub in_git_repo: bool,
@@ -108,7 +119,8 @@ pub(crate) struct GitTagsOutput {
     pub tags: Vec<TagEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RemoteEntry {
     pub(crate) name: String,
     pub(crate) fetch_url: Option<String>,
@@ -116,7 +128,8 @@ pub(crate) struct RemoteEntry {
     pub(crate) provider: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitRemotesOutput {
     pub command: &'static str,
     pub in_git_repo: bool,
@@ -124,7 +137,8 @@ pub(crate) struct GitRemotesOutput {
     pub remotes: Vec<RemoteEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitDiffOutput {
     pub command: &'static str,
     pub in_git_repo: bool,
@@ -134,8 +148,10 @@ pub(crate) struct GitDiffOutput {
     pub diff: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BlameEntry {
+    #[schemars(range(min = 1))]
     pub(crate) line: usize,
     pub(crate) commit: String,
     pub(crate) author: String,
@@ -145,17 +161,20 @@ pub(crate) struct BlameEntry {
     pub(crate) text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitBlameOutput {
     pub command: &'static str,
     pub path: String,
+    #[schemars(range(min = 1))]
     pub line_filter: Option<usize>,
     pub entry_count: usize,
     pub truncated: bool,
     pub entries: Vec<BlameEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GitTagCreateOutput {
     pub command: &'static str,
     pub in_git_repo: bool,

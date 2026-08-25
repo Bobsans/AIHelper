@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::output_schema_for,
 };
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::{cli::GlobalOptions, error::AppError};
 
@@ -149,7 +150,7 @@ fn detect_descriptor() -> CommandDescriptor {
         "project.detect",
         "Detect project",
         "Detect ecosystems, tools, roles, important files, versions, and suggested commands.",
-        detect_output_schema(),
+        output_schema_for::<domain::ProjectDetectOutput>("project.detect"),
     )
     .with_example(CommandExample::new(
         "Detect the current project",
@@ -162,19 +163,7 @@ fn commands_descriptor() -> CommandDescriptor {
         "project.commands",
         "Suggest project commands",
         "Suggest common commands from detected manifests and tooling without executing them.",
-        top_output(
-            "project.commands",
-            &[
-                ("root", string_schema()),
-                ("ecosystems", string_array_schema()),
-                ("tools", string_array_schema()),
-                ("roles", string_array_schema()),
-                (
-                    "commands",
-                    json!({"type": "array", "items": suggested_command_schema()}),
-                ),
-            ],
-        ),
+        output_schema_for::<domain::ProjectCommandsOutput>("project.commands"),
     )
 }
 
@@ -183,18 +172,7 @@ fn version_descriptor() -> CommandDescriptor {
         "project.version",
         "Detect project versions",
         "Read common manifest files and return detected names and versions.",
-        top_output(
-            "project.version",
-            &[
-                ("root", string_schema()),
-                ("version_count", nonnegative_integer_schema()),
-                ("truncated", json!({"type": "boolean"})),
-                (
-                    "versions",
-                    json!({"type": "array", "items": version_schema()}),
-                ),
-            ],
-        ),
+        output_schema_for::<domain::ProjectVersionOutput>("project.version"),
     )
 }
 
@@ -231,110 +209,6 @@ fn path_input_schema() -> Value {
         },
         "additionalProperties": false
     })
-}
-
-fn detect_output_schema() -> Value {
-    top_output(
-        "project.detect",
-        &[
-            ("root", string_schema()),
-            ("ecosystems", string_array_schema()),
-            ("tools", string_array_schema()),
-            ("roles", string_array_schema()),
-            ("files", file_groups_schema()),
-            (
-                "versions",
-                json!({"type": "array", "items": version_schema()}),
-            ),
-            (
-                "commands",
-                json!({"type": "array", "items": suggested_command_schema()}),
-            ),
-            ("package_files", detected_files_schema()),
-            ("ci_files", detected_files_schema()),
-            ("docs_files", detected_files_schema()),
-            ("changelog_files", detected_files_schema()),
-        ],
-    )
-}
-
-fn file_groups_schema() -> Value {
-    exact_object(&[
-        ("packages", detected_files_schema()),
-        ("locks", detected_files_schema()),
-        ("ci", detected_files_schema()),
-        ("docs", detected_files_schema()),
-        ("changelogs", detected_files_schema()),
-        ("deploy", detected_files_schema()),
-        ("infra", detected_files_schema()),
-        ("config", detected_files_schema()),
-        ("quality", detected_files_schema()),
-        ("security", detected_files_schema()),
-    ])
-}
-
-fn detected_files_schema() -> Value {
-    json!({"type": "array", "items": detected_file_schema()})
-}
-
-fn detected_file_schema() -> Value {
-    exact_object(&[("kind", string_schema()), ("path", string_schema())])
-}
-
-fn version_schema() -> Value {
-    exact_object(&[
-        ("kind", string_schema()),
-        ("path", string_schema()),
-        ("name", nullable(string_schema())),
-        ("version", nullable(string_schema())),
-        ("confidence", string_schema()),
-    ])
-}
-
-fn suggested_command_schema() -> Value {
-    exact_object(&[
-        ("kind", string_schema()),
-        ("command", string_array_schema()),
-        ("confidence", string_schema()),
-        ("reason", string_schema()),
-    ])
-}
-
-fn top_output(command: &str, fields: &[(&str, Value)]) -> Value {
-    let mut all_fields = vec![("command", json!({"type": "string", "const": command}))];
-    all_fields.extend(fields.iter().cloned());
-    exact_object(&all_fields)
-}
-
-fn exact_object(fields: &[(&str, Value)]) -> Value {
-    let mut properties = Map::new();
-    let mut required = Vec::new();
-    for (name, schema) in fields {
-        properties.insert((*name).to_owned(), schema.clone());
-        required.push(*name);
-    }
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn string_schema() -> Value {
-    json!({"type": "string"})
-}
-
-fn string_array_schema() -> Value {
-    json!({"type": "array", "items": string_schema()})
-}
-
-fn nonnegative_integer_schema() -> Value {
-    json!({"type": "integer", "minimum": 0})
-}
-
-fn nullable(schema: Value) -> Value {
-    json!({"oneOf": [schema, {"type": "null"}]})
 }
 
 fn execute_detect(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {

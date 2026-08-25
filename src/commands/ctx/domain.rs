@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::commands::ctx_symbols::{Symbol, extract_symbols};
@@ -9,14 +10,16 @@ use crate::safety::{TextFileDecision, TextFilePolicy, TextFileSkipReason};
 
 use super::{ChangedArgs, PackArgs, SymbolsArgs, adapters};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SymbolsFileOutput {
     pub path: String,
     pub symbol_count: usize,
     pub symbols: Vec<Symbol>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CtxSymbolsOutput {
     pub command: &'static str,
     pub preset: String,
@@ -30,7 +33,8 @@ pub(crate) struct CtxSymbolsOutput {
     pub files: Vec<SymbolsFileOutput>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PackItem {
     pub path: String,
     pub kind: String,
@@ -40,7 +44,8 @@ pub(crate) struct PackItem {
     pub symbols: Vec<Symbol>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CtxPackOutput {
     pub command: &'static str,
     pub preset: String,
@@ -56,14 +61,16 @@ pub(crate) struct CtxPackOutput {
     pub items: Vec<PackItem>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ChangedEntry {
     pub status: String,
     pub path: String,
     pub old_path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CtxChangedOutput {
     pub command: &'static str,
     pub in_git_repo: bool,

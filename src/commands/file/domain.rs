@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::AppError;
@@ -6,11 +7,36 @@ use ah_runtime::core::apply_limit;
 
 use super::{FileArgs, FileCommand, HeadArgs, ReadArgs, StatArgs, TailArgs, TreeArgs, adapters};
 
-#[derive(Debug, Serialize)]
+// Was a `&'static str` whose four legal values lived only in the hand-written
+// schema; as an enum the type and the published schema cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum FileKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+impl FileKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Directory => "directory",
+            Self::Symlink => "symlink",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct FileLinesOutput {
     pub command: &'static str,
     pub path: String,
+    #[schemars(range(min = 1))]
     pub from: Option<usize>,
+    #[schemars(range(min = 1))]
     pub to: Option<usize>,
     pub numbered: bool,
     pub line_count: usize,
@@ -18,26 +44,29 @@ pub(crate) struct FileLinesOutput {
     pub content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct FileStatOutput {
     pub command: &'static str,
     pub path: String,
-    pub kind: &'static str,
+    pub kind: FileKind,
     pub size_bytes: u64,
     pub readonly: bool,
     pub modified_unix_seconds: Option<u64>,
     pub created_unix_seconds: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TreeEntry {
     pub depth: usize,
-    pub kind: &'static str,
+    pub kind: FileKind,
     pub name: String,
     pub path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct FileTreeOutput {
     pub command: &'static str,
     pub path: String,

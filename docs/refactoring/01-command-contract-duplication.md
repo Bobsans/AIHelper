@@ -21,7 +21,7 @@ Adding `git.tags` required writing, by hand, in four different notations:
 Scale: 41 `CommandDescriptor::new` call sites and 500+ `json!({...})` literals
 (142 in `plugins/ah-plugin-github/src/typed.rs` alone).
 
-### 1.2 The output schema is a hand-maintained mirror of a Rust type
+### 1.2 The output schema is a hand-maintained mirror of a Rust type *(resolved for built-in domains)*
 
 `GitTagsOutput` already derives `Serialize`. The output schema next to it repeats
 every field name, type, and `required` entry by hand. Nothing links them.
@@ -31,6 +31,11 @@ The only thing that notices divergence is
 `validate_response`, at runtime, in the session of whoever ran the command, as
 `OUTPUT_SCHEMA_VIOLATION`. A field renamed in the struct and forgotten in the
 schema is a production error, not a compile error.
+
+**Status:** every built-in domain now derives its output schema from the payload
+type through `ah_plugin_api::schema::output_schema_for`, so the two cannot
+disagree. ~850 lines of hand-written schema deleted. Host commands and dynamic
+plugins still hand-write theirs.
 
 ### 1.3 Argument extraction is re-implemented per module
 

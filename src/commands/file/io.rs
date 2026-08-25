@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::commands::file::domain::TreeEntry;
+use crate::commands::file::domain::{FileKind, TreeEntry};
 use crate::error::AppError;
 use crate::safety::{self, TextFileDecision, TextFilePolicy};
 use ah_runtime::core::apply_limit;
@@ -153,15 +153,15 @@ pub(crate) fn collect_tree_entries(
     Ok(entries)
 }
 
-pub(crate) fn metadata_kind(metadata: &Metadata) -> &'static str {
+pub(crate) fn metadata_kind(metadata: &Metadata) -> FileKind {
     if metadata.file_type().is_symlink() {
-        "symlink"
+        FileKind::Symlink
     } else if metadata.is_dir() {
-        "directory"
+        FileKind::Directory
     } else if metadata.is_file() {
-        "file"
+        FileKind::File
     } else {
-        "other"
+        FileKind::Other
     }
 }
 

@@ -8,6 +8,7 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::output_schema_for,
 };
 use clap::{Args, Subcommand};
 use serde_json::{Map, Value, json};
@@ -350,7 +351,7 @@ fn text_descriptor() -> CommandDescriptor {
         "Search file text",
         "Search literal text or a regular expression across files.",
         object_schema(properties, vec!["pattern"]),
-        text_output_schema(),
+        output_schema_for::<domain::SearchTextOutput>("search.text"),
     )
     .with_example(CommandExample::new(
         "Find TODOs in Rust files",
@@ -372,7 +373,7 @@ fn files_descriptor() -> CommandDescriptor {
         "Search file paths",
         "Find normalized file paths containing a substring.",
         object_schema(properties, vec!["query"]),
-        files_output_schema(),
+        output_schema_for::<domain::SearchFilesOutput>("search.files"),
     )
 }
 
@@ -431,111 +432,6 @@ fn object_schema(properties: Map<String, Value>, required: Vec<&str>) -> Value {
 
 fn boolean_schema(default: bool, description: &str) -> Value {
     json!({"type": "boolean", "default": default, "description": description})
-}
-
-fn text_output_schema() -> Value {
-    top_output(
-        "search.text",
-        &[
-            ("backend", string_schema()),
-            ("root", string_schema()),
-            ("roots", string_array_schema()),
-            ("pattern", string_schema()),
-            ("regex", boolean_value_schema()),
-            ("ignore_case", boolean_value_schema()),
-            ("context", nonnegative_integer_schema()),
-            ("match_count", nonnegative_integer_schema()),
-            ("file_count", nonnegative_integer_schema()),
-            ("skipped_binary_files", nonnegative_integer_schema()),
-            ("skipped_large_files", nonnegative_integer_schema()),
-            ("skipped_symlink_files", nonnegative_integer_schema()),
-            ("truncated", boolean_value_schema()),
-            (
-                "matches",
-                json!({"type": "array", "items": text_match_schema()}),
-            ),
-        ],
-    )
-}
-
-fn files_output_schema() -> Value {
-    top_output(
-        "search.files",
-        &[
-            ("backend", string_schema()),
-            ("root", string_schema()),
-            ("roots", string_array_schema()),
-            ("query", string_schema()),
-            ("match_count", nonnegative_integer_schema()),
-            ("truncated", boolean_value_schema()),
-            ("files", string_array_schema()),
-        ],
-    )
-}
-
-fn text_match_schema() -> Value {
-    exact_object(&[
-        ("path", string_schema()),
-        ("line", positive_integer_schema()),
-        ("column", positive_integer_schema()),
-        ("text", string_schema()),
-        (
-            "context_before",
-            json!({"type": "array", "items": context_line_schema()}),
-        ),
-        (
-            "context_after",
-            json!({"type": "array", "items": context_line_schema()}),
-        ),
-    ])
-}
-
-fn context_line_schema() -> Value {
-    exact_object(&[
-        ("line", positive_integer_schema()),
-        ("text", string_schema()),
-    ])
-}
-
-fn top_output(command: &str, fields: &[(&str, Value)]) -> Value {
-    let mut all_fields = vec![("command", json!({"type": "string", "const": command}))];
-    all_fields.extend(fields.iter().cloned());
-    exact_object(&all_fields)
-}
-
-fn exact_object(fields: &[(&str, Value)]) -> Value {
-    let mut properties = Map::new();
-    let mut required = Vec::new();
-    for (name, schema) in fields {
-        properties.insert((*name).to_owned(), schema.clone());
-        required.push(*name);
-    }
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn string_schema() -> Value {
-    json!({"type": "string"})
-}
-
-fn string_array_schema() -> Value {
-    json!({"type": "array", "items": string_schema()})
-}
-
-fn boolean_value_schema() -> Value {
-    json!({"type": "boolean"})
-}
-
-fn positive_integer_schema() -> Value {
-    json!({"type": "integer", "minimum": 1})
-}
-
-fn nonnegative_integer_schema() -> Value {
-    json!({"type": "integer", "minimum": 0})
 }
 
 #[cfg(test)]

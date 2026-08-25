@@ -1,12 +1,14 @@
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::AppError;
 
 use super::{CheckArgs, adapters};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RunCheckOutput {
     pub command: &'static str,
     pub argv: Vec<String>,

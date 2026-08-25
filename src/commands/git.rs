@@ -4,6 +4,7 @@ use crate::{cli::GlobalOptions, error::AppError};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::{empty_input_schema, output_schema_for},
 };
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
@@ -232,7 +233,7 @@ fn status_descriptor() -> CommandDescriptor {
         "Git repository status",
         "Return branch, upstream, working-tree counts, latest commit, and latest tag.",
         empty_input_schema(),
-        status_output_schema(),
+        output_schema_for::<domain::GitStatusOutput>("git.status"),
         git_read_effects("Runs read-only Git commands and reads repository metadata and status."),
     )
 }
@@ -253,34 +254,7 @@ fn tags_descriptor() -> CommandDescriptor {
             },
             "additionalProperties": false
         }),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "git.tags"},
-                "in_git_repo": {"type": "boolean"},
-                "latest": {"type": "boolean"},
-                "tag_count": {"type": "integer", "minimum": 0},
-                "truncated": {"type": "boolean"},
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                        "required": ["name"],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": [
-                "command",
-                "in_git_repo",
-                "latest",
-                "tag_count",
-                "truncated",
-                "tags"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::GitTagsOutput>("git.tags"),
         git_read_effects("Runs read-only Git tag enumeration in the repository."),
     )
 }
@@ -312,26 +286,7 @@ fn tag_create_descriptor() -> CommandDescriptor {
             "required": ["tag"],
             "additionalProperties": false
         }),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "git.tag.create"},
-                "in_git_repo": {"type": "boolean"},
-                "tag": {"type": "string"},
-                "reference": {"type": "string"},
-                "annotated": {"type": "boolean"},
-                "target_commit": nullable_schema(commit_summary_schema())
-            },
-            "required": [
-                "command",
-                "in_git_repo",
-                "tag",
-                "reference",
-                "annotated",
-                "target_commit"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::GitTagCreateOutput>("git.tag.create"),
         CommandEffects::new(
             false,
             false,
@@ -355,30 +310,7 @@ fn remotes_descriptor() -> CommandDescriptor {
         "List Git remotes",
         "Return configured fetch and push URLs with provider hints.",
         empty_input_schema(),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "git.remotes"},
-                "in_git_repo": {"type": "boolean"},
-                "remote_count": {"type": "integer", "minimum": 0},
-                "remotes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "fetch_url": {"type": ["string", "null"]},
-                            "push_url": {"type": ["string", "null"]},
-                            "provider": {"type": "string"}
-                        },
-                        "required": ["name", "fetch_url", "push_url", "provider"],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": ["command", "in_git_repo", "remote_count", "remotes"],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::GitRemotesOutput>("git.remotes"),
         git_read_effects("Runs read-only Git configuration inspection and may reveal remote URLs."),
     )
 }
@@ -389,7 +321,7 @@ fn changed_descriptor() -> CommandDescriptor {
         "List Git working-tree changes",
         "Return bounded staged, unstaged, untracked, and renamed paths.",
         empty_input_schema(),
-        changed_output_schema(),
+        output_schema_for::<domain::GitChangedOutput>("git.changed"),
         git_read_effects("Runs read-only Git status and returns changed repository paths."),
     )
 }
@@ -410,26 +342,7 @@ fn diff_descriptor() -> CommandDescriptor {
             },
             "additionalProperties": false
         }),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "git.diff"},
-                "in_git_repo": {"type": "boolean"},
-                "path_filter": {"type": ["string", "null"]},
-                "line_count": {"type": "integer", "minimum": 0},
-                "truncated": {"type": "boolean"},
-                "diff": {"type": "string"}
-            },
-            "required": [
-                "command",
-                "in_git_repo",
-                "path_filter",
-                "line_count",
-                "truncated",
-                "diff"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::GitDiffOutput>("git.diff"),
         git_read_effects("Runs read-only Git diff and may expose uncommitted source or secrets."),
     )
 }
@@ -456,50 +369,7 @@ fn blame_descriptor() -> CommandDescriptor {
             "required": ["path"],
             "additionalProperties": false
         }),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "git.blame"},
-                "path": {"type": "string"},
-                "line_filter": {"type": ["integer", "null"], "minimum": 1},
-                "entry_count": {"type": "integer", "minimum": 0},
-                "truncated": {"type": "boolean"},
-                "entries": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "line": {"type": "integer", "minimum": 1},
-                            "commit": {"type": "string"},
-                            "author": {"type": "string"},
-                            "author_mail": {"type": "string"},
-                            "author_time": {"type": ["integer", "null"]},
-                            "summary": {"type": "string"},
-                            "text": {"type": "string"}
-                        },
-                        "required": [
-                            "line",
-                            "commit",
-                            "author",
-                            "author_mail",
-                            "author_time",
-                            "summary",
-                            "text"
-                        ],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": [
-                "command",
-                "path",
-                "line_filter",
-                "entry_count",
-                "truncated",
-                "entries"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::GitBlameOutput>("git.blame"),
         git_read_effects(
             "Runs read-only Git blame and exposes commit authorship metadata and source text.",
         ),
@@ -523,7 +393,7 @@ fn commit_info_descriptor() -> CommandDescriptor {
             },
             "additionalProperties": false
         }),
-        commit_info_output_schema(),
+        output_schema_for::<domain::CommitInfoOutput>("git.commit-info"),
         git_read_effects(
             "Runs read-only Git history queries and exposes commit authors, messages, and paths.",
         ),
@@ -532,14 +402,6 @@ fn commit_info_descriptor() -> CommandDescriptor {
         "Inspect the latest commit",
         json!({"reference": "HEAD"}),
     ))
-}
-
-fn empty_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-    })
 }
 
 fn git_read_effects(impact: &str) -> CommandEffects {
@@ -553,168 +415,4 @@ fn git_read_effects(impact: &str) -> CommandEffects {
         impact,
         Reversibility::Yes,
     )
-}
-
-fn nullable_schema(schema: Value) -> Value {
-    json!({"oneOf": [schema, {"type": "null"}]})
-}
-
-fn commit_summary_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "hash": {"type": "string"},
-            "short_hash": {"type": "string"},
-            "subject": {"type": "string"}
-        },
-        "required": ["hash", "short_hash", "subject"],
-        "additionalProperties": false
-    })
-}
-
-fn changed_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "git.changed"},
-            "in_git_repo": {"type": "boolean"},
-            "changed_count": {"type": "integer", "minimum": 0},
-            "truncated": {"type": "boolean"},
-            "entries": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string"},
-                        "path": {"type": "string"},
-                        "old_path": {"type": ["string", "null"]}
-                    },
-                    "required": ["status", "path", "old_path"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": [
-            "command",
-            "in_git_repo",
-            "changed_count",
-            "truncated",
-            "entries"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn status_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "git.status"},
-            "in_git_repo": {"type": "boolean"},
-            "branch": {"type": ["string", "null"]},
-            "upstream": {"type": ["string", "null"]},
-            "ahead": {"type": ["integer", "null"], "minimum": 0},
-            "behind": {"type": ["integer", "null"], "minimum": 0},
-            "clean": {"type": "boolean"},
-            "staged_count": {"type": "integer", "minimum": 0},
-            "unstaged_count": {"type": "integer", "minimum": 0},
-            "untracked_count": {"type": "integer", "minimum": 0},
-            "changed_count": {"type": "integer", "minimum": 0},
-            "latest_commit": nullable_schema(commit_summary_schema()),
-            "latest_tag": {"type": ["string", "null"]}
-        },
-        "required": [
-            "command",
-            "in_git_repo",
-            "branch",
-            "upstream",
-            "ahead",
-            "behind",
-            "clean",
-            "staged_count",
-            "unstaged_count",
-            "untracked_count",
-            "changed_count",
-            "latest_commit",
-            "latest_tag"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn commit_info_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "git.commit-info"},
-            "in_git_repo": {"type": "boolean"},
-            "reference": {"type": "string"},
-            "commit": nullable_schema(json!({
-                "type": "object",
-                "properties": {
-                    "hash": {"type": "string"},
-                    "short_hash": {"type": "string"},
-                    "author": person_schema(),
-                    "author_date": {"type": ["string", "null"]},
-                    "committer": person_schema(),
-                    "committer_date": {"type": ["string", "null"]},
-                    "subject": {"type": "string"},
-                    "body": {"type": "string"},
-                    "file_count": {"type": "integer", "minimum": 0},
-                    "additions": {"type": ["integer", "null"], "minimum": 0},
-                    "deletions": {"type": ["integer", "null"], "minimum": 0},
-                    "files": {
-                        "type": "array",
-                        "items": commit_file_schema()
-                    },
-                    "truncated": {"type": "boolean"}
-                },
-                "required": [
-                    "hash",
-                    "short_hash",
-                    "author",
-                    "author_date",
-                    "committer",
-                    "committer_date",
-                    "subject",
-                    "body",
-                    "file_count",
-                    "additions",
-                    "deletions",
-                    "files",
-                    "truncated"
-                ],
-                "additionalProperties": false
-            }))
-        },
-        "required": ["command", "in_git_repo", "reference", "commit"],
-        "additionalProperties": false
-    })
-}
-
-fn person_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "email": {"type": "string"}
-        },
-        "required": ["name", "email"],
-        "additionalProperties": false
-    })
-}
-
-fn commit_file_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "status": {"type": ["string", "null"]},
-            "path": {"type": "string"},
-            "old_path": {"type": ["string", "null"]},
-            "additions": {"type": ["integer", "null"], "minimum": 0},
-            "deletions": {"type": ["integer", "null"], "minimum": 0}
-        },
-        "required": ["status", "path", "old_path", "additions", "deletions"],
-        "additionalProperties": false
-    })
 }

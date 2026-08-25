@@ -7,6 +7,7 @@ use std::{
 };
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -95,7 +96,8 @@ pub(crate) struct ResponseSnapshot {
     pub(crate) body_truncated: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub(crate) struct AssertionSummary {
     pub(crate) total: usize,
     pub(crate) passed: usize,
@@ -103,11 +105,13 @@ pub(crate) struct AssertionSummary {
     pub(crate) failures: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub(crate) struct HttpRequestOutput {
     pub(crate) command: String,
     pub(crate) method: String,
     pub(crate) url: String,
+    #[schemars(range(min = 100, max = 599))]
     pub(crate) status: u16,
     #[serde(skip, default)]
     pub(crate) status_text: String,
@@ -227,7 +231,8 @@ fn default_extract_group() -> usize {
     1
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HttpAssertOutput {
     pub(crate) command: &'static str,
     pub(crate) spec_path: String,
@@ -236,7 +241,8 @@ pub(crate) struct HttpAssertOutput {
     pub(crate) cases: Vec<HttpAssertCaseOutput>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HttpAssertSummary {
     pub(crate) total: usize,
     pub(crate) passed: usize,
@@ -244,10 +250,12 @@ pub(crate) struct HttpAssertSummary {
     pub(crate) duration_ms: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HttpAssertCaseOutput {
     pub(crate) name: String,
     pub(crate) passed: bool,
+    #[schemars(range(min = 100, max = 599))]
     pub(crate) status: Option<u16>,
     pub(crate) duration_ms: u64,
     pub(crate) failures: Vec<String>,

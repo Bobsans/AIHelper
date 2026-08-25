@@ -1,6 +1,7 @@
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::output_schema_for,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Value, json};
@@ -285,7 +286,7 @@ fn pack_descriptor() -> CommandDescriptor {
             },
             "additionalProperties": false
         }),
-        pack_output_schema(),
+        output_schema_for::<domain::CtxPackOutput>("ctx.pack"),
         ctx_read_effects(
             "Reads metadata and eligible text content under the requested paths; following symlinks may read outside those path trees.",
         ),
@@ -316,7 +317,7 @@ fn symbols_descriptor() -> CommandDescriptor {
             "required": ["path"],
             "additionalProperties": false
         }),
-        symbols_output_schema(),
+        output_schema_for::<domain::CtxSymbolsOutput>("ctx.symbols"),
         ctx_read_effects(
             "Reads eligible text files under the requested path; following symlinks may read outside that path tree.",
         ),
@@ -337,7 +338,7 @@ fn changed_descriptor() -> CommandDescriptor {
             "properties": {},
             "additionalProperties": false
         }),
-        changed_output_schema(),
+        output_schema_for::<domain::CtxChangedOutput>("ctx.changed"),
         CommandEffects::new(
             true,
             false,
@@ -387,144 +388,5 @@ fn follow_symlinks_schema() -> Value {
         "type": "boolean",
         "default": false,
         "description": "Follow symlinked files and directories."
-    })
-}
-
-fn symbol_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "line": {"type": "integer", "minimum": 1},
-            "kind": {"type": "string"},
-            "name": {"type": "string"}
-        },
-        "required": ["line", "kind", "name"],
-        "additionalProperties": false
-    })
-}
-
-fn pack_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "ctx.pack"},
-            "preset": {"type": "string"},
-            "roots": {"type": "array", "items": {"type": "string"}},
-            "item_count": {"type": "integer", "minimum": 0},
-            "file_count": {"type": "integer", "minimum": 0},
-            "directory_count": {"type": "integer", "minimum": 0},
-            "symbol_count": {"type": "integer", "minimum": 0},
-            "skipped_binary_files": {"type": "integer", "minimum": 0},
-            "skipped_large_files": {"type": "integer", "minimum": 0},
-            "skipped_symlink_files": {"type": "integer", "minimum": 0},
-            "truncated": {"type": "boolean"},
-            "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "kind": {"type": "string"},
-                        "size_bytes": {"type": "integer", "minimum": 0},
-                        "line_count": {"type": "integer", "minimum": 0},
-                        "symbol_count": {"type": "integer", "minimum": 0},
-                        "symbols": {"type": "array", "items": symbol_schema()}
-                    },
-                    "required": [
-                        "path",
-                        "kind",
-                        "size_bytes",
-                        "line_count",
-                        "symbol_count",
-                        "symbols"
-                    ],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": [
-            "command",
-            "preset",
-            "roots",
-            "item_count",
-            "file_count",
-            "directory_count",
-            "symbol_count",
-            "skipped_binary_files",
-            "skipped_large_files",
-            "skipped_symlink_files",
-            "truncated",
-            "items"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn symbols_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "ctx.symbols"},
-            "preset": {"type": "string"},
-            "root": {"type": "string"},
-            "file_count": {"type": "integer", "minimum": 0},
-            "symbol_count": {"type": "integer", "minimum": 0},
-            "skipped_binary_files": {"type": "integer", "minimum": 0},
-            "skipped_large_files": {"type": "integer", "minimum": 0},
-            "skipped_symlink_files": {"type": "integer", "minimum": 0},
-            "truncated": {"type": "boolean"},
-            "files": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "symbol_count": {"type": "integer", "minimum": 0},
-                        "symbols": {"type": "array", "items": symbol_schema()}
-                    },
-                    "required": ["path", "symbol_count", "symbols"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": [
-            "command",
-            "preset",
-            "root",
-            "file_count",
-            "symbol_count",
-            "skipped_binary_files",
-            "skipped_large_files",
-            "skipped_symlink_files",
-            "truncated",
-            "files"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn changed_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "ctx.changed"},
-            "in_git_repo": {"type": "boolean"},
-            "changed_count": {"type": "integer", "minimum": 0},
-            "entries": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string"},
-                        "path": {"type": "string"},
-                        "old_path": {"type": ["string", "null"]}
-                    },
-                    "required": ["status", "path", "old_path"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": ["command", "in_git_repo", "changed_count", "entries"],
-        "additionalProperties": false
     })
 }

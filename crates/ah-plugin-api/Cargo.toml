@@ -11,5 +11,6 @@ description = "Stable plugin contract and C ABI types for AIHelper"
 publish = false
 
 [dependencies]
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

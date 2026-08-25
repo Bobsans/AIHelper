@@ -1,5 +1,6 @@
 use std::{path::Path, time::Duration};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -7,7 +8,8 @@ use ah_runtime::core::{apply_limit, normalize_path, truncate_lines};
 
 use super::{TaskArgs, TaskCommand, adapters};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub(crate) struct TaskEntry {
     pub(crate) name: String,
     pub(crate) command: String,
@@ -27,7 +29,8 @@ pub(crate) enum TaskResult {
     Run(TaskRunOutput),
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskSaveOutput {
     pub command: &'static str,
     pub name: String,
@@ -36,7 +39,8 @@ pub struct TaskSaveOutput {
     pub updated_unix_seconds: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskListOutput {
     pub command: &'static str,
     pub store_path: String,
@@ -45,7 +49,8 @@ pub struct TaskListOutput {
     pub tasks: Vec<TaskEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRunOutput {
     pub command: &'static str,
     pub name: String,

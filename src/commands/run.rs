@@ -8,6 +8,7 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::output_schema_for,
 };
 use ah_runtime::RunCheckOutcome;
 use serde_json::{Value, json};
@@ -280,39 +281,7 @@ fn check_descriptor() -> CommandDescriptor {
             "required": ["command"],
             "additionalProperties": false
         }),
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "const": "run.check"},
-                "argv": {"type": "array", "items": {"type": "string"}},
-                "success": {"type": "boolean"},
-                "timed_out": {"type": "boolean"},
-                "exit_code": {
-                    "oneOf": [
-                        {"type": "integer"},
-                        {"type": "null"}
-                    ]
-                },
-                "duration_ms": {"type": "integer", "minimum": 0},
-                "stdout": {"type": "string"},
-                "stderr": {"type": "string"},
-                "stdout_truncated": {"type": "boolean"},
-                "stderr_truncated": {"type": "boolean"}
-            },
-            "required": [
-                "command",
-                "argv",
-                "success",
-                "timed_out",
-                "exit_code",
-                "duration_ms",
-                "stdout",
-                "stderr",
-                "stdout_truncated",
-                "stderr_truncated"
-            ],
-            "additionalProperties": false
-        }),
+        output_schema_for::<domain::RunCheckOutput>("run.check"),
         CommandEffects::new(
             false,
             true,

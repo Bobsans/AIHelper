@@ -60,7 +60,9 @@ The highest-leverage phase. Nothing moves between crates yet.
 
 | Work | Group |
 |---|---|
-| `schemars`-derived output schemas, then input schemas; delete `typed_args` mappers | 01 |
+| ~~`schemars`-derived output schemas for built-in domains~~ **(done)** | 01 |
+| `schemars`-derived output schemas for host commands and dynamic plugins | 01 |
+| `schemars`-derived input schemas; delete `typed_args` mappers | 01 |
 | Generate manuals from descriptors; delete `src/plugins.rs` literals | 01 |
 | Generate `docs/reference/*.md`; CI diff check | 01 |
 | `ah-plugin-sdk`: `render`, `http`, `credentials`, `process` | 02 |

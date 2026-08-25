@@ -8,6 +8,7 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::output_schema_for,
 };
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
@@ -264,7 +265,7 @@ fn save_descriptor() -> CommandDescriptor {
             "required": ["name", "command"],
             "additionalProperties": false
         }),
-        save_output_schema(),
+        output_schema_for::<domain::TaskSaveOutput>("task.save"),
         CommandEffects::new(
             false,
             true,
@@ -311,7 +312,7 @@ fn run_descriptor() -> CommandDescriptor {
             "required": ["name"],
             "additionalProperties": false
         }),
-        run_output_schema(),
+        output_schema_for::<domain::TaskRunOutput>("task.run"),
         CommandEffects::new(
             false,
             true,
@@ -346,7 +347,7 @@ fn list_descriptor() -> CommandDescriptor {
             "properties": {},
             "additionalProperties": false
         }),
-        list_output_schema(),
+        output_schema_for::<domain::TaskListOutput>("task.list"),
         CommandEffects::new(
             true,
             false,
@@ -369,81 +370,6 @@ fn task_name_schema() -> Value {
         "minLength": 1,
         "pattern": "^[A-Za-z0-9._-]+$",
         "description": "Task name."
-    })
-}
-
-fn save_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "task.save"},
-            "name": {"type": "string"},
-            "task_command": {"type": "string"},
-            "store_path": {"type": "string"},
-            "updated_unix_seconds": {"type": "integer", "minimum": 0}
-        },
-        "required": [
-            "command",
-            "name",
-            "task_command",
-            "store_path",
-            "updated_unix_seconds"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn list_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "task.list"},
-            "store_path": {"type": "string"},
-            "count": {"type": "integer", "minimum": 0},
-            "truncated": {"type": "boolean"},
-            "tasks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "command": {"type": "string"},
-                        "updated_unix_seconds": {"type": "integer", "minimum": 0}
-                    },
-                    "required": ["name", "command", "updated_unix_seconds"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": ["command", "store_path", "count", "truncated", "tasks"],
-        "additionalProperties": false
-    })
-}
-
-fn run_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "task.run"},
-            "name": {"type": "string"},
-            "task_command": {"type": "string"},
-            "exit_code": {"type": "integer"},
-            "success": {"type": "boolean"},
-            "truncated": {"type": "boolean"},
-            "stdout": {"type": "string"},
-            "stderr": {"type": "string"}
-        },
-        "required": [
-            "command",
-            "name",
-            "task_command",
-            "exit_code",
-            "success",
-            "truncated",
-            "stdout",
-            "stderr"
-        ],
-        "additionalProperties": false
     })
 }
 

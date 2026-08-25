@@ -252,9 +252,9 @@
                 }
               },
               "required": [
-                "status",
+                "old_path",
                 "path",
-                "old_path"
+                "status"
               ],
               "type": "object"
             },
@@ -265,10 +265,10 @@
           }
         },
         "required": [
-          "command",
-          "in_git_repo",
           "changed_count",
-          "entries"
+          "command",
+          "entries",
+          "in_git_repo"
         ],
         "type": "object"
       },
@@ -398,8 +398,8 @@
                       }
                     },
                     "required": [
-                      "line",
                       "kind",
+                      "line",
                       "name"
                     ],
                     "type": "object"
@@ -408,10 +408,10 @@
                 }
               },
               "required": [
-                "path",
                 "kind",
-                "size_bytes",
                 "line_count",
+                "path",
+                "size_bytes",
                 "symbol_count",
                 "symbols"
               ],
@@ -450,17 +450,17 @@
         },
         "required": [
           "command",
+          "directory_count",
+          "file_count",
+          "item_count",
+          "items",
           "preset",
           "roots",
-          "item_count",
-          "file_count",
-          "directory_count",
-          "symbol_count",
           "skipped_binary_files",
           "skipped_large_files",
           "skipped_symlink_files",
-          "truncated",
-          "items"
+          "symbol_count",
+          "truncated"
         ],
         "type": "object"
       },
@@ -568,8 +568,8 @@
                       }
                     },
                     "required": [
-                      "line",
                       "kind",
+                      "line",
                       "name"
                     ],
                     "type": "object"
@@ -614,15 +614,15 @@
         },
         "required": [
           "command",
+          "file_count",
+          "files",
           "preset",
           "root",
-          "file_count",
-          "symbol_count",
           "skipped_binary_files",
           "skipped_large_files",
           "skipped_symlink_files",
-          "truncated",
-          "files"
+          "symbol_count",
+          "truncated"
         ],
         "type": "object"
       },
@@ -734,13 +734,13 @@
         },
         "required": [
           "command",
-          "path",
+          "content",
           "from",
-          "to",
-          "numbered",
           "line_count",
-          "truncated",
-          "content"
+          "numbered",
+          "path",
+          "to",
+          "truncated"
         ],
         "type": "object"
       },
@@ -857,13 +857,13 @@
         },
         "required": [
           "command",
-          "path",
+          "content",
           "from",
-          "to",
-          "numbered",
           "line_count",
-          "truncated",
-          "content"
+          "numbered",
+          "path",
+          "to",
+          "truncated"
         ],
         "type": "object"
       },
@@ -954,12 +954,12 @@
         },
         "required": [
           "command",
-          "path",
+          "created_unix_seconds",
           "kind",
-          "size_bytes",
-          "readonly",
           "modified_unix_seconds",
-          "created_unix_seconds"
+          "path",
+          "readonly",
+          "size_bytes"
         ],
         "type": "object"
       },
@@ -1070,13 +1070,13 @@
         },
         "required": [
           "command",
-          "path",
+          "content",
           "from",
-          "to",
-          "numbered",
           "line_count",
-          "truncated",
-          "content"
+          "numbered",
+          "path",
+          "to",
+          "truncated"
         ],
         "type": "object"
       },
@@ -1193,11 +1193,11 @@
         },
         "required": [
           "command",
-          "path",
-          "max_depth",
+          "entries",
           "entry_count",
-          "truncated",
-          "entries"
+          "max_depth",
+          "path",
+          "truncated"
         ],
         "type": "object"
       },
@@ -1282,11 +1282,11 @@
                 }
               },
               "required": [
-                "line",
-                "commit",
                 "author",
                 "author_mail",
                 "author_time",
+                "commit",
+                "line",
                 "summary",
                 "text"
               ],
@@ -1314,11 +1314,11 @@
         },
         "required": [
           "command",
-          "path",
-          "line_filter",
+          "entries",
           "entry_count",
-          "truncated",
-          "entries"
+          "line_filter",
+          "path",
+          "truncated"
         ],
         "type": "object"
       },
@@ -1380,9 +1380,9 @@
                 }
               },
               "required": [
-                "status",
+                "old_path",
                 "path",
-                "old_path"
+                "status"
               ],
               "type": "object"
             },
@@ -1396,11 +1396,11 @@
           }
         },
         "required": [
-          "command",
-          "in_git_repo",
           "changed_count",
-          "truncated",
-          "entries"
+          "command",
+          "entries",
+          "in_git_repo",
+          "truncated"
         ],
         "type": "object"
       },
@@ -1477,8 +1477,8 @@
                       }
                     },
                     "required": [
-                      "name",
-                      "email"
+                      "email",
+                      "name"
                     ],
                     "type": "object"
                   },
@@ -1502,8 +1502,8 @@
                       }
                     },
                     "required": [
-                      "name",
-                      "email"
+                      "email",
+                      "name"
                     ],
                     "type": "object"
                   },
@@ -1559,11 +1559,11 @@
                         }
                       },
                       "required": [
-                        "status",
-                        "path",
-                        "old_path",
                         "additions",
-                        "deletions"
+                        "deletions",
+                        "old_path",
+                        "path",
+                        "status"
                       ],
                       "type": "object"
                     },
@@ -1583,18 +1583,18 @@
                   }
                 },
                 "required": [
-                  "hash",
-                  "short_hash",
+                  "additions",
                   "author",
                   "author_date",
+                  "body",
                   "committer",
                   "committer_date",
-                  "subject",
-                  "body",
-                  "file_count",
-                  "additions",
                   "deletions",
+                  "file_count",
                   "files",
+                  "hash",
+                  "short_hash",
+                  "subject",
                   "truncated"
                 ],
                 "type": "object"
@@ -1613,9 +1613,9 @@
         },
         "required": [
           "command",
+          "commit",
           "in_git_repo",
-          "reference",
-          "commit"
+          "reference"
         ],
         "type": "object"
       },
@@ -1683,11 +1683,11 @@
         },
         "required": [
           "command",
+          "diff",
           "in_git_repo",
-          "path_filter",
           "line_count",
-          "truncated",
-          "diff"
+          "path_filter",
+          "truncated"
         ],
         "type": "object"
       },
@@ -1758,10 +1758,10 @@
                 }
               },
               "required": [
-                "name",
                 "fetch_url",
-                "push_url",
-                "provider"
+                "name",
+                "provider",
+                "push_url"
               ],
               "type": "object"
             },
@@ -1895,19 +1895,19 @@
           }
         },
         "required": [
-          "command",
-          "in_git_repo",
-          "branch",
-          "upstream",
           "ahead",
           "behind",
+          "branch",
+          "changed_count",
           "clean",
+          "command",
+          "in_git_repo",
+          "latest_commit",
+          "latest_tag",
           "staged_count",
           "unstaged_count",
           "untracked_count",
-          "changed_count",
-          "latest_commit",
-          "latest_tag"
+          "upstream"
         ],
         "type": "object"
       },
@@ -2015,11 +2015,11 @@
           }
         },
         "required": [
+          "annotated",
           "command",
           "in_git_repo",
-          "tag",
           "reference",
-          "annotated",
+          "tag",
           "target_commit"
         ],
         "type": "object"
@@ -2100,8 +2100,8 @@
           "in_git_repo",
           "latest",
           "tag_count",
-          "truncated",
-          "tags"
+          "tags",
+          "truncated"
         ],
         "type": "object"
       },
@@ -2204,11 +2204,11 @@
                 }
               },
               "required": [
+                "duration_ms",
+                "failures",
                 "name",
                 "passed",
-                "status",
-                "duration_ms",
-                "failures"
+                "status"
               ],
               "type": "object"
             },
@@ -2245,20 +2245,20 @@
               }
             },
             "required": [
-              "total",
-              "passed",
+              "duration_ms",
               "failed",
-              "duration_ms"
+              "passed",
+              "total"
             ],
             "type": "object"
           }
         },
         "required": [
+          "cases",
           "command",
-          "spec_path",
           "fail_fast",
-          "summary",
-          "cases"
+          "spec_path",
+          "summary"
         ],
         "type": "object"
       },
@@ -2418,10 +2418,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -2464,17 +2464,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -2632,10 +2632,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -2678,17 +2678,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -2857,10 +2857,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -2903,17 +2903,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -3073,10 +3073,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -3119,17 +3119,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -3298,10 +3298,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -3344,17 +3344,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -3514,10 +3514,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -3560,17 +3560,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -3745,10 +3745,10 @@
               }
             },
             "required": [
-              "total",
-              "passed",
               "failed",
-              "failures"
+              "failures",
+              "passed",
+              "total"
             ],
             "type": "object"
           },
@@ -3791,17 +3791,17 @@
           }
         },
         "required": [
-          "command",
-          "method",
-          "url",
-          "status",
-          "ok",
-          "duration_ms",
-          "truncated",
-          "body_truncated",
-          "headers",
+          "assertions",
           "body",
-          "assertions"
+          "body_truncated",
+          "command",
+          "duration_ms",
+          "headers",
+          "method",
+          "ok",
+          "status",
+          "truncated",
+          "url"
         ],
         "type": "object"
       },
@@ -3913,11 +3913,11 @@
                 }
               },
               "required": [
+                "duration_ms",
+                "failures",
                 "name",
                 "passed",
-                "status",
-                "duration_ms",
-                "failures"
+                "status"
               ],
               "type": "object"
             },
@@ -3954,20 +3954,20 @@
               }
             },
             "required": [
-              "total",
-              "passed",
+              "duration_ms",
               "failed",
-              "duration_ms"
+              "passed",
+              "total"
             ],
             "type": "object"
           }
         },
         "required": [
+          "cases",
           "command",
-          "spec_path",
           "fail_fast",
-          "summary",
-          "cases"
+          "spec_path",
+          "summary"
         ],
         "type": "object"
       },
@@ -4377,9 +4377,9 @@
                 }
               },
               "required": [
-                "kind",
                 "command",
                 "confidence",
+                "kind",
                 "reason"
               ],
               "type": "object"
@@ -4410,11 +4410,11 @@
         },
         "required": [
           "command",
-          "root",
+          "commands",
           "ecosystems",
-          "tools",
           "roles",
-          "commands"
+          "root",
+          "tools"
         ],
         "type": "object"
       },
@@ -4526,9 +4526,9 @@
                 }
               },
               "required": [
-                "kind",
                 "command",
                 "confidence",
+                "kind",
                 "reason"
               ],
               "type": "object"
@@ -4755,14 +4755,14 @@
               }
             },
             "required": [
-              "packages",
-              "locks",
-              "ci",
-              "docs",
               "changelogs",
-              "deploy",
-              "infra",
+              "ci",
               "config",
+              "deploy",
+              "docs",
+              "infra",
+              "locks",
+              "packages",
               "quality",
               "security"
             ],
@@ -4813,35 +4813,27 @@
                   "type": "string"
                 },
                 "name": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "path": {
                   "type": "string"
                 },
                 "version": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
+                "confidence",
                 "kind",
-                "path",
                 "name",
-                "version",
-                "confidence"
+                "path",
+                "version"
               ],
               "type": "object"
             },
@@ -4849,18 +4841,18 @@
           }
         },
         "required": [
-          "command",
-          "root",
-          "ecosystems",
-          "tools",
-          "roles",
-          "files",
-          "versions",
-          "commands",
-          "package_files",
+          "changelog_files",
           "ci_files",
+          "command",
+          "commands",
           "docs_files",
-          "changelog_files"
+          "ecosystems",
+          "files",
+          "package_files",
+          "roles",
+          "root",
+          "tools",
+          "versions"
         ],
         "type": "object"
       },
@@ -4927,35 +4919,27 @@
                   "type": "string"
                 },
                 "name": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "path": {
                   "type": "string"
                 },
                 "version": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
               "required": [
+                "confidence",
                 "kind",
-                "path",
                 "name",
-                "version",
-                "confidence"
+                "path",
+                "version"
               ],
               "type": "object"
             },
@@ -4965,8 +4949,8 @@
         "required": [
           "command",
           "root",
-          "version_count",
           "truncated",
+          "version_count",
           "versions"
         ],
         "type": "object"
@@ -5066,13 +5050,9 @@
             "type": "integer"
           },
           "exit_code": {
-            "oneOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "integer",
+              "null"
             ]
           },
           "stderr": {
@@ -5095,16 +5075,16 @@
           }
         },
         "required": [
-          "command",
           "argv",
-          "success",
-          "timed_out",
-          "exit_code",
+          "command",
           "duration_ms",
-          "stdout",
+          "exit_code",
           "stderr",
+          "stderr_truncated",
+          "stdout",
           "stdout_truncated",
-          "stderr_truncated"
+          "success",
+          "timed_out"
         ],
         "type": "object"
       },
@@ -5194,14 +5174,14 @@
           }
         },
         "required": [
-          "command",
           "backend",
+          "command",
+          "files",
+          "match_count",
+          "query",
           "root",
           "roots",
-          "query",
-          "match_count",
-          "truncated",
-          "files"
+          "truncated"
         ],
         "type": "object"
       },
@@ -5381,12 +5361,12 @@
                 }
               },
               "required": [
-                "path",
-                "line",
                 "column",
-                "text",
+                "context_after",
                 "context_before",
-                "context_after"
+                "line",
+                "path",
+                "text"
               ],
               "type": "object"
             },
@@ -5424,21 +5404,21 @@
           }
         },
         "required": [
-          "command",
           "backend",
-          "root",
-          "roots",
+          "command",
+          "context",
+          "file_count",
+          "ignore_case",
+          "match_count",
+          "matches",
           "pattern",
           "regex",
-          "ignore_case",
-          "context",
-          "match_count",
-          "file_count",
+          "root",
+          "roots",
           "skipped_binary_files",
           "skipped_large_files",
           "skipped_symlink_files",
-          "truncated",
-          "matches"
+          "truncated"
         ],
         "type": "object"
       },
@@ -5594,8 +5574,8 @@
                 }
               },
               "required": [
-                "name",
                 "command",
+                "name",
                 "updated_unix_seconds"
               ],
               "type": "object"
@@ -5608,10 +5588,10 @@
         },
         "required": [
           "command",
-          "store_path",
           "count",
-          "truncated",
-          "tasks"
+          "store_path",
+          "tasks",
+          "truncated"
         ],
         "type": "object"
       },
@@ -5705,13 +5685,13 @@
         },
         "required": [
           "command",
-          "name",
-          "task_command",
           "exit_code",
-          "success",
-          "truncated",
+          "name",
+          "stderr",
           "stdout",
-          "stderr"
+          "success",
+          "task_command",
+          "truncated"
         ],
         "type": "object"
       },
@@ -5793,8 +5773,8 @@
         "required": [
           "command",
           "name",
-          "task_command",
           "store_path",
+          "task_command",
           "updated_unix_seconds"
         ],
         "type": "object"

@@ -2,13 +2,15 @@ use std::collections::BTreeSet;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::{Regex, RegexBuilder};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::AppError;
 
 use super::{FilesArgs, TextArgs, adapters};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SearchTextOutput {
     pub command: &'static str,
     pub backend: String,
@@ -27,7 +29,8 @@ pub(crate) struct SearchTextOutput {
     pub matches: Vec<TextMatch>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SearchFilesOutput {
     pub command: &'static str,
     pub backend: String,
@@ -39,18 +42,23 @@ pub(crate) struct SearchFilesOutput {
     pub files: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TextMatch {
     pub path: String,
+    #[schemars(range(min = 1))]
     pub line: usize,
+    #[schemars(range(min = 1))]
     pub column: usize,
     pub text: String,
     pub context_before: Vec<ContextLine>,
     pub context_after: Vec<ContextLine>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ContextLine {
+    #[schemars(range(min = 1))]
     pub line: usize,
     pub text: String,
 }
