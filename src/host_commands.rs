@@ -4,18 +4,83 @@ use ah_plugin_api::{
     AH_PLUGIN_ABI_VERSION, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
     CommandError, CommandExample, InvocationRequest, InvocationResponse, PluginCompatibility,
     PluginManual, PluginMetadata, Reversibility, RiskLevel, TypedInvocationRequest,
-    TypedInvocationResponse, plugin_capabilities, schema::output_schema_for,
+    TypedInvocationResponse, plugin_capabilities,
+    schema::{input_schema_for, output_schema_for},
 };
 use ah_runtime::{BuiltinPlugin, PluginManager};
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{
     PluginStateMutationOutput, ai,
     cli::PluginStateFilter,
     error::AppError,
     plugin_settings::PluginSettings,
-    secrets::{SecretKind, VaultStore},
+    secrets::{SecretKind, SecretMetadata, VaultStore},
 };
+
+// Wire types for the host command arguments. The host commands read
+// `request.arguments` rather than reusing a clap type, so these are the only
+// description of their input - and now the only one, since the schema is derived
+// from them.
+
+// Arguments for `ai.info`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AiInfoArgs {
+    /// Optional domain filter.
+    #[schemars(length(min = 1))]
+    domain: Option<String>,
+}
+
+// Arguments for `plugins.list`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PluginsListArgs {
+    /// Optional enabled-state filter.
+    state: Option<PluginStateFilter>,
+}
+
+// Arguments for `plugins.enable` and `plugins.disable`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PluginDomainArgs {
+    /// Loaded plugin domain.
+    #[schemars(length(min = 1))]
+    domain: String,
+}
+
+// Arguments for `plugins.reset`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PluginsResetArgs {
+    /// Plugin domain to reset.
+    #[schemars(length(min = 1))]
+    domain: Option<String>,
+    /// Reset every plugin domain override.
+    #[schemars(extend("const" = true))]
+    all: Option<bool>,
+}
+
+// Arguments for `secrets.list`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SecretsListArgs {
+    /// Optional secret-kind filter.
+    kind: Option<SecretKind>,
+}
+
+/// Host arguments are validated against the derived input schema before
+/// dispatch, so a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
+    })
+}
 
 pub(crate) fn builtins(
     manager: Weak<PluginManager>,
@@ -59,18 +124,8 @@ impl BuiltinPlugin for AiHostPlugin {
                 "ai.info",
                 "AIHelper agent manual",
                 "Return the AI-oriented manual for all enabled domains or one selected domain.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "domain": {
-                            "type": "string",
-                            "minLength": 1,
-                            "description": "Optional domain filter."
-                        }
-                    },
-                    "additionalProperties": false
-                }),
-                ai_info_output_schema(),
+                input_schema_for::<AiInfoArgs>(),
+                output_schema_for::<ai::AiInfoOutput>("ai.info"),
                 CommandEffects::new(
                     true,
                     false,
@@ -89,8 +144,11 @@ impl BuiltinPlugin for AiHostPlugin {
         let Some(manager) = self.manager.upgrade() else {
             return host_unavailable("ai", &request.command);
         };
-        let domain = request.arguments.get("domain").and_then(Value::as_str);
-        match ai::typed_info_value(&manager, domain) {
+        let args: AiInfoArgs = match decode(request) {
+            Ok(args) => args,
+            Err(error) => return app_error_response("ai", &request.command, error),
+        };
+        match ai::typed_info_value(&manager, args.domain.as_deref()) {
             Ok(data) => TypedInvocationResponse::success(
                 data,
                 Some("Returned the AIHelper agent manual.".to_owned()),
@@ -107,6 +165,14 @@ struct PluginsHostPlugin {
 
 struct SecretsHostPlugin {
     vault: Arc<VaultStore>,
+}
+
+// The `secrets.list` payload: metadata only, values never leave the vault. A
+// doc comment here would be published as the schema `description`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SecretsListOutput {
+    secrets: Vec<SecretMetadata>,
 }
 
 impl BuiltinPlugin for SecretsHostPlugin {
@@ -149,18 +215,9 @@ impl BuiltinPlugin for SecretsHostPlugin {
                 false,
             ));
         }
-        let kind = match request.arguments.get("kind").and_then(Value::as_str) {
-            Some(value) => match value.parse::<SecretKind>() {
-                Ok(kind) => Some(kind),
-                Err(()) => {
-                    return app_error_response(
-                        "secrets",
-                        &request.command,
-                        AppError::invalid_argument(format!("unsupported secret kind: {value}")),
-                    );
-                }
-            },
-            None => None,
+        let kind = match decode::<SecretsListArgs>(request) {
+            Ok(args) => args.kind,
+            Err(error) => return app_error_response("secrets", &request.command, error),
         };
         match self.vault.list_metadata() {
             Ok(mut secrets) => {
@@ -168,16 +225,10 @@ impl BuiltinPlugin for SecretsHostPlugin {
                     secrets.retain(|secret| secret.kind == kind);
                 }
                 let count = secrets.len();
-                TypedInvocationResponse::success(
-                    json!({"secrets": secrets}),
-                    Some(format!("Returned {count} secret(s).")),
-                )
+                secrets_list_response(secrets, format!("Returned {count} secret(s)."))
             }
             Err(error) if error.code() == "VAULT_NOT_INITIALIZED" => {
-                TypedInvocationResponse::success(
-                    json!({"secrets": []}),
-                    Some("Returned 0 secret(s).".to_owned()),
-                )
+                secrets_list_response(Vec::new(), "Returned 0 secret(s).".to_owned())
             }
             Err(error) => app_error_response(
                 "secrets",
@@ -252,20 +303,11 @@ impl PluginsHostPlugin {
         manager: &PluginManager,
         request: &TypedInvocationRequest,
     ) -> Result<TypedInvocationResponse, AppError> {
-        let state_filter = match request.arguments.get("state").and_then(Value::as_str) {
-            Some("enabled") => Some(PluginStateFilter::Enabled),
-            Some("disabled") => Some(PluginStateFilter::Disabled),
-            Some(value) => {
-                return Err(AppError::invalid_argument(format!(
-                    "unsupported plugins state value: {value}"
-                )));
-            }
-            None => None,
-        };
-        let plugins = crate::collect_plugin_list_entries(manager, state_filter)?;
+        let args: PluginsListArgs = decode(request)?;
+        let plugins = crate::collect_plugin_list_entries(manager, args.state)?;
         let count = plugins.len();
         Ok(TypedInvocationResponse::success(
-            json!({"plugins": plugins}),
+            serde_json::to_value(crate::PluginsListOutput { plugins })?,
             Some(format!("Returned {count} registered plugin(s).")),
         ))
     }
@@ -280,12 +322,14 @@ impl PluginsHostPlugin {
             .settings
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let raw_domain = request.arguments.get("domain").and_then(Value::as_str);
-        let all = request
-            .arguments
-            .get("all")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let (raw_domain, all) = if matches!(mutation, PluginMutation::Reset) {
+            let args: PluginsResetArgs = decode(request)?;
+            (args.domain, args.all.unwrap_or(false))
+        } else {
+            let args: PluginDomainArgs = decode(request)?;
+            (Some(args.domain), false)
+        };
+        let raw_domain = raw_domain.as_deref();
         if matches!(mutation, PluginMutation::Reset) {
             match (raw_domain.is_some(), all) {
                 (true, true) => {
@@ -416,29 +460,8 @@ fn plugins_list_descriptor() -> CommandDescriptor {
         "plugins.list",
         "List AIHelper plugins",
         "List registered plugins, live enabled state, and MCP exposure status.",
-        json!({
-            "type": "object",
-            "description": "Exactly one of domain or all=true is required.",
-            "properties": {
-                "state": {
-                    "type": "string",
-                    "enum": ["enabled", "disabled"],
-                    "description": "Optional enabled-state filter."
-                }
-            },
-            "additionalProperties": false
-        }),
-        json!({
-            "type": "object",
-            "properties": {
-                "plugins": {
-                    "type": "array",
-                    "items": plugin_list_entry_schema()
-                }
-            },
-            "required": ["plugins"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<PluginsListArgs>(),
+        output_schema_for::<crate::PluginsListOutput>("plugins.list"),
         CommandEffects::new(
             true,
             false,
@@ -452,53 +475,23 @@ fn plugins_list_descriptor() -> CommandDescriptor {
     )
 }
 
-fn secret_kind_names() -> Vec<&'static str> {
-    SecretKind::ALL.iter().map(|kind| kind.as_str()).collect()
-}
-
 /// The output schema is hand-written: the payload is a `Vec<SecretMetadata>`,
 /// and that type does not derive `JsonSchema`. Both `enum` lists already come
 /// from `SecretKind` rather than being restated.
+fn secrets_list_response(secrets: Vec<SecretMetadata>, text: String) -> TypedInvocationResponse {
+    match serde_json::to_value(SecretsListOutput { secrets }) {
+        Ok(data) => TypedInvocationResponse::success(data, Some(text)),
+        Err(error) => app_error_response("secrets", "secrets.list", AppError::from(error)),
+    }
+}
+
 fn secrets_list_descriptor() -> CommandDescriptor {
     CommandDescriptor::new(
         "secrets.list",
         "List redacted secrets",
         "List secret metadata without secret values or field-state information.",
-        json!({
-            "type": "object",
-            "properties": {
-                "kind": {
-                    "type": "string",
-                    "enum": secret_kind_names(),
-                    "description": "Optional secret-kind filter."
-                }
-            },
-            "additionalProperties": false
-        }),
-        json!({
-            "type": "object",
-            "properties": {
-                "secrets": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "kind": {
-                                "type": "string",
-                                "enum": secret_kind_names()
-                            },
-                            "label": {"type": "string"},
-                            "description": {"type": ["string", "null"]}
-                        },
-                        "required": ["id", "kind", "label", "description"],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": ["secrets"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<SecretsListArgs>(),
+        output_schema_for::<SecretsListOutput>("secrets.list"),
         CommandEffects::new(
             true,
             false,
@@ -539,22 +532,7 @@ fn plugins_reset_descriptor() -> CommandDescriptor {
         "plugins.reset",
         "Reset AIHelper plugin overrides",
         "Reset one plugin domain override or all overrides to the default enabled state.",
-        json!({
-            "type": "object",
-            "properties": {
-                "domain": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Plugin domain to reset."
-                },
-                "all": {
-                    "type": "boolean",
-                    "const": true,
-                    "description": "Reset every plugin domain override."
-                }
-            },
-            "additionalProperties": false
-        }),
+        input_schema_for::<PluginsResetArgs>(),
         output_schema_for::<PluginStateMutationOutput>("plugins.reset"),
         CommandEffects::new(
             false,
@@ -582,18 +560,7 @@ fn plugin_domain_mutation_descriptor(
         id,
         title,
         description,
-        json!({
-            "type": "object",
-            "properties": {
-                "domain": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Loaded plugin domain."
-                }
-            },
-            "required": ["domain"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<PluginDomainArgs>(),
         output_schema_for::<PluginStateMutationOutput>(id),
         CommandEffects::new(
             false,
@@ -609,166 +576,6 @@ fn plugin_domain_mutation_descriptor(
             Reversibility::Yes,
         ),
     )
-}
-
-/// Hand-written because `PluginListEntry::required_tools` is a
-/// `Vec<ah_plugin_api::RequiredTool>`, and that type does not derive
-/// `JsonSchema`; and because `mcp_omission_reason` is `skip_serializing_if`,
-/// which `output_schema_for` cannot express - it requires every property.
-fn plugin_list_entry_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "plugin_name": {"type": "string"},
-            "domain": {"type": "string"},
-            "description": {"type": "string"},
-            "abi_version": {"type": "integer", "minimum": 0},
-            "required_tools": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "check_args": {
-                            "type": "array",
-                            "items": {"type": "string"}
-                        },
-                        "reason": {"type": "string"}
-                    },
-                    "required": ["name", "check_args", "reason"],
-                    "additionalProperties": false
-                }
-            },
-            "source": {"type": "string", "enum": ["builtin", "dynamic"]},
-            "state": {"type": "string", "enum": ["enabled", "disabled"]},
-            "mcp_exposed": {"type": "boolean"},
-            "mcp_omission_reason": {"type": "string"}
-        },
-        "required": [
-            "plugin_name",
-            "domain",
-            "description",
-            "abi_version",
-            "required_tools",
-            "source",
-            "state",
-            "mcp_exposed"
-        ],
-        "additionalProperties": false
-    })
-}
-
-/// Hand-written because `ai::typed_info_value` assembles the payload from
-/// `ah_plugin_api::PluginManual`, `ManualCommand` and `ManualExample`, none of
-/// which derive `JsonSchema`.
-fn ai_info_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": "ai.info"},
-            "domain_filter": {"type": ["string", "null"]},
-            "global_options": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "flag": {"type": "string"},
-                        "description": {"type": "string"}
-                    },
-                    "required": ["flag", "description"],
-                    "additionalProperties": false
-                }
-            },
-            "host_commands": {
-                "type": "array",
-                "items": host_command_schema()
-            },
-            "plugin_count": {"type": "integer", "minimum": 0},
-            "plugins": {
-                "type": "array",
-                "items": plugin_manual_schema()
-            }
-        },
-        "required": [
-            "command",
-            "domain_filter",
-            "global_options",
-            "host_commands",
-            "plugin_count",
-            "plugins"
-        ],
-        "additionalProperties": false
-    })
-}
-
-fn host_command_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "summary": {"type": "string"},
-            "usage": {"type": "string"},
-            "examples": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "description": {"type": "string"},
-                        "command": {"type": "string"}
-                    },
-                    "required": ["description", "command"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": ["name", "summary", "usage", "examples"],
-        "additionalProperties": false
-    })
-}
-
-fn plugin_manual_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "plugin_name": {"type": "string"},
-            "domain": {"type": "string"},
-            "description": {"type": "string"},
-            "commands": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "summary": {"type": "string"},
-                        "usage": {"type": "string"},
-                        "examples": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "description": {"type": "string"},
-                                    "argv": {
-                                        "type": "array",
-                                        "items": {"type": "string"}
-                                    }
-                                },
-                                "required": ["description", "argv"],
-                                "additionalProperties": false
-                            }
-                        }
-                    },
-                    "required": ["name", "summary", "usage", "examples"],
-                    "additionalProperties": false
-                }
-            },
-            "notes": {
-                "type": "array",
-                "items": {"type": "string"}
-            }
-        },
-        "required": ["plugin_name", "domain", "description", "commands", "notes"],
-        "additionalProperties": false
-    })
 }
 
 fn host_unavailable(domain: &str, command: &str) -> TypedInvocationResponse {

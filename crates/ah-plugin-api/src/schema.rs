@@ -18,12 +18,31 @@
 //!
 //! The last rule applies to **outputs only**. Input schemas keep the `required`
 //! list `schemars` derives, because an optional argument really is optional.
+//!
+//! An output field that is genuinely absent rather than null - one carrying
+//! `#[serde(skip_serializing_if = ...)]` - is the exception. `schemars` cannot
+//! distinguish it from a plain `Option<T>` that always serializes, so mark it:
+//!
+//! ```ignore
+//! #[serde(skip_serializing_if = "Option::is_none")]
+//! #[schemars(extend("x-omissible" = true))]
+//! mcp_omission_reason: Option<&'static str>,
+//! ```
+//!
+//! [`OMISSIBLE`] is stripped from the published schema; the property is left out
+//! of `required` and loses its null branch, because it is absent, never null.
 
 use schemars::JsonSchema;
 use serde_json::{Map, Value};
 
 /// Maximum number of inlining passes before a `$ref` graph is treated as cyclic.
 const MAX_INLINE_PASSES: usize = 16;
+
+/// Marks an output property that may be absent from the payload entirely.
+///
+/// Only meaningful next to `#[serde(skip_serializing_if = ...)]`; the two must
+/// agree, because nothing checks that they do.
+pub const OMISSIBLE: &str = "x-omissible";
 
 /// Schema for a command's output payload, with `command` pinned to `command_id`.
 ///
@@ -58,9 +77,31 @@ fn raw_schema<T: JsonSchema>() -> Value {
 pub fn normalize_output(schema: Value) -> Value {
     let mut schema = inline_definitions(schema);
     strip_annotations(&mut schema);
+    strip_defaults(&mut schema);
     prefer_one_of_for_nullable(&mut schema);
     require_all_properties(&mut schema);
     schema
+}
+
+/// A `default` says what a value becomes when the caller omits it, which is
+/// meaningless for a payload the tool produces. `#[serde(default)]` exists on
+/// output types for deserialization, so `schemars` emits one; drop it rather
+/// than publish a default nobody can supply.
+fn strip_defaults(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.remove("default");
+            for nested in map.values_mut() {
+                strip_defaults(nested);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                strip_defaults(nested);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Reshape a derived schema into catalog form, keeping the derived `required` list.
@@ -285,21 +326,27 @@ fn is_null_schema(value: &Value) -> bool {
         .is_some_and(|kind| kind == "null")
 }
 
-/// Output payloads serialize every field, so every property is required.
+/// Output payloads serialize every field, so every property is required - except
+/// one explicitly marked [`OMISSIBLE`], which is absent rather than null.
 fn require_all_properties(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            let names = map
-                .get("properties")
-                .and_then(Value::as_object)
-                .map(|properties| properties.keys().cloned().collect::<Vec<_>>());
-            if let Some(names) = names
-                && !names.is_empty()
-            {
-                map.insert(
-                    "required".to_owned(),
-                    Value::Array(names.into_iter().map(Value::String).collect()),
-                );
+            let mut required = Vec::new();
+            if let Some(properties) = map.get_mut("properties").and_then(Value::as_object_mut) {
+                for (name, property) in properties.iter_mut() {
+                    if take_omissible_marker(property) {
+                        drop_null_branch(property);
+                    } else {
+                        required.push(Value::String(name.clone()));
+                    }
+                }
+            }
+            if map.contains_key("properties") {
+                if required.is_empty() {
+                    map.remove("required");
+                } else {
+                    map.insert("required".to_owned(), Value::Array(required));
+                }
                 map.entry("additionalProperties")
                     .or_insert(Value::Bool(false));
             }
@@ -314,6 +361,15 @@ fn require_all_properties(value: &mut Value) {
         }
         _ => {}
     }
+}
+
+/// Remove the marker and report whether it was set, so it never reaches callers.
+fn take_omissible_marker(property: &mut Value) -> bool {
+    property
+        .as_object_mut()
+        .and_then(|map| map.remove(OMISSIBLE))
+        .and_then(|marker| marker.as_bool())
+        .unwrap_or(false)
 }
 
 /// An argument object with no declared properties still needs the empty map, so

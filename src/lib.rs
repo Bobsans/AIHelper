@@ -265,8 +265,8 @@ fn render_plugin_state_mutation(
 
 fn matches_plugin_filter(plugin: &PluginListEntry, filter: PluginStateFilter) -> bool {
     match filter {
-        PluginStateFilter::Enabled => plugin.state == "enabled",
-        PluginStateFilter::Disabled => plugin.state == "disabled",
+        PluginStateFilter::Enabled => plugin.state == PluginStateLabel::Enabled,
+        PluginStateFilter::Disabled => plugin.state == PluginStateLabel::Disabled,
     }
 }
 
@@ -279,8 +279,11 @@ fn render_plugins_table(plugins: &[PluginListEntry], formatter: TextFormatter) -
         "PLUGIN",
         plugins.iter().map(|plugin| plugin.plugin_name.as_str()),
     );
-    let source_width = column_width("SOURCE", plugins.iter().map(|plugin| plugin.source));
-    let state_width = column_width("STATE", plugins.iter().map(|plugin| plugin.state));
+    let source_width = column_width(
+        "SOURCE",
+        plugins.iter().map(|plugin| plugin.source.as_str()),
+    );
+    let state_width = column_width("STATE", plugins.iter().map(|plugin| plugin.state.as_str()));
 
     let mut lines = Vec::with_capacity(plugins.len() + 1);
     lines.push(format!(
@@ -293,12 +296,12 @@ fn render_plugins_table(plugins: &[PluginListEntry], formatter: TextFormatter) -
     ));
 
     for plugin in plugins {
-        let source_style = if plugin.source == "dynamic" {
+        let source_style = if plugin.source == PluginSourceLabel::Dynamic {
             TextStyle::Key
         } else {
             TextStyle::Muted
         };
-        let state_style = if plugin.state == "enabled" {
+        let state_style = if plugin.state == PluginStateLabel::Enabled {
             TextStyle::Success
         } else {
             TextStyle::Error
@@ -307,8 +310,11 @@ fn render_plugins_table(plugins: &[PluginListEntry], formatter: TextFormatter) -
             "{}  {}  {}  {}  {}",
             formatter.paint(TextStyle::Key, pad_column(&plugin.domain, domain_width)),
             pad_column(&plugin.plugin_name, plugin_width),
-            formatter.paint(source_style, pad_column(plugin.source, source_width)),
-            formatter.paint(state_style, pad_column(plugin.state, state_width)),
+            formatter.paint(
+                source_style,
+                pad_column(plugin.source.as_str(), source_width)
+            ),
+            formatter.paint(state_style, pad_column(plugin.state.as_str(), state_width)),
             plugin.description
         ));
     }
@@ -328,15 +334,19 @@ fn pad_column(value: &str, width: usize) -> String {
     format!("{value}{}", " ".repeat(padding))
 }
 
-fn plugin_source_label(source: PluginSource) -> &'static str {
+fn plugin_source_label(source: PluginSource) -> PluginSourceLabel {
     match source {
-        PluginSource::Builtin => "builtin",
-        PluginSource::Dynamic => "dynamic",
+        PluginSource::Builtin => PluginSourceLabel::Builtin,
+        PluginSource::Dynamic => PluginSourceLabel::Dynamic,
     }
 }
 
-fn plugin_state_label(enabled: bool) -> &'static str {
-    if enabled { "enabled" } else { "disabled" }
+fn plugin_state_label(enabled: bool) -> PluginStateLabel {
+    if enabled {
+        PluginStateLabel::Enabled
+    } else {
+        PluginStateLabel::Disabled
+    }
 }
 
 fn validate_known_domain(manager: &PluginManager, domain: &str) -> Result<String, AppError> {
@@ -413,17 +423,63 @@ fn command_is_quiet(command: &RuntimeCommand) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct PluginListEntry {
+// The `plugins.list` payload. A doc comment here would be published as the
+// schema `description`, which the catalog does not carry for payload roots.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PluginsListOutput {
+    pub(crate) plugins: Vec<PluginListEntry>,
+}
+
+// Both were `&'static str` whose legal values existed only in the hand-written
+// schema; as enums the type and the published schema cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PluginSourceLabel {
+    Builtin,
+    Dynamic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PluginStateLabel {
+    Enabled,
+    Disabled,
+}
+
+impl PluginSourceLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Dynamic => "dynamic",
+        }
+    }
+}
+
+impl PluginStateLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PluginListEntry {
     plugin_name: String,
     domain: String,
     description: String,
     abi_version: u32,
     required_tools: Vec<RequiredTool>,
-    source: &'static str,
-    state: &'static str,
+    source: PluginSourceLabel,
+    state: PluginStateLabel,
     mcp_exposed: bool,
+    // Absent rather than null for an MCP-exposed plugin, so the published
+    // schema must not require it.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-omissible" = true))]
     mcp_omission_reason: Option<&'static str>,
 }
 
@@ -458,7 +514,10 @@ fn load_dynamic_plugins_from_dirs(
 mod tests {
     use ah_runtime::RuntimeError;
 
-    use super::{PluginListEntry, map_runtime_error, render_plugins_table};
+    use super::{
+        PluginListEntry, PluginSourceLabel, PluginStateLabel, map_runtime_error,
+        render_plugins_table,
+    };
     use crate::output::TextFormatter;
 
     #[test]
@@ -515,12 +574,18 @@ mod tests {
     #[test]
     fn plugins_table_aligns_plain_text_columns() {
         let plugins = vec![
-            plugin_entry("file", "builtin-file", "builtin", "enabled", "Read files"),
+            plugin_entry(
+                "file",
+                "builtin-file",
+                PluginSourceLabel::Builtin,
+                PluginStateLabel::Enabled,
+                "Read files",
+            ),
             plugin_entry(
                 "postgres",
                 "external-postgres",
-                "dynamic",
-                "disabled",
+                PluginSourceLabel::Dynamic,
+                PluginStateLabel::Disabled,
                 "Query databases",
             ),
         ];
@@ -540,8 +605,8 @@ mod tests {
         let plugins = vec![plugin_entry(
             "http",
             "builtin-http",
-            "builtin",
-            "enabled",
+            PluginSourceLabel::Builtin,
+            PluginStateLabel::Enabled,
             "HTTP helpers",
         )];
 
@@ -555,8 +620,8 @@ mod tests {
     fn plugin_entry(
         domain: &str,
         plugin_name: &str,
-        source: &'static str,
-        state: &'static str,
+        source: PluginSourceLabel,
+        state: PluginStateLabel,
         description: &str,
     ) -> PluginListEntry {
         PluginListEntry {

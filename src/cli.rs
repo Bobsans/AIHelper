@@ -5,6 +5,8 @@ use clap::{
     Arg, ArgAction, ArgGroup, ArgMatches, Command, ValueHint, error::ErrorKind,
     parser::ValueSource, value_parser,
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
     ai::{
@@ -80,7 +82,8 @@ pub enum CliParseResult {
     ExitSuccess,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum PluginStateFilter {
     Enabled,
     Disabled,

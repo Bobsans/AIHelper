@@ -764,7 +764,8 @@ impl PluginMetadata {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct RequiredTool {
     pub name: String,
     pub check_args: Vec<String>,
@@ -781,13 +782,15 @@ impl RequiredTool {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ManualExample {
     pub description: String,
     pub argv: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ManualCommand {
     pub name: String,
     pub summary: String,
@@ -795,7 +798,8 @@ pub struct ManualCommand {
     pub examples: Vec<ManualExample>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct PluginManual {
     pub plugin_name: String,
     pub domain: String,

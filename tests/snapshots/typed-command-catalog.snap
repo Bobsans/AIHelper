@@ -52,8 +52,8 @@
                 }
               },
               "required": [
-                "flag",
-                "description"
+                "description",
+                "flag"
               ],
               "type": "object"
             },
@@ -75,8 +75,8 @@
                       }
                     },
                     "required": [
-                      "description",
-                      "command"
+                      "command",
+                      "description"
                     ],
                     "type": "object"
                   },
@@ -93,10 +93,10 @@
                 }
               },
               "required": [
+                "examples",
                 "name",
                 "summary",
-                "usage",
-                "examples"
+                "usage"
               ],
               "type": "object"
             },
@@ -129,8 +129,8 @@
                             }
                           },
                           "required": [
-                            "description",
-                            "argv"
+                            "argv",
+                            "description"
                           ],
                           "type": "object"
                         },
@@ -147,10 +147,10 @@
                       }
                     },
                     "required": [
+                      "examples",
                       "name",
                       "summary",
-                      "usage",
-                      "examples"
+                      "usage"
                     ],
                     "type": "object"
                   },
@@ -173,11 +173,11 @@
                 }
               },
               "required": [
-                "plugin_name",
-                "domain",
-                "description",
                 "commands",
-                "notes"
+                "description",
+                "domain",
+                "notes",
+                "plugin_name"
               ],
               "type": "object"
             },
@@ -4143,7 +4143,6 @@
       "id": "plugins.list",
       "input_schema": {
         "additionalProperties": false,
-        "description": "Exactly one of domain or all=true is required.",
         "properties": {
           "state": {
             "description": "Optional enabled-state filter.",
@@ -4200,8 +4199,8 @@
                       }
                     },
                     "required": [
-                      "name",
                       "check_args",
+                      "name",
                       "reason"
                     ],
                     "type": "object"
@@ -4224,14 +4223,14 @@
                 }
               },
               "required": [
-                "plugin_name",
-                "domain",
-                "description",
                 "abi_version",
+                "description",
+                "domain",
+                "mcp_exposed",
+                "plugin_name",
                 "required_tools",
                 "source",
-                "state",
-                "mcp_exposed"
+                "state"
               ],
               "type": "object"
             },
@@ -5505,10 +5504,10 @@
                 }
               },
               "required": [
+                "description",
                 "id",
                 "kind",
-                "label",
-                "description"
+                "label"
               ],
               "type": "object"
             },

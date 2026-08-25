@@ -15,6 +15,7 @@ pub mod targets;
 
 use ah_plugin_api::PluginManual;
 use ah_runtime::PluginManager;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
@@ -463,8 +464,9 @@ fn global_options_docs() -> Vec<GlobalOptionDoc> {
     ]
 }
 
-#[derive(Debug, Serialize)]
-struct AiInfoOutput {
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AiInfoOutput {
     command: &'static str,
     domain_filter: Option<String>,
     global_options: Vec<GlobalOptionDoc>,
@@ -473,13 +475,15 @@ struct AiInfoOutput {
     plugins: Vec<PluginManual>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct GlobalOptionDoc {
     flag: &'static str,
     description: &'static str,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct HostCommandDoc {
     name: String,
     summary: String,
@@ -487,7 +491,8 @@ struct HostCommandDoc {
     examples: Vec<HostCommandExample>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct HostCommandExample {
     description: String,
     command: String,
