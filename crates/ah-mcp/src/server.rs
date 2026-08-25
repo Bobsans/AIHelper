@@ -31,7 +31,7 @@ use axum::{
     },
     http::{
         HeaderMap, HeaderValue, StatusCode,
-        header::{CACHE_CONTROL, HOST, ORIGIN, REFERRER_POLICY},
+        header::{ACCEPT, CACHE_CONTROL, CONTENT_SECURITY_POLICY, HOST, ORIGIN, REFERRER_POLICY},
     },
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -1374,7 +1374,13 @@ async fn secret_setup_form(
         ));
     };
     match service.form(&query.capability) {
-        Ok(form) => no_store(Html(render_secret_setup_form(&form)).into_response()),
+        Ok(form) => {
+            let nonce = page_nonce();
+            no_store_form(
+                Html(render_secret_setup_form(&form, &nonce)).into_response(),
+                &nonce,
+            )
+        }
         Err(error) => setup_error(error),
     }
 }
@@ -1413,6 +1419,13 @@ async fn secret_setup_submit(
         );
     };
     match service.submit(&query.capability, values) {
+        Ok(metadata) if wants_html(&headers) => {
+            let nonce = page_nonce();
+            no_store_form(
+                Html(render_secret_setup_success(&metadata, &nonce)).into_response(),
+                &nonce,
+            )
+        }
         Ok(metadata) => no_store(Json(metadata).into_response()),
         Err(error) => setup_error(error),
     }
@@ -1427,42 +1440,172 @@ fn setup_error(error: SecretSetupError) -> Response {
     control_error(status, error.code, error.message)
 }
 
-fn no_store(mut response: Response) -> Response {
+fn no_store(response: Response) -> Response {
+    no_store_with_referrer_policy(response, "no-referrer")
+}
+
+/// The setup pages are served with `same-origin` rather than `no-referrer`: under
+/// `no-referrer` a browser sends `Origin: null` on the form POST, which the local
+/// HTTP policy rejects. The page loads no third-party resources, so `same-origin`
+/// keeps the capability out of every referrer that leaves this server.
+///
+/// The nonce-based policy pins the page to its own inline style and script and
+/// blocks every outbound load, so nothing on a secret entry page can reach out.
+fn no_store_form(mut response: Response, nonce: &str) -> Response {
+    let policy = format!(
+        "default-src 'none'; style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; form-action 'self'; base-uri 'none'"
+    );
+    if let Ok(value) = HeaderValue::from_str(&policy) {
+        response
+            .headers_mut()
+            .insert(CONTENT_SECURITY_POLICY, value);
+    }
+    no_store_with_referrer_policy(response, "same-origin")
+}
+
+/// Single-use nonce so the inline style and script survive the page's own CSP.
+fn page_nonce() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
+fn no_store_with_referrer_policy(mut response: Response, policy: &'static str) -> Response {
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
         .headers_mut()
-        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+        .insert(REFERRER_POLICY, HeaderValue::from_static(policy));
     response
 }
 
-fn render_secret_setup_form(form: &SecretSetupForm) -> String {
+const SETUP_PAGE_STYLE: &str = "\
+*,::before,::after{box-sizing:border-box}\
+:root{color-scheme:light dark;\
+--bg:#f4f5f7;--card:#fff;--ink:#1b1f24;--muted:#5b6570;--line:#d8dde3;\
+--field:#fff;--accent:#2b6cb0;--accent-ink:#fff;--ok:#1f7a4d;--ok-bg:#e8f5ee}\
+@media (prefers-color-scheme:dark){:root{\
+--bg:#15181d;--card:#1e232a;--ink:#e8ecf1;--muted:#9aa5b1;--line:#333b45;\
+--field:#161a20;--accent:#4a90d9;--accent-ink:#0f1216;--ok:#63d19b;--ok-bg:#163024}}\
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
+padding:24px;background:var(--bg);color:var(--ink);\
+font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}\
+main{width:100%;max-width:26rem;background:var(--card);border:1px solid var(--line);\
+border-radius:12px;padding:28px}\
+h1{margin:0 0 4px;font-size:1.25rem;letter-spacing:-.01em}\
+.kind{display:inline-block;margin-bottom:20px;padding:2px 8px;border-radius:999px;\
+background:var(--bg);border:1px solid var(--line);color:var(--muted);\
+font-size:.75rem;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}\
+label{display:block;margin-bottom:16px;font-size:.8125rem;font-weight:600;color:var(--muted)}\
+input,textarea{display:block;width:100%;margin-top:6px;padding:9px 11px;\
+border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--ink);\
+font:inherit}\
+textarea{min-height:8rem;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;\
+font-size:.8125rem}\
+input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}\
+.optional{font-weight:400;text-transform:none}\
+button{width:100%;padding:10px 16px;border:0;border-radius:8px;\
+background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:600;cursor:pointer}\
+button:hover{filter:brightness(1.08)}\
+button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}\
+.done{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 12px;\
+border-radius:8px;background:var(--ok-bg);color:var(--ok);font-weight:600}\
+.done svg{flex:none}\
+dl{margin:0 0 20px;display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.875rem}\
+dt{color:var(--muted)}\
+dd{margin:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all}\
+.hint{margin:14px 0 0;font-size:.8125rem;color:var(--muted);text-align:center}\
+[hidden]{display:none}";
+
+fn setup_page(nonce: &str, title: &str, body: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<meta name=\"referrer\" content=\"same-origin\"><title>{}</title>\
+<style nonce=\"{}\">{SETUP_PAGE_STYLE}</style></head><body><main>{body}</main></body></html>",
+        html_escape(title),
+        html_escape(nonce),
+    )
+}
+
+fn render_secret_setup_form(form: &SecretSetupForm, nonce: &str) -> String {
     let fields = form
         .fields
         .iter()
         .map(|field| {
             let required = if field.optional { "" } else { " required" };
+            let label = if field.optional {
+                format!(
+                    "{} <span class=\"optional\">(optional)</span>",
+                    html_escape(field.label)
+                )
+            } else {
+                html_escape(field.label)
+            };
             if field.name == "private_key" {
                 format!(
-                    "<label>{}<textarea name=\"{}\" autocomplete=\"off\" spellcheck=\"false\"{required}></textarea></label>",
-                    html_escape(field.label),
+                    "<label>{label}<textarea name=\"{}\" autocomplete=\"off\" spellcheck=\"false\"{required}></textarea></label>",
                     html_escape(field.name),
                 )
             } else {
                 format!(
-                    "<label>{}<input type=\"password\" name=\"{}\" autocomplete=\"new-password\"{required}></label>",
-                    html_escape(field.label),
+                    "<label>{label}<input type=\"password\" name=\"{}\" autocomplete=\"new-password\"{required}></label>",
                     html_escape(field.name),
                 )
             }
         })
         .collect::<String>();
-    format!(
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\"><title>AIHelper secret setup</title><h1>Set up {}</h1><p>{}</p><form method=\"post\">{fields}<button type=\"submit\">Save</button></form></html>",
-        html_escape(&form.id),
-        html_escape(&form.kind),
+    setup_page(
+        nonce,
+        "AIHelper secret setup",
+        &format!(
+            "<h1>Set up {}</h1><span class=\"kind\">{}</span>\
+<form method=\"post\">{fields}<button type=\"submit\">Save</button></form>",
+            html_escape(&form.id),
+            html_escape(&form.kind),
+        ),
     )
+}
+
+fn render_secret_setup_success(metadata: &SecretSetupMetadata, nonce: &str) -> String {
+    let description = metadata
+        .description
+        .as_deref()
+        .map_or_else(String::new, |description| {
+            format!("<dt>Description</dt><dd>{}</dd>", html_escape(description))
+        });
+    setup_page(
+        nonce,
+        "AIHelper secret saved",
+        &format!(
+            "<p class=\"done\">\
+<svg width=\"18\" height=\"18\" viewBox=\"0 0 18 18\" fill=\"none\" stroke=\"currentColor\" \
+stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">\
+<path d=\"M3.5 9.5l3.5 3.5 7.5-8\"/></svg>Secret saved</p>\
+<h1>{}</h1><span class=\"kind\">{}</span>\
+<dl><dt>Label</dt><dd>{}</dd>{description}</dl>\
+<button type=\"button\" id=\"close\">Close</button>\
+<p class=\"hint\" id=\"hint\" hidden>This tab can be closed now.</p>\
+<script nonce=\"{}\">\
+document.getElementById('close').addEventListener('click',function(){{\
+window.close();\
+document.getElementById('hint').hidden=false;\
+}});\
+</script>",
+            html_escape(&metadata.id),
+            html_escape(&metadata.kind),
+            html_escape(&metadata.label),
+            html_escape(nonce),
+        ),
+    )
+}
+
+/// Browsers submitting the form get the confirmation page; every other caller
+/// keeps the documented redacted-metadata JSON.
+fn wants_html(headers: &HeaderMap) -> bool {
+    headers
+        .get(ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/html"))
 }
 
 fn html_escape(value: &str) -> String {
@@ -1689,6 +1832,13 @@ fn event_parameters(arguments: &JsonObject) -> Value {
 }
 
 fn validate_mcp_plaintext_auth(command: &str, arguments: &JsonObject) -> Result<(), CommandError> {
+    if let Some(domain) = forge_token_domain(command) {
+        return if arguments.contains_key("token") {
+            Err(mcp_plaintext_token_error(domain))
+        } else {
+            Ok(())
+        };
+    }
     if !command.starts_with("http.") {
         return Ok(());
     }
@@ -1722,6 +1872,32 @@ fn validate_mcp_plaintext_auth(command: &str, arguments: &JsonObject) -> Result<
         return Err(mcp_plaintext_auth_error());
     }
     Ok(())
+}
+
+/// GitHub and GitLab carry one opaque token argument; over MCP it must come from
+/// the vault instead of riding along in the tool call.
+fn forge_token_domain(command: &str) -> Option<&'static str> {
+    if command.starts_with("github.") {
+        Some("github")
+    } else if command.starts_with("gitlab.") {
+        Some("gitlab")
+    } else {
+        None
+    }
+}
+
+fn mcp_plaintext_token_error(domain: &'static str) -> CommandError {
+    CommandError::new(
+        Some(domain.to_owned()),
+        None,
+        "INVALID_ARGUMENT",
+        "Inline API tokens are not accepted over MCP",
+        format!(
+            "Store the token in the AH vault and pass its id through credentials.token, or let AIHelper use the host-bound {domain} environment variables"
+        ),
+        2,
+        false,
+    )
 }
 
 fn mcp_plaintext_auth_error() -> CommandError {
@@ -1795,7 +1971,7 @@ fn url_contains_userinfo(value: &str) -> bool {
 }
 
 fn redact_mcp_plaintext_auth(arguments: &mut JsonObject) {
-    for name in ["bearer", "basic"] {
+    for name in ["bearer", "basic", "token"] {
         if arguments.contains_key(name) {
             arguments.insert(
                 name.to_owned(),
@@ -2508,16 +2684,82 @@ mod tests {
     use super::{
         EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
         McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig,
-        REDACTED_MCP_VALUE, RISK_META_KEY, SecretSetupField, SecretSetupForm, ShutdownReader,
-        ShutdownTracker, event_parameters, extract_context, peer_generation_matches,
-        refresh_catalog_after_job, render_secret_setup_form, requires_explicit_cwd,
+        REDACTED_MCP_VALUE, RISK_META_KEY, SecretSetupField, SecretSetupForm, SecretSetupMetadata,
+        ShutdownReader, ShutdownTracker, event_parameters, extract_context,
+        peer_generation_matches, redact_mcp_plaintext_auth, refresh_catalog_after_job,
+        render_secret_setup_form, render_secret_setup_success, requires_explicit_cwd,
         run_check_outcome, spawn_best_effort_notification, validate_mcp_plaintext_auth,
-        wait_for_transport,
+        wait_for_transport, wants_html,
     };
+    use axum::http::{HeaderMap, HeaderValue, header::ACCEPT};
 
     #[test]
     fn private_key_setup_field_uses_a_multiline_textarea() {
-        let html = render_secret_setup_form(&SecretSetupForm {
+        let html = render_secret_setup_form(&ssh_key_form(), "test-nonce");
+
+        assert!(html.contains("<textarea name=\"private_key\""));
+        assert!(!html.contains("type=\"password\" name=\"private_key\""));
+        assert!(html.contains("<input type=\"password\" name=\"passphrase\""));
+        assert!(html.contains("(optional)"));
+    }
+
+    #[test]
+    fn setup_pages_carry_the_nonce_on_every_inline_block() {
+        let form = render_secret_setup_form(&ssh_key_form(), "form-nonce");
+        let success = render_secret_setup_success(
+            &SecretSetupMetadata {
+                id: "deployment-key".to_owned(),
+                kind: "ssh-key".to_owned(),
+                label: "Deployment key".to_owned(),
+                description: None,
+            },
+            "success-nonce",
+        );
+
+        assert!(form.contains("<style nonce=\"form-nonce\">"));
+        assert!(!form.contains("<script"));
+        assert!(success.contains("<style nonce=\"success-nonce\">"));
+        assert!(success.contains("<script nonce=\"success-nonce\">"));
+    }
+
+    #[test]
+    fn success_page_confirms_the_secret_and_offers_a_close_button() {
+        let html = render_secret_setup_success(
+            &SecretSetupMetadata {
+                id: "deployment-key".to_owned(),
+                kind: "ssh-key".to_owned(),
+                label: "Deployment <key>".to_owned(),
+                description: Some("Release runner".to_owned()),
+            },
+            "test-nonce",
+        );
+
+        assert!(html.contains("Secret saved"));
+        assert!(html.contains("id=\"close\""));
+        assert!(html.contains("window.close()"));
+        assert!(html.contains("Release runner"));
+        // Metadata is escaped, and the page never offers a way back to the form.
+        assert!(html.contains("Deployment &lt;key&gt;"));
+        assert!(!html.contains("<form"));
+    }
+
+    #[test]
+    fn only_browsers_receive_the_confirmation_page() {
+        let mut html_headers = HeaderMap::new();
+        html_headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("text/html,application/xhtml+xml"),
+        );
+        let mut json_headers = HeaderMap::new();
+        json_headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+
+        assert!(wants_html(&html_headers));
+        assert!(!wants_html(&json_headers));
+        assert!(!wants_html(&HeaderMap::new()));
+    }
+
+    fn ssh_key_form() -> SecretSetupForm {
+        SecretSetupForm {
             id: "deployment-key".to_owned(),
             kind: "ssh-key".to_owned(),
             fields: vec![
@@ -2532,11 +2774,7 @@ mod tests {
                     optional: true,
                 },
             ],
-        });
-
-        assert!(html.contains("<textarea name=\"private_key\""));
-        assert!(!html.contains("type=\"password\" name=\"private_key\""));
-        assert!(html.contains("<input type=\"password\" name=\"passphrase\""));
+        }
     }
 
     struct TypedPlugin;
@@ -3460,6 +3698,31 @@ mod tests {
             })),
         )
         .expect("vault credential ids remain allowed");
+    }
+
+    #[test]
+    fn mcp_rejects_inline_forge_tokens_but_keeps_credential_ids() {
+        for command in ["github.repo", "gitlab.project"] {
+            let error = validate_mcp_plaintext_auth(
+                command,
+                &arguments(json!({"token": "forge-token-sentinel"})),
+            )
+            .expect_err("inline tokens must be rejected over MCP");
+            let rendered = serde_json::to_string(&error).unwrap();
+            assert_eq!(error.code, "INVALID_ARGUMENT");
+            assert!(!rendered.contains("sentinel"));
+
+            validate_mcp_plaintext_auth(
+                command,
+                &arguments(json!({"credentials": {"token": "work-pat"}})),
+            )
+            .expect("vault credential ids remain allowed");
+        }
+
+        // Inline tokens stay redacted in the events recorded for the rejection.
+        let mut parameters = arguments(json!({"token": "event-token-sentinel"}));
+        redact_mcp_plaintext_auth(&mut parameters);
+        assert_eq!(parameters["token"], json!(REDACTED_MCP_VALUE));
     }
 
     #[test]

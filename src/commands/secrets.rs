@@ -308,6 +308,8 @@ fn prompt_kind_values(
             ("private_key", "SSH private key", false),
             ("passphrase", "SSH key passphrase (optional)", true),
         ],
+        SecretKind::GithubToken => &[("token", "GitHub personal access token", false)],
+        SecretKind::GitlabToken => &[("token", "GitLab personal access token", false)],
     };
     let mut values = BTreeMap::new();
     for (name, prompt, optional) in fields {

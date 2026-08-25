@@ -806,6 +806,14 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
 
     let form = client.get(&setup_url).send().unwrap();
     assert!(form.status().is_success());
+    // `no-referrer` would make browsers send `Origin: null` on the form POST,
+    // which the local HTTP policy rejects.
+    assert_eq!(
+        form.headers()
+            .get("referrer-policy")
+            .and_then(|value| value.to_str().ok()),
+        Some("same-origin")
+    );
     let form = form.text().unwrap();
     assert!(form.contains("name=\"password\""));
     assert!(!form.contains(&token));
@@ -813,12 +821,17 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
     let secret = "browser-form-secret";
     let submitted = client
         .post(&setup_url)
+        .header("Origin", &process.origin)
+        .header("Accept", "text/html,application/xhtml+xml")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(format!("password={secret}"))
         .send()
         .unwrap();
     assert!(submitted.status().is_success());
     let body = submitted.text().unwrap();
+    // A browser gets the confirmation page with a close control, never the secret.
+    assert!(body.contains("Secret saved"));
+    assert!(body.contains("id=\"close\""));
     assert!(body.contains("browser-db"));
     assert!(!body.contains(secret));
     assert!(!body.contains(&token));

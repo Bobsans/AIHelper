@@ -23,6 +23,8 @@ static DESCRIPTION_C: &[u8] = b"Ollama Local API plugin (dynamic)\0";
 
 mod typed;
 
+impl ah_plugin_api::BindResolvedSecrets for OllamaCli {}
+
 ah_plugin_api::define_plugin_entrypoint_v1!(
     plugin_name_c: PLUGIN_NAME_C,
     domain_c: DOMAIN_C,
@@ -837,6 +839,7 @@ mod tests {
 
     fn invoke_with_globals(argv: &[&str], globals: GlobalOptionsWire) -> InvocationResponse {
         let request = InvocationRequest {
+            resolved_secrets: Default::default(),
             domain: DOMAIN.to_owned(),
             argv: argv.iter().map(|item| (*item).to_owned()).collect(),
             globals,

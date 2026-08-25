@@ -16,10 +16,11 @@ Set `NO_COLOR` to disable colors explicitly.
 
 The plugin resolves a token in this order:
 
-1. `--token <TOKEN>`
-2. `GITLAB_TOKEN`
-3. `GL_TOKEN`
-4. `git credential fill` for the selected host
+1. the `token` credential slot, when a vault secret id is selected
+2. `--token <TOKEN>`
+3. `GITLAB_TOKEN`
+4. `GL_TOKEN`
+5. `git credential fill` for the `--api-url` host
 
 Public project reads may work without a token. Creating releases and reading private projects require a token with suitable GitLab permissions.
 
@@ -30,6 +31,44 @@ ah gitlab [--project group/project|PROJECT_ID] [--remote origin] [--host https:/
 ```
 
 If `--project` is omitted, the plugin tries to parse a GitLab project path from `git remote get-url origin`.
+
+Authentication uses `--token`, then `GITLAB_TOKEN`, then `GL_TOKEN`, then the Git
+credential helper.
+
+A vault credential is the preferred source over MCP and is available on every
+`gitlab.*` command through the `token` slot:
+
+```bash
+ah secrets add work-gitlab --kind gitlab-token --label "Work PAT" --open
+```
+
+It works the same way on the direct CLI:
+
+```bash
+ah gitlab repo --credential token=work-gitlab
+```
+
+Agents pass only the id, `{"credentials": {"token": "work-gitlab"}}`. An inline `token`
+argument is rejected over MCP with `INVALID_ARGUMENT`; `--token` remains
+available on the CLI. A vault credential and an inline `--token` are mutually
+exclusive. Like `--token`, a vault credential reaches whatever https host you
+name, since the caller selected both the credential and the destination.
+
+Ambient credentials — the two environment variables and the credential helper —
+are host-bound. They are sent only to `gitlab.com`, to the host of the detected
+git remote, or to a loopback host. Pointing `--api-url` at any other host silently
+drops them, so a redirected endpoint cannot collect your GitLab credentials. The
+token is bound to the `--api-url` host at resolution and re-checked on every
+request, so a `--graphql-url` on a different host never receives it. Pass
+`--use-git-credential=false` to skip the helper entirely.
+
+An explicit `--token` reaches whatever https host you name, since you supplied
+both the credential and the destination. That is the escape hatch for a
+self-managed host the rules above do not cover — for example when `--project` is
+given explicitly, so no remote is detected: `--token "$GITLAB_TOKEN"`.
+
+No token is ever sent to a cleartext `http://` URL unless the host is loopback;
+that combination fails with `GITLAB_INSECURE_TOKEN_TARGET`.
 
 Use `--host` for self-managed GitLab installations:
 

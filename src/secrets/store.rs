@@ -240,6 +240,7 @@ fn validate(secret: &NewSecret) -> Result<(), VaultError> {
         SecretKind::Postgres => ["password"].into_iter().collect(),
         SecretKind::HttpBasic => ["username", "password"].into_iter().collect(),
         SecretKind::SshKey => ["private_key"].into_iter().collect(),
+        SecretKind::GithubToken | SecretKind::GitlabToken => ["token"].into_iter().collect(),
     };
     let allowed: BTreeSet<&str> = match secret.kind {
         SecretKind::SshKey => ["private_key", "passphrase"].into_iter().collect(),
@@ -440,6 +441,48 @@ mod tests {
             .unwrap();
 
         assert_eq!(store.list_metadata().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn forge_token_kinds_require_exactly_one_token_field() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = VaultStore::at(directory.path(), Arc::new(FixedKey([11; 32])));
+        store.initialize().unwrap();
+
+        for kind in [SecretKind::GithubToken, SecretKind::GitlabToken] {
+            let metadata = store
+                .put(NewSecret::api_token(
+                    kind.as_str(),
+                    "Work PAT",
+                    kind,
+                    "forge-token-value",
+                ))
+                .unwrap();
+            assert_eq!(metadata.kind, kind);
+            assert_eq!(
+                store.resolve(kind.as_str()).unwrap().values.get("token"),
+                Some(&"forge-token-value".to_owned())
+            );
+
+            // No extra field is accepted, and the token itself is mandatory.
+            for invalid in [
+                NewSecret::new(
+                    format!("{kind}-extra"),
+                    "Extra",
+                    kind,
+                    BTreeMap::from([
+                        ("token".to_owned(), "forge-token-value".to_owned()),
+                        ("username".to_owned(), "alice".to_owned()),
+                    ]),
+                ),
+                NewSecret::new(format!("{kind}-missing"), "Missing", kind, BTreeMap::new()),
+            ] {
+                assert_eq!(
+                    store.put(invalid).unwrap_err().code(),
+                    "VAULT_INVALID_SECRET"
+                );
+            }
+        }
     }
 
     #[test]

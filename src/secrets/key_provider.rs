@@ -21,7 +21,8 @@ pub struct ExplicitMasterKey([u8; 32]);
 
 impl ExplicitMasterKey {
     pub fn parse(value: String) -> Result<Self, VaultError> {
-        if value.len() != 64 {
+        // `from_str_radix` accepts a leading sign, so hex digits are checked first.
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(VaultError::key_unavailable());
         }
         let mut key = [0_u8; 32];
@@ -116,5 +117,20 @@ mod tests {
 
         assert_eq!(error.code(), "VAULT_KEY_UNAVAILABLE");
         assert!(!error.to_string().contains(&value));
+    }
+
+    #[test]
+    fn explicit_key_rejects_signed_hex_pairs() {
+        // `u8::from_str_radix` accepts a leading sign, which would silently map
+        // distinct env values onto the same key.
+        let signed = format!("+f{}", "0".repeat(62));
+
+        let error = match ExplicitMasterKey::parse(signed) {
+            Err(error) => error,
+            Ok(_) => panic!("signed hex pairs must be rejected"),
+        };
+
+        assert_eq!(error.code(), "VAULT_KEY_UNAVAILABLE");
+        assert!(ExplicitMasterKey::parse("aF".repeat(32)).is_ok());
     }
 }

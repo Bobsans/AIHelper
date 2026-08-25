@@ -319,6 +319,16 @@ fn setup_fields(kind: SecretKind) -> Vec<SecretSetupField> {
                 optional: true,
             },
         ],
+        SecretKind::GithubToken => vec![SecretSetupField {
+            name: "token",
+            label: "GitHub personal access token",
+            optional: false,
+        }],
+        SecretKind::GitlabToken => vec![SecretSetupField {
+            name: "token",
+            label: "GitLab personal access token",
+            optional: false,
+        }],
     }
 }
 

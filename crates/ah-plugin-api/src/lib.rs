@@ -115,37 +115,28 @@ pub struct InvocationRequest {
     pub domain: String,
     pub argv: Vec<String>,
     pub globals: GlobalOptionsWire,
+    /// Credentials the host resolved for `--credential SLOT=ID`, keyed by slot.
+    /// The plugin validates that each value matches a slot it actually accepts.
+    #[serde(default)]
+    pub resolved_secrets: BTreeMap<String, ResolvedSecret>,
 }
 
-/// Public, secret-free typed invocation produced by a plugin's own CLI parser.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CliTypedInvocation {
-    pub command: String,
-    pub arguments: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CliTypedConversion {
-    pub invocation: Option<CliTypedInvocation>,
-    pub response: Option<InvocationResponse>,
-}
-
-impl CliTypedConversion {
-    pub fn converted(command: impl Into<String>, arguments: serde_json::Value) -> Self {
+impl InvocationRequest {
+    pub fn new(domain: impl Into<String>, argv: Vec<String>, globals: GlobalOptionsWire) -> Self {
         Self {
-            invocation: Some(CliTypedInvocation {
-                command: command.into(),
-                arguments,
-            }),
-            response: None,
+            domain: domain.into(),
+            argv,
+            globals,
+            resolved_secrets: BTreeMap::new(),
         }
     }
 
-    pub fn response(response: InvocationResponse) -> Self {
-        Self {
-            invocation: None,
-            response: Some(response),
-        }
+    pub fn with_resolved_secrets(
+        mut self,
+        resolved_secrets: BTreeMap<String, ResolvedSecret>,
+    ) -> Self {
+        self.resolved_secrets = resolved_secrets;
+        self
     }
 }
 
@@ -828,8 +819,6 @@ pub type AhPluginCommandCatalogJsonV1 = unsafe extern "C" fn() -> *mut c_char;
 pub type AhPluginInvokeCommandJsonV1 =
     unsafe extern "C" fn(request_json: *const c_char) -> *mut c_char;
 pub type AhPluginCancelCommandV1 = unsafe extern "C" fn(request_id: *const c_char) -> i32;
-pub type AhPluginArgvToTypedJsonV1 =
-    unsafe extern "C" fn(request_json: *const c_char) -> *mut c_char;
 
 pub fn to_c_string_ptr(value: &str) -> *const c_char {
     let sanitized = value.replace('\0', "\\0");
@@ -852,9 +841,30 @@ pub unsafe fn free_c_string_ptr(value: *mut c_char) {
     let _ = unsafe { CString::from_raw(value) };
 }
 
+/// Lets one parsed CLI model accept the credentials the host resolved for
+/// `--credential SLOT=ID`. Every plugin implements this once; the default
+/// rejects credentials rather than silently dropping them, so a domain only
+/// accepts a slot it actually knows.
+pub trait BindResolvedSecrets: Sized {
+    #[allow(clippy::result_large_err)]
+    fn bind_resolved_secrets(
+        &mut self,
+        secrets: &BTreeMap<String, ResolvedSecret>,
+    ) -> Result<(), InvocationResponse> {
+        match secrets.keys().next() {
+            None => Ok(()),
+            Some(slot) => Err(InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                format!("this command does not accept the '{slot}' credential slot"),
+            )),
+        }
+    }
+}
+
 /// Converts a raw invocation request into a typed response using the plugin-local
 /// argument parser and command executor.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[allow(clippy::result_large_err)]
 pub fn invoke_request_with_parser<TArgs, TParse, TExecute>(
     expected_domain: &str,
     request_json: *const c_char,
@@ -862,6 +872,7 @@ pub fn invoke_request_with_parser<TArgs, TParse, TExecute>(
     execute: TExecute,
 ) -> InvocationResponse
 where
+    TArgs: BindResolvedSecrets,
     TParse: Fn(&[String]) -> Result<TArgs, InvocationResponse>,
     TExecute: Fn(TArgs, &GlobalOptionsWire) -> InvocationResponse,
 {
@@ -900,10 +911,14 @@ where
         Err(error) => return error.with_error_domain(expected_domain),
     };
 
-    let parsed = match parse_args(&normalized.argv) {
+    let mut parsed = match parse_args(&normalized.argv) {
         Ok(value) => value,
         Err(response) => return response.with_error_domain(expected_domain),
     };
+
+    if let Err(response) = parsed.bind_resolved_secrets(&request.resolved_secrets) {
+        return response.with_error_domain(expected_domain);
+    }
 
     execute(parsed, &normalized.globals).with_error_domain(expected_domain)
 }
@@ -917,6 +932,7 @@ pub fn invoke_request_with_parser_catch_unwind<TArgs, TParse, TExecute>(
     execute: TExecute,
 ) -> InvocationResponse
 where
+    TArgs: BindResolvedSecrets,
     TParse: Fn(&[String]) -> Result<TArgs, InvocationResponse>,
     TExecute: Fn(TArgs, &GlobalOptionsWire) -> InvocationResponse,
 {
@@ -1512,14 +1528,12 @@ mod tests {
         assert_eq!(normalized.globals, base_globals());
     }
 
+    impl BindResolvedSecrets for () {}
+
     #[test]
     #[allow(clippy::result_large_err)]
     fn plugin_parser_panic_becomes_structured_error() {
-        let request = InvocationRequest {
-            domain: "test".to_owned(),
-            argv: vec!["run".to_owned()],
-            globals: base_globals(),
-        };
+        let request = InvocationRequest::new("test", vec!["run".to_owned()], base_globals());
         let raw = CString::new(serde_json::to_string(&request).expect("request should serialize"))
             .expect("request should be a cstring");
         let response = invoke_request_with_parser_catch_unwind(
@@ -1543,11 +1557,7 @@ mod tests {
     #[test]
     #[allow(clippy::result_large_err)]
     fn plugin_executor_panic_does_not_poison_later_invocation() {
-        let request = InvocationRequest {
-            domain: "test".to_owned(),
-            argv: vec!["run".to_owned()],
-            globals: base_globals(),
-        };
+        let request = InvocationRequest::new("test", vec!["run".to_owned()], base_globals());
         let raw = CString::new(serde_json::to_string(&request).expect("request should serialize"))
             .expect("request should be a cstring");
         let panic_response = invoke_request_with_parser_catch_unwind(

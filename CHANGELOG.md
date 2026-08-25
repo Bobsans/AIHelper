@@ -7,6 +7,96 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-25
+
+### Added
+
+- `ah ai install`, `ah ai uninstall`, and `ah ai status` wire AIHelper into an
+  AI coding agent in one step: they register the `aihelper` MCP server and
+  install a managed rules block that points at `ah ai info --json`. Targets are
+  `claude`, `codex`, `gemini`, `cursor`, and `copilot`, with `--scope`,
+  `--transport <stdio|http|managed>`, `--url`, `--mcp-only`, `--rules-only`,
+  `--yes`, and `--dry-run`. Run on a terminal without flags, install asks for
+  the scope, the components, and the transport, then confirms a summary before
+  changing anything; any flag, a pipe, `--json`, or `--quiet` takes the
+  documented defaults instead.
+- Registration is delegated to `claude mcp add`, `codex mcp add`, and
+  `gemini mcp add`, so AIHelper never rewrites an agent configuration that may
+  hold unrelated credentials. Cursor and Copilot have no such CLI, so their JSON
+  configurations are merged in place, preserving every other server and key.
+  Only loopback MCP endpoints are accepted.
+- `ah ai install --transport managed` resolves the endpoint from
+  `ah mcp service status` and installs or starts the Windows managed service
+  when needed. A drifted registration is reported rather than repaired, and the
+  service is never provisioned implicitly: a script must ask for it explicitly.
+- `ah ai install` and `ah ai uninstall` also remove a registration left under
+  the previous `ah` server name, so an upgrade does not leave an agent holding
+  two identical servers.
+
+- `--credential SLOT=ID` now works on the direct CLI for every domain whose
+  command catalog declares a secret slot, including `github` and `gitlab`. The
+  host resolves the mapping and passes the values in
+  `InvocationRequest::resolved_secrets`; the plugin binds them by implementing
+  the new `BindResolvedSecrets` trait, whose default rejects unknown slots.
+- Vault credentials for the GitHub and GitLab plugins. New secret kinds
+  `github-token` and `gitlab-token` hold a single `token` field, and every
+  `github.*` and `gitlab.*` command declares an optional `token` credential slot,
+  so an agent passes `{"credentials": {"token": "work-github"}}` instead of the
+  token itself. A vault credential and an inline `--token` are mutually
+  exclusive.
+- The protected browser setup pages are styled, responsive, and follow the
+  system light or dark theme. A successful browser submission now renders a
+  confirmation page with the saved redacted metadata and a Close button instead
+  of raw JSON; callers that do not accept `text/html` keep the JSON response.
+  Both pages carry `Content-Security-Policy: default-src 'none'` with a
+  per-response nonce for their inline style and script.
+
+### Changed
+
+- The CLI and MCP credential paths were unified. The unreleased
+  `ah_plugin_argv_to_typed_json_v1` sidecar ABI, `CliTypedInvocation`,
+  `CliTypedConversion`, and the per-plugin CLI-to-typed converters are gone; a
+  credentialed CLI invocation now runs the plugin's normal argv path instead of
+  being rerouted through the typed executor. Dynamic plugins must implement
+  `BindResolvedSecrets` for their parsed CLI model.
+- MCP rejects an inline `token` argument for `github.*` and `gitlab.*` with
+  `INVALID_ARGUMENT`, matching the existing rule for inline HTTP credentials.
+  Callers must use the `token` credential slot. The `--token` flag and the
+  `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, and `GL_TOKEN` environment
+  variables are unaffected for direct CLI use.
+- GitHub and GitLab ambient credentials are bound to the destination host.
+  `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `GL_TOKEN`, and the Git credential
+  helper now reach only the default API host, the detected git remote host, or a
+  loopback host. Any other `--api-url` needs an explicit `--token`.
+- The Git credential helper is queried for the host named by `--api-url` instead
+  of a fixed host. GitLab additionally requires `--api-url` and `--graphql-url`
+  to share one https host before querying the helper.
+
+### Fixed
+
+- Saving a secret from the protected browser setup form failed with
+  `LOCAL_REQUEST_REJECTED`. The form was served with `Referrer-Policy:
+  no-referrer`, under which browsers send `Origin: null` on the form POST, which
+  the local HTTP policy rejects. The form now uses `same-origin`.
+- GitHub and GitLab refuse to send any token to a cleartext `http://` API URL
+  outside loopback, failing with `GITHUB_INSECURE_TOKEN_TARGET` or
+  `GITLAB_INSECURE_TOKEN_TARGET`. GitLab also withholds the token from a
+  `--graphql-url` that resolves to another host.
+- `--credential` is recognized only before the `--` separator, so a literal
+  value after `--` reaches the plugin unchanged.
+- Secret values that begin with `-` are redacted from command logs instead of
+  being recorded verbatim.
+- `AH_VAULT_MASTER_KEY` rejects non-hexadecimal characters instead of accepting
+  signed pairs such as `+f`.
+- The Git credential helper child process is always reaped, and its output is
+  drained while AIHelper waits, so a slow or chatty helper cannot leave a stray
+  process or stall on a full pipe.
+- `ah ai install` rejects malformed, authenticated, non-HTTP, non-loopback, and
+  non-`/mcp` endpoints, and restores the previous CLI-managed registration when
+  a replacement fails.
+- PostgreSQL `tool.*` commands reject database credentials instead of resolving
+  and silently ignoring them.
+
 ## [1.3.2] - 2026-08-19
 
 ### Fixed

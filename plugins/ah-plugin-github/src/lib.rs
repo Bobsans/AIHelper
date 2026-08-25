@@ -4,7 +4,7 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Child, Output, Stdio},
     time::{Duration, Instant},
 };
 
@@ -26,6 +26,7 @@ const DOMAIN: &str = "github";
 const PLUGIN_NAME: &str = "external-github";
 const DESCRIPTION: &str = "GitHub Releases and Actions plugin (dynamic)";
 const DEFAULT_API_URL: &str = "https://api.github.com";
+const DEFAULT_API_AUTHORITY: &str = "api.github.com";
 const DEFAULT_REMOTE: &str = "origin";
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_WAIT_INTERVAL_SECS: u64 = 15;
@@ -52,6 +53,27 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     typed_execute_fn: typed::invoke,
     typed_cancel_fn: typed::cancel,
 );
+
+impl ah_plugin_api::BindResolvedSecrets for GithubCli {
+    fn bind_resolved_secrets(
+        &mut self,
+        secrets: &std::collections::BTreeMap<String, ah_plugin_api::ResolvedSecret>,
+    ) -> Result<(), InvocationResponse> {
+        if let Some(token) = typed::token_from_resolved_secrets(secrets)
+            .map_err(|error| error.with_error_domain(DOMAIN))?
+        {
+            if self.connection.token.is_some() {
+                return Err(InvocationResponse::error(
+                    "INVALID_ARGUMENT",
+                    "GitHub token credential conflicts with an inline --token",
+                )
+                .with_error_domain(DOMAIN));
+            }
+            self.connection.token = Some(token);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "github", about = "GitHub release and workflow helpers")]
@@ -1513,7 +1535,7 @@ fn get_run(
 fn github_context(args: &GithubConnectionArgs) -> Result<GithubContext, InvocationResponse> {
     let api_url = normalize_api_url(&args.api_url)?;
     let (repo, remote_url) = resolve_repo(args)?;
-    let token = resolve_token(args);
+    let token = resolve_token(args, &api_url, remote_url.as_deref())?;
     let client = Client::builder()
         .timeout(Duration::from_secs(args.timeout_secs.max(1)))
         .redirect(reqwest::redirect::Policy::limited(10))
@@ -1631,19 +1653,115 @@ fn normalize_api_url(value: &str) -> Result<String, InvocationResponse> {
     Ok(normalized)
 }
 
-fn resolve_token(args: &GithubConnectionArgs) -> Option<String> {
-    args.token
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| env_token("GITHUB_TOKEN"))
+fn resolve_token(
+    args: &GithubConnectionArgs,
+    api_url: &str,
+    remote_url: Option<&str>,
+) -> Result<Option<String>, InvocationResponse> {
+    let explicit = args.token.clone().filter(|value| !value.trim().is_empty());
+    let Some(authority) = token_target_authority(api_url) else {
+        // Cleartext off-box: an explicit token means the caller meant to
+        // authenticate, so fail loudly instead of leaking it.
+        return match explicit {
+            Some(_) => Err(insecure_token_target()),
+            None => Ok(None),
+        };
+    };
+    if let Some(token) = explicit {
+        return Ok(Some(token));
+    }
+    if !is_ambient_token_target(&authority, remote_url) {
+        return Ok(None);
+    }
+    Ok(env_token("GITHUB_TOKEN")
         .or_else(|| env_token("GH_TOKEN"))
         .or_else(|| {
             if args.use_git_credential {
-                git_credential_token()
+                git_credential_token(&credential_authority(api_url)?)
             } else {
                 None
             }
-        })
+        }))
+}
+
+fn insecure_token_target() -> InvocationResponse {
+    InvocationResponse::error(
+        "GITHUB_INSECURE_TOKEN_TARGET",
+        "refusing to send a token to a cleartext --api-url; use https or a loopback host",
+    )
+}
+
+/// Authority a caller-supplied token may reach: https anywhere, or cleartext only
+/// on loopback, which cannot leave the machine.
+fn token_target_authority(api_url: &str) -> Option<String> {
+    https_authority(api_url).or_else(|| {
+        let authority = url_authority(api_url, "http://")?;
+        is_loopback_authority(&authority).then_some(authority)
+    })
+}
+
+/// Ambient credentials (environment variables, the Git credential helper) reach
+/// only GitHub itself, the detected remote's host, or loopback, so a redirected
+/// `--api-url` cannot collect them. Other hosts need an explicit `--token`.
+fn is_ambient_token_target(authority: &str, remote_url: Option<&str>) -> bool {
+    if authority == DEFAULT_API_AUTHORITY
+        || authority == "github.com"
+        || is_loopback_authority(authority)
+    {
+        return true;
+    }
+    remote_url
+        .and_then(remote_authority)
+        .is_some_and(|remote| remote == authority)
+}
+
+/// Binds the credential helper lookup to the host that will receive the token,
+/// so a redirected `--api-url` can never collect GitHub credentials.
+fn credential_authority(api_url: &str) -> Option<String> {
+    let authority = https_authority(api_url)?;
+    Some(if authority == DEFAULT_API_AUTHORITY {
+        "github.com".to_owned()
+    } else {
+        authority
+    })
+}
+
+fn https_authority(url: &str) -> Option<String> {
+    url_authority(url, "https://")
+}
+
+fn url_authority(url: &str, scheme: &str) -> Option<String> {
+    let remainder = url.trim().strip_prefix(scheme)?;
+    let authority = remainder.split(['/', '?', '#']).next()?;
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+fn is_loopback_authority(authority: &str) -> bool {
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split(']').next() == Some("::1");
+    }
+    matches!(
+        authority.split(':').next().unwrap_or(authority),
+        "127.0.0.1" | "localhost"
+    )
+}
+
+/// Extracts the host from either URL syntax or the scp-like `git@host:path` form.
+fn remote_authority(remote: &str) -> Option<String> {
+    let trimmed = remote.trim();
+    for scheme in ["https://", "http://", "ssh://", "git+ssh://", "git://"] {
+        if let Some(authority) = url_authority(trimmed, scheme) {
+            return Some(authority);
+        }
+    }
+    let (authority, _) = trimmed.split_once(':')?;
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    (!host.is_empty() && !host.contains('/')).then(|| host.to_ascii_lowercase())
 }
 
 fn env_token(name: &str) -> Option<String> {
@@ -1653,7 +1771,7 @@ fn env_token(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn git_credential_token() -> Option<String> {
+fn git_credential_token(host: &str) -> Option<String> {
     let mut child = noninteractive_command("git")
         .args(["credential", "fill"])
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -1662,13 +1780,14 @@ fn git_credential_token() -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(b"protocol=https\nhost=github.com\n\n")
-            .ok()?;
-    }
+    let written = match child.stdin.take() {
+        Some(mut stdin) => stdin
+            .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
+            .is_ok(),
+        None => false,
+    };
     let output = wait_for_credential_child(child, GIT_CREDENTIAL_TIMEOUT)?;
-    if !output.status.success() {
+    if !written || !output.status.success() {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1685,15 +1804,30 @@ fn git_credential_token() -> Option<String> {
 
 fn wait_for_credential_child(mut child: Child, timeout: Duration) -> Option<Output> {
     let deadline = Instant::now().checked_add(timeout)?;
-    while child.try_wait().ok()?.is_none() {
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
+    let stdout = child.stdout.take();
+    std::thread::scope(|scope| {
+        // Drains stdout while polling so a chatty helper cannot fill the pipe and stall.
+        let reader = scope.spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(mut stdout) = stdout {
+                let _ = stdout.read_to_end(&mut buffer);
+            }
+            buffer
+        });
+        while child.try_wait().ok()?.is_none() {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    child.wait_with_output().ok()
+        Some(Output {
+            status: child.wait().ok()?,
+            stdout: reader.join().ok()?,
+            stderr: Vec::new(),
+        })
+    })
 }
 
 fn github_json<T>(
@@ -2411,6 +2545,8 @@ fn plugin_manual() -> PluginManual {
             "GitHub-specific features live in this dynamic plugin; local Git commands stay in `ah git`.".to_owned(),
             "Repository defaults to GitHub owner/repo parsed from `origin`; override with --repo OWNER/REPO.".to_owned(),
             "Authentication checks --token, GITHUB_TOKEN, GH_TOKEN, then the Git credential helper; pass --use-git-credential=false to skip the helper.".to_owned(),
+            "GITHUB_TOKEN, GH_TOKEN and the credential helper reach only GitHub itself, the detected remote host, or loopback; any other --api-url needs an explicit --token.".to_owned(),
+            "Tokens are never sent to a cleartext --api-url unless the host is loopback.".to_owned(),
             "Use global --json for stable machine-readable output and --limit to cap runs/log matches.".to_owned(),
             "Run logs default to an 8 MiB archive budget and 32 MiB expanded budget; override with command-local max byte flags.".to_owned(),
         ],
@@ -2430,6 +2566,7 @@ mod tests {
         collections::HashMap,
         io::{BufRead, BufReader},
         net::{TcpListener, TcpStream},
+        process::Command,
         sync::{Arc, Mutex},
     };
 
@@ -2555,6 +2692,105 @@ mod tests {
             .expect("the default credential lookup must be opt-out capable");
 
         assert!(!cli.connection.use_git_credential);
+    }
+
+    #[test]
+    fn ambient_tokens_reach_only_github_loopback_or_the_detected_remote() {
+        let remote = Some("git@ghe.corp.example:owner/repo.git");
+
+        assert!(is_ambient_token_target("api.github.com", None));
+        assert!(is_ambient_token_target("github.com", None));
+        assert!(is_ambient_token_target("127.0.0.1:8080", None));
+        assert!(is_ambient_token_target("ghe.corp.example", remote));
+        assert!(is_ambient_token_target(
+            "ghe.corp.example",
+            Some("https://ghe.corp.example/owner/repo.git")
+        ));
+
+        // A redirected --api-url is never trusted with an ambient credential.
+        assert!(!is_ambient_token_target("attacker.example", None));
+        assert!(!is_ambient_token_target("attacker.example", remote));
+        assert!(!is_ambient_token_target("ghe.corp.example", None));
+    }
+
+    #[test]
+    fn tokens_travel_only_over_https_or_loopback() {
+        assert_eq!(
+            token_target_authority("https://ghe.corp.example/api/v3").as_deref(),
+            Some("ghe.corp.example")
+        );
+        assert_eq!(
+            token_target_authority("http://127.0.0.1:8080").as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(
+            token_target_authority("http://localhost:8080").as_deref(),
+            Some("localhost:8080")
+        );
+        assert_eq!(token_target_authority("http://ghe.corp.example"), None);
+    }
+
+    #[test]
+    fn explicit_token_to_a_cleartext_host_is_refused() {
+        let mut args = connection_args("http://ghe.corp.example");
+        args.token = Some("explicit-token".to_owned());
+
+        let error = resolve_token(&args, &args.api_url.clone(), None)
+            .expect_err("a cleartext destination must not receive a token");
+
+        assert_eq!(
+            error.error_code.as_deref(),
+            Some("GITHUB_INSECURE_TOKEN_TARGET")
+        );
+        assert!(!format!("{error:?}").contains("explicit-token"));
+    }
+
+    #[test]
+    fn explicit_token_still_reaches_a_caller_chosen_https_host() {
+        // The caller supplied both the credential and the destination, so only
+        // the cleartext rule applies to it.
+        let mut args = connection_args("https://ghe.corp.example/api/v3");
+        args.token = Some("explicit-token".to_owned());
+
+        let token = resolve_token(&args, &args.api_url.clone(), None).unwrap();
+
+        assert_eq!(token.as_deref(), Some("explicit-token"));
+    }
+
+    fn connection_args(api_url: &str) -> GithubConnectionArgs {
+        GithubConnectionArgs {
+            repo: None,
+            remote: DEFAULT_REMOTE.to_owned(),
+            api_url: api_url.to_owned(),
+            token: None,
+            use_git_credential: false,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            cwd: None,
+        }
+    }
+
+    #[test]
+    fn credential_lookup_is_bound_to_the_api_url_host() {
+        assert_eq!(
+            credential_authority("https://api.github.com").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            credential_authority("https://ghe.corp.example/api/v3").as_deref(),
+            Some("ghe.corp.example")
+        );
+        for redirected in [
+            "https://attacker.example/api/v3",
+            "https://api.github.com@attacker.example/api/v3",
+        ] {
+            assert_ne!(
+                credential_authority(redirected).as_deref(),
+                Some("github.com"),
+                "{redirected}"
+            );
+        }
+        assert_eq!(credential_authority("http://api.github.com"), None);
+        assert_eq!(credential_authority("https://"), None);
     }
 
     #[test]
@@ -3347,6 +3583,7 @@ mod tests {
             argv.splice(0..0, ["--token".to_owned(), "test-token".to_owned()]);
         }
         let request = InvocationRequest {
+            resolved_secrets: Default::default(),
             domain: DOMAIN.to_owned(),
             argv,
             globals: GlobalOptionsWire {

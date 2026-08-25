@@ -29,8 +29,6 @@ Dynamic plugins must expose symbol:
   - `ah_plugin_command_catalog_json_v1`
   - `ah_plugin_invoke_command_json_v1`
   - `ah_plugin_cancel_command_v1`
-- optional CLI-to-typed adapter:
-  - `ah_plugin_argv_to_typed_json_v1`
 
 Entry returns pointer to:
 
@@ -52,13 +50,33 @@ Optional symbol behavior:
 
 The host validates `abi_version` against `AH_PLUGIN_ABI_VERSION`.
 
-`ah_plugin_argv_to_typed_json_v1` is an additive sidecar. It accepts the normal
-`InvocationRequest`, runs the plugin-owned argument parser, and returns a
-secret-free `CliTypedInvocation` (stable command id plus public JSON arguments).
-The host may then attach credential IDs, resolve them through its configured
-`SecretResolver`, and call the existing typed executor. Plugins without this
-symbol retain their legacy invocation behavior and remain load-compatible.
-Never resolve a vault entry or return plaintext from this adapter.
+`--credential SLOT=ID` uses one mechanism on both the CLI and MCP paths. The
+host resolves each mapping through its configured `SecretResolver` and delivers
+the values in `InvocationRequest::resolved_secrets`, keyed by slot; the argv the
+plugin parses never contains a credential. `--credential` is accepted only for a
+domain whose command catalog declares a `SecretSlot`, so no host-side allowlist
+needs updating when a plugin gains one.
+
+A plugin binds those values by implementing `BindResolvedSecrets` for its parsed
+CLI model, which the entrypoint macro calls between parsing and execution:
+
+```rust
+impl ah_plugin_api::BindResolvedSecrets for MyCli {
+    fn bind_resolved_secrets(
+        &mut self,
+        secrets: &BTreeMap<String, ResolvedSecret>,
+    ) -> Result<(), InvocationResponse> {
+        self.connection.token = token_from_resolved_secrets(secrets)?;
+        Ok(())
+    }
+}
+```
+
+The default implementation rejects every slot, so a plugin that has not opted in
+fails loudly instead of silently dropping a credential. Validate the slot name
+and the secret kind in this method: the host resolves the id but does not know
+which command the argv selects. A plugin with no credential slots implements the
+trait with an empty body.
 
 Typed plugins must advertise `typed_commands_v1` in compatibility metadata.
 The catalog declares one `CommandDescriptor` per operation with object-root

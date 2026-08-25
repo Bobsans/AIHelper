@@ -16,10 +16,11 @@ to disable colors explicitly.
 
 The plugin resolves a token in this order:
 
-1. `--token <TOKEN>`
-2. `GITHUB_TOKEN`
-3. `GH_TOKEN`
-4. `git credential fill` for `github.com`
+1. the `token` credential slot, when a vault secret id is selected
+2. `--token <TOKEN>`
+3. `GITHUB_TOKEN`
+4. `GH_TOKEN`
+5. `git credential fill` for the `--api-url` host
 
 Public repository reads may work without a token. Creating releases, dispatching workflows, and reading private repositories require a token with suitable GitHub permissions.
 
@@ -30,6 +31,42 @@ ah github [--repo OWNER/REPO] [--remote origin] [--api-url https://api.github.co
 ```
 
 If `--repo` is omitted, the plugin tries to parse `owner/repo` from `git remote get-url origin`.
+
+Authentication uses `--token`, then `GITHUB_TOKEN`, then `GH_TOKEN`, then the Git
+credential helper.
+
+A vault credential is the preferred source over MCP and is available on every
+`github.*` command through the `token` slot:
+
+```bash
+ah secrets add work-github --kind github-token --label "Work PAT" --open
+```
+
+It works the same way on the direct CLI:
+
+```bash
+ah github repo --credential token=work-github
+```
+
+Agents pass only the id, `{"credentials": {"token": "work-github"}}`. An inline `token`
+argument is rejected over MCP with `INVALID_ARGUMENT`; `--token` remains
+available on the CLI. A vault credential and an inline `--token` are mutually
+exclusive. Like `--token`, a vault credential reaches whatever https host you
+name, since the caller selected both the credential and the destination.
+
+Ambient credentials — the two environment variables and the credential helper —
+are host-bound. They are sent only to `api.github.com`/`github.com`, to the host
+of the detected git remote, or to a loopback host. Pointing `--api-url` at any
+other host silently drops them, so a redirected `--api-url` cannot collect your
+GitHub credentials; the helper is additionally queried only for the https host of
+`--api-url`. Pass `--use-git-credential=false` to skip the helper entirely.
+
+An explicit `--token` reaches whatever https host you name, since you supplied
+both the credential and the destination. That is the escape hatch for a GitHub
+Enterprise host the rules above do not cover: `--token "$GITHUB_TOKEN"`.
+
+No token is ever sent to a cleartext `http://` URL unless the host is loopback;
+that combination fails with `GITHUB_INSECURE_TOKEN_TARGET`.
 
 ## `ah github repo`
 

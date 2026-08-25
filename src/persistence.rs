@@ -39,7 +39,7 @@ pub(crate) fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<
     atomic_write(path, &payload)
 }
 
-fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), AppError> {
+pub(crate) fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), AppError> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());

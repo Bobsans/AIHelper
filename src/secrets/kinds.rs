@@ -8,6 +8,8 @@ pub enum SecretKind {
     Postgres,
     HttpBasic,
     SshKey,
+    GithubToken,
+    GitlabToken,
 }
 
 impl SecretKind {
@@ -16,8 +18,19 @@ impl SecretKind {
             Self::Postgres => "postgres",
             Self::HttpBasic => "http-basic",
             Self::SshKey => "ssh-key",
+            Self::GithubToken => "github-token",
+            Self::GitlabToken => "gitlab-token",
         }
     }
+
+    /// Every kind AIHelper accepts, in CLI and schema order.
+    pub const ALL: [Self; 5] = [
+        Self::Postgres,
+        Self::HttpBasic,
+        Self::SshKey,
+        Self::GithubToken,
+        Self::GitlabToken,
+    ];
 }
 
 impl fmt::Display for SecretKind {
@@ -34,6 +47,8 @@ impl FromStr for SecretKind {
             "postgres" => Ok(Self::Postgres),
             "http-basic" => Ok(Self::HttpBasic),
             "ssh-key" => Ok(Self::SshKey),
+            "github-token" => Ok(Self::GithubToken),
+            "gitlab-token" => Ok(Self::GitlabToken),
             _ => Err(()),
         }
     }
@@ -95,6 +110,20 @@ impl NewSecret {
                 ("password".to_owned(), password.into()),
                 ("username".to_owned(), username.into()),
             ]),
+        )
+    }
+
+    pub fn api_token(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        kind: SecretKind,
+        token: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            id,
+            label,
+            kind,
+            BTreeMap::from([("token".to_owned(), token.into())]),
         )
     }
 

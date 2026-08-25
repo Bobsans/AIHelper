@@ -53,6 +53,10 @@ with `--basic`, `--bearer`, an `Authorization` header, or embedded curl auth.
 Malformed mappings, duplicate `basic` slots, and credential-kind mismatches fail
 before the request is sent.
 
+The mapping is read only before the `--` separator. To send a literal
+`--credential=...` as an option value, use the attached form of that option, for
+example `--body=--credential=a=b`.
+
 ## `ah http replay`
 
 Replay a single curl command through a stable CLI contract.

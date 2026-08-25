@@ -55,41 +55,21 @@ ah_plugin_api::define_plugin_entrypoint_v1!(
     typed_cancel_fn: typed::cancel,
 );
 
-/// Optional additive ABI: parse legacy argv with this plugin's clap model and
-/// return only public typed arguments. The host resolves credentials afterward.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ah_plugin_argv_to_typed_json_v1(
-    request_json: *const std::os::raw::c_char,
-) -> *mut std::os::raw::c_char {
-    let conversion = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let raw = unsafe { ah_plugin_api::c_ptr_to_string(request_json) }
-            .map_err(|error| InvocationResponse::error("INVALID_ARGUMENT", error))?;
-        let request = serde_json::from_str::<ah_plugin_api::InvocationRequest>(&raw)
-            .map_err(|error| InvocationResponse::error("INVALID_ARGUMENT", error.to_string()))?;
-        if request.domain != DOMAIN {
+impl ah_plugin_api::BindResolvedSecrets for PostgresCli {
+    fn bind_resolved_secrets(
+        &mut self,
+        secrets: &std::collections::BTreeMap<String, ah_plugin_api::ResolvedSecret>,
+    ) -> Result<(), InvocationResponse> {
+        if matches!(self.command, PostgresCommand::Tool(_)) && !secrets.is_empty() {
             return Err(InvocationResponse::error(
                 "INVALID_ARGUMENT",
-                "PostgreSQL CLI conversion received the wrong domain",
-            ));
+                "PostgreSQL tool commands do not accept database credentials",
+            )
+            .with_error_domain(DOMAIN));
         }
-        let normalized = ah_plugin_api::normalize_invocation_argv(&request.argv, request.globals)?;
-        let cli = parse_args(&normalized.argv)?;
-        typed::cli_to_typed(cli)
-    }));
-    let conversion = match conversion {
-        Ok(Ok(invocation)) => ah_plugin_api::CliTypedConversion {
-            invocation: Some(invocation),
-            response: None,
-        },
-        Ok(Err(response)) => ah_plugin_api::CliTypedConversion::response(response),
-        Err(_) => ah_plugin_api::CliTypedConversion::response(InvocationResponse::error(
-            "PLUGIN_PANIC",
-            "PostgreSQL CLI conversion panicked",
-        )),
-    };
-    match serde_json::to_string(&conversion) {
-        Ok(value) => ah_plugin_api::to_c_string_ptr(&value).cast_mut(),
-        Err(_) => std::ptr::null_mut(),
+        self.connection.resolved_password = typed::password_from_resolved_secrets(secrets)
+            .map_err(|error| error.with_error_domain(DOMAIN))?;
+        Ok(())
     }
 }
 

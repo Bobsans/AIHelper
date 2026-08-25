@@ -1,14 +1,14 @@
 use std::{
-    cell::Cell,
+    collections::BTreeMap,
     fmt,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use ah_plugin_api::{
-    CliTypedInvocation, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
-    CommandError, InvocationResponse, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse,
+    CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
+    InvocationResponse, ResolvedSecret, Reversibility, RiskLevel, SecretSlot,
+    TypedInvocationRequest, TypedInvocationResponse,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
@@ -161,32 +161,6 @@ impl fmt::Debug for BasicCredential {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum HttpInvocationSource {
-    Typed,
-    DirectCli,
-}
-
-thread_local! {
-    static HTTP_INVOCATION_SOURCE: Cell<HttpInvocationSource> =
-        const { Cell::new(HttpInvocationSource::Typed) };
-}
-
-struct HttpInvocationSourceReset(HttpInvocationSource);
-
-impl Drop for HttpInvocationSourceReset {
-    fn drop(&mut self) {
-        HTTP_INVOCATION_SOURCE.with(|source| source.set(self.0));
-    }
-}
-
-pub(crate) fn with_direct_cli_invocation<T>(invoke: impl FnOnce() -> T) -> T {
-    let previous =
-        HTTP_INVOCATION_SOURCE.with(|source| source.replace(HttpInvocationSource::DirectCli));
-    let _reset = HttpInvocationSourceReset(previous);
-    invoke()
-}
-
 #[derive(Debug, Args, Clone, Default)]
 pub struct RequestExpectArgs {
     #[arg(long = "expect-status", value_name = "CODE_OR_RANGE")]
@@ -224,23 +198,6 @@ pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> 
     }
 }
 
-pub(crate) fn emit_typed_cli_data(data: Value, options: &GlobalOptions) -> Result<(), AppError> {
-    let mut output = serde_json::from_value::<domain::HttpRequestOutput>(data)?;
-    let failed = !output.ok;
-    output.status_text = reqwest::StatusCode::from_u16(output.status)
-        .ok()
-        .and_then(|status| status.canonical_reason().map(str::to_owned))
-        .unwrap_or_default();
-    adapters::output::emit_request(output, options)?;
-    if failed {
-        return Err(AppError::external(
-            "HTTP_ASSERTION_FAILED",
-            "request expectations failed",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn command_catalog() -> CommandCatalog {
     CommandCatalog::new(
         "builtin-http",
@@ -257,101 +214,6 @@ pub(crate) fn command_catalog() -> CommandCatalog {
             assert_descriptor("run"),
         ],
     )
-}
-
-/// Converts only credential-capable HTTP CLI commands using the concrete clap model.
-pub(crate) fn cli_to_typed(args: HttpArgs) -> Result<CliTypedInvocation, InvocationResponse> {
-    let (command, mut arguments) = match args.command {
-        HttpCommand::Request(args) => {
-            let mut values = request_arguments(args.request, args.expect)?;
-            values.insert("method".to_owned(), Value::String(args.method));
-            values.insert("url".to_owned(), Value::String(args.url));
-            ("http.request", values)
-        }
-        HttpCommand::Get(args) => shortcut_arguments("http.get", args)?,
-        HttpCommand::Post(args) => shortcut_arguments("http.post", args)?,
-        HttpCommand::Replay(args) => {
-            let mut values = request_arguments(args.request, args.expect)?;
-            values.insert("curl".to_owned(), Value::String(args.curl));
-            ("http.replay", values)
-        }
-        _ => {
-            return Err(InvocationResponse::error(
-                "INVALID_ARGUMENT",
-                "--credential is supported for http request, get, post, and replay",
-            )
-            .with_error_domain("http"));
-        }
-    };
-    Ok(CliTypedInvocation {
-        command: command.to_owned(),
-        arguments: Value::Object(std::mem::take(&mut arguments)),
-    })
-}
-
-fn shortcut_arguments(
-    command: &'static str,
-    args: MethodShortcutArgs,
-) -> Result<(&'static str, Map<String, Value>), InvocationResponse> {
-    let mut values = request_arguments(args.request, args.expect)?;
-    values.insert("url".to_owned(), Value::String(args.url));
-    Ok((command, values))
-}
-
-fn request_arguments(
-    request: RequestOptionsArgs,
-    expect: RequestExpectArgs,
-) -> Result<Map<String, Value>, InvocationResponse> {
-    let mut values = Map::new();
-    values.insert("headers".to_owned(), json!(request.headers));
-    values.insert("query".to_owned(), json!(request.query));
-    insert_option(&mut values, "timeout_secs", request.timeout_secs);
-    insert_option(
-        &mut values,
-        "max_response_bytes",
-        request.max_response_bytes,
-    );
-    values.insert("retry".to_owned(), json!(request.retry));
-    values.insert("retry_delay_ms".to_owned(), json!(request.retry_delay_ms));
-    insert_option(&mut values, "bearer", request.bearer);
-    insert_option(&mut values, "basic", request.basic);
-    if let Some(raw) = request.json {
-        let parsed = serde_json::from_str::<Value>(&raw).map_err(|error| {
-            InvocationResponse::error("INVALID_ARGUMENT", format!("invalid --json value: {error}"))
-                .with_error_domain("http")
-        })?;
-        values.insert("json".to_owned(), parsed);
-    }
-    insert_path(&mut values, "json_file", request.json_file);
-    insert_option(&mut values, "body", request.body);
-    insert_path(&mut values, "body_file", request.body_file);
-    insert_option(&mut values, "expect_status", expect.expect_status);
-    values.insert("expect_headers".to_owned(), json!(expect.expect_headers));
-    values.insert(
-        "expect_body_contains".to_owned(),
-        json!(expect.expect_body_contains),
-    );
-    values.insert("expect_json".to_owned(), json!(expect.expect_json));
-    Ok(values)
-}
-
-fn insert_option<T: serde::Serialize>(
-    values: &mut Map<String, Value>,
-    key: &str,
-    value: Option<T>,
-) {
-    if let Some(value) = value {
-        values.insert(key.to_owned(), json!(value));
-    }
-}
-
-fn insert_path(values: &mut Map<String, Value>, key: &str, value: Option<PathBuf>) {
-    if let Some(value) = value {
-        values.insert(
-            key.to_owned(),
-            Value::String(value.to_string_lossy().into_owned()),
-        );
-    }
 }
 
 pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationResponse {
@@ -400,7 +262,7 @@ fn typed_request(
         expect: typed_expectations(&request.arguments),
     };
     let output = domain::run_request_command(args, command_name)?;
-    if !output.ok && !is_direct_cli_invocation() {
+    if !output.ok {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
             format!(
@@ -420,7 +282,7 @@ fn typed_replay(request: &TypedInvocationRequest) -> Result<Value, AppError> {
         expect: typed_expectations(&request.arguments),
     };
     let output = domain::run_replay(args, "replay")?;
-    if !output.ok && !is_direct_cli_invocation() {
+    if !output.ok {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
             format!(
@@ -508,30 +370,72 @@ fn resolved_basic_credential(
             "unsupported HTTP credential slot '{slot}'"
         )));
     }
-    if let Some(slot) = request
-        .resolved_secrets
-        .keys()
-        .find(|slot| slot.as_str() != "basic")
+    let public_id = credentials
+        .and_then(|items| items.get("basic"))
+        .and_then(Value::as_str);
+    let resolved = basic_from_resolved_secrets(&request.resolved_secrets)?;
+    match (public_id, &resolved) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(AppError::external(
+                "SECRET_REQUIRED",
+                "HTTP Basic credential was not resolved",
+            ));
+        }
+    }
+    if let Some((public_id, secret)) = public_id.zip(request.resolved_secrets.get("basic"))
+        && secret.id != public_id
     {
+        return Err(AppError::external(
+            "SECRET_KIND_MISMATCH",
+            "resolved HTTP Basic credential does not match the selected credential",
+        ));
+    }
+    Ok(resolved)
+}
+
+/// Binds `--credential basic=ID` on the direct CLI path. The host resolved the
+/// mapping, so there is no public credential map to cross-check here.
+pub(crate) fn bind_resolved_credentials(
+    args: &mut HttpArgs,
+    secrets: &BTreeMap<String, ResolvedSecret>,
+) -> Result<(), InvocationResponse> {
+    if secrets.is_empty() {
+        return Ok(());
+    }
+    let credential = basic_from_resolved_secrets(secrets).map_err(|error| {
+        InvocationResponse::error_diagnostic(error.diagnostic().with_domain("http"))
+    })?;
+    let request = match &mut args.command {
+        HttpCommand::Request(args) => &mut args.request,
+        HttpCommand::Get(args) | HttpCommand::Post(args) => &mut args.request,
+        HttpCommand::Replay(args) => &mut args.request,
+        _ => {
+            return Err(InvocationResponse::error(
+                "INVALID_ARGUMENT",
+                "--credential is supported for http request, get, post, and replay",
+            )
+            .with_error_domain("http"));
+        }
+    };
+    request.resolved_basic = credential;
+    Ok(())
+}
+
+/// Shared by the typed and direct CLI paths: validates the slot and shape of the
+/// credential the host resolved.
+fn basic_from_resolved_secrets(
+    secrets: &BTreeMap<String, ResolvedSecret>,
+) -> Result<Option<BasicCredential>, AppError> {
+    if let Some(slot) = secrets.keys().find(|slot| slot.as_str() != "basic") {
         return Err(AppError::invalid_argument(format!(
             "unsupported resolved HTTP credential slot '{slot}'"
         )));
     }
-
-    let public_id = credentials
-        .and_then(|items| items.get("basic"))
-        .and_then(Value::as_str);
-    let resolved = request.resolved_secrets.get("basic");
-    let Some((public_id, resolved)) = public_id.zip(resolved) else {
-        return match (public_id, resolved) {
-            (None, None) => Ok(None),
-            _ => Err(AppError::external(
-                "SECRET_REQUIRED",
-                "HTTP Basic credential was not resolved",
-            )),
-        };
+    let Some(resolved) = secrets.get("basic") else {
+        return Ok(None);
     };
-    if resolved.id != public_id || resolved.kind != "http-basic" {
+    if resolved.kind != "http-basic" {
         return Err(AppError::external(
             "SECRET_KIND_MISMATCH",
             "resolved HTTP Basic credential does not match the selected credential",
@@ -577,10 +481,6 @@ fn resolve_context_path(cwd: &str, path: &str) -> PathBuf {
 
 fn request_deadline(request: &TypedInvocationRequest) -> Option<Instant> {
     Instant::now().checked_add(Duration::from_millis(request.context.remaining_timeout_ms))
-}
-
-fn is_direct_cli_invocation() -> bool {
-    HTTP_INVOCATION_SOURCE.with(|source| source.get() == HttpInvocationSource::DirectCli)
 }
 
 fn retryable_http_error(code: &str) -> bool {

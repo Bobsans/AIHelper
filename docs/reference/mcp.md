@@ -134,6 +134,9 @@ all published tools, including destructive tools.
 
 ## Managed Windows service
 
+To register this endpoint in an AI agent instead of configuring the agent by
+hand, see [`ah ai install`](ai.md).
+
 Windows users can register the HTTP server as a per-user Task Scheduler 2.0
 task. Registration uses the current interactive user with least privilege; it
 does not require elevation or store a password.

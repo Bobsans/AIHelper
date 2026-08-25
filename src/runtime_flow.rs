@@ -5,10 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ah_plugin_api::{
-    CommandCatalog, ErrorDiagnostic as PluginErrorDiagnostic, ExecutionContextWire,
-    TypedInvocationRequest, TypedInvocationResponse,
-};
+use ah_plugin_api::CommandCatalog;
 use ah_runtime::{
     InvocationOutcome, PluginLoadReport, PluginManager, PluginSource, SecretResolver,
     executor::{Executor, ParallelExecutor},
@@ -357,6 +354,12 @@ fn command_log_name(command: &RuntimeCommand, manager: &PluginManager) -> String
         RuntimeCommand::PluginsDisable { .. } => "plugins.disable".to_owned(),
         RuntimeCommand::PluginsReset { .. } => "plugins.reset".to_owned(),
         RuntimeCommand::AiInfo { .. } => "ai.info".to_owned(),
+        RuntimeCommand::Ai { request, .. } => match request {
+            crate::ai::install::AiCommand::Install(_) => "ai.install",
+            crate::ai::install::AiCommand::Uninstall(_) => "ai.uninstall",
+            crate::ai::install::AiCommand::Status(_) => "ai.status",
+        }
+        .to_owned(),
         RuntimeCommand::Secrets { request, .. } => match request {
             crate::commands::secrets::SecretsCommand::Init => "secrets.init",
             crate::commands::secrets::SecretsCommand::List { .. } => "secrets.list",
@@ -457,6 +460,9 @@ fn execution(
         RuntimeCommand::AiInfo { domain, options } => {
             ai::execute_info(&manager, domain.as_deref(), options).map(|_| None)
         }
+        RuntimeCommand::Ai { request, options } => {
+            ai::install::execute(&manager, request, options).map(|_| None)
+        }
         RuntimeCommand::Secrets { request, options } => {
             crate::commands::secrets::execute(&config, request, options).map(|_| None)
         }
@@ -472,14 +478,15 @@ fn execution(
             let command_catalog = manager.command_catalog_for_domain(&domain).ok().flatten();
             let credential_args = extract_credential_args(argv)?;
             if !credential_args.credentials.is_empty() {
-                execute_credentialed_invocation(&manager, &domain, credential_args, options)
-                    .map_err(|error| {
-                        decorate_invocation_error(error, &domain, command_catalog.as_ref())
-                    })?;
-                return Ok(None);
+                require_secret_slots(&domain, command_catalog.as_ref())?;
             }
             let observation = manager
-                .invoke_observed(&domain, credential_args.argv, options.to_wire())
+                .invoke_credentialed(
+                    &domain,
+                    credential_args.argv,
+                    options.to_wire(),
+                    &credential_args.credentials,
+                )
                 .map_err(|error| match error {
                     ah_runtime::RuntimeError::DomainNotFound(domain) => {
                         let suggestion =
@@ -501,11 +508,26 @@ struct CredentialArgs {
     credentials: BTreeMap<String, String>,
 }
 
+/// Lifts `--credential SLOT=ID` out of the domain argv. Only options before the
+/// `--` separator are recognized, so a literal value can always be passed with
+/// the attached form of its own option, such as `--body=--credential=a=b`.
 fn extract_credential_args(argv: Vec<String>) -> Result<CredentialArgs, AppError> {
     let mut clean = Vec::with_capacity(argv.len());
     let mut credentials = BTreeMap::new();
     let mut index = 0;
+    let mut positional_only = false;
     while index < argv.len() {
+        if positional_only {
+            clean.push(argv[index].clone());
+            index += 1;
+            continue;
+        }
+        if argv[index] == "--" {
+            positional_only = true;
+            clean.push(argv[index].clone());
+            index += 1;
+            continue;
+        }
         let (mapping, consumed) = if argv[index] == "--credential" {
             (argv.get(index + 1).map(String::as_str), 2)
         } else if let Some(mapping) = argv[index].strip_prefix("--credential=") {
@@ -543,107 +565,21 @@ fn extract_credential_args(argv: Vec<String>) -> Result<CredentialArgs, AppError
     })
 }
 
-fn execute_credentialed_invocation(
-    manager: &PluginManager,
-    domain: &str,
-    credential_args: CredentialArgs,
-    options: cli::GlobalOptions,
-) -> Result<(), AppError> {
-    if !matches!(domain, "http" | "postgres") {
-        return Err(AppError::invalid_argument(
-            "--credential is supported only for http and postgres commands",
-        ));
-    }
-    let conversion = manager
-        .argv_to_typed(domain, credential_args.argv, options.to_wire())
-        .map_err(crate::map_runtime_error)?
-        .ok_or_else(|| {
-            AppError::invalid_argument(format!(
-                "plugin domain '{domain}' does not support --credential"
-            ))
-        })?;
-    if let Some(response) = conversion.response {
-        return crate::handle_response(response, options.output, options.quiet);
-    }
-    let mut invocation = conversion.invocation.ok_or_else(|| {
-        AppError::external(
-            "PLUGIN_RESPONSE_INVALID",
-            "plugin returned an empty CLI conversion response",
-        )
-    })?;
-    let arguments = invocation.arguments.as_object_mut().ok_or_else(|| {
-        AppError::external(
-            "PLUGIN_RESPONSE_INVALID",
-            "plugin CLI conversion arguments must be an object",
-        )
-    })?;
-    arguments.insert(
-        "credentials".to_owned(),
-        serde_json::json!(credential_args.credentials),
-    );
-    let cwd = std::env::current_dir()
-        .map_err(|source| AppError::cwd(std::path::PathBuf::from("."), source))?;
-    let request = TypedInvocationRequest::new(
-        invocation.command,
-        invocation.arguments,
-        ExecutionContextWire::new(
-            uuid::Uuid::new_v4().to_string(),
-            cwd.to_string_lossy(),
-            options.limit,
-            u64::MAX,
-        ),
-    );
-    let response = if domain == "http" {
-        crate::commands::http::with_direct_cli_invocation(|| manager.invoke_typed(&request))
-    } else {
-        manager.invoke_typed(&request)
-    }
-    .map_err(crate::map_runtime_error)?;
-    handle_typed_cli_response(domain, response, options)
-}
-
-fn handle_typed_cli_response(
-    domain: &str,
-    response: TypedInvocationResponse,
-    options: cli::GlobalOptions,
-) -> Result<(), AppError> {
-    if !response.success {
-        let error = response.error.ok_or_else(|| {
-            AppError::external("PLUGIN_RESPONSE_INVALID", "typed command returned no error")
-        })?;
-        return Err(AppError::from_diagnostic(PluginErrorDiagnostic::new(
-            error.domain,
-            error.operation,
-            error.code,
-            error.message,
-            error.cause,
-            error.exit_code_hint,
-        )));
-    }
-    if options.quiet && domain != "http" {
+/// `--credential` is accepted for any domain whose catalog declares a secret
+/// slot, so a new plugin needs no host-side allowlist entry.
+fn require_secret_slots(domain: &str, catalog: Option<&CommandCatalog>) -> Result<(), AppError> {
+    let declares_slot = catalog.is_some_and(|catalog| {
+        catalog
+            .commands
+            .iter()
+            .any(|command| !command.secret_slots.is_empty())
+    });
+    if declares_slot {
         return Ok(());
     }
-    if !options.quiet {
-        for notice in response.notices {
-            emit_warning(notice.message);
-        }
-    }
-    let data = response.data.unwrap_or(serde_json::Value::Null);
-    if domain == "http" {
-        return crate::commands::http::emit_typed_cli_data(data, &options);
-    }
-    match options.output {
-        crate::output::OutputMode::Json => println!("{}", serde_json::to_string_pretty(&data)?),
-        crate::output::OutputMode::Text => {
-            if let Some(text) = response.text {
-                print!("{text}");
-                if !text.ends_with('\n') {
-                    println!();
-                }
-            }
-        }
-    }
-    Ok(())
+    Err(AppError::invalid_argument(format!(
+        "domain '{domain}' does not accept --credential"
+    )))
 }
 
 fn decorate_invocation_error(
@@ -882,9 +818,34 @@ mod tests {
     use ah_runtime::PluginManager;
 
     use super::{
-        is_updater_mcp_restore_fast_path, is_version_fast_path, map_mcp_transport_error,
-        resolve_invocation_command, shutdown_runtime,
+        extract_credential_args, is_updater_mcp_restore_fast_path, is_version_fast_path,
+        map_mcp_transport_error, resolve_invocation_command, shutdown_runtime,
     };
+
+    #[test]
+    fn credential_extraction_stops_at_the_positional_separator() {
+        let argv = ["run", "--credential", "basic=api", "--", "--credential=a=b"]
+            .map(str::to_owned)
+            .to_vec();
+
+        let extracted = extract_credential_args(argv).unwrap();
+
+        assert_eq!(extracted.argv, ["run", "--", "--credential=a=b"]);
+        assert_eq!(extracted.credentials["basic"], "api");
+        assert_eq!(extracted.credentials.len(), 1);
+    }
+
+    #[test]
+    fn credential_extraction_keeps_attached_option_values_intact() {
+        let argv = ["post", "--body=--credential=a=b"]
+            .map(str::to_owned)
+            .to_vec();
+
+        let extracted = extract_credential_args(argv).unwrap();
+
+        assert_eq!(extracted.argv, ["post", "--body=--credential=a=b"]);
+        assert!(extracted.credentials.is_empty());
+    }
 
     #[test]
     fn mcp_transport_errors_use_stable_diagnostic_codes() {

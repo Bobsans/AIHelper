@@ -1,3 +1,17 @@
+pub mod install;
+mod json_config;
+pub mod managed;
+mod prompt;
+
+/// Whether `ah ai install` should prompt: a terminal invocation that carried no
+/// decision flags.
+pub fn prompt_wanted(has_decision_flags: bool) -> bool {
+    prompt::wants_prompts(has_decision_flags)
+}
+mod registrar;
+mod rules;
+pub mod targets;
+
 use ah_plugin_api::PluginManual;
 use ah_runtime::PluginManager;
 use serde::Serialize;
@@ -196,6 +210,56 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
                 HostCommandExample {
                     description: "Show manual only for search domain".to_owned(),
                     command: "ah ai info --domain search".to_owned(),
+                },
+            ],
+        },
+        HostCommandDoc {
+            name: "ai.install".to_owned(),
+            summary: "Register the `aihelper` MCP server and rules block in an AI coding agent (claude, codex, gemini, cursor, copilot)."
+                .to_owned(),
+            usage: "ai install <TARGET> [--scope <local|project|user>] [--transport <stdio|http|managed>] [--url URL] [--mcp-only|--rules-only] [--yes] [--dry-run]".to_owned(),
+            examples: vec![
+                HostCommandExample {
+                    description: "Wire AIHelper into Claude Code for this project".to_owned(),
+                    command: "ah ai install claude".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Point Codex at the local HTTP MCP endpoint".to_owned(),
+                    command: "ah ai install codex --transport http".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Use the Windows managed service, installing it if absent"
+                        .to_owned(),
+                    command: "ah ai install cursor --transport managed".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Preview the commands and file changes only".to_owned(),
+                    command: "ah ai install claude --dry-run".to_owned(),
+                },
+            ],
+        },
+        HostCommandDoc {
+            name: "ai.uninstall".to_owned(),
+            summary: "Remove the AIHelper MCP server, including a legacy `ah` registration, and the rules block from an AI coding agent."
+                .to_owned(),
+            usage: "ai uninstall <TARGET> [--scope <local|project|user>] [--dry-run]".to_owned(),
+            examples: vec![HostCommandExample {
+                description: "Remove the AIHelper integration from Codex".to_owned(),
+                command: "ah ai uninstall codex".to_owned(),
+            }],
+        },
+        HostCommandDoc {
+            name: "ai.status".to_owned(),
+            summary: "Report AIHelper integration state for known AI coding agents.".to_owned(),
+            usage: "ai status [TARGET]".to_owned(),
+            examples: vec![
+                HostCommandExample {
+                    description: "Show integration state for every known agent".to_owned(),
+                    command: "ah ai status".to_owned(),
+                },
+                HostCommandExample {
+                    description: "Show integration state for one agent as JSON".to_owned(),
+                    command: "ah --json ai status claude".to_owned(),
                 },
             ],
         },

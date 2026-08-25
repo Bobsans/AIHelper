@@ -11,6 +11,7 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 ## Recipe Index
 - [Prepare and publish a release](recipes/release.md)
 - [Write changelog entries and GitHub release notes](recipes/release-notes.md)
+- [Wire AIHelper into an AI agent](recipes/agent-install.md)
 - [Use AIHelper as an MCP stdio server](recipes/mcp-stdio.md)
 - [Run retryable HTTP workflows with extracted variables](recipes/http.md)
 - [Check for a trusted AIHelper update](recipes/upgrade-check.md)

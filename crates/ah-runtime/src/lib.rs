@@ -12,15 +12,14 @@ use std::{
 
 use ah_plugin_api::{
     AH_PLUGIN_ABI_VERSION, AH_PLUGIN_API_MAJOR_VERSION, AH_PLUGIN_API_MINOR_VERSION,
-    AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL, AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL,
-    AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL, AH_PLUGIN_ENTRY_V1_SYMBOL,
-    AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL, AH_PLUGIN_MANUAL_JSON_V1_SYMBOL,
-    AH_PLUGIN_METADATA_JSON_V1_SYMBOL, AhPluginArgvToTypedJsonV1, AhPluginCancelCommandV1,
+    AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL, AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL,
+    AH_PLUGIN_ENTRY_V1_SYMBOL, AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL,
+    AH_PLUGIN_MANUAL_JSON_V1_SYMBOL, AH_PLUGIN_METADATA_JSON_V1_SYMBOL, AhPluginCancelCommandV1,
     AhPluginCommandCatalogJsonV1, AhPluginEntryV1, AhPluginInvokeCommandJsonV1,
-    AhPluginManualJsonV1, AhPluginMetadataJsonV1, CliTypedConversion, CommandCatalog,
-    CommandDescriptor, CommandError, GlobalOptionsWire, InvocationRequest, InvocationResponse,
-    PluginManual, PluginMetadata, RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest,
-    TypedInvocationResponse, c_ptr_to_string, plugin_capabilities,
+    AhPluginManualJsonV1, AhPluginMetadataJsonV1, CommandCatalog, CommandDescriptor, CommandError,
+    GlobalOptionsWire, InvocationRequest, InvocationResponse, PluginManual, PluginMetadata,
+    RequiredTool, ResolvedSecret, SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
+    c_ptr_to_string, plugin_capabilities,
 };
 use libloading::Library;
 use thiserror::Error;
@@ -141,9 +140,6 @@ pub trait BuiltinPlugin: Send + Sync {
         InvocationObservation::without_outcome(self.invoke(request))
     }
     fn command_catalog(&self) -> Option<CommandCatalog> {
-        None
-    }
-    fn argv_to_typed(&self, _request: &InvocationRequest) -> Option<CliTypedConversion> {
         None
     }
     fn required_tools_typed(&self, _request: &TypedInvocationRequest) -> Vec<RequiredTool> {
@@ -473,11 +469,25 @@ impl PluginManager {
         argv: Vec<String>,
         globals: GlobalOptionsWire,
     ) -> Result<InvocationObservation, RuntimeError> {
+        self.invoke_credentialed(domain, argv, globals, &BTreeMap::new())
+    }
+
+    /// Runs one legacy argv invocation with `--credential SLOT=ID` mappings
+    /// resolved host-side. The plugin sees only the resolved values, never the
+    /// argv form, and validates that each slot is one it accepts.
+    pub fn invoke_credentialed(
+        &self,
+        domain: &str,
+        argv: Vec<String>,
+        globals: GlobalOptionsWire,
+        credentials: &BTreeMap<String, String>,
+    ) -> Result<InvocationObservation, RuntimeError> {
         let domain = domain_key(domain);
         let request = InvocationRequest {
             domain: domain.clone(),
             argv,
             globals,
+            resolved_secrets: self.resolve_credentials(&domain, credentials)?,
         };
         if let Some(plugin) = self.dynamic_plugins.get(&domain) {
             if self.is_domain_disabled(&domain) {
@@ -497,31 +507,6 @@ impl PluginManager {
             return Ok(plugin.invoke_observed(&request));
         }
 
-        Err(RuntimeError::DomainNotFound(domain))
-    }
-
-    /// Lets a plugin reuse its exact CLI parser to produce public typed input.
-    pub fn argv_to_typed(
-        &self,
-        domain: &str,
-        argv: Vec<String>,
-        globals: GlobalOptionsWire,
-    ) -> Result<Option<CliTypedConversion>, RuntimeError> {
-        let domain = domain_key(domain);
-        if self.is_domain_disabled(&domain) {
-            return Err(RuntimeError::DomainDisabled(domain));
-        }
-        let request = InvocationRequest {
-            domain: domain.clone(),
-            argv,
-            globals,
-        };
-        if let Some(plugin) = self.dynamic_plugins.get(&domain) {
-            return plugin.argv_to_typed(&request);
-        }
-        if let Some(plugin) = self.builtin_plugins.get(&domain) {
-            return Ok(plugin.argv_to_typed(&request));
-        }
         Err(RuntimeError::DomainNotFound(domain))
     }
 
@@ -740,6 +725,28 @@ impl PluginManager {
         Ok(response)
     }
 
+    fn resolve_credentials(
+        &self,
+        command: &str,
+        credentials: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, ResolvedSecret>, RuntimeError> {
+        let mut resolved = BTreeMap::new();
+        for (slot, id) in credentials {
+            let Some(resolver) = self.secret_resolver.as_ref() else {
+                return Err(RuntimeError::VaultKeyUnavailable {
+                    command: command.to_owned(),
+                    slot: slot.clone(),
+                    id: id.clone(),
+                });
+            };
+            let secret = resolver
+                .resolve(id)
+                .map_err(|error| map_secret_resolver_error(error, command, slot, id))?;
+            resolved.insert(slot.clone(), secret);
+        }
+        Ok(resolved)
+    }
+
     fn prepare_typed_request<'a>(
         &self,
         command: &RegisteredTypedCommand,
@@ -771,10 +778,12 @@ impl PluginManager {
             &schema_arguments,
         )?;
 
-        let arguments = public_request
-            .arguments
-            .as_object()
-            .expect("schema validated object");
+        let arguments = public_request.arguments.as_object().ok_or_else(|| {
+            RuntimeError::TypedInvocation(format!(
+                "arguments for '{}' must be a JSON object",
+                public_request.command
+            ))
+        })?;
         let credentials = match arguments.get("credentials") {
             None => None,
             Some(serde_json::Value::Object(credentials)) => Some(credentials),
@@ -1056,7 +1065,6 @@ struct DynamicPlugin {
     command_catalog: Option<CommandCatalog>,
     invoke_command_json: Option<AhPluginInvokeCommandJsonV1>,
     cancel_command: Option<AhPluginCancelCommandV1>,
-    argv_to_typed_json: Option<AhPluginArgvToTypedJsonV1>,
     free_c_string: unsafe extern "C" fn(*mut c_char),
 }
 
@@ -1129,11 +1137,6 @@ impl DynamicPlugin {
             unsafe { library.get::<AhPluginCancelCommandV1>(AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL) }
                 .ok()
                 .map(|symbol| *symbol);
-        let argv_to_typed_json = unsafe {
-            library.get::<AhPluginArgvToTypedJsonV1>(AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL)
-        }
-        .ok()
-        .map(|symbol| *symbol);
         let typed_symbols = TypedSymbolAvailability {
             catalog: command_catalog_json.is_some(),
             invoke: invoke_command_json.is_some(),
@@ -1223,7 +1226,6 @@ impl DynamicPlugin {
             command_catalog,
             invoke_command_json,
             cancel_command,
-            argv_to_typed_json,
             free_c_string: api.free_c_string,
         })
     }
@@ -1282,36 +1284,6 @@ impl DynamicPlugin {
         }
         .map_err(RuntimeError::ResponseParse)?;
         serde_json::from_str::<TypedInvocationResponse>(&response_raw)
-            .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
-    }
-
-    fn argv_to_typed(
-        &self,
-        request: &InvocationRequest,
-    ) -> Result<Option<CliTypedConversion>, RuntimeError> {
-        let Some(convert) = self.argv_to_typed_json else {
-            return Ok(None);
-        };
-        let request_json = serde_json::to_string(request).map_err(|error| {
-            RuntimeError::TypedInvocation(format!("CLI request serialization failed: {error}"))
-        })?;
-        let c_request = CString::new(request_json).map_err(|error| {
-            RuntimeError::TypedInvocation(format!("invalid CLI request cstring: {error}"))
-        })?;
-        let response_ptr = unsafe { convert(c_request.as_ptr()) };
-        if response_ptr.is_null() {
-            return Err(RuntimeError::TypedInvocation(
-                "plugin returned null CLI conversion response".to_owned(),
-            ));
-        }
-        let response_raw = unsafe {
-            let decoded = c_ptr_to_string(response_ptr);
-            (self.free_c_string)(response_ptr);
-            decoded
-        }
-        .map_err(RuntimeError::ResponseParse)?;
-        serde_json::from_str::<CliTypedConversion>(&response_raw)
-            .map(Some)
             .map_err(|error| RuntimeError::ResponseParse(error.to_string()))
     }
 
@@ -1815,7 +1787,6 @@ mod tests {
                 )),
                 invoke_command_json: Some(dynamic_probe_invoke),
                 cancel_command: Some(dynamic_probe_cancel),
-                argv_to_typed_json: None,
                 free_c_string: dynamic_probe_free,
             },
         );
@@ -1823,12 +1794,12 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_plugin_without_argv_converter_remains_compatible() {
+    fn a_domain_without_a_secret_resolver_reports_the_vault_as_unavailable() {
         let mut manager = PluginManager::new();
         register_dynamic_probe(&mut manager);
 
-        let conversion = manager
-            .argv_to_typed(
+        let error = manager
+            .invoke_credentialed(
                 "probe",
                 vec!["run".to_owned()],
                 GlobalOptionsWire {
@@ -1836,10 +1807,11 @@ mod tests {
                     quiet: false,
                     limit: None,
                 },
+                &BTreeMap::from([("database".to_owned(), "app-db".to_owned())]),
             )
-            .unwrap();
+            .expect_err("no resolver means no credential");
 
-        assert!(conversion.is_none());
+        assert!(matches!(error, RuntimeError::VaultKeyUnavailable { .. }));
     }
 
     impl BuiltinPlugin for EchoBuiltinPlugin {

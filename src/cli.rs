@@ -2,10 +2,15 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use ah_plugin_api::{GlobalOptionsWire, PluginMetadata, normalize_invocation_argv};
 use clap::{
-    Arg, ArgAction, ArgGroup, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser,
+    Arg, ArgAction, ArgGroup, ArgMatches, Command, ValueHint, error::ErrorKind,
+    parser::ValueSource, value_parser,
 };
 
 use crate::{
+    ai::{
+        install::{AiCommand, InstallRequest, StatusRequest, UninstallRequest},
+        targets::{Scope, Transport},
+    },
     error::{AppError, CommandSuggestion, suggested_subcommand},
     output::OutputMode,
 };
@@ -43,6 +48,10 @@ pub enum RuntimeCommand {
     },
     AiInfo {
         domain: Option<String>,
+        options: GlobalOptions,
+    },
+    Ai {
+        request: crate::ai::install::AiCommand,
         options: GlobalOptions,
     },
     Secrets {
@@ -225,6 +234,40 @@ pub fn parse_runtime_command(
                     domain: ai_submatches.get_one::<String>("domain").cloned(),
                     options,
                 },
+                "install" => RuntimeCommand::Ai {
+                    request: AiCommand::Install(InstallRequest {
+                        target: required_target(ai_submatches)?,
+                        scope: parse_scope(ai_submatches)?,
+                        transport: parse_transport(ai_submatches)?,
+                        managed: ai_submatches
+                            .get_one::<String>("transport")
+                            .is_some_and(|value| value == "managed"),
+                        url: ai_submatches.get_one::<String>("url").cloned(),
+                        with_mcp: !ai_submatches.get_flag("rules-only"),
+                        with_rules: !ai_submatches.get_flag("mcp-only"),
+                        dry_run: ai_submatches.get_flag("dry-run"),
+                        interactive: crate::ai::prompt_wanted(has_decision_flags(
+                            ai_submatches,
+                            options,
+                        )),
+                        assume_yes: ai_submatches.get_flag("yes"),
+                    }),
+                    options,
+                },
+                "uninstall" => RuntimeCommand::Ai {
+                    request: AiCommand::Uninstall(UninstallRequest {
+                        target: required_target(ai_submatches)?,
+                        scope: parse_scope(ai_submatches)?,
+                        dry_run: ai_submatches.get_flag("dry-run"),
+                    }),
+                    options,
+                },
+                "status" => RuntimeCommand::Ai {
+                    request: AiCommand::Status(StatusRequest {
+                        target: ai_submatches.get_one::<String>("target").cloned(),
+                    }),
+                    options,
+                },
                 _ => return Err(AppError::invalid_argument("unsupported ai subcommand")),
             }
         }
@@ -354,12 +397,13 @@ pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString>
             preserve_next = false;
             continue;
         }
-        if redact_next && !value.starts_with('-') {
+        // An unknown option may carry a secret, so its argument is redacted even
+        // when the value itself looks like an option.
+        if redact_next {
             *argument = OsString::from("[REDACTED]");
             redact_next = false;
             continue;
         }
-        redact_next = false;
 
         if !positional_only && value == "--" {
             positional_only = true;
@@ -376,7 +420,7 @@ pub(crate) fn redact_secret_command_argv(raw_args: &[OsString]) -> Vec<OsString>
                 preserve_next = !assigned;
             } else if assigned {
                 *argument = OsString::from(format!("--{name}=[REDACTED]"));
-            } else if !matches!(name, "json" | "quiet" | "help") {
+            } else if !matches!(name, "open" | "json" | "quiet" | "help") {
                 redact_next = true;
             }
             continue;
@@ -641,7 +685,7 @@ fn build_mcp_command() -> Command {
 
 fn build_ai_command() -> Command {
     Command::new(HOST_COMMAND_AI)
-        .about("AI-agent focused command manual")
+        .about("AI-agent manual and agent integration")
         .subcommand(
             Command::new("info")
                 .about("Show full AI-agent manual for available commands")
@@ -653,6 +697,132 @@ fn build_ai_command() -> Command {
                         .help("Show manual only for a single command domain"),
                 ),
         )
+        .subcommand(
+            Command::new("install")
+                .about("Register the AIHelper MCP server and rules block in an AI agent")
+                .arg(target_arg(true))
+                .arg(scope_arg())
+                .arg(
+                    Arg::new("transport")
+                        .long("transport")
+                        .value_name("TRANSPORT")
+                        .value_parser(["stdio", "http", "managed"])
+                        .default_value("stdio")
+                        .help(
+                            "MCP transport written into the agent configuration;                              `managed` uses the Windows managed service endpoint",
+                        ),
+                )
+                .arg(
+                    Arg::new("url")
+                        .long("url")
+                        .value_name("URL")
+                        .value_parser(value_parser!(String))
+                        .help("Loopback MCP endpoint; only valid with --transport http"),
+                )
+                .arg(
+                    Arg::new("mcp-only")
+                        .long("mcp-only")
+                        .action(ArgAction::SetTrue)
+                        .help("Register the MCP server without touching the rules file"),
+                )
+                .arg(
+                    Arg::new("rules-only")
+                        .long("rules-only")
+                        .action(ArgAction::SetTrue)
+                        .help("Install the rules block without registering the MCP server"),
+                )
+                .group(ArgGroup::new("ai-components").args(["mcp-only", "rules-only"]))
+                .arg(
+                    Arg::new("yes")
+                        .long("yes")
+                        .short('y')
+                        .action(ArgAction::SetTrue)
+                        .help("Skip the interactive confirmation prompt"),
+                )
+                .arg(dry_run_arg()),
+        )
+        .subcommand(
+            Command::new("uninstall")
+                .about("Remove the AIHelper MCP server and rules block from an AI agent")
+                .arg(target_arg(true))
+                .arg(scope_arg())
+                .arg(dry_run_arg()),
+        )
+        .subcommand(
+            Command::new("status")
+                .about("Report AIHelper integration state for known AI agents")
+                .arg(target_arg(false)),
+        )
+}
+
+fn target_arg(required: bool) -> Arg {
+    Arg::new("target")
+        .value_name("TARGET")
+        .required(required)
+        .value_parser(value_parser!(String))
+        .help("Agent target, for example claude or codex")
+}
+
+fn scope_arg() -> Arg {
+    Arg::new("scope")
+        .long("scope")
+        .value_name("SCOPE")
+        .value_parser(["local", "project", "user"])
+        .help("Configuration scope understood by the target agent")
+}
+
+fn dry_run_arg() -> Arg {
+    Arg::new("dry-run")
+        .long("dry-run")
+        .action(ArgAction::SetTrue)
+        .help("Report planned commands and file changes without performing them")
+}
+
+/// Any decision supplied on the command line disables prompting, so scripts and
+/// pipes always take the documented defaults.
+fn has_decision_flags(matches: &ArgMatches, options: GlobalOptions) -> bool {
+    matches.contains_id("scope") && matches.get_one::<String>("scope").is_some()
+        || matches.value_source("transport") == Some(ValueSource::CommandLine)
+        || matches.get_one::<String>("url").is_some()
+        || matches.get_flag("mcp-only")
+        || matches.get_flag("rules-only")
+        || matches.get_flag("yes")
+        || matches.get_flag("dry-run")
+        || options.output == OutputMode::Json
+        || options.quiet
+}
+
+fn required_target(matches: &ArgMatches) -> Result<String, AppError> {
+    matches
+        .get_one::<String>("target")
+        .cloned()
+        .ok_or_else(|| AppError::invalid_argument("missing agent target"))
+}
+
+fn parse_scope(matches: &ArgMatches) -> Result<Option<Scope>, AppError> {
+    matches
+        .get_one::<String>("scope")
+        .map(|value| {
+            Scope::parse(value)
+                .ok_or_else(|| AppError::invalid_argument(format!("unsupported scope: {value}")))
+        })
+        .transpose()
+}
+
+fn parse_transport(matches: &ArgMatches) -> Result<Transport, AppError> {
+    match matches
+        .get_one::<String>("transport")
+        .map(String::as_str)
+        .unwrap_or("stdio")
+    {
+        "stdio" => Ok(Transport::Stdio),
+        // `managed` is provisioning, not a wire format: the agent still gets an
+        // HTTP entry, only the endpoint is one AIHelper owns.
+        "http" | "managed" => Ok(Transport::Http),
+        value => Err(AppError::invalid_argument(format!(
+            "unsupported MCP transport: {value}"
+        ))),
+    }
 }
 
 fn build_plugins_command() -> Command {
@@ -719,7 +889,7 @@ fn build_secrets_command() -> Command {
                     Arg::new("kind")
                         .long("kind")
                         .value_name("KIND")
-                        .value_parser(["postgres", "http-basic", "ssh-key"])
+                        .value_parser(secret_kind_values())
                         .help("Filter by secret kind"),
                 ),
         )
@@ -731,7 +901,7 @@ fn build_secrets_command() -> Command {
                     Arg::new("kind")
                         .long("kind")
                         .value_name("KIND")
-                        .value_parser(["postgres", "http-basic", "ssh-key"])
+                        .value_parser(secret_kind_values())
                         .required(true),
                 )
                 .arg(
@@ -809,6 +979,13 @@ fn parse_plugin_state_filter(value: &str) -> Result<PluginStateFilter, AppError>
             "unsupported plugins --state value: {value}"
         ))),
     }
+}
+
+fn secret_kind_values() -> Vec<&'static str> {
+    crate::secrets::SecretKind::ALL
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect()
 }
 
 fn parse_secret_kind(value: &str) -> Result<crate::secrets::SecretKind, AppError> {
@@ -990,6 +1167,100 @@ fn extract_last_cwd(raw_args: &[OsString]) -> Result<Option<PathBuf>, AppError> 
 mod tests {
     use super::*;
 
+    fn install_matches(args: &[&str]) -> ArgMatches {
+        let mut argv = vec!["ai", "install", "claude"];
+        argv.extend_from_slice(args);
+        build_ai_command()
+            .try_get_matches_from(argv)
+            .expect("ai install arguments should parse")
+            .subcommand_matches("install")
+            .expect("install subcommand should match")
+            .clone()
+    }
+
+    fn text_options() -> GlobalOptions {
+        GlobalOptions {
+            output: OutputMode::Text,
+            quiet: false,
+            limit: None,
+        }
+    }
+
+    #[test]
+    fn a_bare_install_carries_no_decision_flags() {
+        assert!(!has_decision_flags(&install_matches(&[]), text_options()));
+    }
+
+    #[test]
+    fn every_decision_flag_disables_prompting() {
+        for args in [
+            vec!["--scope", "user"],
+            vec!["--transport", "http"],
+            vec!["--transport", "stdio"],
+            vec!["--mcp-only"],
+            vec!["--rules-only"],
+            vec!["--dry-run"],
+            vec!["--yes"],
+        ] {
+            assert!(
+                has_decision_flags(&install_matches(&args), text_options()),
+                "{args:?} must disable prompting"
+            );
+        }
+    }
+
+    #[test]
+    fn machine_readable_and_quiet_output_also_disable_prompting() {
+        let json = GlobalOptions {
+            output: OutputMode::Json,
+            quiet: false,
+            limit: None,
+        };
+        let quiet = GlobalOptions {
+            output: OutputMode::Text,
+            quiet: true,
+            limit: None,
+        };
+        assert!(has_decision_flags(&install_matches(&[]), json));
+        assert!(has_decision_flags(&install_matches(&[]), quiet));
+    }
+
+    #[test]
+    fn an_explicit_stdio_transport_is_distinguished_from_the_default() {
+        assert_eq!(
+            install_matches(&[]).value_source("transport"),
+            Some(ValueSource::DefaultValue),
+            "the default must not look like an explicit choice"
+        );
+        assert_eq!(
+            install_matches(&["--transport", "stdio"]).value_source("transport"),
+            Some(ValueSource::CommandLine)
+        );
+    }
+
+    #[test]
+    fn managed_transport_sets_the_provisioning_flag_and_stays_http() {
+        let raw_args = [
+            OsString::from("ah"),
+            OsString::from("ai"),
+            OsString::from("install"),
+            OsString::from("claude"),
+            OsString::from("--transport"),
+            OsString::from("managed"),
+        ]
+        .to_vec();
+        let parsed = parse_runtime_command(raw_args, &[]).expect("managed transport should parse");
+        let CliParseResult::Command(RuntimeCommand::Ai {
+            request: crate::ai::install::AiCommand::Install(request),
+            ..
+        }) = parsed
+        else {
+            panic!("expected an ai install command");
+        };
+        assert!(request.managed);
+        assert_eq!(request.transport, Transport::Http);
+    }
+
     #[test]
     fn secrets_redaction_skips_global_options_while_locating_action() {
         let raw_args = [
@@ -1012,6 +1283,32 @@ mod tests {
         assert_eq!(sanitized.last(), Some(&OsString::from("[REDACTED]")));
         assert_eq!(sanitized[2], "workspace");
         assert_eq!(sanitized[5], "10");
+    }
+
+    #[test]
+    fn secrets_redaction_covers_values_that_look_like_options() {
+        let raw_args = [
+            "ah",
+            "secrets",
+            "add",
+            "billing",
+            "--kind",
+            "postgres",
+            "--label",
+            "Billing",
+            "--open",
+            "--password",
+            "-hunter2",
+        ]
+        .map(OsString::from);
+
+        let sanitized = redact_secret_command_argv(&raw_args);
+
+        assert!(!sanitized.iter().any(|value| value == "-hunter2"));
+        assert_eq!(sanitized.last(), Some(&OsString::from("[REDACTED]")));
+        // Known metadata options and their values stay readable in the log.
+        assert_eq!(sanitized[7], "Billing");
+        assert_eq!(sanitized[8], "--open");
     }
 
     #[test]

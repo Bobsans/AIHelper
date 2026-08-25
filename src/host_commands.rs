@@ -452,6 +452,10 @@ fn plugins_list_descriptor() -> CommandDescriptor {
     )
 }
 
+fn secret_kind_names() -> Vec<&'static str> {
+    SecretKind::ALL.iter().map(|kind| kind.as_str()).collect()
+}
+
 fn secrets_list_descriptor() -> CommandDescriptor {
     CommandDescriptor::new(
         "secrets.list",
@@ -462,7 +466,7 @@ fn secrets_list_descriptor() -> CommandDescriptor {
             "properties": {
                 "kind": {
                     "type": "string",
-                    "enum": ["postgres", "http-basic", "ssh-key"],
+                    "enum": secret_kind_names(),
                     "description": "Optional secret-kind filter."
                 }
             },
@@ -479,7 +483,7 @@ fn secrets_list_descriptor() -> CommandDescriptor {
                             "id": {"type": "string"},
                             "kind": {
                                 "type": "string",
-                                "enum": ["postgres", "http-basic", "ssh-key"]
+                                "enum": secret_kind_names()
                             },
                             "label": {"type": "string"},
                             "description": {"type": ["string", "null"]}

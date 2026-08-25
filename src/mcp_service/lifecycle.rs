@@ -94,6 +94,24 @@ pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
     }
 }
 
+/// Non-printing lifecycle access for callers that render their own output,
+/// such as `ah ai install --transport managed`.
+#[cfg(windows)]
+pub(crate) fn snapshot_status() -> Result<StatusOutput, AppError> {
+    Ok(update_service()?.status())
+}
+
+#[cfg(windows)]
+pub(crate) fn install_quietly(options: &InstallOptions) -> Result<MutationOutput, AppError> {
+    require_managed_service_executable(&current_executable_path()?)?;
+    update_service()?.install(options)
+}
+
+#[cfg(windows)]
+pub(crate) fn start_quietly() -> Result<MutationOutput, AppError> {
+    update_service()?.start()
+}
+
 #[cfg(windows)]
 pub(crate) fn stop_for_update_while_locked() -> Result<bool, AppError> {
     let service = update_service()?;

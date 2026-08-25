@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use ah_plugin_api::{
-    CliTypedInvocation, CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects,
-    CommandError, CommandExample, GlobalOptionsWire, InvocationResponse, Reversibility, RiskLevel,
-    SecretSlot, TypedInvocationRequest, TypedInvocationResponse,
+    CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
+    GlobalOptionsWire, InvocationResponse, Reversibility, RiskLevel, SecretSlot,
+    TypedInvocationRequest, TypedInvocationResponse,
 };
 use serde_json::{Map, Value, json};
 
@@ -53,140 +53,6 @@ pub(super) fn invoke(request: &TypedInvocationRequest) -> TypedInvocationRespons
 
 pub(super) fn cancel(_request_id: &str) -> bool {
     false
-}
-
-pub(super) fn cli_to_typed(cli: PostgresCli) -> Result<CliTypedInvocation, InvocationResponse> {
-    let mut arguments = Map::new();
-    insert_path(&mut arguments, "tool_path", cli.tool.tool_path.as_ref());
-    arguments.insert("ensure_tool".to_owned(), json!(cli.tool.ensure_tool));
-    insert_option(&mut arguments, "host", cli.connection.host.as_ref());
-    insert_option(&mut arguments, "port", cli.connection.port.as_ref());
-    insert_option(&mut arguments, "database", cli.connection.database.as_ref());
-    insert_option(&mut arguments, "user", cli.connection.user.as_ref());
-    insert_option(&mut arguments, "service", cli.connection.service.as_ref());
-    insert_option(&mut arguments, "sslmode", cli.connection.sslmode.as_ref());
-    insert_option(
-        &mut arguments,
-        "password_env",
-        cli.connection.password_env.as_ref(),
-    );
-    arguments.insert(
-        "connect_timeout_secs".to_owned(),
-        json!(cli.connection.connect_timeout_secs),
-    );
-    insert_option(
-        &mut arguments,
-        "statement_timeout_ms",
-        cli.connection.statement_timeout_ms.as_ref(),
-    );
-
-    let command = match cli.command {
-        PostgresCommand::Tool(_) => {
-            return Err(InvocationResponse::error(
-                "INVALID_ARGUMENT",
-                "--credential is supported only for operational PostgreSQL commands",
-            ));
-        }
-        PostgresCommand::Ping => "postgres.ping",
-        PostgresCommand::Info => "postgres.info",
-        PostgresCommand::Databases => "postgres.databases",
-        PostgresCommand::Schemas(args) => {
-            arguments.insert("include_system".to_owned(), json!(args.include_system));
-            "postgres.schemas"
-        }
-        PostgresCommand::Tables(args) => {
-            relation_arguments(&mut arguments, args);
-            "postgres.tables"
-        }
-        PostgresCommand::Views(args) => {
-            relation_arguments(&mut arguments, args);
-            "postgres.views"
-        }
-        PostgresCommand::Describe(args) => {
-            arguments.insert("object".to_owned(), json!(args.object));
-            "postgres.describe"
-        }
-        PostgresCommand::Indexes(args) => {
-            insert_option(&mut arguments, "schema", args.schema.as_ref());
-            insert_option(&mut arguments, "table", args.table.as_ref());
-            "postgres.indexes"
-        }
-        PostgresCommand::Extensions(args) => {
-            arguments.insert("available".to_owned(), json!(args.available));
-            "postgres.extensions"
-        }
-        PostgresCommand::Query(args) => {
-            sql_arguments(&mut arguments, args.sql.as_ref(), args.file.as_ref());
-            "postgres.query"
-        }
-        PostgresCommand::Exec(args) => {
-            sql_arguments(&mut arguments, args.sql.as_ref(), args.file.as_ref());
-            arguments.insert(
-                "single_transaction".to_owned(),
-                json!(args.single_transaction),
-            );
-            arguments.insert("yes".to_owned(), json!(args.yes));
-            "postgres.exec"
-        }
-        PostgresCommand::Explain(args) => {
-            sql_arguments(&mut arguments, args.sql.as_ref(), args.file.as_ref());
-            arguments.insert("analyze".to_owned(), json!(args.analyze));
-            arguments.insert("buffers".to_owned(), json!(args.buffers));
-            arguments.insert("yes".to_owned(), json!(args.yes));
-            "postgres.explain"
-        }
-        PostgresCommand::Activity(args) => {
-            arguments.insert("active".to_owned(), json!(args.active));
-            arguments.insert("idle_in_tx".to_owned(), json!(args.idle_in_tx));
-            "postgres.activity"
-        }
-        PostgresCommand::Locks(args) => {
-            arguments.insert("blocking".to_owned(), json!(args.blocking));
-            "postgres.locks"
-        }
-        PostgresCommand::Size(args) => {
-            insert_option(&mut arguments, "schema", args.schema.as_ref());
-            insert_option(&mut arguments, "table", args.table.as_ref());
-            "postgres.size"
-        }
-        PostgresCommand::Settings(args) => {
-            arguments.insert("changed".to_owned(), json!(args.changed));
-            "postgres.settings"
-        }
-    };
-    Ok(CliTypedInvocation {
-        command: command.to_owned(),
-        arguments: Value::Object(arguments),
-    })
-}
-
-fn relation_arguments(arguments: &mut Map<String, Value>, args: RelationListArgs) {
-    insert_option(arguments, "schema", args.schema.as_ref());
-    arguments.insert("include_system".to_owned(), json!(args.include_system));
-}
-
-fn sql_arguments(arguments: &mut Map<String, Value>, sql: Option<&String>, file: Option<&PathBuf>) {
-    insert_option(arguments, "sql", sql);
-    insert_path(arguments, "file", file);
-}
-
-fn insert_option<T: serde::Serialize>(
-    arguments: &mut Map<String, Value>,
-    name: &str,
-    value: Option<&T>,
-) {
-    if let Some(value) = value {
-        arguments.insert(name.to_owned(), json!(value));
-    }
-}
-
-fn insert_path(arguments: &mut Map<String, Value>, name: &str, value: Option<&PathBuf>) {
-    if let Some(value) = value {
-        arguments.insert(
-            name.to_owned(),
-            Value::String(value.to_string_lossy().into_owned()),
-        );
-    }
 }
 
 fn typed_cli(request: &TypedInvocationRequest) -> Result<PostgresCli, CommandError> {
@@ -353,24 +219,9 @@ fn resolved_database_password(
             false,
         ));
     }
-    if let Some(slot) = request
-        .resolved_secrets
-        .keys()
-        .find(|slot| slot.as_str() != "database")
-    {
-        return Err(command_error(
-            request,
-            "INVALID_ARGUMENT",
-            format!("Unsupported resolved PostgreSQL credential slot '{slot}'"),
-            "only the database credential slot is supported",
-            false,
-        ));
-    }
-
     let public_id = credentials
         .and_then(|items| items.get("database"))
         .and_then(Value::as_str);
-    let resolved = request.resolved_secrets.get("database");
     if public_id.is_some() && optional_string(&request.arguments, "password_env").is_some() {
         return Err(command_error(
             request,
@@ -380,19 +231,23 @@ fn resolved_database_password(
             false,
         ));
     }
-    let Some((public_id, resolved)) = public_id.zip(resolved) else {
-        return match (public_id, resolved) {
-            (None, None) => Ok(None),
-            _ => Err(command_error(
+    let password = password_from_resolved_secrets(&request.resolved_secrets)
+        .map_err(|error| invocation_to_command_error(request, error))?;
+    match (public_id, &password) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(command_error(
                 request,
                 "SECRET_REQUIRED",
                 "PostgreSQL database credential was not resolved",
                 "public credential selection and private resolution must both be present",
                 false,
-            )),
-        };
-    };
-    if resolved.id != public_id || resolved.kind != "postgres" {
+            ));
+        }
+    }
+    if let Some((public_id, secret)) = public_id.zip(request.resolved_secrets.get("database"))
+        && secret.id != public_id
+    {
         return Err(command_error(
             request,
             "SECRET_KIND_MISMATCH",
@@ -401,16 +256,53 @@ fn resolved_database_password(
             false,
         ));
     }
+    Ok(password)
+}
+
+/// Shared by the typed and direct CLI paths: validates the slot and shape of the
+/// credential the host resolved.
+pub(super) fn password_from_resolved_secrets(
+    secrets: &std::collections::BTreeMap<String, ah_plugin_api::ResolvedSecret>,
+) -> Result<Option<SecretValue>, InvocationResponse> {
+    if let Some(slot) = secrets.keys().find(|slot| slot.as_str() != "database") {
+        return Err(InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("Unsupported resolved PostgreSQL credential slot '{slot}'"),
+        ));
+    }
+    let Some(resolved) = secrets.get("database") else {
+        return Ok(None);
+    };
+    if resolved.kind != "postgres" {
+        return Err(InvocationResponse::error(
+            "SECRET_KIND_MISMATCH",
+            "Resolved PostgreSQL database credential does not match the selected credential",
+        ));
+    }
     let password = resolved.values.get("password").ok_or_else(|| {
-        command_error(
-            request,
+        InvocationResponse::error(
             "SECRET_REQUIRED",
             "Resolved PostgreSQL credential has no password",
-            "postgres credentials require a password value",
-            false,
         )
     })?;
     Ok(Some(SecretValue::new(password)))
+}
+
+fn invocation_to_command_error(
+    request: &TypedInvocationRequest,
+    response: InvocationResponse,
+) -> CommandError {
+    command_error(
+        request,
+        response
+            .error_code
+            .unwrap_or_else(|| "INVALID_ARGUMENT".to_owned()),
+        response
+            .error_message
+            .unwrap_or_else(|| "credential resolution failed".to_owned()),
+        "credential slot or kind mismatch",
+        false,
+    )
 }
 
 fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
@@ -1537,6 +1429,7 @@ fn setting_row_schema() -> Value {
 
 #[cfg(test)]
 mod tests {
+    use ah_plugin_api::BindResolvedSecrets;
     use std::collections::BTreeMap;
 
     use ah_plugin_api::{ExecutionContextWire, ResolvedSecret};
@@ -1595,8 +1488,10 @@ mod tests {
     }
 
     #[test]
-    fn cli_converter_reuses_clap_and_emits_only_public_query_arguments() {
-        let cli = parse_args(&[
+    fn direct_cli_binds_a_resolved_password_without_exposing_it() {
+        use ah_plugin_api::{BindResolvedSecrets, ResolvedSecret};
+
+        let mut cli = parse_args(&[
             "query".to_owned(),
             "--database".to_owned(),
             "app".to_owned(),
@@ -1605,16 +1500,50 @@ mod tests {
         ])
         .expect("legacy argv should parse");
 
-        let invocation = cli_to_typed(cli).expect("operational command should convert");
+        cli.bind_resolved_secrets(&std::collections::BTreeMap::from([(
+            "database".to_owned(),
+            ResolvedSecret {
+                id: "app-db".to_owned(),
+                kind: "postgres".to_owned(),
+                values: std::collections::BTreeMap::from([(
+                    "password".to_owned(),
+                    "direct-cli-sentinel".to_owned(),
+                )]),
+            },
+        )]))
+        .expect("resolved credential should bind");
 
-        assert_eq!(invocation.command, "postgres.query");
-        assert_eq!(invocation.arguments["database"], "app");
-        assert_eq!(invocation.arguments["sql"], "select 1");
-        assert!(invocation.arguments.get("credentials").is_none());
-        assert!(
-            !serde_json::to_string(&invocation)
-                .unwrap()
-                .contains("resolved_password")
+        let password = cli
+            .connection
+            .resolved_password
+            .as_ref()
+            .expect("password should be bound");
+        assert_eq!(password.expose(), "direct-cli-sentinel");
+        assert!(!format!("{:?}", cli.connection).contains("direct-cli-sentinel"));
+    }
+
+    #[test]
+    fn direct_tool_command_rejects_a_database_credential() {
+        let mut cli = super::super::PostgresCli::try_parse_from(["postgres", "tool", "status"])
+            .expect("tool status should parse");
+
+        let error = cli
+            .bind_resolved_secrets(&std::collections::BTreeMap::from([(
+                "database".to_owned(),
+                ResolvedSecret {
+                    id: "app-db".to_owned(),
+                    kind: "postgres".to_owned(),
+                    values: std::collections::BTreeMap::from([(
+                        "password".to_owned(),
+                        "private-password".to_owned(),
+                    )]),
+                },
+            )]))
+            .expect_err("tool commands must not accept database credentials");
+
+        assert_eq!(
+            error.error_code.expect("structured error code"),
+            "INVALID_ARGUMENT"
         );
     }
 

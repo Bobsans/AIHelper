@@ -2,3 +2,4 @@
 .idea/
 benchmarks/latest.md
 .ah/
+.claude/settings.local.json

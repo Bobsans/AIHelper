@@ -8,7 +8,8 @@ use std::{
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
-    GlobalOptionsWire, Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    GlobalOptionsWire, Reversibility, RiskLevel, SecretSlot, TypedInvocationRequest,
+    TypedInvocationResponse,
 };
 use serde_json::{Map, Value, json};
 
@@ -165,7 +166,7 @@ fn invoke_inner(request: &TypedInvocationRequest) -> TypedInvocationResponse {
 fn typed_cli(request: &TypedInvocationRequest) -> Result<GitlabCli, CommandError> {
     let arguments = &request.arguments;
     let cwd = PathBuf::from(&request.context.cwd);
-    let connection = typed_connection(request);
+    let connection = typed_connection(request)?;
     let command = match request.command.as_str() {
         "gitlab.project" => GitlabCommand::Project,
         "gitlab.releases" => GitlabCommand::Releases,
@@ -287,20 +288,40 @@ fn typed_cli(request: &TypedInvocationRequest) -> Result<GitlabCli, CommandError
     })
 }
 
-fn typed_connection(request: &TypedInvocationRequest) -> GitlabConnectionArgs {
+fn typed_connection(
+    request: &TypedInvocationRequest,
+) -> Result<GitlabConnectionArgs, CommandError> {
     let arguments = &request.arguments;
-    GitlabConnectionArgs {
+    let token = connection_token(request)?;
+    Ok(GitlabConnectionArgs {
         project: optional_string(arguments, "project"),
         remote: string_or(arguments, "remote", DEFAULT_REMOTE),
         host: string_or(arguments, "host", DEFAULT_HOST),
         api_url: optional_string(arguments, "api_url"),
         graphql_url: optional_string(arguments, "graphql_url"),
-        token: optional_string(arguments, "token"),
+        token,
         use_git_credential: bool_or(arguments, "use_git_credential", true),
         timeout_secs: u64_or(arguments, "timeout_secs", DEFAULT_TIMEOUT_SECS)
             .min(remaining_seconds(request)),
         cwd: Some(PathBuf::from(&request.context.cwd)),
+    })
+}
+
+/// The vault credential and an inline token are mutually exclusive; a resolved
+/// credential always wins over nothing, never over an explicit argument.
+fn connection_token(request: &TypedInvocationRequest) -> Result<Option<String>, CommandError> {
+    let inline = optional_string(&request.arguments, "token");
+    let resolved = resolved_token(request)?;
+    if inline.is_some() && resolved.is_some() {
+        return Err(command_error(
+            request,
+            "INVALID_ARGUMENT",
+            "GitLab token credential conflicts with an inline token",
+            "select either a vault credential or an inline token",
+            false,
+        ));
     }
+    Ok(resolved.or(inline))
 }
 
 fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
@@ -386,6 +407,99 @@ fn retryable_code(code: &str) -> bool {
         || code.contains("TIMEOUT")
         || code.contains("RATE")
         || code.contains("SERVER")
+}
+
+/// Binds the vault token slot: the public credential id and the privately
+/// resolved secret must both be present and must agree.
+fn resolved_token(request: &TypedInvocationRequest) -> Result<Option<String>, CommandError> {
+    let credentials = request
+        .arguments
+        .get("credentials")
+        .and_then(Value::as_object);
+    if let Some(slot) = credentials.and_then(|items| items.keys().find(|key| *key != "token")) {
+        return Err(command_error(
+            request,
+            "INVALID_ARGUMENT",
+            format!("Unsupported GitLab credential slot '{slot}'"),
+            "only the token credential slot is supported",
+            false,
+        ));
+    }
+    let public_id = credentials
+        .and_then(|items| items.get("token"))
+        .and_then(Value::as_str);
+    let token = token_from_resolved_secrets(&request.resolved_secrets).map_err(|response| {
+        command_error(
+            request,
+            response
+                .error_code
+                .unwrap_or_else(|| "INVALID_ARGUMENT".to_owned()),
+            response
+                .error_message
+                .unwrap_or_else(|| "credential resolution failed".to_owned()),
+            "credential slot or kind mismatch",
+            false,
+        )
+    })?;
+    match (public_id, &token) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(command_error(
+                request,
+                "SECRET_REQUIRED",
+                "GitLab token credential was not resolved",
+                "public credential selection and private resolution must both be present",
+                false,
+            ));
+        }
+    }
+    if let Some((public_id, secret)) = public_id.zip(request.resolved_secrets.get("token"))
+        && secret.id != public_id
+    {
+        return Err(command_error(
+            request,
+            "SECRET_KIND_MISMATCH",
+            "Resolved GitLab token does not match the selected credential",
+            "credential identity or kind mismatch",
+            false,
+        ));
+    }
+    Ok(token)
+}
+
+/// Shared by the typed and direct CLI paths: validates the slot and shape of the
+/// credential the host resolved.
+pub(super) fn token_from_resolved_secrets(
+    secrets: &std::collections::BTreeMap<String, ah_plugin_api::ResolvedSecret>,
+) -> Result<Option<String>, ah_plugin_api::InvocationResponse> {
+    if let Some(slot) = secrets.keys().find(|slot| slot.as_str() != "token") {
+        return Err(ah_plugin_api::InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("Unsupported resolved GitLab credential slot '{slot}'"),
+        ));
+    }
+    let Some(resolved) = secrets.get("token") else {
+        return Ok(None);
+    };
+    if resolved.kind != "gitlab-token" {
+        return Err(ah_plugin_api::InvocationResponse::error(
+            "SECRET_KIND_MISMATCH",
+            "Resolved GitLab token does not match the selected credential",
+        ));
+    }
+    let token = resolved.values.get("token").ok_or_else(|| {
+        ah_plugin_api::InvocationResponse::error(
+            "SECRET_REQUIRED",
+            "Resolved GitLab credential has no token",
+        )
+    })?;
+    if token.trim().is_empty() {
+        return Err(ah_plugin_api::InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            "Resolved GitLab token must not be empty",
+        ));
+    }
+    Ok(Some(token.clone()))
 }
 
 fn command_error(
@@ -885,6 +999,13 @@ fn descriptor(
     effects: CommandEffects,
 ) -> CommandDescriptor {
     CommandDescriptor::new(id, title, description, input_schema, output_schema, effects)
+        .with_secret_slot(token_slot())
+}
+
+/// Every command in this domain talks to the API, so all of them accept the
+/// vault token slot.
+fn token_slot() -> SecretSlot {
+    SecretSlot::optional("token", ["gitlab-token"], "GitLab API token.")
 }
 
 fn read_effects(impact: &str) -> CommandEffects {
@@ -1102,7 +1223,9 @@ fn item_output(command: &str, item: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use ah_plugin_api::ExecutionContextWire;
+    use std::collections::BTreeMap;
+
+    use ah_plugin_api::{ExecutionContextWire, ResolvedSecret};
 
     use super::*;
 
@@ -1134,6 +1257,96 @@ mod tests {
     }
 
     #[test]
+    fn every_command_declares_only_the_token_secret_slot() {
+        for command in &command_catalog().commands {
+            assert_eq!(command.secret_slots.len(), 1, "{}", command.id);
+            let slot = &command.secret_slots[0];
+            assert_eq!(slot.name, "token");
+            assert_eq!(slot.accepted_kinds, ["gitlab-token"]);
+            assert!(!slot.required);
+        }
+    }
+
+    #[test]
+    fn typed_connection_binds_a_matching_resolved_token() {
+        let request = token_request(json!({"project": "group/project"})).with_resolved_secrets(
+            BTreeMap::from([(
+                "token".to_owned(),
+                resolved_secret("gitlab-token", "vault-token-sentinel"),
+            )]),
+        );
+
+        let connection = typed_connection(&request).expect("credential should bind");
+
+        assert_eq!(connection.token.as_deref(), Some("vault-token-sentinel"));
+    }
+
+    #[test]
+    fn typed_connection_rejects_an_inline_token_beside_a_credential() {
+        let mut arguments = json!({"project": "group/project"});
+        arguments["token"] = json!("inline-token-sentinel");
+        let request = TypedInvocationRequest::new(
+            "gitlab.project",
+            {
+                arguments["credentials"] = json!({"token": "api"});
+                arguments
+            },
+            ExecutionContextWire::new("gitlab-token-conflict", ".", None, 2_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "token".to_owned(),
+            resolved_secret("gitlab-token", "vault-token-sentinel"),
+        )]));
+
+        let error = typed_connection(&request).expect_err("token sources must conflict");
+        let serialized = serde_json::to_string(&error).expect("error serializes");
+
+        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert!(!serialized.contains("inline-token-sentinel"));
+        assert!(!serialized.contains("vault-token-sentinel"));
+    }
+
+    #[test]
+    fn typed_connection_rejects_unresolved_and_mismatched_credentials() {
+        let unresolved = token_request(json!({"project": "group/project"}));
+        assert_eq!(
+            typed_connection(&unresolved)
+                .expect_err("public id requires private resolution")
+                .code,
+            "SECRET_REQUIRED"
+        );
+
+        let wrong_kind = token_request(json!({"project": "group/project"})).with_resolved_secrets(
+            BTreeMap::from([(
+                "token".to_owned(),
+                resolved_secret("http-basic", "wrong-kind-sentinel"),
+            )]),
+        );
+        let error = typed_connection(&wrong_kind).expect_err("kind must match");
+        let serialized = serde_json::to_string(&error).expect("error serializes");
+
+        assert_eq!(error.code, "SECRET_KIND_MISMATCH");
+        assert!(!serialized.contains("wrong-kind-sentinel"));
+    }
+
+    fn token_request(mut arguments: Value) -> TypedInvocationRequest {
+        arguments["credentials"] = json!({"token": "api"});
+        TypedInvocationRequest::new(
+            "gitlab.project",
+            arguments,
+            ExecutionContextWire::new("gitlab-token", ".", None, 2_000),
+        )
+    }
+
+    fn resolved_secret(kind: &str, token: &str) -> ResolvedSecret {
+        ResolvedSecret {
+            id: "api".to_owned(),
+            kind: kind.to_owned(),
+            values: BTreeMap::from([("token".to_owned(), token.to_owned())]),
+        }
+    }
+
+    #[test]
     fn typed_commands_use_git_credentials_by_default() {
         let request = TypedInvocationRequest::new(
             "gitlab.project",
@@ -1141,7 +1354,7 @@ mod tests {
             ExecutionContextWire::new("gitlab-default-auth", ".", None, 2_000),
         );
 
-        assert!(typed_connection(&request).use_git_credential);
+        assert!(typed_connection(&request).unwrap().use_git_credential);
         assert_eq!(
             command_catalog().commands[0].input_schema["properties"]["use_git_credential"]["default"],
             true
