@@ -133,6 +133,7 @@ name = "ah-plugin-sdk"
 version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
+ "reqwest",
  "serde",
  "serde_json",
 ]

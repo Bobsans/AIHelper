@@ -2,13 +2,13 @@ use std::time::Duration;
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::render;
+use ah_plugin_sdk::{http, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
-use reqwest::blocking::Client;
+use reqwest::{Method, blocking::Client};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -387,8 +387,6 @@ where
     TResponse: DeserializeOwned,
 {
     let base_url = normalize_base_url(base_url)?;
-    let url = format!("{base_url}{path}");
-
     let client = Client::builder()
         .timeout(Duration::from_secs(timeout_secs.max(1)))
         .build()
@@ -399,33 +397,20 @@ where
             )
         })?;
 
-    let response = client.post(&url).json(request).send().map_err(|error| {
-        InvocationResponse::error(
-            "OLLAMA_HTTP_FAILED",
-            format!("request to '{url}' failed: {error}"),
-        )
-    })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
-        return Err(InvocationResponse::error(
-            "OLLAMA_API_FAILED",
-            format!(
-                "ollama returned HTTP {status} for '{url}': {}",
-                render::truncate_for_error(&body, 400)
-            ),
-        ));
+    http::JsonApi {
+        client: &client,
+        base_url: &base_url,
+        service: "ollama",
+        codes: http::ApiErrorCodes {
+            transport: "OLLAMA_HTTP_FAILED",
+            status: "OLLAMA_API_FAILED",
+            decode: "OLLAMA_RESPONSE_INVALID",
+        },
+        headers: &[],
+        authorize: None,
+        error_body_chars: 400,
     }
-
-    response.json::<TResponse>().map_err(|error| {
-        InvocationResponse::error(
-            "OLLAMA_RESPONSE_INVALID",
-            format!("failed to decode response from '{url}': {error}"),
-        )
-    })
+    .json(Method::POST, path, Some(request))
 }
 
 fn normalize_base_url(base_url: &str) -> Result<String, InvocationResponse> {

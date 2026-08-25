@@ -7,7 +7,7 @@ use std::{
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::{credentials, render};
+use ah_plugin_sdk::{credentials, http, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
@@ -1834,6 +1834,40 @@ fn credential_authority(api_url: &str, graphql_url: &str) -> Option<String> {
     (credentials::https_authority(graphql_url)? == authority).then_some(authority)
 }
 
+/// The GitLab REST API as this plugin talks to it.
+///
+/// The token is bound to the authority it was resolved for, so a redirected
+/// path never receives it. The GraphQL call is not built here and keeps its own
+/// check through `authorized_token`.
+fn api(context: &GitlabContext) -> http::JsonApi<'_> {
+    http::JsonApi {
+        client: &context.client,
+        base_url: &context.api_url,
+        service: "GitLab",
+        codes: http::ApiErrorCodes {
+            transport: "GITLAB_HTTP_FAILED",
+            status: "GITLAB_API_FAILED",
+            decode: "GITLAB_RESPONSE_INVALID",
+        },
+        headers: &[
+            ("Accept", "application/json"),
+            ("User-Agent", "AIHelper-gitlab-plugin"),
+        ],
+        authorize: context
+            .token
+            .as_deref()
+            .zip(context.token_authority.as_deref())
+            .map(|(token, authority)| http::Authorization {
+                scheme: http::AuthScheme::Header {
+                    name: "PRIVATE-TOKEN",
+                    token,
+                },
+                authority: Some(authority),
+            }),
+        error_body_chars: 500,
+    }
+}
+
 fn gitlab_json<T>(
     context: &GitlabContext,
     method: Method,
@@ -1843,13 +1877,7 @@ fn gitlab_json<T>(
 where
     T: DeserializeOwned,
 {
-    let response = gitlab_response(context, method, path, body)?;
-    response.json::<T>().map_err(|error| {
-        InvocationResponse::error(
-            "GITLAB_RESPONSE_INVALID",
-            format!("failed to decode GitLab response for '{path}': {error}"),
-        )
-    })
+    api(context).json(method, path, body.as_ref())
 }
 
 fn gitlab_graphql<T>(context: &GitlabContext, body: Value) -> Result<GraphqlEnvelope<T>, String>
@@ -1890,38 +1918,7 @@ fn gitlab_response(
     path: &str,
     body: Option<Value>,
 ) -> Result<reqwest::blocking::Response, InvocationResponse> {
-    let url = format!("{}{}", context.api_url, path);
-    let mut request = context
-        .client
-        .request(method, &url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "AIHelper-gitlab-plugin");
-    if let Some(token) = authorized_token(context, &url) {
-        request = request.header("PRIVATE-TOKEN", token);
-    }
-    if let Some(body) = body {
-        request = request.json(&body);
-    }
-    let response = request.send().map_err(|error| {
-        InvocationResponse::error(
-            "GITLAB_HTTP_FAILED",
-            format!("request to '{url}' failed: {error}"),
-        )
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
-        return Err(InvocationResponse::error(
-            "GITLAB_API_FAILED",
-            format!(
-                "GitLab returned HTTP {status} for '{url}': {}",
-                render::truncate_for_error(&body, 500)
-            ),
-        ));
-    }
-    Ok(response)
+    api(context).send(method, path, body.as_ref())
 }
 
 fn collect_job_trace(

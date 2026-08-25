@@ -7,7 +7,7 @@ use std::{
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::{credentials, render};
+use ah_plugin_sdk::{credentials, http, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
@@ -1921,6 +1921,32 @@ fn credential_authority(api_url: &str) -> Option<String> {
     })
 }
 
+/// The GitHub REST API as this plugin talks to it.
+fn api(context: &GithubContext) -> http::JsonApi<'_> {
+    http::JsonApi {
+        client: &context.client,
+        base_url: &context.api_url,
+        service: "GitHub",
+        codes: http::ApiErrorCodes {
+            transport: "GITHUB_HTTP_FAILED",
+            status: "GITHUB_API_FAILED",
+            decode: "GITHUB_RESPONSE_INVALID",
+        },
+        headers: &[
+            ("Accept", "application/vnd.github+json"),
+            ("X-GitHub-Api-Version", "2022-11-28"),
+            ("User-Agent", "AIHelper-github-plugin"),
+        ],
+        // Every URL is built from `api_url`, which `resolve_token` already
+        // accepted as the token's target, so there is nothing further to bind to.
+        authorize: context.token.as_deref().map(|token| http::Authorization {
+            scheme: http::AuthScheme::Bearer(token),
+            authority: None,
+        }),
+        error_body_chars: 500,
+    }
+}
+
 fn github_json<T>(
     context: &GithubContext,
     method: Method,
@@ -1930,13 +1956,7 @@ fn github_json<T>(
 where
     T: DeserializeOwned,
 {
-    let response = github_response(context, method, path, body)?;
-    response.json::<T>().map_err(|error| {
-        InvocationResponse::error(
-            "GITHUB_RESPONSE_INVALID",
-            format!("failed to decode GitHub response for '{path}': {error}"),
-        )
-    })
+    api(context).json(method, path, body.as_ref())
 }
 
 fn github_no_content(
@@ -1945,8 +1965,7 @@ fn github_no_content(
     path: &str,
     body: Option<Value>,
 ) -> Result<(), InvocationResponse> {
-    let _response = github_response(context, method, path, body)?;
-    Ok(())
+    api(context).send(method, path, body.as_ref()).map(drop)
 }
 
 fn github_response(
@@ -1955,39 +1974,7 @@ fn github_response(
     path: &str,
     body: Option<Value>,
 ) -> Result<reqwest::blocking::Response, InvocationResponse> {
-    let url = format!("{}{}", context.api_url, path);
-    let mut request = context
-        .client
-        .request(method, &url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "AIHelper-github-plugin");
-    if let Some(token) = &context.token {
-        request = request.bearer_auth(token);
-    }
-    if let Some(body) = body {
-        request = request.json(&body);
-    }
-    let response = request.send().map_err(|error| {
-        InvocationResponse::error(
-            "GITHUB_HTTP_FAILED",
-            format!("request to '{url}' failed: {error}"),
-        )
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
-        return Err(InvocationResponse::error(
-            "GITHUB_API_FAILED",
-            format!(
-                "GitHub returned HTTP {status} for '{url}': {}",
-                render::truncate_for_error(&body, 500)
-            ),
-        ));
-    }
-    Ok(response)
+    api(context).send(method, path, body.as_ref())
 }
 
 fn download_run_logs(
