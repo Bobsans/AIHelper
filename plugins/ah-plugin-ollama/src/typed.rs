@@ -1,8 +1,9 @@
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     GlobalOptionsWire, Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
+    schema::{input_schema_for, output_schema_for},
 };
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -32,25 +33,22 @@ pub(super) fn cancel(_request_id: &str) -> bool {
 }
 
 fn typed_command(request: &TypedInvocationRequest) -> Result<OllamaCommand, CommandError> {
-    let arguments = &request.arguments;
-    let connection = ConnectionArgs {
-        base_url: string_or(arguments, "base_url", DEFAULT_BASE_URL),
-        timeout_secs: u64_or(arguments, "timeout_secs", DEFAULT_TIMEOUT_SECS)
-            .min(remaining_seconds(request)),
-    };
+    let cap = remaining_seconds(request);
     match request.command.as_str() {
-        "ollama.ask" => Ok(OllamaCommand::Ask(AskArgs {
-            model: required_string(arguments, "model", request)?,
-            prompt: required_string(arguments, "prompt", request)?,
-            system: optional_string(arguments, "system"),
-            connection,
-        })),
-        "ollama.chat" => Ok(OllamaCommand::Chat(ChatArgs {
-            model: required_string(arguments, "model", request)?,
-            message: required_string(arguments, "message", request)?,
-            system: optional_string(arguments, "system"),
-            connection,
-        })),
+        "ollama.ask" => {
+            let mut args: AskArgs = decode(request)?;
+            require_text(request, "model", &args.model)?;
+            require_text(request, "prompt", &args.prompt)?;
+            args.connection.timeout_secs = args.connection.timeout_secs.clamp(1, cap);
+            Ok(OllamaCommand::Ask(args))
+        }
+        "ollama.chat" => {
+            let mut args: ChatArgs = decode(request)?;
+            require_text(request, "model", &args.model)?;
+            require_text(request, "message", &args.message)?;
+            args.connection.timeout_secs = args.connection.timeout_secs.clamp(1, cap);
+            Ok(OllamaCommand::Chat(args))
+        }
         _ => Err(command_error(
             request,
             "TYPED_COMMAND_NOT_FOUND",
@@ -59,6 +57,40 @@ fn typed_command(request: &TypedInvocationRequest) -> Result<OllamaCommand, Comm
             false,
         )),
     }
+}
+
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the type disagree.
+fn decode<T: serde::de::DeserializeOwned>(
+    request: &TypedInvocationRequest,
+) -> Result<T, CommandError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        command_error(
+            request,
+            "INVALID_ARGUMENT",
+            format!("Invalid arguments for {}", request.command),
+            error.to_string(),
+            false,
+        )
+    })
+}
+
+/// `minLength` rejects an empty string, but not one that is only whitespace.
+fn require_text(
+    request: &TypedInvocationRequest,
+    name: &str,
+    value: &str,
+) -> Result<(), CommandError> {
+    if value.trim().is_empty() {
+        return Err(command_error(
+            request,
+            "INVALID_ARGUMENT",
+            format!("Missing {name}"),
+            format!("typed input requires non-empty '{name}'"),
+            false,
+        ));
+    }
+    Ok(())
 }
 
 fn remaining_seconds(request: &TypedInvocationRequest) -> u64 {
@@ -155,50 +187,13 @@ fn command_error(
     )
 }
 
-fn required_string(
-    arguments: &Value,
-    name: &str,
-    request: &TypedInvocationRequest,
-) -> Result<String, CommandError> {
-    optional_string(arguments, name)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            command_error(
-                request,
-                "INVALID_ARGUMENT",
-                format!("Missing {name}"),
-                format!("typed input requires non-empty '{name}'"),
-                false,
-            )
-        })
-}
-
-fn optional_string(arguments: &Value, name: &str) -> Option<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn string_or(arguments: &Value, name: &str, default: &str) -> String {
-    optional_string(arguments, name).unwrap_or_else(|| default.to_owned())
-}
-
-fn u64_or(arguments: &Value, name: &str, default: u64) -> u64 {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .unwrap_or(default)
-        .max(1)
-}
-
 fn ask_descriptor() -> CommandDescriptor {
     descriptor(
         "ollama.ask",
         "Generate with Ollama",
         "Generate one non-streaming response with Ollama /api/generate.",
-        prompt_input("prompt", "Prompt text."),
-        output_schema("ask"),
+        input_schema_for::<AskArgs>(),
+        output_schema_for::<OllamaOutput>("ask"),
     )
     .with_example(CommandExample::new(
         "Summarize a concept",
@@ -214,8 +209,8 @@ fn chat_descriptor() -> CommandDescriptor {
         "ollama.chat",
         "Chat with Ollama",
         "Send one user message and optional system instruction to Ollama /api/chat.",
-        prompt_input("message", "User message text."),
-        output_schema("chat"),
+        input_schema_for::<ChatArgs>(),
+        output_schema_for::<OllamaOutput>("chat"),
     )
     .with_example(CommandExample::new(
         "Ask for test cases",
@@ -254,104 +249,6 @@ fn descriptor(
             Reversibility::No,
         ),
     )
-}
-
-fn prompt_input(content_field: &str, content_description: &str) -> Value {
-    let mut properties = Map::new();
-    properties.insert(
-        "model".to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "description": "Ollama model name."
-        }),
-    );
-    properties.insert(
-        content_field.to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "description": content_description
-        }),
-    );
-    properties.insert(
-        "system".to_owned(),
-        json!({
-            "type": "string",
-            "description": "Optional system instruction sent to the model."
-        }),
-    );
-    properties.insert(
-        "base_url".to_owned(),
-        json!({
-            "type": "string",
-            "minLength": 1,
-            "default": DEFAULT_BASE_URL,
-            "description": "Ollama base URL. Prompt data is sent to this address."
-        }),
-    );
-    properties.insert(
-        "timeout_secs".to_owned(),
-        json!({
-            "type": "integer",
-            "minimum": 1,
-            "default": DEFAULT_TIMEOUT_SECS,
-            "description": "HTTP timeout, capped by the MCP request deadline."
-        }),
-    );
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": ["model", content_field],
-        "additionalProperties": false
-    })
-}
-
-fn output_schema(command: &str) -> Value {
-    let nullable_string = json!({"type": ["string", "null"]});
-    let nullable_boolean = json!({"type": ["boolean", "null"]});
-    let nullable_integer = json!({"type": ["integer", "null"], "minimum": 0});
-    json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "const": command},
-            "model": {"type": "string"},
-            "response": {"type": "string"},
-            "done": nullable_boolean,
-            "done_reason": nullable_string,
-            "created_at": nullable_string,
-            "metrics": {
-                "type": "object",
-                "properties": {
-                    "total_duration": nullable_integer,
-                    "load_duration": nullable_integer,
-                    "prompt_eval_count": nullable_integer,
-                    "prompt_eval_duration": nullable_integer,
-                    "eval_count": nullable_integer,
-                    "eval_duration": nullable_integer
-                },
-                "required": [
-                    "total_duration",
-                    "load_duration",
-                    "prompt_eval_count",
-                    "prompt_eval_duration",
-                    "eval_count",
-                    "eval_duration"
-                ],
-                "additionalProperties": false
-            }
-        },
-        "required": [
-            "command",
-            "model",
-            "response",
-            "done",
-            "done_reason",
-            "created_at",
-            "metrics"
-        ],
-        "additionalProperties": false
-    })
 }
 
 #[cfg(test)]

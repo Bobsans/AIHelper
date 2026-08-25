@@ -17,5 +17,6 @@ crate-type = ["cdylib"]
 ah-plugin-api = { path = "../../crates/ah-plugin-api" }
 clap.workspace = true
 reqwest = { workspace = true, features = ["json"] }
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

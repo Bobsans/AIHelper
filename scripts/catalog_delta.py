@@ -9,6 +9,10 @@ real diffs in `git diff`.
 This compares two snapshots with `required` canonicalised, so anything it prints
 is a genuine change to the published contract and needs a decision.
 
+Both snapshot shapes are understood: the built-in catalog is a list of
+`{domain, plugin, descriptor}` entries, while a dynamic plugin snapshot is a bare
+`CommandCatalog`, `{plugin_name, domain, commands: [...]}`.
+
 Usage:
     # before touching a schema
     cp tests/snapshots/typed-command-catalog.snap target/catalog_prev.snap
@@ -53,9 +57,16 @@ def load(path: pathlib.Path):
     return canonical(json.loads(path.read_text(encoding="utf-8")))
 
 
+def by_command(snapshot) -> dict:
+    """Index a snapshot by command id, whichever of the two shapes it has."""
+    if isinstance(snapshot, dict):
+        return {command["id"]: command for command in snapshot["commands"]}
+    return {entry["descriptor"]["id"]: entry for entry in snapshot}
+
+
 def describe(before, after) -> int:
-    by_id = {entry["descriptor"]["id"]: entry for entry in before}
-    after_by_id = {entry["descriptor"]["id"]: entry for entry in after}
+    by_id = by_command(before)
+    after_by_id = by_command(after)
 
     removed = sorted(set(by_id) - set(after_by_id))
     added = sorted(set(after_by_id) - set(by_id))
@@ -81,9 +92,23 @@ def describe(before, after) -> int:
             )
         )
 
-    if not (removed or added or changed):
+    # A plugin snapshot carries plugin_name and domain outside the command list.
+    envelope = envelope_delta(before, after)
+
+    if not (removed or added or changed or envelope):
         print("OK: identical once `required` is treated as a set")
         return 0
+    return 1
+
+
+def envelope_delta(before, after) -> int:
+    if not (isinstance(before, dict) and isinstance(after, dict)):
+        return 0
+    old = {key: value for key, value in before.items() if key != "commands"}
+    new = {key: value for key, value in after.items() if key != "commands"}
+    if old == new:
+        return 0
+    print(f"-- catalog envelope: {old} -> {new}")
     return 1
 
 

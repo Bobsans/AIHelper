@@ -9,6 +9,7 @@ use ah_plugin_api::{
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::blocking::Client;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 const DOMAIN: &str = "ollama";
@@ -55,54 +56,90 @@ enum OllamaCommand {
     Chat(ChatArgs),
 }
 
-#[derive(Debug, Args)]
+// The connection options are flattened into both command argument types, and
+// `serde(deny_unknown_fields)` cannot be combined with `serde(flatten)`, so each
+// of them states the `additionalProperties: false` the catalog publishes; the
+// runtime validates arguments against that schema before dispatch, which is what
+// rejects an unknown property either way.
+//
+// The doc comments below become the published schema descriptions; `help` stays
+// explicit because the CLI wording is not the same text.
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
 struct AskArgs {
+    /// Ollama model name.
     #[arg(
         long,
         value_name = "MODEL",
         help = "Ollama model name, for example llama3.2"
     )]
+    #[schemars(length(min = 1))]
     model: String,
+    /// Prompt text.
     #[arg(long, value_name = "TEXT", help = "Prompt text")]
+    #[schemars(length(min = 1))]
     prompt: String,
+    /// Optional system instruction sent to the model.
     #[arg(long, value_name = "TEXT", help = "Optional system instruction")]
     system: Option<String>,
     #[command(flatten)]
+    #[serde(flatten)]
     connection: ConnectionArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
 struct ChatArgs {
+    /// Ollama model name.
     #[arg(
         long,
         value_name = "MODEL",
         help = "Ollama model name, for example llama3.2"
     )]
+    #[schemars(length(min = 1))]
     model: String,
+    /// User message text.
     #[arg(long, value_name = "TEXT", help = "User message text")]
+    #[schemars(length(min = 1))]
     message: String,
+    /// Optional system instruction sent to the model.
     #[arg(long, value_name = "TEXT", help = "Optional system instruction")]
     system: Option<String>,
     #[command(flatten)]
+    #[serde(flatten)]
     connection: ConnectionArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Deserialize, JsonSchema)]
 struct ConnectionArgs {
+    /// Ollama base URL. Prompt data is sent to this address.
     #[arg(
         long,
         value_name = "URL",
         default_value = DEFAULT_BASE_URL,
         help = "Ollama base URL"
     )]
+    #[serde(default = "default_base_url")]
+    #[schemars(length(min = 1))]
     base_url: String,
+    /// HTTP timeout, capped by the MCP request deadline.
     #[arg(
         long,
         value_name = "SECONDS",
         default_value_t = DEFAULT_TIMEOUT_SECS,
         help = "HTTP timeout in seconds"
     )]
+    #[serde(default = "default_timeout_secs")]
+    #[schemars(range(min = 1))]
     timeout_secs: u64,
+}
+
+fn default_base_url() -> String {
+    DEFAULT_BASE_URL.to_owned()
+}
+
+fn default_timeout_secs() -> u64 {
+    DEFAULT_TIMEOUT_SECS
 }
 
 #[derive(Debug, Serialize)]
@@ -162,7 +199,7 @@ struct ChatMessageResponse {
     content: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct OllamaOutput {
     command: String,
     model: String,
@@ -173,7 +210,7 @@ struct OllamaOutput {
     metrics: OllamaMetrics,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct OllamaMetrics {
     total_duration: Option<u64>,
     load_duration: Option<u64>,
