@@ -8,10 +8,13 @@ use std::{
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError,
     InvocationResponse, ResolvedSecret, Reversibility, RiskLevel, SecretSlot,
-    TypedInvocationRequest, TypedInvocationResponse, schema::output_schema_for,
+    TypedInvocationRequest, TypedInvocationResponse,
+    schema::{input_schema_for, output_schema_for},
 };
 use clap::{Args, Subcommand, ValueEnum};
-use serde_json::{Map, Value, json};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::Value;
 
 use crate::{cli::GlobalOptions, error::AppError};
 
@@ -177,6 +180,186 @@ pub struct RequestExpectArgs {
     pub expect_json: Vec<String>,
 }
 
+/// The wire contract for every request-shaped HTTP command, kept separate from
+/// [`RequestOptionsArgs`] because the two genuinely differ: a caller sends a JSON
+/// value, the CLI type holds it already serialized; a caller names a credential
+/// slot, the CLI type holds the credential the host resolved; and the deadline is
+/// supplied by the execution context, not by anyone. [`Self::split`] converts one
+/// into the other with what only the execution context knows.
+///
+/// `credentials` is not part of the published input schema - the runtime augments
+/// the MCP-facing schema with it from the descriptor's secret slots - but it does
+/// arrive in the arguments, so the field exists and is hidden from the schema.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RequestOptionsWireArgs {
+    /// HTTP headers as K: V.
+    headers: Option<Vec<String>>,
+    /// Query parameters as KEY=VALUE.
+    query: Option<Vec<String>>,
+    /// HTTP timeout.
+    #[serde(default = "default_timeout_secs")]
+    #[schemars(range(min = 1))]
+    timeout_secs: u64,
+    /// Maximum response body bytes.
+    #[serde(default = "default_max_response_bytes")]
+    #[schemars(range(min = 1))]
+    max_response_bytes: usize,
+    /// Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.
+    #[serde(default)]
+    retry: u64,
+    /// Fixed delay in milliseconds between retry attempts.
+    #[serde(default)]
+    retry_delay_ms: u64,
+    /// Bearer token sent to the target URL.
+    bearer: Option<String>,
+    /// Basic credentials as USER:PASS.
+    basic: Option<String>,
+    /// JSON request payload.
+    json: Option<Value>,
+    /// JSON payload file.
+    #[schemars(length(min = 1))]
+    json_file: Option<String>,
+    /// Raw text request payload.
+    body: Option<String>,
+    /// Raw text payload file.
+    #[schemars(length(min = 1))]
+    body_file: Option<String>,
+    /// Expected status code, class, or range.
+    expect_status: Option<String>,
+    /// Expected headers as K: V.
+    expect_headers: Option<Vec<String>>,
+    /// Required body substrings.
+    expect_body_contains: Option<Vec<String>>,
+    /// JSON checks as PATH:OP[:VALUE].
+    expect_json: Option<Vec<String>>,
+    #[serde(default)]
+    #[schemars(skip)]
+    credentials: Option<Value>,
+}
+
+fn default_timeout_secs() -> u64 {
+    domain::DEFAULT_TIMEOUT_SECS
+}
+
+fn default_max_response_bytes() -> usize {
+    domain::DEFAULT_MAX_RESPONSE_BYTES
+}
+
+impl RequestOptionsWireArgs {
+    fn split(
+        self,
+        request: &TypedInvocationRequest,
+    ) -> Result<(RequestOptionsArgs, RequestExpectArgs), AppError> {
+        let cwd = &request.context.cwd;
+        let options = RequestOptionsArgs {
+            headers: self.headers.unwrap_or_default(),
+            query: self.query.unwrap_or_default(),
+            timeout_secs: Some(self.timeout_secs),
+            max_response_bytes: Some(self.max_response_bytes),
+            retry: self.retry,
+            retry_delay_ms: self.retry_delay_ms,
+            bearer: self.bearer,
+            basic: self.basic,
+            resolved_basic: resolved_basic_credential(
+                self.credentials.as_ref(),
+                &request.resolved_secrets,
+            )?,
+            json: self.json.as_ref().map(serde_json::to_string).transpose()?,
+            json_file: self.json_file.map(|path| resolve_context_path(cwd, &path)),
+            body: self.body,
+            body_file: self.body_file.map(|path| resolve_context_path(cwd, &path)),
+            deadline: request_deadline(request),
+        };
+        let expect = RequestExpectArgs {
+            expect_status: self.expect_status,
+            expect_headers: self.expect_headers.unwrap_or_default(),
+            expect_body_contains: self.expect_body_contains.unwrap_or_default(),
+            expect_json: self.expect_json.unwrap_or_default(),
+        };
+        Ok((options, expect))
+    }
+}
+
+// The three request-shaped commands differ only in how the target is named, so
+// the options above are flattened in. `deny_unknown_fields` cannot be combined
+// with `serde(flatten)`, so each of them states the `additionalProperties: false`
+// the catalog publishes; the runtime validates arguments against that schema
+// before dispatch, which is what rejects an unknown property.
+/// bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
+pub struct RequestWireArgs {
+    /// HTTP method.
+    #[schemars(length(min = 1))]
+    method: String,
+    /// Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.
+    #[schemars(length(min = 1))]
+    url: String,
+    #[serde(flatten)]
+    options: RequestOptionsWireArgs,
+}
+
+/// bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
+pub struct MethodShortcutWireArgs {
+    /// Absolute HTTP(S) URL. Network access is unrestricted by AIHelper.
+    #[schemars(length(min = 1))]
+    url: String,
+    #[serde(flatten)]
+    options: RequestOptionsWireArgs,
+}
+
+/// bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(extend("additionalProperties" = false))]
+pub struct ReplayWireArgs {
+    /// Supported curl command form.
+    #[schemars(length(min = 1))]
+    curl: String,
+    #[serde(flatten)]
+    options: RequestOptionsWireArgs,
+}
+
+// The wire contract for `http.assert` and `http.run`: the report format is an
+// output-shaping CLI flag and the deadline comes from the execution context, so
+// neither appears here. Deliberately not a doc comment: these two commands
+// publish no top-level schema description, and a doc comment would become one.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AssertWireArgs {
+    /// YAML or JSON spec path resolved against the execution cwd.
+    #[schemars(length(min = 1))]
+    spec_path: String,
+    /// Template variables encoded as KEY=VALUE.
+    #[schemars(inner(pattern(r"^[^=]+=.*$")))]
+    vars: Option<Vec<String>>,
+    /// Additional attempts per case for transport failures, timeouts, response read failures, and HTTP 5xx.
+    #[serde(default)]
+    retry: u64,
+    /// Fixed delay in milliseconds between retry attempts.
+    #[serde(default)]
+    retry_delay_ms: u64,
+    /// Stop after the first failed case.
+    #[serde(default)]
+    fail_fast: bool,
+}
+
+impl AssertWireArgs {
+    fn into_args(self, request: &TypedInvocationRequest) -> AssertArgs {
+        AssertArgs {
+            spec_path: resolve_context_path(&request.context.cwd, &self.spec_path),
+            vars: self.vars.unwrap_or_default(),
+            retry: self.retry,
+            retry_delay_ms: self.retry_delay_ms,
+            fail_fast: self.fail_fast,
+            report: None,
+            deadline: request_deadline(request),
+        }
+    }
+}
+
 pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         HttpCommand::Request(request_args) => execute_request(
@@ -251,15 +434,27 @@ fn typed_request(
     command_name: &'static str,
     method: Option<&str>,
 ) -> Result<Value, AppError> {
-    let method = method
-        .map(str::to_owned)
-        .or_else(|| optional_string(&request.arguments, "method"))
-        .ok_or_else(|| AppError::invalid_argument("missing HTTP method"))?;
-    let args = RequestArgs {
-        method,
-        url: required_string(&request.arguments, "url")?,
-        request: typed_request_options(request)?,
-        expect: typed_expectations(&request.arguments),
+    let args = match method {
+        Some(method) => {
+            let wire: MethodShortcutWireArgs = decode(request)?;
+            let (options, expect) = wire.options.split(request)?;
+            RequestArgs {
+                method: method.to_owned(),
+                url: wire.url,
+                request: options,
+                expect,
+            }
+        }
+        None => {
+            let wire: RequestWireArgs = decode(request)?;
+            let (options, expect) = wire.options.split(request)?;
+            RequestArgs {
+                method: wire.method,
+                url: wire.url,
+                request: options,
+                expect,
+            }
+        }
     };
     let output = domain::run_request_command(args, command_name)?;
     if !output.ok {
@@ -276,10 +471,12 @@ fn typed_request(
 }
 
 fn typed_replay(request: &TypedInvocationRequest) -> Result<Value, AppError> {
+    let wire: ReplayWireArgs = decode(request)?;
+    let (options, expect) = wire.options.split(request)?;
     let args = ReplayArgs {
-        curl: required_string(&request.arguments, "curl")?,
-        request: typed_request_options(request)?,
-        expect: typed_expectations(&request.arguments),
+        curl: wire.curl,
+        request: options,
+        expect,
     };
     let output = domain::run_replay(args, "replay")?;
     if !output.ok {
@@ -299,19 +496,8 @@ fn typed_assert(
     request: &TypedInvocationRequest,
     command_name: &'static str,
 ) -> Result<Value, AppError> {
-    let spec_path = resolve_context_path(
-        &request.context.cwd,
-        &required_string(&request.arguments, "spec_path")?,
-    );
-    let args = AssertArgs {
-        spec_path,
-        vars: string_array(&request.arguments, "vars"),
-        retry: u64_or(&request.arguments, "retry", 0),
-        retry_delay_ms: u64_or(&request.arguments, "retry_delay_ms", 0),
-        fail_fast: bool_or(&request.arguments, "fail_fast", false),
-        report: None,
-        deadline: request_deadline(request),
-    };
+    let wire: AssertWireArgs = decode(request)?;
+    let args = wire.into_args(request);
     let (output, _) = domain::run_assert(args, crate::output::OutputMode::Json, command_name)?;
     if output.summary.failed > 0 {
         return Err(AppError::external(
@@ -325,46 +511,22 @@ fn typed_assert(
     Ok(serde_json::to_value(output)?)
 }
 
-fn typed_request_options(request: &TypedInvocationRequest) -> Result<RequestOptionsArgs, AppError> {
-    let arguments = &request.arguments;
-    let json = arguments
-        .get("json")
-        .map(serde_json::to_string)
-        .transpose()?;
-    Ok(RequestOptionsArgs {
-        headers: string_array(arguments, "headers"),
-        query: string_array(arguments, "query"),
-        timeout_secs: Some(u64_or(
-            arguments,
-            "timeout_secs",
-            domain::DEFAULT_TIMEOUT_SECS,
-        )),
-        max_response_bytes: arguments
-            .get("max_response_bytes")
-            .and_then(Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok()),
-        retry: u64_or(arguments, "retry", 0),
-        retry_delay_ms: u64_or(arguments, "retry_delay_ms", 0),
-        bearer: optional_string(arguments, "bearer"),
-        basic: optional_string(arguments, "basic"),
-        resolved_basic: resolved_basic_credential(request)?,
-        json,
-        json_file: optional_string(arguments, "json_file")
-            .map(|path| resolve_context_path(&request.context.cwd, &path)),
-        body: optional_string(arguments, "body"),
-        body_file: optional_string(arguments, "body_file")
-            .map(|path| resolve_context_path(&request.context.cwd, &path)),
-        deadline: request_deadline(request),
+/// Arguments are validated against the derived input schema before dispatch, so
+/// a failure here means the schema and the wire type disagree.
+fn decode<T: serde::de::DeserializeOwned>(request: &TypedInvocationRequest) -> Result<T, AppError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        AppError::invalid_argument(format!(
+            "invalid arguments for {}: {error}",
+            request.command
+        ))
     })
 }
 
 fn resolved_basic_credential(
-    request: &TypedInvocationRequest,
+    credentials: Option<&Value>,
+    resolved_secrets: &BTreeMap<String, ResolvedSecret>,
 ) -> Result<Option<BasicCredential>, AppError> {
-    let credentials = request
-        .arguments
-        .get("credentials")
-        .and_then(Value::as_object);
+    let credentials = credentials.and_then(Value::as_object);
     if let Some(slot) = credentials.and_then(|items| items.keys().find(|key| *key != "basic")) {
         return Err(AppError::invalid_argument(format!(
             "unsupported HTTP credential slot '{slot}'"
@@ -373,7 +535,7 @@ fn resolved_basic_credential(
     let public_id = credentials
         .and_then(|items| items.get("basic"))
         .and_then(Value::as_str);
-    let resolved = basic_from_resolved_secrets(&request.resolved_secrets)?;
+    let resolved = basic_from_resolved_secrets(resolved_secrets)?;
     match (public_id, &resolved) {
         (None, None) | (Some(_), Some(_)) => {}
         _ => {
@@ -383,7 +545,7 @@ fn resolved_basic_credential(
             ));
         }
     }
-    if let Some((public_id, secret)) = public_id.zip(request.resolved_secrets.get("basic"))
+    if let Some((public_id, secret)) = public_id.zip(resolved_secrets.get("basic"))
         && secret.id != public_id
     {
         return Err(AppError::external(
@@ -461,15 +623,6 @@ fn basic_from_resolved_secrets(
     Ok(Some(BasicCredential::new(username, password)))
 }
 
-fn typed_expectations(arguments: &Value) -> RequestExpectArgs {
-    RequestExpectArgs {
-        expect_status: optional_string(arguments, "expect_status"),
-        expect_headers: string_array(arguments, "expect_headers"),
-        expect_body_contains: string_array(arguments, "expect_body_contains"),
-        expect_json: string_array(arguments, "expect_json"),
-    }
-}
-
 fn resolve_context_path(cwd: &str, path: &str) -> PathBuf {
     let path = PathBuf::from(path);
     if path.is_absolute() {
@@ -487,58 +640,12 @@ fn retryable_http_error(code: &str) -> bool {
     code.contains("HTTP_REQUEST") || code.contains("HTTP_RESPONSE") || code.contains("TIMEOUT")
 }
 
-fn required_string(arguments: &Value, name: &str) -> Result<String, AppError> {
-    optional_string(arguments, name)
-        .ok_or_else(|| AppError::invalid_argument(format!("missing {name}")))
-}
-
-fn optional_string(arguments: &Value, name: &str) -> Option<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn string_array(arguments: &Value, name: &str) -> Vec<String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn bool_or(arguments: &Value, name: &str, default: bool) -> bool {
-    arguments
-        .get(name)
-        .and_then(Value::as_bool)
-        .unwrap_or(default)
-}
-
-fn u64_or(arguments: &Value, name: &str, default: u64) -> u64 {
-    arguments
-        .get(name)
-        .and_then(Value::as_u64)
-        .unwrap_or(default)
-}
-
 fn request_descriptor() -> CommandDescriptor {
-    let mut properties = request_properties();
-    properties.insert(
-        "method".to_owned(),
-        json!({"type": "string", "minLength": 1, "description": "HTTP method."}),
-    );
-    properties.insert("url".to_owned(), url_schema());
     CommandDescriptor::new(
         "http.request",
         "Send HTTP request",
         "Send an HTTP request with explicit method, payload, authentication, and expectations.",
-        request_input_schema(properties, vec!["method", "url"]),
+        input_schema_for::<RequestWireArgs>(),
         output_schema_for::<domain::HttpRequestOutput>("http.request"),
         http_write_effects(
             "Sends an arbitrary HTTP method and optional credentials or payload to an arbitrary URL; the remote service may mutate state.",
@@ -548,13 +655,11 @@ fn request_descriptor() -> CommandDescriptor {
 }
 
 fn shortcut_descriptor(command: &str, method: &str, read_only: bool) -> CommandDescriptor {
-    let mut properties = request_properties();
-    properties.insert("url".to_owned(), url_schema());
     let descriptor = CommandDescriptor::new(
         format!("http.{command}"),
         format!("Send HTTP {method}"),
         format!("Send an HTTP {method} request with payload, authentication, and expectations."),
-        request_input_schema(properties, vec!["url"]),
+        input_schema_for::<MethodShortcutWireArgs>(),
         output_schema_for::<domain::HttpRequestOutput>(&format!("http.{command}")),
         if read_only {
             http_read_effects(
@@ -574,16 +679,11 @@ fn shortcut_descriptor(command: &str, method: &str, read_only: bool) -> CommandD
 }
 
 fn replay_descriptor() -> CommandDescriptor {
-    let mut properties = request_properties();
-    properties.insert(
-        "curl".to_owned(),
-        json!({"type": "string", "minLength": 1, "description": "Supported curl command form."}),
-    );
     CommandDescriptor::new(
         "http.replay",
         "Replay curl request",
         "Parse and replay a supported curl command with optional expectation overrides.",
-        request_input_schema(properties, vec!["curl"]),
+        input_schema_for::<ReplayWireArgs>(),
         output_schema_for::<domain::HttpRequestOutput>("http.replay"),
         http_write_effects(
             "Replays an arbitrary HTTP request encoded in curl syntax and may send embedded credentials or mutate a remote service.",
@@ -605,40 +705,7 @@ fn assert_descriptor(command: &str) -> CommandDescriptor {
             "Run HTTP assertion alias"
         },
         "Execute all HTTP cases in a YAML or JSON assertion spec.",
-        json!({
-            "type": "object",
-            "properties": {
-                "spec_path": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "YAML or JSON spec path resolved against the execution cwd."
-                },
-                "vars": {
-                    "type": "array",
-                    "items": {"type": "string", "pattern": "^[^=]+=.*$"},
-                    "description": "Template variables encoded as KEY=VALUE."
-                },
-                "retry": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "default": 0,
-                    "description": "Additional attempts per case for transport failures, timeouts, response read failures, and HTTP 5xx."
-                },
-                "retry_delay_ms": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "default": 0,
-                    "description": "Fixed delay in milliseconds between retry attempts."
-                },
-                "fail_fast": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Stop after the first failed case."
-                }
-            },
-            "required": ["spec_path"],
-            "additionalProperties": false
-        }),
+        input_schema_for::<AssertWireArgs>(),
         output_schema_for::<domain::HttpAssertOutput>("http.assert"),
         CommandEffects::new(
             false,
@@ -657,125 +724,6 @@ fn assert_descriptor(command: &str) -> CommandDescriptor {
             Reversibility::Unknown,
         ),
     )
-}
-
-fn request_properties() -> Map<String, Value> {
-    let mut properties = Map::new();
-    properties.insert(
-        "headers".to_owned(),
-        string_list_schema("HTTP headers as K: V."),
-    );
-    properties.insert(
-        "query".to_owned(),
-        string_list_schema("Query parameters as KEY=VALUE."),
-    );
-    properties.insert(
-        "timeout_secs".to_owned(),
-        positive_integer_with_default(domain::DEFAULT_TIMEOUT_SECS, "HTTP timeout."),
-    );
-    properties.insert(
-        "max_response_bytes".to_owned(),
-        positive_integer_with_default(
-            domain::DEFAULT_MAX_RESPONSE_BYTES as u64,
-            "Maximum response body bytes.",
-        ),
-    );
-    properties.insert(
-        "retry".to_owned(),
-        nonnegative_integer_with_default(
-            0,
-            "Additional attempts for transport failures, timeouts, response read failures, and HTTP 5xx.",
-        ),
-    );
-    properties.insert(
-        "retry_delay_ms".to_owned(),
-        nonnegative_integer_with_default(0, "Fixed delay in milliseconds between retry attempts."),
-    );
-    properties.insert(
-        "bearer".to_owned(),
-        json!({"type": "string", "description": "Bearer token sent to the target URL."}),
-    );
-    properties.insert(
-        "basic".to_owned(),
-        json!({"type": "string", "description": "Basic credentials as USER:PASS."}),
-    );
-    properties.insert(
-        "json".to_owned(),
-        json!({"description": "JSON request payload."}),
-    );
-    properties.insert(
-        "json_file".to_owned(),
-        file_path_schema("JSON payload file."),
-    );
-    properties.insert(
-        "body".to_owned(),
-        json!({"type": "string", "description": "Raw text request payload."}),
-    );
-    properties.insert(
-        "body_file".to_owned(),
-        file_path_schema("Raw text payload file."),
-    );
-    properties.insert(
-        "expect_status".to_owned(),
-        json!({"type": "string", "description": "Expected status code, class, or range."}),
-    );
-    properties.insert(
-        "expect_headers".to_owned(),
-        string_list_schema("Expected headers as K: V."),
-    );
-    properties.insert(
-        "expect_body_contains".to_owned(),
-        string_list_schema("Required body substrings."),
-    );
-    properties.insert(
-        "expect_json".to_owned(),
-        string_list_schema("JSON checks as PATH:OP[:VALUE]."),
-    );
-    properties
-}
-
-fn request_input_schema(properties: Map<String, Value>, required: Vec<&str>) -> Value {
-    json!({
-        "type": "object",
-        "description": "bearer and basic are mutually exclusive; at most one of json, json_file, body, or body_file may be supplied.",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
-fn url_schema() -> Value {
-    json!({
-        "type": "string",
-        "minLength": 1,
-        "description": "Absolute HTTP(S) URL. Network access is unrestricted by AIHelper."
-    })
-}
-
-fn file_path_schema(description: &str) -> Value {
-    json!({"type": "string", "minLength": 1, "description": description})
-}
-
-fn string_list_schema(description: &str) -> Value {
-    json!({"type": "array", "items": {"type": "string"}, "description": description})
-}
-
-fn positive_integer_with_default(default: u64, description: &str) -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 1,
-        "default": default,
-        "description": description
-    })
-}
-
-fn nonnegative_integer_with_default(default: u64, description: &str) -> Value {
-    json!({
-        "type": "integer",
-        "minimum": 0,
-        "default": default,
-        "description": description
-    })
 }
 
 fn http_read_effects(impact: &str) -> CommandEffects {
@@ -867,8 +815,16 @@ mod tests {
     use std::collections::BTreeMap;
 
     use ah_plugin_api::{ExecutionContextWire, ResolvedSecret};
+    use serde_json::json;
 
     use super::*;
+
+    fn typed_request_options(
+        request: &TypedInvocationRequest,
+    ) -> Result<RequestOptionsArgs, AppError> {
+        let wire: MethodShortcutWireArgs = decode(request)?;
+        wire.options.split(request).map(|(options, _)| options)
+    }
 
     #[test]
     fn typed_http_schemas_expose_retry_options() {

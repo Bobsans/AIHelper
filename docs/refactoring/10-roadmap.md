@@ -64,7 +64,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 |---------------------------------------------------------------------------------------------|--------|
 | ~~`schemars`-derived output schemas for the eight built-in domains~~ **(done)**             | 01     |
 | ~~`schemars`-derived input schemas and `typed_args` for seven built-in domains~~ **(done)** | 01     |
-| `http` input schemas: wire type separate from the CLI type                                  | 01     |
+| ~~`http` input schemas: wire type separate from the CLI type~~ **(done)**                   | 01     |
 | Schemas for host commands (`ai.info`, `plugins.*`, `secrets.list`)                          | 01     |
 | Schemas for the four dynamic plugins                                                        | 01     |
 | Generate manuals from descriptors; delete `src/plugins.rs` literals                         | 01     |
