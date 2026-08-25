@@ -15,6 +15,7 @@ publish = false
 members = [
     "crates/ah-mcp",
     "crates/ah-plugin-api",
+    "crates/ah-plugin-sdk",
     "crates/ah-redact",
     "crates/ah-release-manifest",
     "crates/ah-release-tool",

@@ -76,6 +76,7 @@ name = "ah-plugin-github"
 version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
+ "ah-plugin-sdk",
  "clap",
  "reqwest",
  "schemars",
@@ -90,6 +91,7 @@ name = "ah-plugin-gitlab"
 version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
+ "ah-plugin-sdk",
  "clap",
  "reqwest",
  "schemars",
@@ -122,6 +124,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "zip",
+]
+
+[[package]]
+name = "ah-plugin-sdk"
+version = "1.4.0"
+dependencies = [
+ "ah-plugin-api",
 ]
 
 [[package]]

@@ -18,13 +18,14 @@ releases, CI runs and logs — with parallel, separately written code:
 
 | Concern | GitHub | GitLab |
 |---|---|---|
-| credential authority parsing | `lib.rs:1720` `credential_authority` | `lib.rs:1628` |
-| HTTPS authority extraction | `lib.rs:1729` `https_authority` | `lib.rs:1633` |
-| loopback detection | `lib.rs:1742` `is_loopback_authority` | `lib.rs:1646` |
-| git remote authority | `lib.rs:1753` `remote_authority` | `lib.rs:1657` |
-| env token lookup | `lib.rs:1767` `env_token` | `lib.rs:1671` |
-| `git credential fill` driver | `lib.rs:1774` `git_credential_token` | `lib.rs:1678` |
-| bounded credential child wait | `lib.rs:1805` `wait_for_credential_child` | `lib.rs:1709` |
+| ~~credential authority parsing~~ | *forge policy; kept, now three lines each* | |
+| ~~HTTPS authority extraction~~ | `ah_plugin_sdk::credentials` | |
+| ~~loopback detection~~ | `ah_plugin_sdk::credentials` | |
+| ~~git remote authority~~ | `ah_plugin_sdk::credentials` | |
+| ~~env token lookup~~ | `ah_plugin_sdk::credentials` | |
+| ~~`git credential fill` driver~~ | `ah_plugin_sdk::credentials` | |
+| ~~bounded credential child wait~~ | `ah_plugin_sdk::credentials` | |
+| ~~ambient-token policy~~ | `credentials::TokenPolicy`, per-forge data only | |
 | JSON request wrapper | `lib.rs:1833` `github_json` | `lib.rs:1737` `gitlab_json` |
 | response/error mapping | `lib.rs:1861` `github_response` | `lib.rs:1787` |
 | log/trace fetch with byte caps | `lib.rs:1902`, `lib.rs:2001` | `lib.rs:1827` |
@@ -106,7 +107,7 @@ domains, which have the same needs):
 | Module | Provides |
 |---|---|
 | `sdk::http` | blocking JSON client: retry policy, deadline, pagination, bounded response bodies, uniform error→`CommandError` mapping |
-| `sdk::credentials` | authority parsing, loopback checks, `git credential fill` with bounded child wait, env fallback, ambient-token policy |
+| ~~`sdk::credentials`~~ *(done)* | authority parsing, loopback checks, `git credential fill` with bounded child wait, env fallback, ambient-token policy |
 | ~~`sdk::cancel`~~ | *done, as `ah_plugin_api::cancellation` — see B* |
 | `sdk::render` | table/list/keyvalue renderers built on `TextFormatter`, ANSI stripping, truncation |
 | `sdk::descriptor` | descriptor/manual builders (feeds group 01) |
@@ -150,8 +151,10 @@ implementation, not a merged product surface.
 
 1. Create `ah-plugin-sdk` with `sdk::render` and `sdk::http` first; migrate the
    Ollama plugin (smallest, 1 040 lines) as the pilot.
-2. Move credential resolution into `sdk::credentials`; migrate GitHub, then GitLab.
-   Add a shared test suite that runs against both.
+2. ~~Move credential resolution into `sdk::credentials`; migrate GitHub, then GitLab.
+   Add a shared test suite that runs against both.~~ **(done)** — the shared suite lives
+   with the code it tests, in the SDK; each plugin keeps only the assertions about its
+   own policy, and makes them against the policy value the plugin actually builds.
 3. Add the runtime cancellation token; migrate the three built-in domains and the
    GitHub plugin; delete the globals.
 4. ~~Add `sdk::process`; delete `AH_*_TEST_*` environment seams and rewrite those tests
@@ -175,7 +178,7 @@ implementation, not a merged product surface.
 
 ## Acceptance criteria
 
-- No credential-handling code exists in more than one place.
+- ~~No credential-handling code exists in more than one place.~~ **(met)**
 - No plugin defines its own cancellation registry.
 - No `AH_*_TEST_*` environment variable is read by production code paths.
 - A new plugin can be written without copying code from an existing plugin; the

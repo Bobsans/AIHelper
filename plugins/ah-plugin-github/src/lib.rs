@@ -1,13 +1,14 @@
 use std::{
-    env, fs,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    fs,
+    io::{BufRead, BufReader, Cursor, Read},
     path::{Path, PathBuf},
-    process::{Child, Output, Stdio},
     time::{Duration, Instant},
 };
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
+use ah_plugin_sdk::credentials;
+
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
     TextFormatter, TextStyle, noninteractive_command,
@@ -1877,29 +1878,29 @@ fn resolve_token(
     remote_url: Option<&str>,
 ) -> Result<Option<String>, InvocationResponse> {
     let explicit = args.token.clone().filter(|value| !value.trim().is_empty());
-    let Some(authority) = token_target_authority(api_url) else {
-        // Cleartext off-box: an explicit token means the caller meant to
-        // authenticate, so fail loudly instead of leaking it.
-        return match explicit {
-            Some(_) => Err(insecure_token_target()),
-            None => Ok(None),
-        };
-    };
-    if let Some(token) = explicit {
-        return Ok(Some(token));
+    credentials::resolve(api_url, explicit, &token_policy(args, api_url, remote_url))
+        .map(|resolved| resolved.token)
+        .map_err(|credentials::InsecureTokenTarget| insecure_token_target())
+}
+
+/// Where a GitHub token may come from when the caller supplied none.
+fn token_policy<'a>(
+    args: &GithubConnectionArgs,
+    api_url: &str,
+    remote_url: Option<&'a str>,
+) -> credentials::TokenPolicy<'a> {
+    credentials::TokenPolicy {
+        // `api.github.com` and `github.com` are the same forge, so a credential
+        // registered for either is registered for both.
+        home_authorities: &[DEFAULT_API_AUTHORITY, "github.com"],
+        env_vars: &["GITHUB_TOKEN", "GH_TOKEN"],
+        credential_authority: args
+            .use_git_credential
+            .then(|| credential_authority(api_url))
+            .flatten(),
+        remote_url,
+        helper_timeout: GIT_CREDENTIAL_TIMEOUT,
     }
-    if !is_ambient_token_target(&authority, remote_url) {
-        return Ok(None);
-    }
-    Ok(env_token("GITHUB_TOKEN")
-        .or_else(|| env_token("GH_TOKEN"))
-        .or_else(|| {
-            if args.use_git_credential {
-                git_credential_token(&credential_authority(api_url)?)
-            } else {
-                None
-            }
-        }))
 }
 
 fn insecure_token_target() -> InvocationResponse {
@@ -1909,142 +1910,14 @@ fn insecure_token_target() -> InvocationResponse {
     )
 }
 
-/// Authority a caller-supplied token may reach: https anywhere, or cleartext only
-/// on loopback, which cannot leave the machine.
-fn token_target_authority(api_url: &str) -> Option<String> {
-    https_authority(api_url).or_else(|| {
-        let authority = url_authority(api_url, "http://")?;
-        is_loopback_authority(&authority).then_some(authority)
-    })
-}
-
-/// Ambient credentials (environment variables, the Git credential helper) reach
-/// only GitHub itself, the detected remote's host, or loopback, so a redirected
-/// `--api-url` cannot collect them. Other hosts need an explicit `--token`.
-fn is_ambient_token_target(authority: &str, remote_url: Option<&str>) -> bool {
-    if authority == DEFAULT_API_AUTHORITY
-        || authority == "github.com"
-        || is_loopback_authority(authority)
-    {
-        return true;
-    }
-    remote_url
-        .and_then(remote_authority)
-        .is_some_and(|remote| remote == authority)
-}
-
 /// Binds the credential helper lookup to the host that will receive the token,
 /// so a redirected `--api-url` can never collect GitHub credentials.
 fn credential_authority(api_url: &str) -> Option<String> {
-    let authority = https_authority(api_url)?;
+    let authority = credentials::https_authority(api_url)?;
     Some(if authority == DEFAULT_API_AUTHORITY {
         "github.com".to_owned()
     } else {
         authority
-    })
-}
-
-fn https_authority(url: &str) -> Option<String> {
-    url_authority(url, "https://")
-}
-
-fn url_authority(url: &str, scheme: &str) -> Option<String> {
-    let remainder = url.trim().strip_prefix(scheme)?;
-    let authority = remainder.split(['/', '?', '#']).next()?;
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
-}
-
-fn is_loopback_authority(authority: &str) -> bool {
-    if let Some(rest) = authority.strip_prefix('[') {
-        return rest.split(']').next() == Some("::1");
-    }
-    matches!(
-        authority.split(':').next().unwrap_or(authority),
-        "127.0.0.1" | "localhost"
-    )
-}
-
-/// Extracts the host from either URL syntax or the scp-like `git@host:path` form.
-fn remote_authority(remote: &str) -> Option<String> {
-    let trimmed = remote.trim();
-    for scheme in ["https://", "http://", "ssh://", "git+ssh://", "git://"] {
-        if let Some(authority) = url_authority(trimmed, scheme) {
-            return Some(authority);
-        }
-    }
-    let (authority, _) = trimmed.split_once(':')?;
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    (!host.is_empty() && !host.contains('/')).then(|| host.to_ascii_lowercase())
-}
-
-fn env_token(name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-}
-
-fn git_credential_token(host: &str) -> Option<String> {
-    let mut child = noninteractive_command("git")
-        .args(["credential", "fill"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let written = match child.stdin.take() {
-        Some(mut stdin) => stdin
-            .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
-            .is_ok(),
-        None => false,
-    };
-    let output = wait_for_credential_child(child, GIT_CREDENTIAL_TIMEOUT)?;
-    if !written || !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(value) = line.strip_prefix("password=") {
-            let token = value.trim().to_owned();
-            if !token.is_empty() {
-                return Some(token);
-            }
-        }
-    }
-    None
-}
-
-fn wait_for_credential_child(mut child: Child, timeout: Duration) -> Option<Output> {
-    let deadline = Instant::now().checked_add(timeout)?;
-    let stdout = child.stdout.take();
-    std::thread::scope(|scope| {
-        // Drains stdout while polling so a chatty helper cannot fill the pipe and stall.
-        let reader = scope.spawn(move || {
-            let mut buffer = Vec::new();
-            if let Some(mut stdout) = stdout {
-                let _ = stdout.read_to_end(&mut buffer);
-            }
-            buffer
-        });
-        while child.try_wait().ok()?.is_none() {
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        Some(Output {
-            status: child.wait().ok()?,
-            stdout: reader.join().ok()?,
-            stderr: Vec::new(),
-        })
     })
 }
 
@@ -2780,6 +2653,8 @@ fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Write, process::Stdio};
+
     use std::{
         collections::HashMap,
         io::{BufRead, BufReader},
@@ -2914,38 +2789,47 @@ mod tests {
 
     #[test]
     fn ambient_tokens_reach_only_github_loopback_or_the_detected_remote() {
+        // Asserted through the policy the plugin actually builds, not a
+        // restatement of it.
+        let accepts = |authority: &str, remote: Option<&str>| {
+            token_policy(&connection_args(DEFAULT_API_URL), DEFAULT_API_URL, remote)
+                .accepts_ambient_credentials(authority)
+        };
         let remote = Some("git@ghe.corp.example:owner/repo.git");
 
-        assert!(is_ambient_token_target("api.github.com", None));
-        assert!(is_ambient_token_target("github.com", None));
-        assert!(is_ambient_token_target("127.0.0.1:8080", None));
-        assert!(is_ambient_token_target("ghe.corp.example", remote));
-        assert!(is_ambient_token_target(
+        assert!(accepts("api.github.com", None));
+        assert!(accepts("github.com", None));
+        assert!(accepts("127.0.0.1:8080", None));
+        assert!(accepts("ghe.corp.example", remote));
+        assert!(accepts(
             "ghe.corp.example",
             Some("https://ghe.corp.example/owner/repo.git")
         ));
 
         // A redirected --api-url is never trusted with an ambient credential.
-        assert!(!is_ambient_token_target("attacker.example", None));
-        assert!(!is_ambient_token_target("attacker.example", remote));
-        assert!(!is_ambient_token_target("ghe.corp.example", None));
+        assert!(!accepts("attacker.example", None));
+        assert!(!accepts("attacker.example", remote));
+        assert!(!accepts("ghe.corp.example", None));
     }
 
     #[test]
     fn tokens_travel_only_over_https_or_loopback() {
         assert_eq!(
-            token_target_authority("https://ghe.corp.example/api/v3").as_deref(),
+            credentials::secure_authority("https://ghe.corp.example/api/v3").as_deref(),
             Some("ghe.corp.example")
         );
         assert_eq!(
-            token_target_authority("http://127.0.0.1:8080").as_deref(),
+            credentials::secure_authority("http://127.0.0.1:8080").as_deref(),
             Some("127.0.0.1:8080")
         );
         assert_eq!(
-            token_target_authority("http://localhost:8080").as_deref(),
+            credentials::secure_authority("http://localhost:8080").as_deref(),
             Some("localhost:8080")
         );
-        assert_eq!(token_target_authority("http://ghe.corp.example"), None);
+        assert_eq!(
+            credentials::secure_authority("http://ghe.corp.example"),
+            None
+        );
     }
 
     #[test]
@@ -3028,7 +2912,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        assert!(wait_for_credential_child(child, Duration::from_millis(20)).is_none());
+        assert!(credentials::wait_for_credential_child(child, Duration::from_millis(20)).is_none());
     }
 
     #[test]

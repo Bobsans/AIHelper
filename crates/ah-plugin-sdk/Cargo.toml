@@ -1,0 +1,14 @@
+[package]
+name = "ah-plugin-sdk"
+version = "1.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared implementation support for AIHelper plugins"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
+
+[dependencies]
+ah-plugin-api = { path = "../ah-plugin-api" }

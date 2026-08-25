@@ -1,13 +1,14 @@
 use std::{
-    env, fs,
-    io::{BufRead, BufReader, Read, Write},
+    fs,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    process::{Child, Output, Stdio},
     time::{Duration, Instant},
 };
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
+use ah_plugin_sdk::credentials;
+
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
     TextFormatter, TextStyle, noninteractive_command,
@@ -1590,13 +1591,13 @@ fn resolve_host_and_project(
 fn remote_host(remote: &str) -> Option<String> {
     let trimmed = remote.trim();
     for scheme in ["https://", "http://"] {
-        if let Some(authority) = url_authority(trimmed, scheme) {
+        if let Some(authority) = credentials::url_authority(trimmed, scheme) {
             return Some(format!("{scheme}{authority}"));
         }
     }
     // An ssh or scp-like remote carries an ssh port that says nothing about the
     // web endpoint, so only the host survives.
-    let authority = remote_authority(trimmed)?;
+    let authority = credentials::remote_authority(trimmed)?;
     let host = authority.split(':').next().unwrap_or(&authority);
     (!host.is_empty()).then(|| format!("https://{host}"))
 }
@@ -1787,37 +1788,36 @@ fn resolve_token(
     remote_url: Option<&str>,
 ) -> Result<(Option<String>, Option<String>), InvocationResponse> {
     let explicit = args.token.clone().filter(|value| !value.trim().is_empty());
-    let Some(authority) = secure_authority(api_url) else {
-        // Cleartext off-box: an explicit token means the caller meant to
-        // authenticate, so fail loudly instead of leaking it.
-        return match explicit {
-            Some(_) => Err(insecure_token_target()),
-            None => Ok((None, None)),
-        };
-    };
-    if let Some(token) = explicit {
-        return Ok((Some(token), Some(authority)));
+    let policy = token_policy(args, api_url, graphql_url, remote_url);
+    credentials::resolve(api_url, explicit, &policy)
+        .map(|resolved| (resolved.token, resolved.authority))
+        .map_err(|credentials::InsecureTokenTarget| insecure_token_target())
+}
+
+/// Where a GitLab token may come from when the caller supplied none.
+fn token_policy<'a>(
+    args: &GitlabConnectionArgs,
+    api_url: &str,
+    graphql_url: &str,
+    remote_url: Option<&'a str>,
+) -> credentials::TokenPolicy<'a> {
+    credentials::TokenPolicy {
+        home_authorities: &[DEFAULT_HOST_AUTHORITY],
+        env_vars: &["GITLAB_TOKEN", "GL_TOKEN"],
+        credential_authority: args
+            .use_git_credential
+            .then(|| credential_authority(api_url, graphql_url))
+            .flatten(),
+        remote_url,
+        helper_timeout: GIT_CREDENTIAL_TIMEOUT,
     }
-    if !is_ambient_token_target(&authority, remote_url) {
-        return Ok((None, None));
-    }
-    let token = env_token("GITLAB_TOKEN")
-        .or_else(|| env_token("GL_TOKEN"))
-        .or_else(|| {
-            if args.use_git_credential {
-                git_credential_token(&credential_authority(api_url, graphql_url)?)
-            } else {
-                None
-            }
-        });
-    Ok((token, Some(authority)))
 }
 
 /// Attaches the token only to the authority it was resolved for.
 fn authorized_token<'a>(context: &'a GitlabContext, url: &str) -> Option<&'a str> {
     let token = context.token.as_deref()?;
     let authority = context.token_authority.as_deref()?;
-    (secure_authority(url)? == authority).then_some(token)
+    (credentials::secure_authority(url)? == authority).then_some(token)
 }
 
 fn insecure_token_target() -> InvocationResponse {
@@ -1827,134 +1827,11 @@ fn insecure_token_target() -> InvocationResponse {
     )
 }
 
-fn secure_authority(url: &str) -> Option<String> {
-    https_authority(url).or_else(|| {
-        let authority = url_authority(url, "http://")?;
-        is_loopback_authority(&authority).then_some(authority)
-    })
-}
-
-/// Ambient credentials (environment variables, the Git credential helper) reach
-/// only GitLab.com, the detected remote's host, or loopback, so a redirected
-/// `--api-url` cannot collect them. Other hosts need an explicit `--token`.
-fn is_ambient_token_target(authority: &str, remote_url: Option<&str>) -> bool {
-    if authority == DEFAULT_HOST_AUTHORITY || is_loopback_authority(authority) {
-        return true;
-    }
-    remote_url
-        .and_then(remote_authority)
-        .is_some_and(|remote| remote == authority)
-}
-
 /// Binds the credential helper lookup to the hosts that will receive the token,
 /// so a redirected `--api-url` or `--graphql-url` can never collect credentials.
 fn credential_authority(api_url: &str, graphql_url: &str) -> Option<String> {
-    let authority = https_authority(api_url)?;
-    (https_authority(graphql_url)? == authority).then_some(authority)
-}
-
-fn https_authority(url: &str) -> Option<String> {
-    url_authority(url, "https://")
-}
-
-fn url_authority(url: &str, scheme: &str) -> Option<String> {
-    let remainder = url.trim().strip_prefix(scheme)?;
-    let authority = remainder.split(['/', '?', '#']).next()?;
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
-}
-
-fn is_loopback_authority(authority: &str) -> bool {
-    if let Some(rest) = authority.strip_prefix('[') {
-        return rest.split(']').next() == Some("::1");
-    }
-    matches!(
-        authority.split(':').next().unwrap_or(authority),
-        "127.0.0.1" | "localhost"
-    )
-}
-
-/// Extracts the host from either URL syntax or the scp-like `git@host:path` form.
-fn remote_authority(remote: &str) -> Option<String> {
-    let trimmed = remote.trim();
-    for scheme in ["https://", "http://", "ssh://", "git+ssh://", "git://"] {
-        if let Some(authority) = url_authority(trimmed, scheme) {
-            return Some(authority);
-        }
-    }
-    let (authority, _) = trimmed.split_once(':')?;
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    (!host.is_empty() && !host.contains('/')).then(|| host.to_ascii_lowercase())
-}
-
-fn env_token(name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-}
-
-fn git_credential_token(host: &str) -> Option<String> {
-    let mut child = noninteractive_command("git")
-        .args(["credential", "fill"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let written = match child.stdin.take() {
-        Some(mut stdin) => stdin
-            .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
-            .is_ok(),
-        None => false,
-    };
-    let output = wait_for_credential_child(child, GIT_CREDENTIAL_TIMEOUT)?;
-    if !written || !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(value) = line.strip_prefix("password=") {
-            let token = value.trim().to_owned();
-            if !token.is_empty() {
-                return Some(token);
-            }
-        }
-    }
-    None
-}
-
-fn wait_for_credential_child(mut child: Child, timeout: Duration) -> Option<Output> {
-    let deadline = Instant::now().checked_add(timeout)?;
-    let stdout = child.stdout.take();
-    std::thread::scope(|scope| {
-        // Drains stdout while polling so a chatty helper cannot fill the pipe and stall.
-        let reader = scope.spawn(move || {
-            let mut buffer = Vec::new();
-            if let Some(mut stdout) = stdout {
-                let _ = stdout.read_to_end(&mut buffer);
-            }
-            buffer
-        });
-        while child.try_wait().ok()?.is_none() {
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        Some(Output {
-            status: child.wait().ok()?,
-            stdout: reader.join().ok()?,
-            stderr: Vec::new(),
-        })
-    })
+    let authority = credentials::https_authority(api_url)?;
+    (credentials::https_authority(graphql_url)? == authority).then_some(authority)
 }
 
 fn gitlab_json<T>(
@@ -2849,6 +2726,8 @@ fn manual_example(description: &str, argv: &[&str]) -> ManualExample {
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Write, process::Stdio};
+
     use std::{
         collections::HashMap,
         io::{BufRead, BufReader, Read},
@@ -2997,28 +2876,42 @@ mod tests {
 
     #[test]
     fn ambient_tokens_reach_only_gitlab_loopback_or_the_detected_remote() {
+        // Asserted through the policy the plugin actually builds, not a
+        // restatement of it.
+        let accepts = |authority: &str, remote: Option<&str>| {
+            token_policy(
+                &connection_args(),
+                "https://gitlab.com/api/v4",
+                "https://gitlab.com/api/graphql",
+                remote,
+            )
+            .accepts_ambient_credentials(authority)
+        };
         let remote = Some("git@gitlab.corp.example:group/project.git");
 
-        assert!(is_ambient_token_target("gitlab.com", None));
-        assert!(is_ambient_token_target("127.0.0.1:8080", None));
-        assert!(is_ambient_token_target("gitlab.corp.example", remote));
+        assert!(accepts("gitlab.com", None));
+        assert!(accepts("127.0.0.1:8080", None));
+        assert!(accepts("gitlab.corp.example", remote));
 
-        assert!(!is_ambient_token_target("attacker.example", None));
-        assert!(!is_ambient_token_target("attacker.example", remote));
-        assert!(!is_ambient_token_target("gitlab.corp.example", None));
+        assert!(!accepts("attacker.example", None));
+        assert!(!accepts("attacker.example", remote));
+        assert!(!accepts("gitlab.corp.example", None));
     }
 
     #[test]
     fn tokens_travel_only_over_https_or_loopback() {
         assert_eq!(
-            secure_authority("https://gitlab.corp.example/api/v4").as_deref(),
+            credentials::secure_authority("https://gitlab.corp.example/api/v4").as_deref(),
             Some("gitlab.corp.example")
         );
         assert_eq!(
-            secure_authority("http://127.0.0.1:8080/api/v4").as_deref(),
+            credentials::secure_authority("http://127.0.0.1:8080/api/v4").as_deref(),
             Some("127.0.0.1:8080")
         );
-        assert_eq!(secure_authority("http://gitlab.corp.example/api/v4"), None);
+        assert_eq!(
+            credentials::secure_authority("http://gitlab.corp.example/api/v4"),
+            None
+        );
     }
 
     #[test]
@@ -3035,6 +2928,20 @@ mod tests {
         assert_eq!(authorized_token(&context, &context.graphql_url), None);
     }
 
+    fn connection_args() -> GitlabConnectionArgs {
+        GitlabConnectionArgs {
+            project: None,
+            remote: DEFAULT_REMOTE.to_owned(),
+            host: None,
+            api_url: None,
+            graphql_url: None,
+            token: None,
+            use_git_credential: false,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            cwd: None,
+        }
+    }
+
     fn context_with_token(api_url: &str, graphql_url: &str) -> GitlabContext {
         GitlabContext {
             client: Client::builder().build().unwrap(),
@@ -3042,7 +2949,7 @@ mod tests {
             api_url: api_url.to_owned(),
             graphql_url: graphql_url.to_owned(),
             token: Some("private-token".to_owned()),
-            token_authority: secure_authority(api_url),
+            token_authority: credentials::secure_authority(api_url),
             project: ProjectRef {
                 value: "group/project".to_owned(),
             },
@@ -3121,7 +3028,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        assert!(wait_for_credential_child(child, Duration::from_millis(20)).is_none());
+        assert!(credentials::wait_for_credential_child(child, Duration::from_millis(20)).is_none());
     }
 
     #[test]
