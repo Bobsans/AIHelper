@@ -1,0 +1,334 @@
+{
+  "plugin_name": "external-ollama",
+  "domain": "ollama",
+  "commands": [
+    {
+      "id": "ollama.ask",
+      "title": "Generate with Ollama",
+      "description": "Generate one non-streaming response with Ollama /api/generate.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "base_url": {
+            "default": "http://127.0.0.1:11434",
+            "description": "Ollama base URL. Prompt data is sent to this address.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "description": "Ollama model name.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Prompt text.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "system": {
+            "description": "Optional system instruction sent to the model.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 120,
+            "description": "HTTP timeout, capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model",
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "ask",
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "done": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "done_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metrics": {
+            "additionalProperties": false,
+            "properties": {
+              "eval_count": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "eval_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "load_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prompt_eval_count": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prompt_eval_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "total_duration",
+              "load_duration",
+              "prompt_eval_count",
+              "prompt_eval_duration",
+              "eval_count",
+              "eval_duration"
+            ],
+            "type": "object"
+          },
+          "model": {
+            "type": "string"
+          },
+          "response": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "model",
+          "response",
+          "done",
+          "done_reason",
+          "created_at",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read"
+        ],
+        "risk": "high",
+        "impact": "Sends the prompt, system text, and model name to the configured base URL and consumes remote or local inference resources; transmission and compute usage cannot be undone.",
+        "reversibility": "no"
+      },
+      "examples": [
+        {
+          "description": "Summarize a concept",
+          "arguments": {
+            "model": "llama3.2",
+            "prompt": "Summarize Rust ownership in three bullets."
+          }
+        }
+      ],
+      "secret_slots": []
+    },
+    {
+      "id": "ollama.chat",
+      "title": "Chat with Ollama",
+      "description": "Send one user message and optional system instruction to Ollama /api/chat.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "base_url": {
+            "default": "http://127.0.0.1:11434",
+            "description": "Ollama base URL. Prompt data is sent to this address.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "message": {
+            "description": "User message text.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "description": "Ollama model name.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "system": {
+            "description": "Optional system instruction sent to the model.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 120,
+            "description": "HTTP timeout, capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model",
+          "message"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "chat",
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "done": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "done_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metrics": {
+            "additionalProperties": false,
+            "properties": {
+              "eval_count": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "eval_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "load_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prompt_eval_count": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prompt_eval_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total_duration": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "total_duration",
+              "load_duration",
+              "prompt_eval_count",
+              "prompt_eval_duration",
+              "eval_count",
+              "eval_duration"
+            ],
+            "type": "object"
+          },
+          "model": {
+            "type": "string"
+          },
+          "response": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "model",
+          "response",
+          "done",
+          "done_reason",
+          "created_at",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read"
+        ],
+        "risk": "high",
+        "impact": "Sends the prompt, system text, and model name to the configured base URL and consumes remote or local inference resources; transmission and compute usage cannot be undone.",
+        "reversibility": "no"
+      },
+      "examples": [
+        {
+          "description": "Ask for test cases",
+          "arguments": {
+            "message": "Generate test names for parser edge cases.",
+            "model": "llama3.2"
+          }
+        }
+      ],
+      "secret_slots": []
+    }
+  ]
+}

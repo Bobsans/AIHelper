@@ -58,6 +58,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-gitlab\0";
 static DOMAIN_C: &[u8] = b"gitlab\0";
 static DESCRIPTION_C: &[u8] = b"GitLab Releases and Pipelines plugin (dynamic)\0";
 
+#[cfg(test)]
+mod snapshots;
 mod typed;
 
 ah_plugin_api::define_plugin_entrypoint_v1!(

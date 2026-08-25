@@ -39,6 +39,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-github\0";
 static DOMAIN_C: &[u8] = b"github\0";
 static DESCRIPTION_C: &[u8] = b"GitHub Releases and Actions plugin (dynamic)\0";
 
+#[cfg(test)]
+mod snapshots;
 mod typed;
 
 ah_plugin_api::define_plugin_entrypoint_v1!(

@@ -1,0 +1,3919 @@
+{
+  "plugin_name": "external-github",
+  "domain": "github",
+  "commands": [
+    {
+      "id": "github.repo",
+      "title": "Inspect GitHub repository",
+      "description": "Detect the GitHub repository and return remote plus API metadata.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "type": "string"
+          },
+          "command": {
+            "const": "github.repo",
+            "type": "string"
+          },
+          "default_branch": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "html_url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "private": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote_url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "owner",
+          "name",
+          "remote_url",
+          "api_url",
+          "html_url",
+          "default_branch",
+          "private"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "May run Git repository detection and sends a read request to the configured API URL; a supplied token is sent to that host.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issues",
+      "title": "List GitHub issues",
+      "description": "List or search repository issues with filters and the shared result limit.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "assignee": {
+            "description": "Assignee login.",
+            "type": "string"
+          },
+          "author": {
+            "description": "Author login.",
+            "type": "string"
+          },
+          "labels": {
+            "description": "Issue labels.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "search": {
+            "description": "GitHub search query.",
+            "type": "string"
+          },
+          "since": {
+            "description": "ISO date or timestamp.",
+            "type": "string"
+          },
+          "state": {
+            "default": "open",
+            "enum": [
+              "open",
+              "closed",
+              "all"
+            ],
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command": {
+            "const": "github.issues",
+            "type": "string"
+          },
+          "issue_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assignees": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "login"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "body": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "closed_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "comments": {
+                  "oneOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "html_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "labels": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "number": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "pull_request": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "user": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "login": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "login"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "body",
+                "state",
+                "html_url",
+                "user",
+                "labels",
+                "assignees",
+                "comments",
+                "created_at",
+                "updated_at",
+                "closed_at",
+                "pull_request"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "search": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "since": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "state",
+          "labels",
+          "assignee",
+          "author",
+          "since",
+          "search",
+          "issue_count",
+          "issues"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads issue metadata from the configured GitHub API and may expose private repository data.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issue.view",
+      "title": "View GitHub issue",
+      "description": "Return one GitHub issue by repository issue number.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "number": {
+            "description": "Issue number.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.issue.view",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": false,
+            "properties": {
+              "assignees": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "login"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "body": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "closed_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comments": {
+                "oneOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "labels": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "number": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "pull_request": {
+                "oneOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "login"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "body",
+              "state",
+              "html_url",
+              "user",
+              "labels",
+              "assignees",
+              "comments",
+              "created_at",
+              "updated_at",
+              "closed_at",
+              "pull_request"
+            ],
+            "type": "object"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads one issue and its metadata from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issue.create",
+      "title": "Create GitHub issue",
+      "description": "Create a repository issue with optional body, labels, and assignees. Use body or body_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "assignees": {
+            "description": "Assignees to set.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "body": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "labels": {
+            "description": "Labels to set.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Issue title.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.issue.create",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": false,
+            "properties": {
+              "assignees": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "login"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "body": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "closed_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comments": {
+                "oneOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "labels": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "number": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "pull_request": {
+                "oneOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "login"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "body",
+              "state",
+              "html_url",
+              "user",
+              "labels",
+              "assignees",
+              "comments",
+              "created_at",
+              "updated_at",
+              "closed_at",
+              "pull_request"
+            ],
+            "type": "object"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Creates a persistent issue and may notify repository participants; body files are read from the execution cwd.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issue.update",
+      "title": "Update GitHub issue",
+      "description": "Update one or more issue fields. At least one update field is required; use body or body_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "assignees": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "body": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "number": {
+            "description": "Issue number.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Replacement title.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.issue.update",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": false,
+            "properties": {
+              "assignees": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "login"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "body": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "closed_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comments": {
+                "oneOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "labels": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "number": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "pull_request": {
+                "oneOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "login"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "body",
+              "state",
+              "html_url",
+              "user",
+              "labels",
+              "assignees",
+              "comments",
+              "created_at",
+              "updated_at",
+              "closed_at",
+              "pull_request"
+            ],
+            "type": "object"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Mutates a persistent issue and may change workflow state or notify participants.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issue.close",
+      "title": "Close GitHub issue",
+      "description": "Close an issue, optionally adding a comment first. Use comment or comment_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "comment": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "comment_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "number": {
+            "description": "Issue number.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.issue.close",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": false,
+            "properties": {
+              "assignees": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "login"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "body": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "closed_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "comments": {
+                "oneOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "labels": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "number": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "pull_request": {
+                "oneOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "login"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "body",
+              "state",
+              "html_url",
+              "user",
+              "labels",
+              "assignees",
+              "comments",
+              "created_at",
+              "updated_at",
+              "closed_at",
+              "pull_request"
+            ],
+            "type": "object"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "May create a comment, closes a persistent issue, and may notify participants.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issue.comment",
+      "title": "Comment on GitHub issue",
+      "description": "Create a comment on one repository issue. Exactly one of body or body_file is required.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "body": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "number": {
+            "description": "Issue number.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.issue.comment",
+            "type": "string"
+          },
+          "comment": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "login"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "body",
+              "html_url",
+              "user",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "number": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "number",
+          "comment"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Creates a persistent issue comment and may notify repository participants.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.issue.comments",
+      "title": "List GitHub issue comments",
+      "description": "List comments for one issue with the shared result limit.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "number": {
+            "description": "Issue number.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.issue.comments",
+            "type": "string"
+          },
+          "comment_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "comments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "body": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "html_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "updated_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "user": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "login": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "login"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "body",
+                "html_url",
+                "user",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "number": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "number",
+          "comment_count",
+          "comments"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads issue comments and author metadata from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.release.get",
+      "title": "Get GitHub release",
+      "description": "Return GitHub release metadata by tag.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "tag": {
+            "description": "Release tag.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.release.get",
+            "type": "string"
+          },
+          "release": {
+            "additionalProperties": false,
+            "properties": {
+              "assets": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "browser_download_url": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "size",
+                    "browser_download_url"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "draft": {
+                "type": "boolean"
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "prerelease": {
+                "type": "boolean"
+              },
+              "published_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tag_name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "tag_name",
+              "name",
+              "draft",
+              "prerelease",
+              "html_url",
+              "published_at",
+              "assets"
+            ],
+            "type": "object"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "release"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads release metadata and asset URLs from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.release.assets",
+      "title": "List GitHub release assets",
+      "description": "List assets attached to a release tag.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "tag": {
+            "description": "Release tag.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "assets": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "browser_download_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "size": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "size",
+                "browser_download_url"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "github.release.assets",
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "tag",
+          "asset_count",
+          "assets"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads release asset metadata and download URLs from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.release.create",
+      "title": "Create GitHub release",
+      "description": "Create a GitHub release for a tag with optional notes and flags. Use notes or notes_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "draft": {
+            "default": false,
+            "description": "Create as draft.",
+            "type": "boolean"
+          },
+          "notes": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "notes_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "prerelease": {
+            "default": false,
+            "description": "Mark as prerelease.",
+            "type": "boolean"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "tag": {
+            "description": "Release tag.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "description": "Target commit-ish.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Release title.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.release.create",
+            "type": "string"
+          },
+          "release": {
+            "additionalProperties": false,
+            "properties": {
+              "assets": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "browser_download_url": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "size",
+                    "browser_download_url"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "draft": {
+                "type": "boolean"
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "prerelease": {
+                "type": "boolean"
+              },
+              "published_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tag_name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "tag_name",
+              "name",
+              "draft",
+              "prerelease",
+              "html_url",
+              "published_at",
+              "assets"
+            ],
+            "type": "object"
+          },
+          "repository": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "release"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Creates a persistent release and may create or resolve a tag target; release notes files are read from the execution cwd.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.workflows",
+      "title": "List GitHub workflows",
+      "description": "List GitHub Actions workflows in the repository.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.workflows",
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "workflow_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workflows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "html_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "path",
+                "state",
+                "html_url"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "workflow_count",
+          "workflows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads workflow names, paths, states, and URLs from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.workflow.run",
+      "title": "Dispatch GitHub workflow",
+      "description": "Dispatch a GitHub Actions workflow on a reference. Dispatching needs a token carrying the actions write scope, which the git credential helper usually does not: on HTTP 401 stop and ask the user for a github-token secret rather than retrying.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "inputs": {
+            "description": "Workflow inputs encoded as KEY=VALUE.",
+            "items": {
+              "pattern": "^[^=]+=.*$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ref": {
+            "description": "Git reference to dispatch.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          },
+          "workflow": {
+            "description": "Workflow id or file name.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow",
+          "ref"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.workflow.run",
+            "type": "string"
+          },
+          "dispatched": {
+            "type": "boolean"
+          },
+          "input_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "workflow": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "workflow",
+          "ref",
+          "input_count",
+          "dispatched"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Starts an external workflow that may execute arbitrary repository automation and consume billed resources.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.runs",
+      "title": "List GitHub workflow runs",
+      "description": "List workflow runs with optional workflow and branch filters.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "branch": {
+            "description": "Head branch filter.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          },
+          "workflow": {
+            "description": "Workflow id or file.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command": {
+            "const": "github.runs",
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "conclusion": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "event": {
+                  "type": "string"
+                },
+                "head_branch": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "head_sha": {
+                  "type": "string"
+                },
+                "html_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "name": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "event",
+                "status",
+                "conclusion",
+                "head_branch",
+                "head_sha",
+                "html_url",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "workflow": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "workflow",
+          "branch",
+          "run_count",
+          "runs"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads workflow run status, commit SHA, and URLs from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.run.get",
+      "title": "Get GitHub workflow run",
+      "description": "Return one workflow run by numeric id.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Workflow run id.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.run.get",
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run": {
+            "additionalProperties": false,
+            "properties": {
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "event": {
+                "type": "string"
+              },
+              "head_branch": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "head_sha": {
+                "type": "string"
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "event",
+              "status",
+              "conclusion",
+              "head_branch",
+              "head_sha",
+              "html_url",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "run"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads one workflow run and its commit/status metadata from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.run.wait",
+      "title": "Wait for GitHub workflow run",
+      "description": "Poll a workflow run until completion, timeout, or cancellation.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "fail_on_failure": {
+            "default": false,
+            "description": "Return an error for a non-success conclusion.",
+            "type": "boolean"
+          },
+          "interval_secs": {
+            "default": 15,
+            "description": "Polling interval.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Workflow run id.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          },
+          "wait_timeout_secs": {
+            "default": 1800,
+            "description": "Maximum wait duration.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.run.wait",
+            "type": "string"
+          },
+          "elapsed_secs": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run": {
+            "additionalProperties": false,
+            "properties": {
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "event": {
+                "type": "string"
+              },
+              "head_branch": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "head_sha": {
+                "type": "string"
+              },
+              "html_url": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string"
+              },
+              "updated_at": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "event",
+              "status",
+              "conclusion",
+              "head_branch",
+              "head_sha",
+              "html_url",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "run",
+          "elapsed_secs"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Repeatedly reads external workflow state until completion and may consume API rate limits.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.run.jobs",
+      "title": "List GitHub workflow jobs",
+      "description": "List jobs belonging to one workflow run.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Workflow run id.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.run.jobs",
+            "type": "string"
+          },
+          "job_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "jobs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "completed_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "conclusion": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "html_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "status",
+                "conclusion",
+                "html_url",
+                "started_at",
+                "completed_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "run_id",
+          "job_count",
+          "jobs"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads workflow job names, status, timestamps, and URLs from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.run.logs",
+      "title": "Search GitHub run logs",
+      "description": "Read or filter lines from one workflow run log archive. The archive exists only once the run has finished and until GitHub expires it, so an unfinished or expired run answers 404: check github.run.get, or wait with github.run.wait, instead of retrying.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "grep": {
+            "description": "Optional text filter.",
+            "type": "string"
+          },
+          "max_body_bytes": {
+            "default": 8388608,
+            "description": "Maximum compressed response bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_expanded_bytes": {
+            "default": 33554432,
+            "description": "Maximum expanded archive bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Workflow run id.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.run.logs",
+            "type": "string"
+          },
+          "grep": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "match_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file",
+                "line",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "run_id",
+          "grep",
+          "match_count",
+          "truncated",
+          "matches"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Downloads and expands workflow logs, which may contain secrets or untrusted build output.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.run.warnings",
+      "title": "Extract GitHub run warnings",
+      "description": "Extract warning-like lines from one workflow run log archive. The archive exists only once the run has finished and until GitHub expires it, so an unfinished or expired run answers 404: check github.run.get, or wait with github.run.wait, instead of retrying.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_body_bytes": {
+            "default": 8388608,
+            "description": "Maximum compressed response bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_expanded_bytes": {
+            "default": 33554432,
+            "description": "Maximum expanded archive bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Workflow run id.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "github.run.warnings",
+            "type": "string"
+          },
+          "grep": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "match_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file",
+                "line",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "run_id",
+          "grep",
+          "match_count",
+          "truncated",
+          "matches"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Downloads and expands workflow logs, which may contain secrets or untrusted build output.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    },
+    {
+      "id": "github.run.artifacts",
+      "title": "List GitHub workflow artifacts",
+      "description": "List artifacts produced by one workflow run.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "default": "https://api.github.com",
+            "description": "GitHub-compatible API base URL. A supplied token is sent to this host.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository override in OWNER/REPO form. Omit it to read the repository from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "Workflow run id.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitHub token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "artifacts": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "archive_download_url": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "expired": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "size_in_bytes": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "size_in_bytes",
+                "expired",
+                "archive_download_url"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "github.run.artifacts",
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "run_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command",
+          "repository",
+          "run_id",
+          "artifact_count",
+          "artifacts"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads artifact names, sizes, expiry state, and archive URLs from the configured GitHub API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "github-token"
+          ],
+          "required": false,
+          "description": "GitHub API token."
+        }
+      ]
+    }
+  ]
+}

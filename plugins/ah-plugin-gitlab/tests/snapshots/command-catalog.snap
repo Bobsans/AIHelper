@@ -1,0 +1,2212 @@
+{
+  "plugin_name": "external-gitlab",
+  "domain": "gitlab",
+  "commands": [
+    {
+      "id": "gitlab.project",
+      "title": "Inspect GitLab project",
+      "description": "Detect the GitLab project and return remote plus API metadata.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "type": "string"
+          },
+          "command": {
+            "const": "gitlab.project",
+            "type": "string"
+          },
+          "default_branch": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "path_with_namespace": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "type": "string"
+          },
+          "remote_url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visibility": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "web_url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "remote_url",
+          "host",
+          "api_url",
+          "id",
+          "path_with_namespace",
+          "web_url",
+          "default_branch",
+          "visibility"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "May run Git project detection and sends a read request to the configured API URL; a supplied token is sent to that host.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.releases",
+      "title": "List GitLab releases",
+      "description": "List project releases with the shared result limit.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.releases",
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "release_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "releases": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "release_count",
+          "releases"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads release metadata and assets from the configured GitLab API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.release.get",
+      "title": "Get GitLab release",
+      "description": "Return one GitLab release by tag.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "tag": {
+            "description": "Release tag.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.release.get",
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "release": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "release"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads release metadata and asset links from the configured GitLab API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.release.create",
+      "title": "Create GitLab release",
+      "description": "Create a project release with optional description and target reference. Use description or description_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "description_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "description": "Release name.",
+            "type": "string"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "ref": {
+            "description": "Tag target reference.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "tag": {
+            "description": "Release tag.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.release.create",
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "release": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "release"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Creates a persistent release and may create a tag; description files are read from the execution cwd.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issues",
+      "title": "List GitLab issues",
+      "description": "List project issues with state, label, author, assignee, date, and search filters.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "assignee": {
+            "description": "Optional issue filter.",
+            "type": "string"
+          },
+          "author": {
+            "description": "Optional issue filter.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "search": {
+            "description": "Optional issue filter.",
+            "type": "string"
+          },
+          "since": {
+            "description": "Optional issue filter.",
+            "type": "string"
+          },
+          "state": {
+            "default": "opened",
+            "enum": [
+              "opened",
+              "closed",
+              "all"
+            ],
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.issues",
+            "type": "string"
+          },
+          "issue_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "issue_count",
+          "issues"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads issue metadata from the configured GitLab API and may expose private project data.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issue.view",
+      "title": "View GitLab issue",
+      "description": "Return one issue, optionally with comments, designs, and warnings.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "full": {
+            "default": false,
+            "description": "Also load comments and designs.",
+            "type": "boolean"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "iid": {
+            "description": "Project issue iid.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "iid"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "const": "gitlab.issue.view",
+                "type": "string"
+              },
+              "issue": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "project": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "project",
+              "issue"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "const": "gitlab.issue.view",
+                "type": "string"
+              },
+              "comment_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "comments": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "design_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "designs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "full": {
+                "const": true
+              },
+              "iid": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "issue": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "project": {
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "command",
+              "project",
+              "iid",
+              "full",
+              "issue",
+              "comment_count",
+              "comments",
+              "design_count",
+              "designs",
+              "warnings"
+            ],
+            "type": "object"
+          }
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads issue metadata and, with full=true, comments plus design information through REST and GraphQL.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issue.create",
+      "title": "Create GitLab issue",
+      "description": "Create a project issue with optional description, labels, and assignees. Use description or description_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "assignee_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "description_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Issue title.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.issue.create",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Creates a persistent issue and may notify project participants; description files are read from the execution cwd.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issue.update",
+      "title": "Update GitLab issue",
+      "description": "Update one or more fields on a project issue. At least one update field is required; use description or description_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "assignee_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "description": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "description_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "iid": {
+            "description": "Project issue iid.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "opened",
+              "closed"
+            ],
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Replacement title.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "iid"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.issue.update",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Mutates a persistent issue and may change workflow state or notify participants.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issue.close",
+      "title": "Close GitLab issue",
+      "description": "Close an issue, optionally adding a comment first. Use comment or comment_file, not both.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "comment": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "comment_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "iid": {
+            "description": "Project issue iid.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "iid"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.issue.close",
+            "type": "string"
+          },
+          "issue": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "May create a note, closes a persistent issue, and may notify participants.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issue.comment",
+      "title": "Comment on GitLab issue",
+      "description": "Create a note on one project issue. Exactly one of body or body_file is required.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "body": {
+            "description": "Inline text.",
+            "type": "string"
+          },
+          "body_file": {
+            "description": "UTF-8 text file resolved against the execution cwd.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "iid": {
+            "description": "Project issue iid.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "iid"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.issue.comment",
+            "type": "string"
+          },
+          "comment": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "iid": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "iid",
+          "comment"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_write",
+          "external_write",
+          "configuration_read",
+          "filesystem_read",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Creates a persistent issue note and may notify project participants.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.issue.comments",
+      "title": "List GitLab issue comments",
+      "description": "List notes for one project issue with the shared result limit.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "iid": {
+            "description": "Project issue iid.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "iid"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.issue.comments",
+            "type": "string"
+          },
+          "comment_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "comments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "iid": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "iid",
+          "comment_count",
+          "comments"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads issue notes and author metadata from the configured GitLab API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.pipelines",
+      "title": "List GitLab pipelines",
+      "description": "List project pipelines with an optional branch filter.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "branch": {
+            "description": "Branch filter.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.pipelines",
+            "type": "string"
+          },
+          "pipeline_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pipelines": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "pipeline_count",
+          "pipelines"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads pipeline status, commit SHA, references, and URLs from the configured GitLab API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.pipeline.get",
+      "title": "Get GitLab pipeline",
+      "description": "Return one project pipeline by id.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "pipeline_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.pipeline.get",
+            "type": "string"
+          },
+          "pipeline": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "pipeline"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads one pipeline and its commit/status metadata from the configured GitLab API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.pipeline.wait",
+      "title": "Wait for GitLab pipeline",
+      "description": "Poll a pipeline until completion, timeout, or cancellation. pipeline_id is a pipeline id from gitlab.pipelines, not a job id and not a merge request iid.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "fail_on_failure": {
+            "default": false,
+            "description": "Return an error for a non-success status.",
+            "type": "boolean"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "interval_secs": {
+            "default": 15,
+            "description": "Polling interval.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "pipeline_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          },
+          "wait_timeout_secs": {
+            "default": 1800,
+            "description": "Maximum wait duration.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.pipeline.wait",
+            "type": "string"
+          },
+          "elapsed_secs": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pipeline": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "pipeline",
+          "elapsed_secs"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Repeatedly reads external pipeline state and may consume API rate limits.",
+        "reversibility": "yes"
+      },
+      "examples": [
+        {
+          "description": "Wait for a pipeline of a project named outright, which needs no working directory",
+          "arguments": {
+            "interval_secs": 30,
+            "pipeline_id": 101919,
+            "project": "group/tool"
+          }
+        }
+      ],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.pipeline.jobs",
+      "title": "List GitLab pipeline jobs",
+      "description": "List jobs belonging to one project pipeline.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "pipeline_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.pipeline.jobs",
+            "type": "string"
+          },
+          "job_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "jobs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pipeline_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "pipeline_id",
+          "job_count",
+          "jobs"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Reads job names, stages, statuses, timestamps, and URLs from the configured GitLab API.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.job.trace",
+      "title": "Read GitLab job trace",
+      "description": "Read or filter one job trace.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "grep": {
+            "description": "Optional text filter.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "job_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_body_bytes": {
+            "default": 8388608,
+            "description": "Maximum trace response bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.job.trace",
+            "type": "string"
+          },
+          "grep": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "match_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "line": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "line",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "project": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "job_id",
+          "grep",
+          "match_count",
+          "truncated",
+          "matches"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Downloads a job trace that may contain secrets or untrusted build output.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    },
+    {
+      "id": "gitlab.job.warnings",
+      "title": "Extract GitLab job warnings",
+      "description": "Extract warning-like lines from one job trace.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_url": {
+            "description": "REST API base URL. A supplied token is sent to this host.",
+            "type": "string"
+          },
+          "graphql_url": {
+            "description": "GraphQL API URL used for issue designs.",
+            "type": "string"
+          },
+          "host": {
+            "default": "https://gitlab.com",
+            "description": "GitLab base URL. Omit it and the host is taken from the git remote, which is why a self-managed instance needs no override. Set it together with project, since naming the project stops the remote from being read.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "job_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_body_bytes": {
+            "default": 8388608,
+            "description": "Maximum trace response bytes.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project": {
+            "description": "Project override as path (group/subgroup/name) or numeric id. Omit it to read the project from the git remote, which also needs context.cwd.",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout_secs": {
+            "default": 60,
+            "description": "Per-request HTTP timeout.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Explicit GitLab token; prefer environment-based authentication.",
+            "type": "string"
+          },
+          "use_git_credential": {
+            "default": true,
+            "description": "Use Git credential helper lookup as the final fallback.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "gitlab.job.warnings",
+            "type": "string"
+          },
+          "grep": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "match_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "line": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "line",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "project": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command",
+          "project",
+          "job_id",
+          "grep",
+          "match_count",
+          "truncated",
+          "matches"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "external_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "medium",
+        "impact": "Downloads a job trace that may contain secrets or untrusted build output.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "token",
+          "accepted_kinds": [
+            "gitlab-token"
+          ],
+          "required": false,
+          "description": "GitLab API token."
+        }
+      ]
+    }
+  ]
+}

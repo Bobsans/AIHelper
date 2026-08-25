@@ -21,6 +21,8 @@ static PLUGIN_NAME_C: &[u8] = b"external-ollama\0";
 static DOMAIN_C: &[u8] = b"ollama\0";
 static DESCRIPTION_C: &[u8] = b"Ollama Local API plugin (dynamic)\0";
 
+#[cfg(test)]
+mod snapshots;
 mod typed;
 
 impl ah_plugin_api::BindResolvedSecrets for OllamaCli {}

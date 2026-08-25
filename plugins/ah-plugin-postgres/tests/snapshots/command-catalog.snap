@@ -1,0 +1,3222 @@
+{
+  "plugin_name": "external-postgres",
+  "domain": "postgres",
+  "commands": [
+    {
+      "id": "postgres.tool.status",
+      "title": "Inspect PostgreSQL toolchain",
+      "description": "Resolve psql candidates and report the selected client toolchain.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "cache_dir": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "accepted": {
+                  "type": "boolean"
+                },
+                "bin_dir": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "psql_path": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                },
+                "version_major": {
+                  "oneOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "version_raw": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "source",
+                "path",
+                "psql_path",
+                "bin_dir",
+                "version_raw",
+                "version_major",
+                "accepted",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "postgres.tool.status",
+            "type": "string"
+          },
+          "config_path": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "minimum_major": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remediation": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "accepted": {
+                    "type": "boolean"
+                  },
+                  "bin_dir": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "psql_path": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "version_major": {
+                    "oneOf": [
+                      {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "version_raw": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "source",
+                  "path",
+                  "psql_path",
+                  "bin_dir",
+                  "version_raw",
+                  "version_major",
+                  "accepted",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "available",
+          "selected",
+          "candidates",
+          "target_version",
+          "minimum_major",
+          "cache_dir",
+          "config_path",
+          "remediation"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false,
+        "effects": [
+          "filesystem_read",
+          "configuration_read",
+          "process_spawn"
+        ],
+        "risk": "low",
+        "impact": "Reads tool configuration and may execute candidate psql binaries with --version.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": []
+    },
+    {
+      "id": "postgres.tool.download",
+      "title": "Download PostgreSQL toolchain",
+      "description": "Download, verify, and unpack the supported PostgreSQL client toolchain.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "description": "Replace an existing managed toolchain.",
+            "type": "boolean"
+          },
+          "timeout_secs": {
+            "default": 1800,
+            "description": "Download timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "version": {
+            "default": "18.4",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "bin_dir": {
+            "type": "string"
+          },
+          "cache_path": {
+            "type": "string"
+          },
+          "command": {
+            "const": "postgres.tool.download",
+            "type": "string"
+          },
+          "downloaded": {
+            "type": "boolean"
+          },
+          "psql_path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "version",
+          "url",
+          "sha256",
+          "cache_path",
+          "bin_dir",
+          "psql_path",
+          "downloaded"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "network_read",
+          "filesystem_read",
+          "filesystem_write",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Downloads an executable archive from the built-in vendor URL, verifies its checksum, and writes or replaces files in the shared PostgreSQL tool cache.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": []
+    },
+    {
+      "id": "postgres.tool.use",
+      "title": "Select PostgreSQL toolchain",
+      "description": "Validate a psql toolchain path and persist it as the shared default.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Tool executable or directory resolved against cwd.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.tool.use",
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "psql_path": {
+            "type": "string"
+          },
+          "version": {
+            "additionalProperties": false,
+            "properties": {
+              "major": {
+                "oneOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "raw": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "raw",
+              "major"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "path",
+          "psql_path",
+          "version",
+          "config_path"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false,
+        "effects": [
+          "filesystem_read",
+          "configuration_write",
+          "process_spawn"
+        ],
+        "risk": "high",
+        "impact": "Executes the selected psql binary with --version and changes the shared PostgreSQL tool configuration used by later tasks.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": []
+    },
+    {
+      "id": "postgres.tool.cleanup",
+      "title": "Clean PostgreSQL tool cache",
+      "description": "Delete one version or all versions from the managed PostgreSQL tool cache.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "description": "Managed version to remove; omit to remove every cached version.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.tool.cleanup",
+            "type": "string"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": true,
+        "open_world": false,
+        "effects": [
+          "filesystem_delete"
+        ],
+        "risk": "high",
+        "impact": "Permanently deletes managed PostgreSQL tool directories from the shared cache; concurrent tasks using those binaries may fail.",
+        "reversibility": "no"
+      },
+      "examples": [],
+      "secret_slots": []
+    },
+    {
+      "id": "postgres.ping",
+      "title": "Ping PostgreSQL",
+      "description": "Connect and return server plus session identity metadata.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.ping",
+            "type": "string"
+          },
+          "current_database": {
+            "type": "string"
+          },
+          "current_schema": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_user": {
+            "type": "string"
+          },
+          "inet_server_addr": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inet_server_port": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_encoding": {
+            "type": "string"
+          },
+          "server_version": {
+            "type": "string"
+          },
+          "session_user": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "server_version",
+          "current_database",
+          "current_user",
+          "session_user",
+          "current_schema",
+          "server_encoding",
+          "inet_server_addr",
+          "inet_server_port"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads server/session metadata. ensure_tool=true may first download and write a shared client toolchain. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.info",
+      "title": "Inspect PostgreSQL session",
+      "description": "Return selected server and session metadata.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.info",
+            "type": "string"
+          },
+          "current_database": {
+            "type": "string"
+          },
+          "current_schema": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_user": {
+            "type": "string"
+          },
+          "inet_server_addr": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inet_server_port": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_encoding": {
+            "type": "string"
+          },
+          "server_version": {
+            "type": "string"
+          },
+          "session_user": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "server_version",
+          "current_database",
+          "current_user",
+          "session_user",
+          "current_schema",
+          "server_encoding",
+          "inet_server_addr",
+          "inet_server_port"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads server/session metadata. ensure_tool=true may first download and write a shared client toolchain. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.databases",
+      "title": "List PostgreSQL databases",
+      "description": "List PostgreSQL databases",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.databases",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "allow_connections": {
+                  "type": "boolean"
+                },
+                "encoding": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                },
+                "size": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "owner",
+                "encoding",
+                "allow_connections",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads database names, owners, encodings, connection flags, and visible size information. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.schemas",
+      "title": "List PostgreSQL schemas",
+      "description": "List PostgreSQL schemas",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "include_system": {
+            "default": false,
+            "description": "Include system schemas.",
+            "type": "boolean"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.schemas",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "owner"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads schema names and owners, optionally including system schemas. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.tables",
+      "title": "List PostgreSQL tables",
+      "description": "List PostgreSQL tables",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "include_system": {
+            "default": false,
+            "description": "Include system relations.",
+            "type": "boolean"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema": {
+            "description": "Restrict results to this schema.",
+            "type": "string"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.tables",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                },
+                "rows_estimate": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "schema": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "schema",
+                "name",
+                "kind",
+                "owner",
+                "rows_estimate",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads relation names, owners, row estimates, and total sizes. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.views",
+      "title": "List PostgreSQL views",
+      "description": "List PostgreSQL views",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "include_system": {
+            "default": false,
+            "description": "Include system relations.",
+            "type": "boolean"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema": {
+            "description": "Restrict results to this schema.",
+            "type": "string"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.views",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                },
+                "rows_estimate": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "schema": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "schema",
+                "name",
+                "kind",
+                "owner",
+                "rows_estimate",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads relation names, owners, row estimates, and total sizes. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.describe",
+      "title": "Describe PostgreSQL relation",
+      "description": "Describe a table, view, or materialized view.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "object": {
+            "description": "Relation name as NAME or SCHEMA.NAME.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "comment": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "data_type": {
+                  "type": "string"
+                },
+                "default": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "nullable": {
+                  "type": "boolean"
+                },
+                "ordinal": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "ordinal",
+                "name",
+                "data_type",
+                "nullable",
+                "default",
+                "comment"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "command": {
+            "const": "postgres.describe",
+            "type": "string"
+          },
+          "constraints": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "constraint_type": {
+                  "type": "string"
+                },
+                "definition": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "constraint_type",
+                "definition"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "indexes": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "definition": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "primary": {
+                  "type": "boolean"
+                },
+                "schema": {
+                  "type": "string"
+                },
+                "table": {
+                  "type": "string"
+                },
+                "unique": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "schema",
+                "table",
+                "name",
+                "primary",
+                "unique",
+                "definition"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "relation": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "rows_estimate": {
+                "oneOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "schema": {
+                "type": "string"
+              },
+              "total_size": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema",
+              "name",
+              "kind",
+              "owner",
+              "rows_estimate",
+              "total_size"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "relation",
+          "columns",
+          "indexes",
+          "constraints"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads relation, column, index, and constraint definitions that may reveal database structure. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.indexes",
+      "title": "List PostgreSQL indexes",
+      "description": "List PostgreSQL indexes",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema": {
+            "description": "Restrict results to this schema.",
+            "type": "string"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "table": {
+            "description": "Restrict results to this table.",
+            "type": "string"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.indexes",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "definition": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "primary": {
+                  "type": "boolean"
+                },
+                "schema": {
+                  "type": "string"
+                },
+                "table": {
+                  "type": "string"
+                },
+                "unique": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "schema",
+                "table",
+                "name",
+                "primary",
+                "unique",
+                "definition"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads index names and full definitions. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.extensions",
+      "title": "List PostgreSQL extensions",
+      "description": "List PostgreSQL extensions",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "default": false,
+            "description": "Include available but not installed extensions.",
+            "type": "boolean"
+          },
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.extensions",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "comment": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "default_version": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "installed_version": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "installed_version",
+                "default_version",
+                "schema",
+                "comment"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads installed extension metadata or the server's available extension catalog. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.query",
+      "title": "Query PostgreSQL",
+      "description": "Run SQL restricted to SELECT, WITH, TABLE, or VALUES in a read-only transaction.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.",
+            "type": "string"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sql": {
+            "description": "Inline SQL text. Exactly one of sql or file is required.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.query",
+            "type": "string"
+          },
+          "row_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {},
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "row_count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Sends arbitrary read-oriented SQL to the selected database and may expose sensitive rows; PostgreSQL functions can have external effects despite the read-only transaction, and ensure_tool=true may write the shared tool cache.",
+        "reversibility": "unknown"
+      },
+      "examples": [
+        {
+          "description": "Read the current time",
+          "arguments": {
+            "sql": "select now() as current_time"
+          }
+        }
+      ],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.exec",
+      "title": "Execute PostgreSQL SQL",
+      "description": "Execute explicitly confirmed SQL mutations or administrative commands.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.",
+            "type": "string"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "single_transaction": {
+            "default": false,
+            "description": "Execute all SQL in one transaction.",
+            "type": "boolean"
+          },
+          "sql": {
+            "description": "Inline SQL text. Exactly one of sql or file is required.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          },
+          "yes": {
+            "const": true,
+            "description": "Required explicit confirmation for arbitrary SQL mutation.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "yes"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.exec",
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stdout": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "stdout",
+          "stderr"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "process_spawn",
+          "network_write",
+          "external_write",
+          "configuration_read"
+        ],
+        "risk": "critical",
+        "impact": "Executes arbitrary SQL with the configured database privileges; it can modify or delete data and schema, lock objects, invoke extensions, and affect other sessions. Effects may be irreversible even with single_transaction=true.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.explain",
+      "title": "Explain PostgreSQL SQL",
+      "description": "Return a query plan; analyze=true executes the supplied SQL.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "analyze": {
+            "default": false,
+            "description": "Execute the SQL while collecting actual plan statistics.",
+            "type": "boolean"
+          },
+          "buffers": {
+            "default": false,
+            "description": "Include buffer usage in the plan.",
+            "type": "boolean"
+          },
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "UTF-8 SQL file resolved against cwd. Exactly one of sql or file is required.",
+            "type": "string"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sql": {
+            "description": "Inline SQL text. Exactly one of sql or file is required.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Required when analyze=true because the SQL is executed.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "analyze": {
+            "type": "boolean"
+          },
+          "buffers": {
+            "type": "boolean"
+          },
+          "command": {
+            "const": "postgres.explain",
+            "type": "string"
+          },
+          "plan": {}
+        },
+        "required": [
+          "command",
+          "analyze",
+          "buffers",
+          "plan"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "process_spawn",
+          "network_write",
+          "external_write",
+          "configuration_read"
+        ],
+        "risk": "critical",
+        "impact": "Without analyze, PostgreSQL plans but does not execute the SQL. With analyze=true, arbitrary SQL is executed and can mutate or delete database state, acquire locks, and invoke external functions.",
+        "reversibility": "unknown"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.activity",
+      "title": "Inspect PostgreSQL activity",
+      "description": "Inspect PostgreSQL activity",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "default": false,
+            "description": "Show only active sessions.",
+            "type": "boolean"
+          },
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "idle_in_tx": {
+            "default": false,
+            "description": "Show only sessions idle in a transaction.",
+            "type": "boolean"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.activity",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "application_name": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "client_addr": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "database": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pid": {
+                  "type": "integer"
+                },
+                "query": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "query_start": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state_change": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "user": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "wait_event": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "wait_event_type": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "pid",
+                "user",
+                "database",
+                "application_name",
+                "client_addr",
+                "state",
+                "wait_event_type",
+                "wait_event",
+                "query_start",
+                "state_change",
+                "query"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads session identities, client addresses, wait states, timestamps, and truncated SQL text from pg_stat_activity. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.locks",
+      "title": "Inspect PostgreSQL locks",
+      "description": "Inspect PostgreSQL locks",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "blocking": {
+            "default": false,
+            "description": "Return only locks with a known blocking session.",
+            "type": "boolean"
+          },
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.locks",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "blocked_pid": {
+                  "type": "integer"
+                },
+                "blocked_query": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "blocked_user": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "blocking_pid": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "blocking_query": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "blocking_user": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lock_type": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "relation": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "blocked_pid",
+                "blocked_user",
+                "blocking_pid",
+                "blocking_user",
+                "lock_type",
+                "mode",
+                "relation",
+                "blocked_query",
+                "blocking_query"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads blocked and blocking session identities plus truncated SQL text. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.size",
+      "title": "Inspect PostgreSQL sizes",
+      "description": "Inspect PostgreSQL sizes",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema": {
+            "description": "Show aggregate size for a schema or qualify a table.",
+            "type": "string"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "table": {
+            "description": "Show table size; may be NAME or SCHEMA.NAME.",
+            "type": "string"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.size",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "bytes": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "scope",
+                "schema",
+                "name",
+                "size",
+                "bytes"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads database, schema, or relation size statistics. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    },
+    {
+      "id": "postgres.settings",
+      "title": "Inspect PostgreSQL settings",
+      "description": "Inspect PostgreSQL settings",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "default": false,
+            "description": "Return only settings whose source is not default.",
+            "type": "boolean"
+          },
+          "connect_timeout_secs": {
+            "default": 10,
+            "description": "Connection timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "database": {
+            "description": "PostgreSQL database name.",
+            "type": "string"
+          },
+          "ensure_tool": {
+            "default": false,
+            "description": "Download the managed toolchain when no usable psql exists. This writes the shared cache.",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "PostgreSQL host.",
+            "type": "string"
+          },
+          "password_env": {
+            "description": "For password-protected servers, name an environment variable that already exists in this process; its value is passed to psql as PGPASSWORD. Never pass the password itself, and never guess a variable name. Prefer the database credential slot: call secrets.list with kind=postgres, and if no secret matches, ask the user to create one instead.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "service": {
+            "description": "libpq service name.",
+            "type": "string"
+          },
+          "sslmode": {
+            "enum": [
+              "disable",
+              "allow",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "type": "string"
+          },
+          "statement_timeout_ms": {
+            "description": "Server statement timeout capped by the MCP request deadline.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_path": {
+            "description": "Explicit psql executable or tool directory resolved against cwd.",
+            "type": "string"
+          },
+          "user": {
+            "description": "PostgreSQL user.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "postgres.settings",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "setting": {
+                  "type": "string"
+                },
+                "short_desc": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "unit": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "setting",
+                "unit",
+                "source",
+                "short_desc"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "count",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "effects": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": true,
+        "effects": [
+          "filesystem_read",
+          "filesystem_write",
+          "configuration_read",
+          "process_spawn",
+          "network_read",
+          "external_read"
+        ],
+        "risk": "high",
+        "impact": "Reads server settings, sources, units, and descriptions; configuration values may contain sensitive operational details. Runs psql as a child process. ensure_tool=true may download and write a shared client toolchain before connecting.",
+        "reversibility": "yes"
+      },
+      "examples": [],
+      "secret_slots": [
+        {
+          "name": "database",
+          "accepted_kinds": [
+            "postgres"
+          ],
+          "required": false,
+          "description": "PostgreSQL database credential."
+        }
+      ]
+    }
+  ]
+}
