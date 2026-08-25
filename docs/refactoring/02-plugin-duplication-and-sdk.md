@@ -59,16 +59,25 @@ and then every implementer has to invent the plumbing behind it.
 `normalize_path` (9), `truncate_for_error` (4), `render_success` (4),
 `strip_ansi_sequences` (2), `paint_if_present` (2), `input_schema` (2).
 
-### 2.3 Test hooks live in the production binary
+### 2.3 Test hooks live in the production binary *(resolved, and the finding was overstated)*
 
-- `plugins/ah-plugin-github/src/lib.rs:2798` — `AH_GITHUB_TEST_CREDENTIAL_SLEEP`
-- `plugins/ah-plugin-gitlab/src/lib.rs:2886` — `AH_GITLAB_TEST_CREDENTIAL_SLEEP`
-- `plugins/ah-plugin-postgres/src/lib.rs:1124` — `AH_POSTGRES_TEST_SYSTEM_PATH`
+Three environment-variable seams were listed. Reading them again, only one was real:
 
-These are environment-variable seams that exist only because there is no injectable
-process/clock/filesystem abstraction. They ship to users, they are undocumented, and
-`AH_POSTGRES_TEST_SYSTEM_PATH` in particular alters executable resolution — a
-security-relevant behavior controlled by an untracked environment variable.
+| Seam | Where it was read | Verdict |
+|---|---|---|
+| `AH_GITHUB_TEST_CREDENTIAL_SLEEP` | inside `#[cfg(test)] mod tests` | never compiled into the cdylib |
+| `AH_GITLAB_TEST_CREDENTIAL_SLEEP` | inside `#[cfg(test)] mod tests` | never compiled into the cdylib |
+| `AH_POSTGRES_TEST_SYSTEM_PATH` | `find_psql_in_path`, production | **shipped** |
+
+The two credential seams are a test re-executing its own test binary and telling the
+child to sleep, which is what makes the timeout observable. They do not ship and they
+do not need an abstraction.
+
+`AH_POSTGRES_TEST_SYSTEM_PATH` did ship, and it short-circuited `PATH` resolution for
+`psql` — an untracked environment variable choosing which executable runs. It is
+deleted. No injectable process runner was needed to delete it: **no test referenced
+it**. The seam outlived whatever test it was cut for, and removing it removed a
+`PATH`-override primitive from the shipped plugin.
 
 ### 2.4 Text rendering is re-invented per plugin
 
@@ -101,7 +110,7 @@ domains, which have the same needs):
 | ~~`sdk::cancel`~~ | *done, as `ah_plugin_api::cancellation` — see B* |
 | `sdk::render` | table/list/keyvalue renderers built on `TextFormatter`, ANSI stripping, truncation |
 | `sdk::descriptor` | descriptor/manual builders (feeds group 01) |
-| `sdk::process` | injectable command runner (kills the test-only env vars) |
+| ~~`sdk::process`~~ | *dropped: the one shipped seam it was for is deleted, and nothing else asks for it* |
 
 ### B. Cancellation belongs to one module *(done)*
 
@@ -145,8 +154,8 @@ implementation, not a merged product surface.
    Add a shared test suite that runs against both.
 3. Add the runtime cancellation token; migrate the three built-in domains and the
    GitHub plugin; delete the globals.
-4. Add `sdk::process`; delete `AH_*_TEST_*` environment seams and rewrite those tests
-   against the injected runner.
+4. ~~Add `sdk::process`; delete `AH_*_TEST_*` environment seams and rewrite those tests
+   against the injected runner.~~ **(done by deletion; the seam had no tests)**
 5. Introduce `Forge` and migrate GitHub and GitLab behavior into `forge::core`,
    one command family at a time (issues → releases → pipelines/runs → logs).
 6. Adopt `sdk::render` in the host too; delete `render_plugins_table` column logic.
@@ -160,8 +169,9 @@ implementation, not a merged product surface.
 - **Do not over-unify the forge model.** GitLab designs/GraphQL and GitHub artifacts
   have no counterpart on the other side; keep them as adapter-specific commands
   rather than forcing a lowest-common-denominator trait.
-- **Deleting the test env vars is a behavior change for the test suite only** — it
-  must not change production behavior, and the golden tests prove that.
+- ~~**Deleting the test env vars is a behavior change for the test suite only**~~ — it
+  was a production behavior change: `AH_POSTGRES_TEST_SYSTEM_PATH` no longer overrides
+  `psql` resolution. Nothing in the repository set it.
 
 ## Acceptance criteria
 

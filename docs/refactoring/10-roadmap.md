@@ -71,7 +71,7 @@ The highest-leverage phase. Nothing moves between crates yet.
 | ~~Tie `docs/reference/*.md` to the catalog~~ **(done as a drift test)**                     | 01     |
 | `ah-plugin-sdk`: `render`, `http`, `credentials`, `process`                                 | 02     |
 | ~~One cancellation registry instead of five~~ **(done)**                                    | 02     |
-| Delete `AH_*_TEST_*` environment seams                                                      | 02, 08 |
+| ~~Delete `AH_*_TEST_*` environment seams~~ **(done; one of three was real)**                | 02, 08 |
 | `Emitter<W>`; remove `println!` from adapters; single `--quiet` handling                    | 04     |
 | ~~`From<RuntimeError> for ErrorDiagnostic`; delete three mapping tables~~ **(done)**        | 04     |
 | ~~Box error payloads; remove `result_large_err` allows~~ **(done)**                         | 04, 09 |

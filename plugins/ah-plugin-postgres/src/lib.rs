@@ -29,7 +29,6 @@ const MIN_POSTGRES_MAJOR: u32 = 14;
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_DOWNLOAD_TIMEOUT_SECS: u64 = 1800;
 const AH_POSTGRES_TOOL_PATH: &str = "AH_POSTGRES_TOOL_PATH";
-const AH_POSTGRES_TEST_SYSTEM_PATH: &str = "AH_POSTGRES_TEST_SYSTEM_PATH";
 const POSTGRES_18_4_WINDOWS_X64_URL: &str =
     "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-windows-x64-binaries.zip";
 const POSTGRES_18_4_WINDOWS_X64_SHA256: &str =
@@ -1315,13 +1314,6 @@ fn parse_psql_major(raw: &str) -> Option<u32> {
 }
 
 fn find_psql_in_path() -> Option<PathBuf> {
-    if let Some(test_path) = env::var_os(AH_POSTGRES_TEST_SYSTEM_PATH) {
-        return if test_path.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(test_path))
-        };
-    }
     let path_var = env::var_os("PATH")?;
     for dir in env::split_paths(&path_var) {
         for name in path_executable_names("psql") {
