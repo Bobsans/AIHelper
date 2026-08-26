@@ -13,7 +13,8 @@
 //! snapshot - rendered from the *main* command tree, which no user reaches for
 //! that command - showed them filled in.
 //!
-//! One declaration, used by both.
+//! One declaration, used by both - and one scan, in [`detect`], deciding which
+//! of them (if either) gets argv next.
 
 use std::ffi::{OsStr, OsString};
 
@@ -106,20 +107,19 @@ pub(crate) fn global_options(matches: &ArgMatches) -> Result<GlobalOptions, AppE
 /// The first `max` positional arguments, skipping the global flags and their
 /// values.
 ///
-/// This exists because the early routes have to know *which* command was asked
-/// for before they can decide whether to build a parser for it. It knows the
-/// global flag set, which is why that set is declared once above: a flag added
-/// there and forgotten here would make the walker treat its value as a command
-/// name.
+/// This exists because the route has to be known *before* a parser is built for
+/// it. It knows the global flag set, which is why that set is declared once
+/// above: a flag added there and forgotten here would make the walker treat its
+/// value as a command name.
+///
+/// Private, and called exactly once per process: the two early parsers each
+/// used to call it for themselves.
 ///
 /// # Errors
 ///
 /// [`AppError`] for non-Unicode arguments, or a global flag left without its
 /// value at the end of argv.
-pub(crate) fn leading_positionals(
-    raw_args: &[OsString],
-    max: usize,
-) -> Result<Vec<String>, AppError> {
+fn leading_positionals(raw_args: &[OsString], max: usize) -> Result<Vec<String>, AppError> {
     let mut found = Vec::new();
     let mut index = 1;
     while index < raw_args.len() && found.len() < max {
@@ -199,14 +199,33 @@ impl Handoff {
     }
 }
 
+/// Which parser owns this argv.
+///
+/// Three of them scanned argv independently to answer this - `detect`, the
+/// updater route and the managed-service route - so a plain `ah git status`
+/// walked the argument list three times before the real parse walked it a
+/// fourth. The scan happens once now, and the answer selects at most one
+/// further parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Route {
+    /// Nothing early claims it; the plugin-aware parse owns it.
+    Full,
+    /// `ah upgrade ...`, answered before plugin discovery.
+    Upgrade,
+    /// `ah mcp service ...`, likewise.
+    Service,
+    /// A managed `ah mcp serve --managed-config ...`, which needs a preflight
+    /// and which crash recovery treats differently.
+    ManagedServe,
+}
+
 /// What the process must know before it can decide what to build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Startup {
     /// `--version` or `-V` on their own, answered without loading anything.
     pub(crate) version_only: bool,
     pub(crate) handoff: Option<Handoff>,
-    /// A managed `mcp serve`, which crash recovery treats differently.
-    pub(crate) managed_serve: bool,
+    pub(crate) route: Route,
 }
 
 /// Read the startup decision out of argv and the environment.
@@ -245,9 +264,21 @@ fn detect_in(
     Ok(Startup {
         version_only,
         handoff: handoff(raw_args, &positionals, version_only, environment)?,
-        managed_serve: leads_with(&positionals, &["mcp", "serve"])
-            && has_flag(raw_args, "--managed-config"),
+        route: route(&positionals, raw_args),
     })
+}
+
+/// The one place that decides which parser gets argv next.
+fn route(positionals: &[String], raw_args: &[OsString]) -> Route {
+    if positionals.first().map(String::as_str) == Some("upgrade") {
+        Route::Upgrade
+    } else if leads_with(positionals, &["mcp", "service"]) {
+        Route::Service
+    } else if leads_with(positionals, &["mcp", "serve"]) && has_flag(raw_args, "--managed-config") {
+        Route::ManagedServe
+    } else {
+        Route::Full
+    }
 }
 
 fn handoff(
@@ -370,6 +401,10 @@ mod tests {
         }
     }
 
+    fn route_of(line: &[&str]) -> Route {
+        detect_in(&argv(line), &nothing).unwrap().route
+    }
+
     #[test]
     fn a_managed_serve_is_recognised_in_either_spelling() {
         for line in [
@@ -377,19 +412,38 @@ mod tests {
             vec!["ah", "mcp", "serve", "--managed-config=d.json"],
             vec!["ah", "--json", "mcp", "serve", "--managed-config=d.json"],
         ] {
-            assert!(
-                detect_in(&argv(&line), &nothing).unwrap().managed_serve,
-                "{line:?}"
-            );
+            assert_eq!(route_of(&line), Route::ManagedServe, "{line:?}");
         }
+        // A plain `mcp serve` is the full CLI's, and `mcp service` is the
+        // lifecycle route however the flag is spelled.
+        assert_eq!(route_of(&["ah", "mcp", "serve"]), Route::Full);
+        assert_eq!(
+            route_of(&["ah", "mcp", "service", "status", "--managed-config=d"]),
+            Route::Service
+        );
+    }
+
+    /// The routing decisions the two early parsers used to make for
+    /// themselves, each by its own argv walk.
+    #[test]
+    fn only_the_early_entry_points_leave_the_full_route() {
+        assert_eq!(route_of(&["ah", "upgrade", "--check"]), Route::Upgrade);
+        assert_eq!(route_of(&["ah", "--json", "upgrade"]), Route::Upgrade);
+        assert_eq!(
+            route_of(&["ah", "mcp", "--json", "service", "start"]),
+            Route::Service
+        );
+
         for line in [
-            vec!["ah", "mcp", "serve"],
-            vec!["ah", "mcp", "service", "status", "--managed-config=d"],
+            vec!["ah", "git", "status"],
+            vec!["ah", "mcp"],
+            // A domain that merely mentions the early words as arguments.
+            vec!["ah", "file", "read", "mcp", "service"],
+            vec!["ah", "run", "upgrade"],
+            // `--cwd upgrade` names a directory, not a command.
+            vec!["ah", "--cwd", "upgrade"],
         ] {
-            assert!(
-                !detect_in(&argv(&line), &nothing).unwrap().managed_serve,
-                "{line:?}"
-            );
+            assert_eq!(route_of(&line), Route::Full, "{line:?}");
         }
     }
 

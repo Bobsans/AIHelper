@@ -8,7 +8,6 @@ use super::model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS};
 
 #[derive(Debug)]
 pub enum EarlyRoute {
-    NotManaged,
     ExitSuccess,
     Service(ServiceCommand),
     ManagedServe { definition_path: PathBuf },
@@ -33,27 +32,18 @@ pub struct InstallOptions {
     pub options: GlobalOptions,
 }
 
-pub fn route(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
-    let tokens = crate::entry::leading_positionals(raw_args, 2)?;
-    let Some(domain) = tokens.first().map(String::as_str) else {
-        return Ok(EarlyRoute::NotManaged);
-    };
-    let operation = tokens.get(1).map(String::as_str);
-    if domain != "mcp" {
-        return Ok(EarlyRoute::NotManaged);
-    }
-    let is_service = operation == Some("service");
-    let is_managed_serve = operation == Some("serve")
-        && raw_args.iter().any(|arg| {
-            arg == "--managed-config"
-                || arg
-                    .to_str()
-                    .is_some_and(|value| value.starts_with("--managed-config="))
-        });
-    if !is_service && !is_managed_serve {
-        return Ok(EarlyRoute::NotManaged);
-    }
-
+/// Parse an argv that [`crate::entry::detect`] has already identified as
+/// `mcp service` or a managed `mcp serve`.
+///
+/// The walk that used to decide that lived here, in a third copy of the same
+/// scan; [`crate::entry::Route`] owns it now, so this function no longer has a
+/// "not mine" answer to give.
+///
+/// # Errors
+///
+/// [`AppError`] for arguments these commands do not accept, and for a managed
+/// serve on a transport other than HTTP.
+pub fn parse(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
     let matches = match build_early_command().try_get_matches_from(raw_args.iter().cloned()) {
         Ok(matches) => matches,
         Err(error) => match error.kind() {
@@ -77,7 +67,7 @@ pub fn route(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
         cwd: None,
     };
     let Some(("mcp", mcp)) = matches.subcommand() else {
-        return Ok(EarlyRoute::NotManaged);
+        return Err(AppError::invalid_argument("expected an mcp subcommand"));
     };
     match mcp.subcommand() {
         Some(("serve", serve)) => {
@@ -125,7 +115,9 @@ pub fn route(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
                 "missing or unsupported mcp service subcommand",
             )),
         },
-        _ => Ok(EarlyRoute::NotManaged),
+        _ => Err(AppError::invalid_argument(
+            "missing or unsupported mcp subcommand",
+        )),
     }
 }
 
@@ -209,7 +201,7 @@ mod tests {
 
     #[test]
     fn routes_service_with_globals_in_any_supported_position() {
-        let route = route(&args(&[
+        let route = parse(&args(&[
             "ah",
             "mcp",
             "--json",
@@ -230,14 +222,12 @@ mod tests {
         assert_eq!(options.options.output, OutputMode::Json);
     }
 
+    /// Which argv reaches this parser at all is
+    /// `crate::entry::Route`'s decision, and is tested there.
     #[test]
-    fn routes_only_managed_serve_early() {
+    fn a_managed_serve_carries_its_definition_path() {
         assert!(matches!(
-            route(&args(&["ah", "mcp", "serve"])).unwrap(),
-            EarlyRoute::NotManaged
-        ));
-        assert!(matches!(
-            route(&args(&[
+            parse(&args(&[
                 "ah",
                 "mcp",
                 "serve",
@@ -252,14 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_domain_never_enters_managed_parser() {
-        assert!(matches!(
-            route(&args(&["ah", "file", "read", "mcp", "service"])).unwrap(),
-            EarlyRoute::NotManaged
-        ));
-    }
-
-    #[test]
     fn routes_every_lifecycle_mutation_early() {
         for (name, expected) in [
             ("start", "start"),
@@ -268,7 +250,7 @@ mod tests {
             ("status", "status"),
             ("uninstall", "uninstall"),
         ] {
-            let route = route(&args(&["ah", "mcp", "service", name])).unwrap();
+            let route = parse(&args(&["ah", "mcp", "service", name])).unwrap();
             let actual = match route {
                 EarlyRoute::Service(ServiceCommand::Start { .. }) => "start",
                 EarlyRoute::Service(ServiceCommand::Stop { .. }) => "stop",
@@ -284,7 +266,7 @@ mod tests {
     #[test]
     fn lifecycle_mutations_accept_existing_global_options_only() {
         for name in ["stop", "restart", "uninstall"] {
-            let parsed = route(&args(&[
+            let parsed = parse(&args(&[
                 "ah", "--cwd", ".", "mcp", "service", name, "--json", "--quiet", "--limit", "7",
             ]))
             .unwrap();
@@ -298,7 +280,7 @@ mod tests {
             assert!(options.quiet);
             assert_eq!(options.limit, Some(7));
 
-            let error = route(&args(&["ah", "mcp", "service", name, "--force"])).unwrap_err();
+            let error = parse(&args(&["ah", "mcp", "service", name, "--force"])).unwrap_err();
             assert_eq!(error.code(), "INVALID_ARGUMENT");
         }
     }
@@ -313,7 +295,7 @@ mod tests {
             );
         }
         assert_eq!(
-            route(&args(&["ah", "mcp", "service"])).unwrap_err().code(),
+            parse(&args(&["ah", "mcp", "service"])).unwrap_err().code(),
             "INVALID_ARGUMENT"
         );
     }

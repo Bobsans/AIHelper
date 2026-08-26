@@ -15,7 +15,6 @@ pub enum UpgradeRequest {
 
 #[derive(Debug)]
 pub enum EarlyUpgradeRoute {
-    NotUpgrade,
     ExitSuccess,
     Execute {
         request: UpgradeRequest,
@@ -23,14 +22,18 @@ pub enum EarlyUpgradeRoute {
     },
 }
 
-pub fn route(raw_args: &[OsString]) -> Result<EarlyUpgradeRoute, AppError> {
-    if crate::entry::leading_positionals(raw_args, 1)?
-        .first()
-        .map(String::as_str)
-        != Some("upgrade")
-    {
-        return Ok(EarlyUpgradeRoute::NotUpgrade);
-    }
+/// Parse an argv that [`crate::entry::detect`] has already identified as
+/// `upgrade`.
+///
+/// It used to re-scan argv to find that out for itself, which is why there was
+/// a `NotUpgrade` variant: the caller asked every parser in turn whether the
+/// command was theirs. One scan decides now, so the question cannot be asked
+/// twice and cannot be answered two ways.
+///
+/// # Errors
+///
+/// [`AppError`] for arguments `upgrade` does not accept.
+pub fn parse(raw_args: &[OsString]) -> Result<EarlyUpgradeRoute, AppError> {
     let matches = match crate::entry::early_command()
         .subcommand(build_help_command())
         .try_get_matches_from(raw_args.iter().cloned())
@@ -48,7 +51,9 @@ pub fn route(raw_args: &[OsString]) -> Result<EarlyUpgradeRoute, AppError> {
     };
     let options = crate::entry::global_options(&matches)?;
     let Some(("upgrade", upgrade)) = matches.subcommand() else {
-        return Ok(EarlyUpgradeRoute::NotUpgrade);
+        return Err(AppError::invalid_argument(
+            "upgrade takes no other subcommand",
+        ));
     };
     Ok(EarlyUpgradeRoute::Execute {
         request: request_from_matches(upgrade)?,
@@ -109,7 +114,7 @@ mod tests {
 
     #[test]
     fn routes_check_with_globals_in_any_supported_position() {
-        let route = route(&[
+        let route = parse(&[
             OsString::from("ah"),
             OsString::from("--json"),
             OsString::from("upgrade"),
@@ -128,13 +133,13 @@ mod tests {
     #[test]
     fn routes_stable_update_and_rejects_unknown_operation() {
         let EarlyUpgradeRoute::Execute { request, .. } =
-            route(&[OsString::from("ah"), OsString::from("upgrade")]).unwrap()
+            parse(&[OsString::from("ah"), OsString::from("upgrade")]).unwrap()
         else {
             panic!("unexpected route")
         };
         assert_eq!(request, UpgradeRequest::Upgrade);
 
-        let EarlyUpgradeRoute::Execute { request, .. } = route(&[
+        let EarlyUpgradeRoute::Execute { request, .. } = parse(&[
             OsString::from("ah"),
             OsString::from("upgrade"),
             OsString::from("--version"),
@@ -145,7 +150,7 @@ mod tests {
         };
         assert_eq!(request, UpgradeRequest::Version(Version::new(1, 2, 3)));
 
-        let EarlyUpgradeRoute::Execute { request, .. } = route(&[
+        let EarlyUpgradeRoute::Execute { request, .. } = parse(&[
             OsString::from("ah"),
             OsString::from("upgrade"),
             OsString::from("--rollback"),

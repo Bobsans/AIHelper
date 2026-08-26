@@ -91,7 +91,7 @@ Mostly moves, made safe by phases 0–1.
 | ~~Split `event_log` into record shaping and rotation~~ **(done)**                        | 05     |
 | ~~Separate `ai/install` logic from progress rendering~~ **(done)**                       | 04, 05 |
 | ~~One `commands/*` layout; delete the eight `mod adapters` shims~~ **(done)**            | 05     |
-| Single-parse `Entry` enum; hidden subcommands replace env-var routing                    | 03     |
+| ~~Single-parse `Entry` enum; hidden flag replaces env-var routing~~ **(done)**            | 03     |
 | ~~`run()` split into parse → bootstrap → dispatch → report~~ **(done)**                  | 03     |
 | ~~Remove `set_current_dir`; request-scoped cwd; concurrency test~~ **(done)**            | 03     |
 | ~~`ah-paths`; `platform::{fs,process,exec}` ports~~ **(done)**                           | 03, 06 |
@@ -99,11 +99,30 @@ Mostly moves, made safe by phases 0–1.
 **Exit criterion:** no file over ~800 production lines; one parse of argv; no
 process-global working directory.
 
-**Measured, with two rows still open.** No process-global working directory:
-met, `set_current_dir` is gone from the workspace. One parse of argv: **not**
-met - the row above is open, and argv is still read by `entry::detect`, the
-upgrade route, the managed-service route and the full parse. Files over ~800
-production lines: **not** met, twenty of them. The largest are
+**Measured, with one row still open.**
+
+*No process-global working directory:* met. `set_current_dir` is gone from the
+workspace.
+
+*One parse of argv:* met as far as it can be, and the criterion was overstated.
+argv is **scanned** exactly once - `entry::detect` walks it and returns an
+`entry::Route` - and that answer selects **at most one** further parse. Before,
+each candidate route asked argv for itself, so a plain `ah git status` walked
+the argument list four times: `detect`, the upgrade route's gate, the
+managed-service route's gate, and then the real parse. A literal single parse is
+not reachable and should not have been written as the target: the full CLI's
+shape depends on which plugins loaded, and answering `ah mcp service status`
+before that discovery is the entire point of the early routes. Two parsers over
+one scan is the floor. The three `NotUpgrade`/`NotManaged` "not mine" variants
+are gone with the duplicate scans that produced them.
+
+*Env-var routing:* met, by a hidden global flag rather than the hidden
+subcommands the row proposed - `--internal-handoff <kind>` is a contract between
+two of our own binaries, and a flag keeps it in the parser. The two legacy
+variables stay on the read side only, because invariant 4 requires a helper from
+one release to be able to drive the `ah` of another.
+
+*Files over ~800 production lines:* **not** met, twenty of them. The largest are
 `ah-update-helper/src/apply.rs` (2195) and `mcp_service/lifecycle.rs` (2027);
 several others are data rather than logic (`project/rules.rs`, the three
 plugins' `typed.rs`) and splitting those buys nothing. The criterion was

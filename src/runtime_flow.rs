@@ -46,7 +46,7 @@ pub(crate) fn run() -> Result<(), AppError> {
     }
 
     let session = Session::open(&raw_args)?;
-    let managed_runner = match route_without_plugins(&raw_args)? {
+    let managed_runner = match route_without_plugins(&raw_args, entry.route)? {
         Step::Done(outcome) => return outcome,
         Step::Continue(runner) => runner,
     };
@@ -67,7 +67,10 @@ fn answer_before_startup(entry: &crate::entry::Startup) -> Result<Step<()>, AppE
     }
     if entry.handoff.is_none()
         && matches!(
-            crate::updater::recovery::recover_before_startup(entry.managed_serve)?,
+            crate::updater::recovery::recover_before_startup(matches!(
+                entry.route,
+                crate::entry::Route::ManagedServe
+            ))?,
             crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched
         )
     {
@@ -141,30 +144,38 @@ impl Session {
 /// The entry points answered before plugin discovery: `upgrade`, the managed
 /// service commands, and the preflight for a managed `mcp serve`.
 ///
-/// They are separate parses because the full CLI cannot be the first one - its
-/// shape depends on which plugins loaded, and discovery is what these avoid.
+/// They are separate parses from the main one because the full CLI cannot be
+/// the first parse - its shape depends on which plugins loaded, and discovery
+/// is what these avoid. They are no longer separate *scans*: this used to ask
+/// each parser in turn whether the command was its own, so every invocation
+/// walked argv once per candidate route before the real parse walked it again.
+/// [`crate::entry::Route`] answers that once, and at most one parse follows.
 fn route_without_plugins(
     raw_args: &[OsString],
+    route: crate::entry::Route,
 ) -> Result<Step<Option<Arc<ManagedRunner>>>, AppError> {
-    match crate::updater::command::route(raw_args)? {
-        crate::updater::command::EarlyUpgradeRoute::NotUpgrade => {}
-        crate::updater::command::EarlyUpgradeRoute::ExitSuccess => {
-            return Ok(Step::Done(Ok(())));
-        }
-        crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => {
-            return Ok(Step::Done(crate::updater::execute(request, options)));
-        }
-    }
-    match crate::mcp_service::command::route(raw_args)? {
-        EarlyRoute::NotManaged => Ok(Step::Continue(None)),
-        EarlyRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
-        EarlyRoute::Service(command) => {
-            Ok(Step::Done(crate::mcp_service::lifecycle::execute(command)))
-        }
-        EarlyRoute::ManagedServe { definition_path } => {
-            match ManagedRunner::preflight(&definition_path)? {
-                ManagedPreflight::AlreadyRunning => Ok(Step::Done(Ok(()))),
-                ManagedPreflight::Ready(runner) => Ok(Step::Continue(Some(Arc::new(*runner)))),
+    match route {
+        crate::entry::Route::Full => Ok(Step::Continue(None)),
+        crate::entry::Route::Upgrade => match crate::updater::command::parse(raw_args)? {
+            crate::updater::command::EarlyUpgradeRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
+            crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => {
+                Ok(Step::Done(crate::updater::execute(request, options)))
+            }
+        },
+        crate::entry::Route::Service | crate::entry::Route::ManagedServe => {
+            match crate::mcp_service::command::parse(raw_args)? {
+                EarlyRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
+                EarlyRoute::Service(command) => {
+                    Ok(Step::Done(crate::mcp_service::lifecycle::execute(command)))
+                }
+                EarlyRoute::ManagedServe { definition_path } => {
+                    match ManagedRunner::preflight(&definition_path)? {
+                        ManagedPreflight::AlreadyRunning => Ok(Step::Done(Ok(()))),
+                        ManagedPreflight::Ready(runner) => {
+                            Ok(Step::Continue(Some(Arc::new(*runner))))
+                        }
+                    }
+                }
             }
         }
     }
@@ -897,7 +908,7 @@ mod tests {
         let entry = crate::entry::Startup {
             version_only: true,
             handoff: Some(crate::entry::Handoff::InstalledSmoke),
-            managed_serve: false,
+            route: crate::entry::Route::Full,
         };
 
         let step = answer_before_startup(&entry).expect("the handoff answers");
@@ -912,7 +923,7 @@ mod tests {
         let entry = crate::entry::Startup {
             version_only: false,
             handoff: Some(crate::entry::Handoff::ManagedRestore),
-            managed_serve: false,
+            route: crate::entry::Route::Full,
         };
 
         let step = answer_before_startup(&entry).expect("the handoff continues");
