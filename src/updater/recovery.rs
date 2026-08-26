@@ -372,6 +372,10 @@ fn ensure_direct_directory_metadata(metadata: &fs::Metadata) -> Result<(), AppEr
     Ok(())
 }
 
+/// Recovery reports every failure as one code, with the original in the detail.
+///
+/// Deliberately not `super::map_updater_error`: the phase that consumed the
+/// invocation is what a caller has to be able to see.
 fn map_updater_error(error: UpdaterError) -> AppError {
     AppError::external(
         "UPDATER_RECOVERY",

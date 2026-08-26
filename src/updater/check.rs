@@ -9,8 +9,8 @@ use crate::{
     error::AppError,
     output::Emitter,
     updater::{
-        command::UpgradeRequest, github::GitHubReleaseClient, service::ServiceGuard,
-        trust::production_release_trust,
+        command::UpgradeRequest, github::GitHubReleaseClient, map_updater_error,
+        service::ServiceGuard, trust::production_release_trust,
     },
 };
 
@@ -90,13 +90,6 @@ fn update_source(source: Option<UpdateSource>) -> &'static str {
         Some(UpdateSource::GitHubRelease) => "github_release",
         None => "none",
     }
-}
-
-fn map_updater_error(error: UpdaterError) -> AppError {
-    AppError::external(
-        format!("UPDATER_{}", error.code().as_str().to_ascii_uppercase()),
-        error.detail(),
-    )
 }
 
 #[cfg(test)]

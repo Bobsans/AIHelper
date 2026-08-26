@@ -26,6 +26,7 @@ use super::{
     command::UpgradeRequest,
     github::GitHubReleaseClient,
     installation::{load_current_managed_installation, resolve_current_managed_installation},
+    map_updater_error,
     smoke::run_offline_smoke,
     trust::production_release_trust,
 };
@@ -486,11 +487,4 @@ fn contract(detail: &'static str) -> UpdaterError {
 
 fn candidate_error(detail: &'static str) -> UpdaterError {
     UpdaterError::new(UpdaterErrorCode::Candidate, detail)
-}
-
-fn map_updater_error(error: UpdaterError) -> AppError {
-    AppError::external(
-        format!("UPDATER_{}", error.code().as_str().to_ascii_uppercase()),
-        error.detail(),
-    )
 }
