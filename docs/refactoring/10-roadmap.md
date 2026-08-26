@@ -171,7 +171,7 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 |-------------------------------------------------------------|--------|
 | ~~`ServiceGuard` trait; invert the updater↔service dependency~~ **(done)** | 07 |
 | ~~Extract `ah-updater` from `src/updater/`~~ **(done)**      | 07, 09 |
-| Extract `ah-secrets`, `ah-observability`, `ah-service`      | 09     |
+| ~~Extract `ah-secrets`, `ah-observability`, `ah-service`~~ **(done, plus `ah-config`)** | 09 |
 | One `fsverify` module for updater hardening primitives      | 07     |
 | ↳ partly landed: `ah-update-helper::apply::fsverify` now names them in that crate; the row's "one" still wants them shared with `src/updater/` | |
 | Extract domain crates last                                  | 09     |
@@ -218,6 +218,32 @@ unification had been supplying for it.
 What stayed in the root is what the criterion allows: `src/upgrade/` is the clap
 route, the two port implementations and the renderer. The root crate also lost
 `sha2`, `zip` and `ed25519-dalek`, which it no longer needs.
+
+**`ah-secrets`, `ah-observability` and `ah-service` followed, and so did
+`ah-config`,** which was not on the list and had to go first: the log directory
+and the vault both resolve against it. Each of the four builds and tests with
+the root crate absent from its graph.
+
+`ah-service` needed the same two separations the updater did - the mechanism
+printed its own output and its input type carried `GlobalOptions` through six
+variants - so `src/service/` now holds the route and the renderer, and
+`lifecycle::run` takes an `Operation` and returns a `Report`. `InstallSettings`
+replaced `InstallOptions`: the only CLI value the mechanism actually needed was
+`--limit`, which is written into the definition and outlives the invocation.
+
+Two things worth recording about doing it this way:
+
+- **Building each crate alone is the point, not a side effect.** It found five
+  missing `windows-sys`/`windows` features across `ah-platform` and
+  `ah-service` that workspace feature unification had been supplying. A crate
+  that only ever builds inside the workspace never states what it needs.
+- **The orphan rule pointed at the right answer twice.** `SecretResolver for
+  VaultStore` could no longer live in the root once both halves were foreign to
+  it, and the impl belongs with the vault. Same for the `ServiceGuard` impl and
+  `mcp_service`.
+
+The root crate is 4441 lines of `src/*.rs` plus the command modules, against a
+`crates/` directory of nineteen.
 
 The three lifecycle helpers that remain (`snapshot_status`, `install_quietly`,
 `start_quietly`) serve `ai install --transport managed`. Group 07 counted them
