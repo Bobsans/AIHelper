@@ -29,6 +29,7 @@ pub(crate) enum EarlyRecoveryOutcome {
 
 pub(crate) fn recover_before_startup(
     allow_safe_managed_serve: bool,
+    guard: &dyn crate::updater::service::ServiceGuard,
 ) -> Result<EarlyRecoveryOutcome, AppError> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
@@ -57,11 +58,7 @@ pub(crate) fn recover_before_startup(
             return Ok(EarlyRecoveryOutcome::Continue);
         }
 
-        let service_paths = crate::mcp_service::paths::ServicePaths::discover()?;
-        let lease = crate::mcp_service::lock::FileLease::acquire(
-            &service_paths.lifecycle_lock,
-            RECOVERY_LOCK_TIMEOUT,
-        )?;
+        let hold = guard.hold(RECOVERY_LOCK_TIMEOUT)?;
         if let Some(paths) = discover_pending(&executable, &updater_root)? {
             let inspected = inspect_transaction(&paths, &trust).map_err(map_updater_error)?;
             if matches!(
@@ -72,19 +69,19 @@ pub(crate) fn recover_before_startup(
                     | TransactionStateV1::CommitStarted
                     | TransactionStateV1::RollbackStarted
             ) {
-                crate::mcp_service::lifecycle::stop_for_update_while_locked()?;
+                guard.stop(&hold)?;
             }
         }
         recover_pending_for(
             &executable,
             &updater_root,
             &trust,
-            &ProcessRecoveryRunner(&lease),
+            &ProcessRecoveryRunner(&hold),
         )
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
-        let _ = allow_safe_managed_serve;
+        let _ = (allow_safe_managed_serve, guard);
         Ok(EarlyRecoveryOutcome::Continue)
     }
 }
@@ -101,7 +98,7 @@ enum HelperRun {
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-struct ProcessRecoveryRunner<'a>(&'a crate::mcp_service::lock::FileLease);
+struct ProcessRecoveryRunner<'a>(&'a crate::updater::service::ServiceHold);
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {

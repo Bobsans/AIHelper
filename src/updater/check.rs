@@ -9,7 +9,8 @@ use crate::{
     error::AppError,
     output::Emitter,
     updater::{
-        command::UpgradeRequest, github::GitHubReleaseClient, trust::production_release_trust,
+        command::UpgradeRequest, github::GitHubReleaseClient, service::ServiceGuard,
+        trust::production_release_trust,
     },
 };
 
@@ -18,12 +19,17 @@ pub(crate) trait ReleaseCheckSource {
     fn download(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError>;
 }
 
-pub(crate) fn execute(request: UpgradeRequest, options: GlobalOptions) -> Result<(), AppError> {
+pub(crate) fn execute(
+    request: UpgradeRequest,
+    options: GlobalOptions,
+    guard: &dyn ServiceGuard,
+) -> Result<(), AppError> {
     match request {
+        // A check mutates nothing, so it never touches the service.
         UpgradeRequest::Check => execute_check(options),
         request @ (UpgradeRequest::Upgrade
         | UpgradeRequest::Version(_)
-        | UpgradeRequest::Rollback) => super::activate::execute(request, options),
+        | UpgradeRequest::Rollback) => super::activate::execute(request, options, guard),
     }
 }
 

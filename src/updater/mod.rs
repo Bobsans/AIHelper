@@ -7,6 +7,7 @@ pub(crate) mod github;
 mod handoff;
 mod installation;
 pub(crate) mod recovery;
+pub(crate) mod service;
 mod smoke;
 mod trust;
 

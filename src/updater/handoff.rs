@@ -21,7 +21,7 @@ use windows_sys::Win32::{
 };
 
 use crate::{
-    commands::run::windows_job::CREATE_PROCESS_LOCK, error::AppError, mcp_service::lock::FileLease,
+    commands::run::windows_job::CREATE_PROCESS_LOCK, error::AppError, updater::service::ServiceHold,
 };
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -29,31 +29,31 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) fn launch_recovery(
     helper: &Path,
     arguments: &[&OsStr],
-    lease: &FileLease,
+    hold: &ServiceHold,
 ) -> Result<(), LaunchFailure> {
-    launch_helper(helper, arguments, lease, "UPDATER_RECOVERY", "recovery")
+    launch_helper(helper, arguments, hold, "UPDATER_RECOVERY", "recovery")
 }
 
 pub(super) fn launch_activation(
     helper: &Path,
     arguments: &[&OsStr],
-    lease: &FileLease,
+    hold: &ServiceHold,
 ) -> Result<(), LaunchFailure> {
-    launch_helper(helper, arguments, lease, "UPDATER_ACTIVATION", "activation")
+    launch_helper(helper, arguments, hold, "UPDATER_ACTIVATION", "activation")
 }
 
 pub(super) fn launch_rollback(
     helper: &Path,
     arguments: &[&OsStr],
-    lease: &FileLease,
+    hold: &ServiceHold,
 ) -> Result<(), LaunchFailure> {
-    launch_helper(helper, arguments, lease, "UPDATER_ROLLBACK", "rollback")
+    launch_helper(helper, arguments, hold, "UPDATER_ROLLBACK", "rollback")
 }
 
 fn launch_helper(
     helper: &Path,
     arguments: &[&OsStr],
-    lease: &FileLease,
+    hold: &ServiceHold,
     error_code: &'static str,
     operation: &'static str,
 ) -> Result<(), LaunchFailure> {
@@ -70,7 +70,7 @@ fn launch_helper(
         "failed to create update helper handoff event",
     )
     .map_err(LaunchFailure::safe)?;
-    let raw_lease = lease.raw_handle();
+    let raw_lease = hold.raw_handle();
     let mut attributes = AttributeList::new(error_code).map_err(LaunchFailure::safe)?;
     attributes
         .set_handle(&raw_lease, error_code)
@@ -85,7 +85,7 @@ fn launch_helper(
     let mut argv = arguments.to_vec();
     argv.extend([
         OsStr::new("--lifecycle-lock"),
-        lease.path().as_os_str(),
+        hold.path().as_os_str(),
         OsStr::new("--lifecycle-lock-handle"),
         OsStr::new(&handle_value),
         OsStr::new("--handoff-event"),
@@ -435,6 +435,7 @@ impl Drop for OwnedHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp_service::lock::FileLease;
 
     #[test]
     fn quotes_windows_arguments_without_trailing_backslash_escape() {

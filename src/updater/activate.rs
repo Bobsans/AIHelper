@@ -19,16 +19,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-use crate::mcp_service::lifecycle::{
-    capture_for_update_while_locked, restore_for_update_while_locked, stop_for_update_while_locked,
-};
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    mcp_service::{lock::FileLease, paths::ServicePaths},
-    output::Emitter,
-};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter, updater::service::ServiceGuard};
 
 use super::{
     candidate::prepare_candidate,
@@ -56,14 +47,18 @@ struct UpgradeLaunchResult<'a> {
     rollback: &'a str,
 }
 
-pub(super) fn execute(request: UpgradeRequest, options: GlobalOptions) -> Result<(), AppError> {
+pub(super) fn execute(
+    request: UpgradeRequest,
+    options: GlobalOptions,
+    guard: &dyn ServiceGuard,
+) -> Result<(), AppError> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        execute_windows(request, options)
+        execute_windows(request, options, guard)
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
-        let _ = (request, options);
+        let _ = (request, options, guard);
         Err(map_updater_error(UpdaterError::new(
             UpdaterErrorCode::UnsupportedPlatform,
             "self-update requires Windows x86_64",
@@ -72,9 +67,13 @@ pub(super) fn execute(request: UpgradeRequest, options: GlobalOptions) -> Result
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<(), AppError> {
+fn execute_windows(
+    request: UpgradeRequest,
+    options: GlobalOptions,
+    guard: &dyn ServiceGuard,
+) -> Result<(), AppError> {
     if request == UpgradeRequest::Rollback {
-        return execute_rollback(options);
+        return execute_rollback(options, guard);
     }
     let operation = match request {
         UpgradeRequest::Upgrade => UpdateOperation::Upgrade,
@@ -155,11 +154,12 @@ fn execute_windows(request: UpgradeRequest, options: GlobalOptions) -> Result<()
         &selected_version_text,
         "github_release",
         &trust,
+        guard,
     )
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn execute_rollback(options: GlobalOptions) -> Result<(), AppError> {
+fn execute_rollback(options: GlobalOptions, guard: &dyn ServiceGuard) -> Result<(), AppError> {
     let trust = production_release_trust().map_err(map_updater_error)?;
     let installation = load_current_managed_installation(&trust).map_err(map_updater_error)?;
     let backup = load_permanent_backup(
@@ -186,6 +186,7 @@ fn execute_rollback(options: GlobalOptions) -> Result<(), AppError> {
         &selected_version,
         "permanent_backup",
         &trust,
+        guard,
     )
 }
 
@@ -202,6 +203,7 @@ fn launch_transaction(
     selected_version: &str,
     source: &str,
     trust: &ah_updater_core::ReleaseTrust,
+    guard: &dyn ServiceGuard,
 ) -> Result<(), AppError> {
     let transaction_id = Uuid::new_v4();
     let transactions = installation.state_root().join("transactions");
@@ -212,10 +214,9 @@ fn launch_transaction(
         transactions.join(transaction_id.to_string()),
     );
 
-    let service_paths = ServicePaths::discover()?;
-    let lease = FileLease::acquire(&service_paths.lifecycle_lock, LIFECYCLE_LOCK_TIMEOUT)?;
+    let hold = guard.hold(LIFECYCLE_LOCK_TIMEOUT)?;
     cleanup_activation_helpers(installation.state_root()).map_err(map_updater_error)?;
-    let mcp_state = capture_for_update_while_locked()?;
+    let mcp_state = guard.capture(&hold)?;
     let plan = TransactionPlanV1::build_for_operation(
         operation,
         transaction_id,
@@ -253,17 +254,17 @@ fn launch_transaction(
             return Err(map_updater_error(error));
         }
     };
-    let stopped = match stop_for_update_while_locked() {
+    let stopped = match guard.stop(&hold) {
         Ok(stopped) => stopped,
         Err(error) => {
-            let _ = restore_for_update_while_locked(mcp_state);
+            let _ = guard.restore(&hold, mcp_state);
             let _ = remove_completed_transaction(&paths, trust);
             let _ = fs::remove_file(&helper);
             return Err(error);
         }
     };
     if stopped != mcp_state.was_running {
-        let _ = restore_for_update_while_locked(mcp_state);
+        let _ = guard.restore(&hold, mcp_state);
         let _ = remove_completed_transaction(&paths, trust);
         let _ = fs::remove_file(&helper);
         return Err(AppError::external(
@@ -287,13 +288,13 @@ fn launch_transaction(
         paths.transaction_root().as_os_str(),
     ];
     let launch = if operation == UpdateOperation::Rollback {
-        super::handoff::launch_rollback(&helper, &arguments, &lease)
+        super::handoff::launch_rollback(&helper, &arguments, &hold)
     } else {
-        super::handoff::launch_activation(&helper, &arguments, &lease)
+        super::handoff::launch_activation(&helper, &arguments, &hold)
     };
     if let Err(failure) = launch {
         if failure.cleanup_safe() {
-            let restore = restore_for_update_while_locked(mcp_state);
+            let restore = guard.restore(&hold, mcp_state);
             let _ = remove_completed_transaction(&paths, trust);
             let _ = fs::remove_file(&helper);
             restore?;

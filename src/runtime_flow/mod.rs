@@ -31,6 +31,7 @@ use crate::{
     event_log::{EventDiagnostic, EventLogger, SystemEventSeverity},
     mcp_service::{
         command::EarlyRoute,
+        lifecycle::ManagedMcpGuard,
         model::ExitKind,
         runner::{ManagedPreflight, ManagedRunner},
     },
@@ -93,10 +94,10 @@ fn answer_before_startup(entry: &crate::entry::Startup) -> Result<Step<()>, AppE
     }
     if entry.handoff.is_none()
         && matches!(
-            crate::updater::recovery::recover_before_startup(matches!(
-                entry.route,
-                crate::entry::Route::ManagedServe
-            ))?,
+            crate::updater::recovery::recover_before_startup(
+                matches!(entry.route, crate::entry::Route::ManagedServe),
+                &ManagedMcpGuard,
+            )?,
             crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched
         )
     {
@@ -184,9 +185,9 @@ fn route_without_plugins(
         crate::entry::Route::Full => Ok(Step::Continue(None)),
         crate::entry::Route::Upgrade => match crate::updater::command::parse(raw_args)? {
             crate::updater::command::EarlyUpgradeRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
-            crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => {
-                Ok(Step::Done(crate::updater::execute(request, options)))
-            }
+            crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => Ok(
+                Step::Done(crate::updater::execute(request, options, &ManagedMcpGuard)),
+            ),
         },
         crate::entry::Route::Service | crate::entry::Route::ManagedServe => {
             match crate::mcp_service::command::parse(raw_args)? {

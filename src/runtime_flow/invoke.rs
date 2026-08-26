@@ -128,7 +128,7 @@ pub(super) fn execution(
             crate::commands::secrets::execute(&config, request, options).map(|_| None)
         }
         RuntimeCommand::Upgrade { request, options } => {
-            crate::updater::execute(request, options).map(|_| None)
+            crate::updater::execute(request, options, &ManagedMcpGuard).map(|_| None)
         }
         RuntimeCommand::Invoke {
             domain,

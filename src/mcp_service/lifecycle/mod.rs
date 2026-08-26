@@ -13,6 +13,7 @@
 //! | `stop`      | stopping it, restarting it, and the orphan case              |
 //! | `uninstall` | proving it inactive, then deleting only what we own          |
 //! | `status`    | observing all three layers and reducing them to one state    |
+//! | `guard`     | the same service, seen as something an update holds still     |
 //!
 //! The operations used to be a single 1620-line `impl` block, which is why
 //! reading one of them meant scrolling past the other four.
@@ -54,11 +55,14 @@ use super::{
     store::{Document, ServiceStore},
 };
 
+mod guard;
 mod install;
 mod start;
 mod status;
 mod stop;
 mod uninstall;
+
+pub(crate) use guard::ManagedMcpGuard;
 
 use status::{
     SchedulerRuntimeEvidence, configuration_matches, reduce_runtime, require_no_drift,
@@ -147,63 +151,6 @@ pub(crate) fn install_quietly(options: &InstallOptions) -> Result<MutationOutput
 #[cfg(windows)]
 pub(crate) fn start_quietly() -> Result<MutationOutput, AppError> {
     update_service()?.start()
-}
-
-#[cfg(windows)]
-pub(crate) fn stop_for_update_while_locked() -> Result<bool, AppError> {
-    let service = update_service()?;
-    Ok(service.stop_locked(StopPolicy::AllowExactOrphan)?.changed)
-}
-
-#[cfg(windows)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ManagedMcpUpdateState {
-    pub(crate) was_running: bool,
-    pub(crate) previous_instance_id: Option<Uuid>,
-}
-
-#[cfg(windows)]
-pub(crate) fn capture_for_update_while_locked() -> Result<ManagedMcpUpdateState, AppError> {
-    let status = update_service()?.status();
-    let was_running = status.readiness.status == ReadinessStatus::Ready
-        || matches!(
-            status.scheduler.state,
-            SchedulerState::Running | SchedulerState::Queued
-        )
-        || matches!(
-            status.runtime.status,
-            RuntimeStatus::Starting | RuntimeStatus::RunningNotReady | RuntimeStatus::Ready
-        );
-    let previous_instance_id = status
-        .readiness
-        .instance_id
-        .or(status.runtime.instance_id)
-        .filter(|_| was_running);
-    Ok(ManagedMcpUpdateState {
-        was_running,
-        previous_instance_id,
-    })
-}
-
-#[cfg(windows)]
-pub(crate) fn restore_for_update_while_locked(
-    state: ManagedMcpUpdateState,
-) -> Result<(), AppError> {
-    if !state.was_running {
-        return Ok(());
-    }
-    let service = update_service()?;
-    service.start_locked()?;
-    let status = service.status();
-    if status.readiness.status != ReadinessStatus::Ready
-        || status.readiness.instance_id == state.previous_instance_id
-    {
-        return Err(AppError::external(
-            "MCP_SERVICE_RESTART_FAILED",
-            "managed MCP did not return with a new ready instance identity",
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(windows)]
