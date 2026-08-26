@@ -32,11 +32,11 @@ pub struct InstallOptions {
     pub options: GlobalOptions,
 }
 
-/// Parse an argv that [`crate::entry::detect`] has already identified as
+/// Parse an argv that `entry::detect` has already identified as
 /// `mcp service` or a managed `mcp serve`.
 ///
 /// The walk that used to decide that lived here, in a third copy of the same
-/// scan; [`crate::entry::Route`] owns it now, so this function no longer has a
+/// scan; `entry::Route` owns it now, so this function no longer has a
 /// "not mine" answer to give.
 ///
 /// # Errors

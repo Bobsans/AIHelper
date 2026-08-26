@@ -22,7 +22,7 @@ pub enum EarlyUpgradeRoute {
     },
 }
 
-/// Parse an argv that [`crate::entry::detect`] has already identified as
+/// Parse an argv that `entry::detect` has already identified as
 /// `upgrade`.
 ///
 /// It used to re-scan argv to find that out for itself, which is why there was
