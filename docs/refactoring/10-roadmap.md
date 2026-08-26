@@ -172,8 +172,7 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 | ~~`ServiceGuard` trait; invert the updater↔service dependency~~ **(done)** | 07 |
 | ~~Extract `ah-updater` from `src/updater/`~~ **(done)**      | 07, 09 |
 | ~~Extract `ah-secrets`, `ah-observability`, `ah-service`~~ **(done, plus `ah-config`)** | 09 |
-| One `fsverify` module for updater hardening primitives      | 07     |
-| ↳ partly landed: `ah-update-helper::apply::fsverify` now names them in that crate; the row's "one" still wants them shared with `src/updater/` | |
+| ~~One `fsverify` module for updater hardening primitives~~ **(done)** | 07 |
 | Extract domain crates last                                  | 09     |
 
 **Exit criterion:** the root crate is CLI wiring; every subsystem builds and tests
@@ -244,6 +243,26 @@ Two things worth recording about doing it this way:
 
 The root crate is 4441 lines of `src/*.rs` plus the command modules, against a
 `crates/` directory of nineteen.
+
+**The hardening primitives are one implementation each,** and the row's wording
+turned out to matter. The reparse-point and hard-link checks were already single
+copies in `ah-platform`; what was duplicated was the *composition* of them - "a
+plain regular file with exactly one name" - six times, under four different
+names, which is why counting by name had missed two of them. Three of the six
+omitted the hard-link half.
+
+Group 07 says the union is the requirement, not the intersection, so
+`ah_platform::fs::direct_file` performs all four checks and three call sites
+gained a refusal they did not have: the candidate staging check, the recovery
+identity read and the transaction file check. `read_bounded` went from three
+copies to one, and `encode_digest` from six to one - a digest compared as text
+has to be spelled the same everywhere or the comparison silently fails.
+
+Two sites keep their own check on purpose and now say so in the code: the
+running executable may legitimately be hard-linked into place by whoever
+unpacked a portable install, and the cargo-marker probe is detection rather than
+verification. Naming them is the point - the next reader "deduplicating" either
+would change what an installation is allowed to look like.
 
 The three lifecycle helpers that remain (`snapshot_status`, `install_quietly`,
 `start_quietly`) serve `ai install --transport managed`. Group 07 counted them
