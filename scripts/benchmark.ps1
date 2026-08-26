@@ -68,7 +68,11 @@ $benchDir = Join-Path $root "benchmarks"
 New-Item -ItemType Directory -Force -Path $benchDir | Out-Null
 
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
+# Two files on purpose: `latest.md` is the convenient name, and the stamped copy
+# is what makes a before/after comparison possible - a second run would
+# otherwise overwrite the baseline it is meant to be compared against.
 $markdownPath = Join-Path $benchDir "latest.md"
+$stampedPath = Join-Path $benchDir ((Get-Date -Format "yyyy-MM-dd-HHmmss") + ".md")
 
 $markdown = @(
     "# AIHelper Benchmarks",
@@ -84,7 +88,9 @@ foreach ($row in $results) {
     $markdown += "| $($row.Command) | $($row.AvgMs) | $($row.MinMs) | $($row.MaxMs) |"
 }
 
-$markdown -join "`n" | Set-Content -Path $markdownPath -Encoding UTF8
+$report = $markdown -join "`n"
+$report | Set-Content -Path $markdownPath -Encoding UTF8
+$report | Set-Content -Path $stampedPath -Encoding UTF8
 
 Write-Host ""
-Write-Host "Benchmark report saved to $markdownPath"
+Write-Host "Benchmark report saved to $markdownPath and $stampedPath"

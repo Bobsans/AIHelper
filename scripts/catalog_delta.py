@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Report what a catalog snapshot change actually altered.
 
-Deriving a schema from its Rust type reorders the `required` array, because the
-derived list follows the property map rather than the declaration order. JSON
-Schema treats `required` as a set, so that reordering is noise - but it hides the
-real diffs in `git diff`.
+Deriving a schema from its Rust type changes its spelling in two ways that carry
+no meaning:
 
-This compares two snapshots with `required` canonicalised, so anything it prints
-is a genuine change to the published contract and needs a decision.
+- `required` is reordered, because the derived list follows the property map
+  rather than the declaration order. JSON Schema treats it as a set.
+- a nullable field becomes `type: [T, "null"]` where a hand-written schema said
+  `oneOf: [T, {"type": "null"}]`. The two accept exactly the same documents.
+
+Both are noise, and both bury the real diffs in `git diff`. This normalises them
+away, so anything it prints is a genuine change to the published contract and
+needs a decision.
 
 Both snapshot shapes are understood: the built-in catalog is a list of
 `{domain, plugin, descriptor}` entries, while a dynamic plugin snapshot is a bare
@@ -23,7 +27,7 @@ Usage:
     # or explicitly
     python scripts/catalog_delta.py <before.snap> <after.snap>
 
-Exit code is 0 when the only difference is `required` ordering.
+Exit code is 0 when the only differences are those two spellings.
 """
 
 from __future__ import annotations
@@ -37,17 +41,46 @@ DEFAULT_BEFORE = pathlib.Path("target/catalog_prev.snap")
 DEFAULT_AFTER = pathlib.Path("tests/snapshots/typed-command-catalog.snap")
 
 
+NULL_SCHEMA = {"type": "null"}
+
+
 def canonical(node):
-    """Sort every `required` array so ordering cannot mask a real difference."""
+    """Rewrite a schema into the one spelling both forms share."""
     if isinstance(node, dict):
-        return {
+        node = {
             key: sorted(value)
             if key == "required" and isinstance(value, list)
             else canonical(value)
             for key, value in node.items()
         }
+        node = merge_nullable_one_of(node)
+        if isinstance(node.get("type"), list):
+            node["type"] = sorted(node["type"])
+        return node
     if isinstance(node, list):
         return [canonical(value) for value in node]
+    return node
+
+
+def merge_nullable_one_of(node: dict) -> dict:
+    """Fold `oneOf: [T, null]` into `T` with a nullable `type`.
+
+    Only the two-branch nullable shape folds. A `oneOf` that is a real union of
+    two non-null schemas is left alone, because collapsing it would hide a
+    contract change rather than reveal one.
+    """
+    variants = node.get("oneOf")
+    if not (isinstance(variants, list) and len(variants) == 2):
+        return node
+    others = [variant for variant in variants if variant != NULL_SCHEMA]
+    if len(others) != 1 or not isinstance(others[0], dict):
+        return node
+    merged = dict(others[0])
+    if not isinstance(merged.get("type"), str):
+        return node
+    merged["type"] = sorted([merged["type"], "null"])
+    node = {key: value for key, value in node.items() if key != "oneOf"}
+    node.update(merged)
     return node
 
 
@@ -96,7 +129,7 @@ def describe(before, after) -> int:
     envelope = envelope_delta(before, after)
 
     if not (removed or added or changed or envelope):
-        print("OK: identical once `required` is treated as a set")
+        print("OK: identical once `required` is a set and nullables share a spelling")
         return 0
     return 1
 

@@ -4,7 +4,9 @@ This document describes how to benchmark AIHelper commands and where the main ho
 
 ## Quick Benchmark
 
-Run from project root:
+Run from project root. The script is Windows-only: it invokes
+`target/release/ah.exe` directly. Porting it is tracked in the refactoring
+program, group 09.
 
 ```powershell
 pwsh -File scripts/benchmark.ps1 -Iterations 5
@@ -12,7 +14,10 @@ pwsh -File scripts/benchmark.ps1 -Iterations 5
 
 Outputs:
 - table in terminal with per-command min/avg/max latency
-- markdown report at `benchmarks/latest.md`
+- markdown report at `benchmarks/latest.md`, plus a timestamped copy beside it
+
+`benchmarks/` is ignored by Git, so results are local to your machine and are
+not comparable across commits by anyone else.
 
 ## Benchmark Scope
 
@@ -33,5 +38,6 @@ Current suite covers:
 
 1. Run benchmark before changes.
 2. Run benchmark after changes with the same `Iterations` value.
-3. Compare `benchmarks/latest.md` snapshots.
+3. Compare the two timestamped reports. `latest.md` is overwritten by the
+   second run, so it is not the file to compare against.
 4. If any command regresses >20% average latency, inspect traversal and parsing logic first.
