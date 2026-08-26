@@ -90,7 +90,7 @@ Mostly moves, made safe by phases 0–1.
 | ~~Move the secret-setup UI out of `ah-mcp`; split protocol/transport/shutdown/jobs~~     | 05     |
 | ~~Split `event_log` into record shaping and rotation~~ **(done)**                        | 05     |
 | ~~Separate `ai/install` logic from progress rendering~~ **(done)**                       | 04, 05 |
-| One `commands/*` layout; delete the eight `mod adapters` shims                           | 05     |
+| ~~One `commands/*` layout; delete the eight `mod adapters` shims~~ **(done)**            | 05     |
 | Single-parse `Entry` enum; hidden subcommands replace env-var routing                    | 03     |
 | `run()` split into parse → bootstrap → dispatch → report                                 | 03     |
 | Remove `set_current_dir`; request-scoped cwd; concurrency test                           | 03     |
