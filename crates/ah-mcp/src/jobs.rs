@@ -15,7 +15,8 @@ use ah_runtime::{
 
 use crate::{
     events::EventDispatcher,
-    server::{McpCommandEvent, McpCommandStatus, run_check_outcome},
+    mapping::run_check_outcome,
+    server::{McpCommandEvent, McpCommandStatus},
 };
 
 pub(crate) const DEFAULT_JOB_CAPACITY: usize = 128;

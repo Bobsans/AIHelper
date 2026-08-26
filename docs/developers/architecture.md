@@ -41,9 +41,13 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
   - a web application rather than an MCP concern, so its security properties are
     reviewed on their own rather than inside protocol changes
 - `crates/ah-mcp`:
-  - dynamic `rmcp` server adapter
-  - stdio and local stateful Streamable HTTP transports
-  - shared job registry, MCP annotations, cancellation, and tool-list updates
+  - `server`: the `rmcp` handler, tool dispatch and catalog snapshots
+  - `transport`: stdio and local stateful Streamable HTTP, readiness, the
+    control and setup routes, and the policy deciding a request is local
+  - `mapping`: catalog commands, typed responses and errors into MCP types
+  - `job_tools` and `jobs`: the `ah.job.*` surface and the registry behind it
+  - `shutdown`: the shutdown request, tracker and stdin reader
+  - `plaintext_auth`: refusing and scrubbing credentials pasted into arguments
 
 ## Runtime Flow
 

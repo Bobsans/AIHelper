@@ -87,7 +87,7 @@ Mostly moves, made safe by phases 0–1.
 |------------------------------------------------------------------------------------------|--------|
 | ~~`ctx_symbols` and `project/rules` become table-driven~~ **(done)**                     | 05     |
 | ~~Split `http/domain.rs` into `client`/`curl`/`jsonpath`/`assert`/`spec`~~ **(done)**    | 05, 08 |
-| Move the secret-setup UI out of `ah-mcp`; split protocol/transport/shutdown/jobs         | 05     |
+| ~~Move the secret-setup UI out of `ah-mcp`; split protocol/transport/shutdown/jobs~~     | 05     |
 | Split `event_log` into sink and rotation                                                 | 05     |
 | Separate `ai/install` logic from progress rendering                                      | 04, 05 |
 | One `commands/*` layout; delete the eight `mod adapters` shims                           | 05     |

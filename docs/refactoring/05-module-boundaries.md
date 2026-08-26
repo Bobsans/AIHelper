@@ -6,7 +6,7 @@ whole file in their head.
 
 ## Findings
 
-### 5.1 `crates/ah-mcp/src/server.rs` — 3 991 lines, at least seven jobs
+### 5.1 `crates/ah-mcp/src/server.rs` — 3 991 lines, at least seven jobs *(done)*
 
 | Responsibility | Evidence |
 |---|---|
@@ -30,8 +30,23 @@ re-exports the contract types so callers still see one surface.
 
 `axum` moved to `[workspace.dependencies]`, since two members need it now.
 
-**Still to split:** `mcp::protocol`, `mcp::transport::{stdio,http}`,
-`mcp::shutdown`, `mcp::mapping`. `server.rs` is 3 541 lines.
+**Status: split.** Six modules where there was one file:
+
+| Module | Production lines | Owns |
+|---|---|---|
+| `server` | 833 | `McpServer`, the `ServerHandler` impl, tool dispatch, catalog snapshots |
+| `transport` | 570 | stdio and HTTP serving, readiness, control and setup routes, the local-request policy |
+| `mapping` | 503 | catalog commands, typed responses and errors into MCP types |
+| `job_tools` | 184 | the `ah.job.*` tool schemas, arguments and results |
+| `shutdown` | 144 | the shutdown request, the tracker, the stdin reader |
+| `plaintext_auth` | 122 | refusing and scrubbing credentials pasted into tool arguments |
+
+`server.rs` is 833 production lines, marginally over this phase's criterion.
+
+**Not done: the test module.** 1 305 lines of tests still sit in `server.rs` and
+reach into all five modules, which is why several fields are `pub(crate)` rather
+than private. They share one fixture set, so splitting them is its own job rather
+than a tail of this one.
 
 ### 5.2 `src/commands/http/domain.rs` — 1 983 lines, a test framework in disguise *(done)*
 

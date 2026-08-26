@@ -1,84 +1,55 @@
 use std::{
-    borrow::Cow,
-    collections::{BTreeMap, HashMap},
-    future::{Future, IntoFuture},
-    net::Ipv4Addr,
-    path::Path,
-    pin::Pin,
+    collections::HashMap,
+    future::Future,
     sync::{
-        Arc, Mutex, OnceLock, Weak,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, Weak,
+        atomic::{AtomicU64, Ordering},
     },
-    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
-use ah_plugin_api::{
-    CommandDescriptor, CommandError, ExecutionContextWire, TypedInvocationRequest,
-    TypedInvocationResponse,
+use crate::job_tools::{job_argument_error, job_registry_error, job_snapshot_result, take_job_id};
+use crate::mapping::{
+    build_catalog_snapshot, command_error_result, command_event_outcome,
+    command_event_run_check_outcome, execution_request_id, extract_context, internal_catalog_error,
+    requires_explicit_cwd, typed_response_result, unknown_tool_error,
 };
-use ah_redact::{REDACTED, curl_contains_auth, is_authorization_header, url_contains_userinfo};
+use crate::plaintext_auth::{redact_mcp_plaintext_auth, validate_mcp_plaintext_auth};
+
+use ah_plugin_api::{CommandError, TypedInvocationRequest};
 use ah_runtime::{
-    InvocationOutcome, PluginManager, RegisteredCommand, RunCheckOutcome, RuntimeError,
+    InvocationOutcome, PluginManager, RegisteredCommand, RuntimeError,
     executor::{ExecutionTelemetry, Executor},
 };
-use ah_setup_ui::{
-    SecretSetupError, SecretSetupRequest, SecretSetupService, no_store, no_store_form, page_nonce,
-    render_secret_setup_form, render_secret_setup_success, wants_html,
-};
-use axum::{
-    Form, Json, Router,
-    extract::{
-        Query, State,
-        rejection::{FormRejection, JsonRejection, QueryRejection},
-    },
-    http::{
-        HeaderMap, StatusCode,
-        header::{HOST, ORIGIN},
-    },
-    response::{Html, IntoResponse, Response},
-    routing::{get, post},
-};
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-};
+use ah_setup_ui::SecretSetupService;
 use rmcp::{
-    Peer, RoleServer, ServerHandler, ServiceExt,
+    Peer, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, CancelledNotificationParam, ContentBlock, ErrorCode,
-        Implementation, JsonObject, ListToolsResult, Meta, NumberOrString, PaginatedRequestParams,
-        ServerCapabilities, ServerInfo, TaskSupport, Tool, ToolAnnotations, ToolExecution,
+        CallToolRequestParams, CallToolResult, CancelledNotificationParam, Implementation,
+        JsonObject, ListToolsResult, NumberOrString, PaginatedRequestParams, ServerCapabilities,
+        ServerInfo, Tool,
     },
     service::{NotificationContext, RequestContext},
-    transport::stdio,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 use thiserror::Error;
-use tokio::{
-    io::{AsyncRead, ReadBuf},
-    sync::Notify,
-};
-use tokio_util::sync::CancellationToken;
-use tower_http::limit::RequestBodyLimitLayer;
-use uuid::Uuid;
 
 use crate::{
     events::EventDispatcher,
-    jobs::{JobEventContext, JobRegistry, JobRegistryError, JobSnapshot, JobStatus},
+    jobs::{JobEventContext, JobRegistry},
 };
 
-const TOOL_PREFIX: &str = "ah.";
-const RISK_META_KEY: &str = "dev.aihelper/risk";
-const DIAGNOSTIC_META_KEY: &str = "dev.aihelper/diagnostic";
-const EXECUTION_META_KEY: &str = "dev.aihelper/execution";
-const JOB_TOOL_PREFIX: &str = "ah.job.";
-const JOB_START_TOOL: &str = "ah.job.start";
-const JOB_STATUS_TOOL: &str = "ah.job.status";
-const JOB_RESULT_TOOL: &str = "ah.job.result";
-const JOB_CANCEL_TOOL: &str = "ah.job.cancel";
-const PEER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(1);
-const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+pub(crate) const TOOL_PREFIX: &str = "ah.";
+pub(crate) const RISK_META_KEY: &str = "dev.aihelper/risk";
+pub(crate) const DIAGNOSTIC_META_KEY: &str = "dev.aihelper/diagnostic";
+pub(crate) const EXECUTION_META_KEY: &str = "dev.aihelper/execution";
+pub(crate) const JOB_TOOL_PREFIX: &str = "ah.job.";
+pub(crate) const JOB_START_TOOL: &str = "ah.job.start";
+pub(crate) const JOB_STATUS_TOOL: &str = "ah.job.status";
+pub(crate) const JOB_RESULT_TOOL: &str = "ah.job.result";
+pub(crate) const JOB_CANCEL_TOOL: &str = "ah.job.cancel";
+pub(crate) const PEER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(1);
+pub(crate) const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpCommandStatus {
@@ -164,8 +135,8 @@ pub enum McpAdapterError {
 
 #[must_use]
 pub struct McpServeOutcome {
-    result: Result<(), McpAdapterError>,
-    remaining_shutdown_grace: Duration,
+    pub(crate) result: Result<(), McpAdapterError>,
+    pub(crate) remaining_shutdown_grace: Duration,
 }
 
 impl McpServeOutcome {
@@ -179,46 +150,46 @@ impl McpServeOutcome {
 }
 
 pub struct McpServer {
-    shared: Arc<McpShared>,
-    active_executions: Mutex<HashMap<String, Vec<String>>>,
-    require_explicit_cwd: bool,
-    session_id: u64,
+    pub(crate) shared: Arc<McpShared>,
+    pub(crate) active_executions: Mutex<HashMap<String, Vec<String>>>,
+    pub(crate) require_explicit_cwd: bool,
+    pub(crate) session_id: u64,
 }
 
-struct McpShared {
-    manager: Arc<PluginManager>,
-    executor: Arc<dyn Executor>,
-    config: McpServerConfig,
-    catalog_snapshot: Mutex<Arc<CatalogSnapshot>>,
-    catalog_generation: AtomicU64,
-    next_execution_id: AtomicU64,
-    event_dispatcher: Option<Arc<EventDispatcher>>,
-    secret_setup: Option<Arc<dyn SecretSetupService>>,
-    jobs: Arc<JobRegistry>,
-    peers: Mutex<HashMap<u64, RegisteredPeer>>,
-    next_session_id: AtomicU64,
-    next_peer_generation: AtomicU64,
+pub(crate) struct McpShared {
+    pub(crate) manager: Arc<PluginManager>,
+    pub(crate) executor: Arc<dyn Executor>,
+    pub(crate) config: McpServerConfig,
+    pub(crate) catalog_snapshot: Mutex<Arc<CatalogSnapshot>>,
+    pub(crate) catalog_generation: AtomicU64,
+    pub(crate) next_execution_id: AtomicU64,
+    pub(crate) event_dispatcher: Option<Arc<EventDispatcher>>,
+    pub(crate) secret_setup: Option<Arc<dyn SecretSetupService>>,
+    pub(crate) jobs: Arc<JobRegistry>,
+    pub(crate) peers: Mutex<HashMap<u64, RegisteredPeer>>,
+    pub(crate) next_session_id: AtomicU64,
+    pub(crate) next_peer_generation: AtomicU64,
 }
 
-struct RegisteredPeer {
-    generation: u64,
-    peer: Peer<RoleServer>,
+pub(crate) struct RegisteredPeer {
+    pub(crate) generation: u64,
+    pub(crate) peer: Peer<RoleServer>,
 }
 
-struct CatalogSnapshot {
-    runtime_revision: u64,
-    tools: Vec<Tool>,
-    tools_by_name: HashMap<String, Tool>,
-    commands_by_name: HashMap<String, RegisteredCommand>,
+pub(crate) struct CatalogSnapshot {
+    pub(crate) runtime_revision: u64,
+    pub(crate) tools: Vec<Tool>,
+    pub(crate) tools_by_name: HashMap<String, Tool>,
+    pub(crate) commands_by_name: HashMap<String, RegisteredCommand>,
 }
 
-struct ToolCallOutcome {
+pub(crate) struct ToolCallOutcome {
     result: Result<CallToolResult, rmcp::ErrorData>,
     telemetry: Option<ExecutionTelemetry>,
 }
 
 impl ToolCallOutcome {
-    fn unobserved(result: Result<CallToolResult, rmcp::ErrorData>) -> Self {
+    pub(crate) fn unobserved(result: Result<CallToolResult, rmcp::ErrorData>) -> Self {
         Self {
             result,
             telemetry: None,
@@ -278,7 +249,7 @@ impl McpServer {
         }
     }
 
-    fn register_peer(&self, peer: Peer<RoleServer>) {
+    pub(crate) fn register_peer(&self, peer: Peer<RoleServer>) {
         let generation = self
             .shared
             .next_peer_generation
@@ -290,7 +261,7 @@ impl McpServer {
             .insert(self.session_id, RegisteredPeer { generation, peer });
     }
 
-    fn notify_tool_list_changed_all(&self) {
+    pub(crate) fn notify_tool_list_changed_all(&self) {
         notify_tool_list_changed_shared(&self.shared);
     }
 
@@ -318,7 +289,10 @@ impl McpServer {
         Ok(changed)
     }
 
-    fn find_command(&self, mcp_name: &str) -> Result<Option<RegisteredCommand>, McpAdapterError> {
+    pub(crate) fn find_command(
+        &self,
+        mcp_name: &str,
+    ) -> Result<Option<RegisteredCommand>, McpAdapterError> {
         if !mcp_name.starts_with(TOOL_PREFIX) {
             return Ok(None);
         }
@@ -329,7 +303,7 @@ impl McpServer {
             .cloned())
     }
 
-    fn catalog_snapshot(&self) -> Arc<CatalogSnapshot> {
+    pub(crate) fn catalog_snapshot(&self) -> Arc<CatalogSnapshot> {
         Arc::clone(
             &self
                 .shared
@@ -339,7 +313,7 @@ impl McpServer {
         )
     }
 
-    fn next_detached_execution_id(&self) -> String {
+    pub(crate) fn next_detached_execution_id(&self) -> String {
         let sequence = self
             .shared
             .next_execution_id
@@ -347,7 +321,7 @@ impl McpServer {
         format!("mcp:job:e:{sequence}")
     }
 
-    fn call_job_tool(&self, request: CallToolRequestParams) -> ToolCallOutcome {
+    pub(crate) fn call_job_tool(&self, request: CallToolRequestParams) -> ToolCallOutcome {
         let result = match request.name.as_ref() {
             JOB_START_TOOL => self.job_start(request.arguments.unwrap_or_default()),
             JOB_STATUS_TOOL => self.job_status(request.arguments.unwrap_or_default(), false),
@@ -358,7 +332,10 @@ impl McpServer {
         ToolCallOutcome::unobserved(result)
     }
 
-    fn job_start(&self, mut arguments: JsonObject) -> Result<CallToolResult, rmcp::ErrorData> {
+    pub(crate) fn job_start(
+        &self,
+        mut arguments: JsonObject,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let tool = match arguments.remove("tool") {
             Some(Value::String(tool)) if !tool.trim().is_empty() => tool,
             _ => {
@@ -458,7 +435,7 @@ impl McpServer {
         Ok(job_snapshot_result(&snapshot, false))
     }
 
-    fn job_status(
+    pub(crate) fn job_status(
         &self,
         mut arguments: JsonObject,
         include_result: bool,
@@ -478,7 +455,10 @@ impl McpServer {
         }
     }
 
-    fn job_cancel(&self, mut arguments: JsonObject) -> Result<CallToolResult, rmcp::ErrorData> {
+    pub(crate) fn job_cancel(
+        &self,
+        mut arguments: JsonObject,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let job_id = match take_job_id(&mut arguments) {
             Ok(job_id) => job_id,
             Err(error) => return Ok(command_error_result(error)),
@@ -499,7 +479,7 @@ impl McpServer {
     }
 
     #[cfg(test)]
-    async fn call_tool_inner(
+    pub(crate) async fn call_tool_inner(
         &self,
         request: CallToolRequestParams,
         request_id: String,
@@ -509,7 +489,7 @@ impl McpServer {
             .result
     }
 
-    async fn call_tool_inner_observed(
+    pub(crate) async fn call_tool_inner_observed(
         &self,
         request: CallToolRequestParams,
         request_id: String,
@@ -557,7 +537,7 @@ impl McpServer {
         }
     }
 
-    fn cancel_request(&self, request_id: &NumberOrString) -> bool {
+    pub(crate) fn cancel_request(&self, request_id: &NumberOrString) -> bool {
         let protocol_request_id = execution_request_id(request_id);
         let execution_ids = self
             .active_executions
@@ -575,7 +555,7 @@ impl McpServer {
         cancelled
     }
 
-    fn begin_execution(&self, request_id: &NumberOrString) -> ActiveExecution<'_> {
+    pub(crate) fn begin_execution(&self, request_id: &NumberOrString) -> ActiveExecution<'_> {
         let protocol_request_id = execution_request_id(request_id);
         let sequence = self
             .shared
@@ -596,7 +576,7 @@ impl McpServer {
         }
     }
 
-    async fn call_tool_completed(
+    pub(crate) async fn call_tool_completed(
         &self,
         request: CallToolRequestParams,
         protocol_request_id: &NumberOrString,
@@ -650,7 +630,9 @@ impl McpServer {
     }
 }
 
-fn refresh_catalog_generation_shared(shared: &McpShared) -> Result<bool, McpAdapterError> {
+pub(crate) fn refresh_catalog_generation_shared(
+    shared: &McpShared,
+) -> Result<bool, McpAdapterError> {
     let runtime_revision = shared.manager.catalog_revision();
     if shared
         .catalog_snapshot
@@ -674,7 +656,7 @@ fn refresh_catalog_generation_shared(shared: &McpShared) -> Result<bool, McpAdap
     Ok(true)
 }
 
-fn notify_tool_list_changed_shared(shared: &Arc<McpShared>) {
+pub(crate) fn notify_tool_list_changed_shared(shared: &Arc<McpShared>) {
     let peers = shared
         .peers
         .lock()
@@ -696,7 +678,7 @@ fn notify_tool_list_changed_shared(shared: &Arc<McpShared>) {
     }
 }
 
-fn refresh_catalog_after_job(shared: Weak<McpShared>) {
+pub(crate) fn refresh_catalog_after_job(shared: Weak<McpShared>) {
     let Some(shared) = shared.upgrade() else {
         return;
     };
@@ -705,7 +687,7 @@ fn refresh_catalog_after_job(shared: Weak<McpShared>) {
     }
 }
 
-fn remove_peer_generation(shared: &McpShared, session_id: u64, generation: u64) -> bool {
+pub(crate) fn remove_peer_generation(shared: &McpShared, session_id: u64, generation: u64) -> bool {
     let mut peers = shared
         .peers
         .lock()
@@ -721,11 +703,11 @@ fn remove_peer_generation(shared: &McpShared, session_id: u64, generation: u64) 
     }
 }
 
-fn peer_generation_matches(current: Option<u64>, expected: u64) -> bool {
+pub(crate) fn peer_generation_matches(current: Option<u64>, expected: u64) -> bool {
     current == Some(expected)
 }
 
-fn spawn_best_effort_notification<F, C>(notification: F, timeout: Duration, on_stale: C)
+pub(crate) fn spawn_best_effort_notification<F, C>(notification: F, timeout: Duration, on_stale: C)
 where
     F: Future<Output = bool> + Send + 'static,
     C: FnOnce() + Send + 'static,
@@ -740,7 +722,7 @@ where
     });
 }
 
-struct ActiveExecution<'a> {
+pub(crate) struct ActiveExecution<'a> {
     active_executions: &'a Mutex<HashMap<String, Vec<String>>>,
     executor: Arc<dyn Executor>,
     protocol_request_id: String,
@@ -748,7 +730,7 @@ struct ActiveExecution<'a> {
 }
 
 impl ActiveExecution<'_> {
-    fn execution_id(&self) -> &str {
+    pub(crate) fn execution_id(&self) -> &str {
         &self.execution_id
     }
 }
@@ -837,1408 +819,16 @@ impl Drop for McpServer {
     }
 }
 
-struct ShutdownTracker {
-    started_at: OnceLock<Instant>,
-    changed: Notify,
-    grace: Duration,
-}
-
-#[derive(Clone)]
-struct HttpLifecycleState {
-    readiness: ReadinessResponse,
-    authority: String,
-    origin: String,
-    lifecycle: Arc<HttpLifecycleController>,
-    secret_setup: Option<Arc<dyn SecretSetupService>>,
-}
-
-impl HttpLifecycleState {
-    fn new(
-        version: String,
-        instance_id: Uuid,
-        pid: u32,
-        authority: String,
-        origin: String,
-        lifecycle: Arc<HttpLifecycleController>,
-        secret_setup: Option<Arc<dyn SecretSetupService>>,
-    ) -> Self {
-        Self {
-            readiness: ReadinessResponse {
-                status: "ready",
-                version,
-                pid,
-                instance_id,
-            },
-            authority,
-            origin,
-            lifecycle,
-            secret_setup,
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-struct ReadinessResponse {
-    status: &'static str,
-    version: String,
-    pid: u32,
-    instance_id: Uuid,
-}
-
-struct HttpLifecycleController {
-    shutdown_started: AtomicBool,
-    tracker: Arc<ShutdownTracker>,
-    executor: Arc<dyn Executor>,
-    cancellation: CancellationToken,
-}
-
-impl HttpLifecycleController {
-    fn new(
-        tracker: Arc<ShutdownTracker>,
-        executor: Arc<dyn Executor>,
-        cancellation: CancellationToken,
-    ) -> Self {
-        Self {
-            shutdown_started: AtomicBool::new(false),
-            tracker,
-            executor,
-            cancellation,
-        }
-    }
-
-    fn begin_shutdown(&self) -> bool {
-        if self
-            .shutdown_started
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return false;
-        }
-        self.tracker.begin();
-        self.executor.close();
-        self.cancellation.cancel();
-        true
-    }
-
-    async fn cancelled(&self) {
-        self.cancellation.cancelled().await;
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ShutdownRequest {
-    instance_id: Uuid,
-}
-
-#[derive(Serialize)]
-struct ShutdownAccepted {
-    status: &'static str,
-    instance_id: Uuid,
-}
-
-#[derive(Serialize)]
-struct ControlErrorResponse {
-    error: ControlError,
-}
-
-#[derive(Serialize)]
-struct ControlError {
-    code: &'static str,
-    message: &'static str,
-}
-
-impl ShutdownTracker {
-    fn new(grace: Duration) -> Self {
-        Self {
-            started_at: OnceLock::new(),
-            changed: Notify::new(),
-            grace,
-        }
-    }
-
-    fn begin(&self) {
-        if self.started_at.set(Instant::now()).is_ok() {
-            self.changed.notify_waiters();
-        }
-    }
-
-    fn remaining(&self) -> Duration {
-        self.started_at.get().map_or(self.grace, |started_at| {
-            self.grace.saturating_sub(started_at.elapsed())
-        })
-    }
-
-    async fn expired(&self) {
-        loop {
-            if let Some(started_at) = self.started_at.get() {
-                tokio::time::sleep_until((*started_at + self.grace).into()).await;
-                return;
-            }
-            let changed = self.changed.notified();
-            tokio::pin!(changed);
-            changed.as_mut().enable();
-            if self.started_at.get().is_some() {
-                continue;
-            }
-            changed.await;
-        }
-    }
-}
-
-struct ShutdownReader<R> {
-    inner: R,
-    tracker: Arc<ShutdownTracker>,
-    executor: Arc<dyn Executor>,
-    shutdown_started: bool,
-}
-
-impl<R> ShutdownReader<R> {
-    fn new(inner: R, tracker: Arc<ShutdownTracker>, executor: Arc<dyn Executor>) -> Self {
-        Self {
-            inner,
-            tracker,
-            executor,
-            shutdown_started: false,
-        }
-    }
-
-    fn begin_shutdown(&mut self) {
-        if !self.shutdown_started {
-            self.shutdown_started = true;
-            self.tracker.begin();
-            self.executor.close();
-        }
-    }
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for ShutdownReader<R> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-        buffer: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        let had_capacity = buffer.remaining() > 0;
-        let filled_before = buffer.filled().len();
-        let result = Pin::new(&mut this.inner).poll_read(context, buffer);
-        if matches!(&result, Poll::Ready(Err(_)))
-            || matches!(&result, Poll::Ready(Ok(())) if had_capacity && buffer.filled().len() == filled_before)
-        {
-            this.begin_shutdown();
-        }
-        result
-    }
-}
-
-pub async fn serve_stdio(server: McpServer) -> Result<(), McpAdapterError> {
-    serve_stdio_bounded(server, DEFAULT_SHUTDOWN_GRACE)
-        .await
-        .into_result()
-}
-
-pub async fn serve_stdio_bounded(server: McpServer, grace: Duration) -> McpServeOutcome {
-    let executor = Arc::clone(&server.shared.executor);
-    let event_dispatcher = server.shared.event_dispatcher.clone();
-    let tracker = Arc::new(ShutdownTracker::new(grace));
-    let (stdin, stdout) = stdio();
-    let reader = ShutdownReader::new(stdin, Arc::clone(&tracker), Arc::clone(&executor));
-    let result = match server.serve((reader, stdout)).await {
-        Ok(service) => {
-            wait_for_transport(
-                async {
-                    let result = service.waiting().await;
-                    tracker.begin();
-                    executor.close();
-                    result
-                        .map(|_| ())
-                        .map_err(|error| McpAdapterError::Service(error.to_string()))
-                },
-                tracker.as_ref(),
-            )
-            .await
-        }
-        Err(error) => {
-            tracker.begin();
-            executor.close();
-            Err(McpAdapterError::Service(error.to_string()))
-        }
-    };
-    tracker.begin();
-    executor.close();
-    if let Some(dispatcher) = event_dispatcher {
-        dispatcher.flush(tracker.remaining()).await;
-    }
-    McpServeOutcome {
-        result,
-        remaining_shutdown_grace: tracker.remaining(),
-    }
-}
-
-pub async fn serve_http(server: McpServer, port: u16) -> Result<(), McpAdapterError> {
-    serve_http_bounded(server, port, DEFAULT_SHUTDOWN_GRACE)
-        .await
-        .into_result()
-}
-
-pub async fn serve_http_bounded(server: McpServer, port: u16, grace: Duration) -> McpServeOutcome {
-    serve_http_bounded_with_version(server, port, env!("CARGO_PKG_VERSION"), grace).await
-}
-
-pub async fn serve_http_bounded_with_version(
-    server: McpServer,
-    port: u16,
-    version: impl Into<String>,
-    grace: Duration,
-) -> McpServeOutcome {
-    serve_http_bounded_with_identity_and_listener(
-        server,
-        port,
-        version,
-        Uuid::new_v4(),
-        std::process::id(),
-        grace,
-        || Ok(()),
-    )
-    .await
-}
-
-pub async fn serve_http_bounded_with_identity_and_listener<F>(
-    server: McpServer,
-    port: u16,
-    version: impl Into<String>,
-    instance_id: Uuid,
-    pid: u32,
-    grace: Duration,
-    on_listener_bound: F,
-) -> McpServeOutcome
-where
-    F: FnOnce() -> Result<(), McpAdapterError>,
-{
-    let tracker = Arc::new(ShutdownTracker::new(grace));
-    let executor = Arc::clone(&server.shared.executor);
-    let event_dispatcher = server.shared.event_dispatcher.clone();
-    let authority = format!("127.0.0.1:{port}");
-    let origin = format!("http://{authority}");
-    let cancellation = CancellationToken::new();
-    let lifecycle_controller = Arc::new(HttpLifecycleController::new(
-        Arc::clone(&tracker),
-        Arc::clone(&executor),
-        cancellation.clone(),
-    ));
-    let lifecycle = HttpLifecycleState::new(
-        version.into(),
-        instance_id,
-        pid,
-        authority.clone(),
-        origin.clone(),
-        Arc::clone(&lifecycle_controller),
-        server.shared.secret_setup.clone(),
-    );
-    let config = StreamableHttpServerConfig::default()
-        .with_stateful_mode(true)
-        .with_allowed_hosts([authority])
-        .with_allowed_origins([origin])
-        .with_cancellation_token(cancellation);
-    let session_template = Arc::new(server);
-    let factory_template = Arc::clone(&session_template);
-    let service: StreamableHttpService<McpServer, LocalSessionManager> = StreamableHttpService::new(
-        move || Ok(factory_template.http_session()),
-        Arc::new(LocalSessionManager::default()),
-        config,
-    );
-    let router = Router::new()
-        .route("/health/ready", get(readiness))
-        .route("/control/shutdown", post(control_shutdown))
-        .route("/secrets/setup/capability", post(secret_setup_capability))
-        .route(
-            "/secrets/setup",
-            get(secret_setup_form).post(secret_setup_submit),
-        )
-        .nest_service("/mcp", service)
-        .with_state(lifecycle)
-        .layer(RequestBodyLimitLayer::new(1024 * 1024));
-    let listener = match tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            lifecycle_controller.begin_shutdown();
-            return McpServeOutcome {
-                result: Err(McpAdapterError::Service(error.to_string())),
-                remaining_shutdown_grace: tracker.remaining(),
-            };
-        }
-    };
-    if let Err(error) = on_listener_bound() {
-        lifecycle_controller.begin_shutdown();
-        return McpServeOutcome {
-            result: Err(error),
-            remaining_shutdown_grace: tracker.remaining(),
-        };
-    }
-    let shutdown_controller = Arc::clone(&lifecycle_controller);
-    let serving = axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = shutdown_signal() => {
-                    shutdown_controller.begin_shutdown();
-                }
-                _ = shutdown_controller.cancelled() => {}
-            }
-        })
-        .into_future();
-    let result = wait_for_transport(
-        async move {
-            serving
-                .await
-                .map_err(|error| McpAdapterError::Service(error.to_string()))
-        },
-        tracker.as_ref(),
-    )
-    .await;
-    lifecycle_controller.begin_shutdown();
-    if let Some(dispatcher) = event_dispatcher {
-        dispatcher.flush(tracker.remaining()).await;
-    }
-    McpServeOutcome {
-        result,
-        remaining_shutdown_grace: tracker.remaining(),
-    }
-}
-
-async fn wait_for_transport<F>(
-    transport: F,
-    tracker: &ShutdownTracker,
-) -> Result<(), McpAdapterError>
-where
-    F: Future<Output = Result<(), McpAdapterError>>,
-{
-    tokio::pin!(transport);
-    tokio::select! {
-        biased;
-        result = &mut transport => result,
-        _ = tracker.expired() => Err(McpAdapterError::ShutdownTimeout {
-            grace_ms: tracker.grace.as_millis(),
-        }),
-    }
-}
-
-async fn readiness(
-    State(state): State<HttpLifecycleState>,
-    headers: HeaderMap,
-) -> Result<Json<ReadinessResponse>, StatusCode> {
-    validate_local_headers(&headers, &state)?;
-    Ok(Json(state.readiness))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SetupCapabilityQuery {
-    capability: String,
-}
-
-#[derive(Serialize)]
-struct SetupCapabilityResponse {
-    setup_url: String,
-}
-
-async fn secret_setup_capability(
-    State(state): State<HttpLifecycleState>,
-    headers: HeaderMap,
-    request: Result<Json<SecretSetupRequest>, JsonRejection>,
-) -> Response {
-    if validate_local_headers(&headers, &state).is_err() {
-        return control_error(
-            StatusCode::FORBIDDEN,
-            "LOCAL_REQUEST_REJECTED",
-            "request does not match the local HTTP policy",
-        );
-    }
-    let Some(service) = state.secret_setup else {
-        return control_error(
-            StatusCode::NOT_FOUND,
-            "VAULT_SETUP_UNAVAILABLE",
-            "secret setup is unavailable",
-        );
-    };
-    let Ok(Json(request)) = request else {
-        return control_error(
-            StatusCode::BAD_REQUEST,
-            "VAULT_SETUP_REQUEST_INVALID",
-            "secret setup request is invalid",
-        );
-    };
-    match service.issue(request) {
-        Ok(capability) => no_store(
-            Json(SetupCapabilityResponse {
-                setup_url: format!(
-                    "http://{}/secrets/setup?capability={capability}",
-                    state.authority
-                ),
-            })
-            .into_response(),
-        ),
-        Err(error) => setup_error(error),
-    }
-}
-
-async fn secret_setup_form(
-    State(state): State<HttpLifecycleState>,
-    headers: HeaderMap,
-    query: Result<Query<SetupCapabilityQuery>, QueryRejection>,
-) -> Response {
-    if validate_local_headers(&headers, &state).is_err() {
-        return control_error(
-            StatusCode::FORBIDDEN,
-            "LOCAL_REQUEST_REJECTED",
-            "request does not match the local HTTP policy",
-        );
-    }
-    let Some(service) = state.secret_setup else {
-        return control_error(
-            StatusCode::NOT_FOUND,
-            "VAULT_SETUP_UNAVAILABLE",
-            "secret setup is unavailable",
-        );
-    };
-    let Ok(Query(query)) = query else {
-        return setup_error(SecretSetupError::new(
-            "VAULT_SETUP_CAPABILITY_INVALID",
-            "secret setup capability is invalid, expired, or already used",
-        ));
-    };
-    match service.form(&query.capability) {
-        Ok(form) => {
-            let nonce = page_nonce();
-            no_store_form(
-                Html(render_secret_setup_form(&form, &nonce)).into_response(),
-                &nonce,
-            )
-        }
-        Err(error) => setup_error(error),
-    }
-}
-
-async fn secret_setup_submit(
-    State(state): State<HttpLifecycleState>,
-    headers: HeaderMap,
-    query: Result<Query<SetupCapabilityQuery>, QueryRejection>,
-    form: Result<Form<BTreeMap<String, String>>, FormRejection>,
-) -> Response {
-    if validate_local_headers(&headers, &state).is_err() {
-        return control_error(
-            StatusCode::FORBIDDEN,
-            "LOCAL_REQUEST_REJECTED",
-            "request does not match the local HTTP policy",
-        );
-    }
-    let Some(service) = state.secret_setup else {
-        return control_error(
-            StatusCode::NOT_FOUND,
-            "VAULT_SETUP_UNAVAILABLE",
-            "secret setup is unavailable",
-        );
-    };
-    let Ok(Query(query)) = query else {
-        return setup_error(SecretSetupError::new(
-            "VAULT_SETUP_CAPABILITY_INVALID",
-            "secret setup capability is invalid, expired, or already used",
-        ));
-    };
-    let Ok(Form(values)) = form else {
-        return control_error(
-            StatusCode::BAD_REQUEST,
-            "VAULT_SETUP_SUBMISSION_INVALID",
-            "secret setup form is invalid",
-        );
-    };
-    match service.submit(&query.capability, values) {
-        Ok(metadata) if wants_html(&headers) => {
-            let nonce = page_nonce();
-            no_store_form(
-                Html(render_secret_setup_success(&metadata, &nonce)).into_response(),
-                &nonce,
-            )
-        }
-        Ok(metadata) => no_store(Json(metadata).into_response()),
-        Err(error) => setup_error(error),
-    }
-}
-
-fn setup_error(error: SecretSetupError) -> Response {
-    let status = if error.code == "VAULT_SETUP_CAPABILITY_INVALID" {
-        StatusCode::FORBIDDEN
-    } else {
-        StatusCode::BAD_REQUEST
-    };
-    control_error(status, error.code, error.message)
-}
-
-async fn control_shutdown(
-    State(state): State<HttpLifecycleState>,
-    headers: HeaderMap,
-    request: Result<Json<ShutdownRequest>, JsonRejection>,
-) -> Response {
-    if validate_local_headers(&headers, &state).is_err() {
-        return control_error(
-            StatusCode::FORBIDDEN,
-            "LOCAL_REQUEST_REJECTED",
-            "request does not match the local HTTP policy",
-        );
-    }
-
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(rejection) if rejection.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE => {
-            return control_error(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "UNSUPPORTED_MEDIA_TYPE",
-                "request content type must be application/json",
-            );
-        }
-        Err(_) => {
-            return control_error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_SHUTDOWN_REQUEST",
-                "request body must contain exactly one valid instance_id",
-            );
-        }
-    };
-
-    if request.instance_id != state.readiness.instance_id {
-        return control_error(
-            StatusCode::CONFLICT,
-            "INSTANCE_ID_MISMATCH",
-            "instance_id does not match the running AIHelper instance",
-        );
-    }
-
-    state.lifecycle.begin_shutdown();
-    (
-        StatusCode::ACCEPTED,
-        Json(ShutdownAccepted {
-            status: "shutting_down",
-            instance_id: request.instance_id,
-        }),
-    )
-        .into_response()
-}
-
-fn control_error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
-    (
-        status,
-        Json(ControlErrorResponse {
-            error: ControlError { code, message },
-        }),
-    )
-        .into_response()
-}
-
-fn validate_local_headers(
-    headers: &HeaderMap,
-    state: &HttpLifecycleState,
-) -> Result<(), StatusCode> {
-    let host_matches = headers
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|host| host == state.authority);
-    if !host_matches {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    let origin_matches = headers.get(ORIGIN).is_none_or(|value| {
-        value
-            .to_str()
-            .ok()
-            .is_some_and(|origin| origin == state.origin)
-    });
-    if !origin_matches {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() {
-    let ctrl_c = tokio::signal::ctrl_c();
-    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-        Ok(mut terminate) => {
-            tokio::select! {
-                _ = ctrl_c => {}
-                _ = terminate.recv() => {}
-            }
-        }
-        Err(_) => {
-            let _ = ctrl_c.await;
-        }
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-}
-
-fn job_tools() -> Vec<Tool> {
-    vec![
-        job_tool(
-            JOB_START_TOOL,
-            "Start AIHelper job",
-            "Start any published AIHelper tool without waiting for its result. Inspect the target tool risk metadata before calling. Retries are not generally safe.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "tool": {"type": "string", "minLength": 1},
-                    "arguments": {"type": "object"}
-                },
-                "required": ["tool", "arguments"],
-                "additionalProperties": false
-            }),
-            (false, true, false, true),
-            "critical",
-            "Can invoke any published AIHelper tool, including destructive commands.",
-        ),
-        job_tool(
-            JOB_STATUS_TOOL,
-            "Inspect AIHelper job",
-            "Return the current state of an AIHelper background job without waiting.",
-            job_id_schema(),
-            (true, false, true, false),
-            "low",
-            "Reads process-local job metadata only.",
-        ),
-        job_tool(
-            JOB_RESULT_TOOL,
-            "Read AIHelper job result",
-            "Return ready=false immediately while running, or the repeatable terminal result.",
-            job_id_schema(),
-            (true, false, true, false),
-            "low",
-            "Reads a retained process-local job result only.",
-        ),
-        job_tool(
-            JOB_CANCEL_TOOL,
-            "Cancel AIHelper job",
-            "Request cooperative cancellation and return the job's current terminal state immediately.",
-            job_id_schema(),
-            (false, true, true, false),
-            "medium",
-            "Requests cancellation of one active command; the handler may continue draining.",
-        ),
-    ]
-}
-
-fn job_id_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {"job_id": {"type": "string", "minLength": 1}},
-        "required": ["job_id"],
-        "additionalProperties": false
-    })
-}
-
-fn job_tool(
-    name: &'static str,
-    title: &'static str,
-    description: &'static str,
-    input_schema: Value,
-    annotations: (bool, bool, bool, bool),
-    risk: &'static str,
-    impact: &'static str,
-) -> Tool {
-    let mut tool = Tool::new(
-        name,
-        description,
-        input_schema
-            .as_object()
-            .cloned()
-            .expect("job tool input schema must be an object"),
-    );
-    tool.title = Some(title.to_owned());
-    tool.annotations = Some(ToolAnnotations::from_raw(
-        Some(title.to_owned()),
-        Some(annotations.0),
-        Some(annotations.1),
-        Some(annotations.2),
-        Some(annotations.3),
-    ));
-    tool.execution = Some(ToolExecution::new().with_task_support(TaskSupport::Forbidden));
-    tool.meta = Some(Meta(Map::from_iter([(
-        RISK_META_KEY.to_owned(),
-        json!({
-            "level": risk,
-            "impact": impact,
-            "effects": ["process_state"],
-            "reversibility": if name == JOB_START_TOOL { "unknown" } else { "yes" }
-        }),
-    )])));
-    tool
-}
-
 /// Clone tool arguments for event logging with the `context` wrapper removed.
 ///
 /// The `context` object carries the caller's `cwd`, `limit`, and `timeout_ms`,
 /// which are execution plumbing rather than tool inputs and must not leak into
 /// the recorded parameter payload.
-fn event_parameters(arguments: &JsonObject) -> Value {
+pub(crate) fn event_parameters(arguments: &JsonObject) -> Value {
     let mut parameters = arguments.clone();
     parameters.remove("context");
     redact_mcp_plaintext_auth(&mut parameters);
     Value::Object(parameters)
-}
-
-fn validate_mcp_plaintext_auth(command: &str, arguments: &JsonObject) -> Result<(), CommandError> {
-    if let Some(domain) = forge_token_domain(command) {
-        return if arguments.contains_key("token") {
-            Err(mcp_plaintext_token_error(domain))
-        } else {
-            Ok(())
-        };
-    }
-    if !command.starts_with("http.") {
-        return Ok(());
-    }
-    if arguments.contains_key("bearer") || arguments.contains_key("basic") {
-        return Err(mcp_plaintext_auth_error());
-    }
-    if arguments
-        .get("headers")
-        .and_then(Value::as_array)
-        .is_some_and(|headers| {
-            headers
-                .iter()
-                .filter_map(Value::as_str)
-                .any(is_authorization_header)
-        })
-    {
-        return Err(mcp_plaintext_auth_error());
-    }
-    if arguments
-        .get("url")
-        .and_then(Value::as_str)
-        .is_some_and(url_contains_userinfo)
-    {
-        return Err(mcp_plaintext_auth_error());
-    }
-    if arguments
-        .get("curl")
-        .and_then(Value::as_str)
-        .is_some_and(curl_contains_auth)
-    {
-        return Err(mcp_plaintext_auth_error());
-    }
-    Ok(())
-}
-
-/// GitHub and GitLab carry one opaque token argument; over MCP it must come from
-/// the vault instead of riding along in the tool call.
-fn forge_token_domain(command: &str) -> Option<&'static str> {
-    if command.starts_with("github.") {
-        Some("github")
-    } else if command.starts_with("gitlab.") {
-        Some("gitlab")
-    } else {
-        None
-    }
-}
-
-fn mcp_plaintext_token_error(domain: &'static str) -> CommandError {
-    CommandError::new(
-        Some(domain.to_owned()),
-        None,
-        "INVALID_ARGUMENT",
-        "Inline API tokens are not accepted over MCP",
-        format!(
-            "Store the token in the AH vault and pass its id through credentials.token, or let AIHelper use the host-bound {domain} environment variables"
-        ),
-        2,
-        false,
-    )
-}
-
-fn mcp_plaintext_auth_error() -> CommandError {
-    CommandError::new(
-        Some("http".to_owned()),
-        None,
-        "INVALID_ARGUMENT",
-        "Inline HTTP credentials are not accepted over MCP",
-        "Store the credential in the AH vault and pass its id through credentials.basic",
-        2,
-        false,
-    )
-}
-
-fn redact_mcp_plaintext_auth(arguments: &mut JsonObject) {
-    for name in ["bearer", "basic", "token"] {
-        if arguments.contains_key(name) {
-            arguments.insert(name.to_owned(), Value::String(REDACTED.to_owned()));
-        }
-    }
-    if let Some(Value::Array(headers)) = arguments.get_mut("headers") {
-        for header in headers {
-            if header.as_str().is_some_and(is_authorization_header) {
-                *header = Value::String(format!("Authorization: {REDACTED}"));
-            }
-        }
-    }
-    if let Some(Value::String(url)) = arguments.get_mut("url")
-        && url_contains_userinfo(url)
-    {
-        *url = REDACTED.to_owned();
-    }
-    if let Some(Value::String(curl)) = arguments.get_mut("curl")
-        && curl_contains_auth(curl)
-    {
-        *curl = REDACTED.to_owned();
-    }
-    if let Some(Value::Object(nested)) = arguments.get_mut("arguments") {
-        redact_mcp_plaintext_auth(nested);
-    }
-}
-
-fn take_job_id(arguments: &mut JsonObject) -> Result<String, CommandError> {
-    match arguments.remove("job_id") {
-        Some(Value::String(job_id)) if !job_id.trim().is_empty() => Ok(job_id),
-        _ => Err(job_argument_error(
-            "job control requires a non-empty string property 'job_id'",
-        )),
-    }
-}
-
-fn job_snapshot_result(snapshot: &JobSnapshot, include_result: bool) -> CallToolResult {
-    let mut data = Map::from_iter([
-        ("job_id".to_owned(), Value::String(snapshot.job_id.clone())),
-        ("tool".to_owned(), Value::String(snapshot.tool.clone())),
-        (
-            "status".to_owned(),
-            Value::String(snapshot.status.as_str().to_owned()),
-        ),
-        ("draining".to_owned(), Value::Bool(snapshot.draining)),
-    ]);
-    if include_result {
-        let ready = snapshot.status != JobStatus::Running;
-        data.insert("ready".to_owned(), Value::Bool(ready));
-        if let Some(response) = &snapshot.response {
-            data.insert(
-                "response".to_owned(),
-                serde_json::to_value(response)
-                    .expect("typed invocation response must always serialize"),
-            );
-        }
-    }
-    let data = Value::Object(data);
-    let mut result = CallToolResult::structured(data.clone());
-    result.content = vec![ContentBlock::text(
-        serde_json::to_string(&data).expect("job result must always serialize"),
-    )];
-    result
-}
-
-fn job_argument_error(cause: impl Into<String>) -> CommandError {
-    CommandError::new(
-        Some("job".to_owned()),
-        None,
-        "INVALID_ARGUMENT",
-        "Invalid job tool arguments",
-        cause,
-        2,
-        false,
-    )
-}
-
-fn job_registry_error(error: JobRegistryError) -> CommandError {
-    match error {
-        JobRegistryError::CapacityFull { capacity } => CommandError::new(
-            Some("job".to_owned()),
-            Some("job.start".to_owned()),
-            "JOB_CAPACITY_FULL",
-            "AIHelper job registry is full",
-            format!("all {capacity} retained records are active or draining"),
-            1,
-            true,
-        ),
-        JobRegistryError::NotFound { job_id } => CommandError::new(
-            Some("job".to_owned()),
-            None,
-            "JOB_NOT_FOUND",
-            "AIHelper job was not found",
-            format!("job '{job_id}' is unknown, expired, or evicted"),
-            2,
-            false,
-        ),
-    }
-}
-
-fn command_to_tool(command: &RegisteredCommand) -> Result<Tool, McpAdapterError> {
-    let descriptor = &command.descriptor;
-    let input_schema = schema_object_with_context(descriptor)?;
-    let output_schema = schema_object(&descriptor.id, "output", &descriptor.output_schema)?;
-    let risk =
-        serde_json::to_value(descriptor.effects.risk).expect("risk enum should always serialize");
-    let reversibility = serde_json::to_value(descriptor.effects.reversibility)
-        .expect("reversibility enum should always serialize");
-    let effects = serde_json::to_value(&descriptor.effects.effects)
-        .expect("effect enums should always serialize");
-    let mut risk_meta = Map::new();
-    risk_meta.insert("level".to_owned(), risk.clone());
-    risk_meta.insert(
-        "impact".to_owned(),
-        Value::String(descriptor.effects.impact.clone()),
-    );
-    risk_meta.insert("effects".to_owned(), effects);
-    risk_meta.insert("reversibility".to_owned(), reversibility);
-    let mut meta = Map::new();
-    meta.insert(RISK_META_KEY.to_owned(), Value::Object(risk_meta));
-
-    let risk_label = risk.as_str().unwrap_or("unknown");
-    let examples = descriptor
-        .examples
-        .iter()
-        .map(|example| format!("- {}: {}", example.description, example.arguments))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let example_section = (!examples.is_empty()).then(|| format!("\n\nExamples:\n{examples}"));
-    let credential_section = (!descriptor.secret_slots.is_empty()).then(|| {
-        let slots = descriptor
-            .secret_slots
-            .iter()
-            .map(|slot| {
-                let kinds = slot.accepted_kinds.join(", ");
-                let filters = slot
-                    .accepted_kinds
-                    .iter()
-                    .map(|kind| format!("kind={kind}"))
-                    .collect::<Vec<_>>()
-                    .join(" or ");
-                format!(
-                    "{} accepts {kinds}. If the ID is unknown, call secrets.list with {filters}.",
-                    slot.name
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!("\n\nCredential slots: {slots}")
-    });
-    let description = format!(
-        "{}{}\n\nFor project-relative paths, include context.cwd. HTTP job targets always require an absolute context.cwd.{}\n\nImpact: {}\nRisk: {risk_label}.",
-        descriptor.description,
-        credential_section.unwrap_or_default(),
-        example_section.unwrap_or_default(),
-        descriptor.effects.impact
-    );
-    let mut tool = Tool::new(
-        format!("{TOOL_PREFIX}{}", descriptor.id),
-        description,
-        input_schema,
-    );
-    tool.title = Some(descriptor.title.clone());
-    tool.output_schema = Some(Arc::new(output_schema));
-    tool.annotations = Some(ToolAnnotations::from_raw(
-        Some(descriptor.title.clone()),
-        Some(descriptor.effects.read_only),
-        Some(descriptor.effects.destructive),
-        Some(descriptor.effects.idempotent),
-        Some(descriptor.effects.open_world),
-    ));
-    tool.execution = Some(ToolExecution::new().with_task_support(TaskSupport::Forbidden));
-    tool.meta = Some(Meta(meta));
-    Ok(tool)
-}
-
-fn schema_object_with_context(
-    descriptor: &CommandDescriptor,
-) -> Result<JsonObject, McpAdapterError> {
-    let schema = ah_runtime::typed::mcp_input_schema(descriptor).map_err(|error| {
-        McpAdapterError::InvalidSchema {
-            command: descriptor.id.clone(),
-            reason: error.to_string(),
-        }
-    })?;
-    schema_object(&descriptor.id, "input", &schema)
-}
-
-fn schema_object(command: &str, kind: &str, schema: &Value) -> Result<JsonObject, McpAdapterError> {
-    schema
-        .as_object()
-        .cloned()
-        .ok_or_else(|| McpAdapterError::InvalidSchema {
-            command: command.to_owned(),
-            reason: format!("{kind} schema root must be an object"),
-        })
-}
-
-fn extract_context(
-    arguments: &mut JsonObject,
-    request_id: &str,
-    defaults: &McpServerConfig,
-    descriptor: &CommandDescriptor,
-    require_explicit_cwd: bool,
-) -> Result<ExecutionContextWire, CommandError> {
-    let context = arguments.remove("context");
-    let Some(context) = context else {
-        if require_explicit_cwd {
-            return Err(context_error(
-                descriptor,
-                "context.cwd is required for HTTP execution",
-            ));
-        }
-        return Ok(ExecutionContextWire::new(
-            request_id,
-            defaults.cwd.clone(),
-            defaults.limit,
-            defaults.default_timeout_ms,
-        ));
-    };
-    let Some(context) = context.as_object() else {
-        return Err(context_error(descriptor, "context must be a JSON object"));
-    };
-    for key in context.keys() {
-        if !matches!(key.as_str(), "cwd" | "limit" | "timeout_ms") {
-            return Err(context_error(
-                descriptor,
-                format!("unknown context property '{key}'"),
-            ));
-        }
-    }
-
-    let cwd = match context.get("cwd") {
-        Some(Value::String(cwd)) if !cwd.trim().is_empty() => cwd.clone(),
-        Some(_) => {
-            return Err(context_error(
-                descriptor,
-                "context.cwd must be a non-empty string",
-            ));
-        }
-        None if require_explicit_cwd => {
-            return Err(context_error(
-                descriptor,
-                "context.cwd is required for HTTP execution",
-            ));
-        }
-        None => defaults.cwd.clone(),
-    };
-    if require_explicit_cwd && !Path::new(&cwd).is_absolute() {
-        return Err(context_error(
-            descriptor,
-            "context.cwd must be an absolute path for HTTP execution",
-        ));
-    }
-    let limit = match context.get("limit") {
-        Some(value) => Some(positive_usize(value, "context.limit", descriptor)?),
-        None => defaults.limit,
-    };
-    let timeout_ms = match context.get("timeout_ms") {
-        Some(value) => positive_u64(value, "context.timeout_ms", descriptor)?,
-        None => defaults.default_timeout_ms,
-    };
-    Ok(ExecutionContextWire::new(
-        request_id, cwd, limit, timeout_ms,
-    ))
-}
-
-fn requires_explicit_cwd(
-    descriptor: &CommandDescriptor,
-    arguments: &JsonObject,
-    http_transport: bool,
-) -> bool {
-    if !http_transport {
-        return false;
-    }
-
-    match descriptor.id.as_str() {
-        "ai.info" | "plugins.list" | "plugins.enable" | "plugins.disable" | "plugins.reset" => {
-            false
-        }
-        command if command.starts_with("ollama.") => false,
-        command if command.starts_with("postgres.") => {
-            has_relative_path(arguments, "tool_path")
-                || (command == "postgres.tool.use" && has_relative_path(arguments, "path"))
-        }
-        "http.assert" | "http.run" => true,
-        command if command.starts_with("http.") => {
-            has_relative_path(arguments, "json_file") || has_relative_path(arguments, "body_file")
-        }
-        // A hosted API call reads nothing from disk once the caller names the
-        // project itself, and its credential lookup is bound to the API host
-        // rather than to a git remote.
-        command if command.starts_with("github.") => {
-            !has_text(arguments, "repo") || has_relative_input_file(arguments)
-        }
-        command if command.starts_with("gitlab.") => {
-            !has_text(arguments, "project") || has_relative_input_file(arguments)
-        }
-        _ => true,
-    }
-}
-
-/// The file-backed inputs a hosted API call can carry, all of them resolved
-/// against the working directory.
-fn has_relative_input_file(arguments: &JsonObject) -> bool {
-    [
-        "body_file",
-        "comment_file",
-        "description_file",
-        "notes_file",
-    ]
-    .into_iter()
-    .any(|field| has_relative_path(arguments, field))
-}
-
-fn has_text(arguments: &JsonObject, field: &str) -> bool {
-    arguments
-        .get(field)
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-}
-
-fn has_relative_path(arguments: &JsonObject, field: &str) -> bool {
-    arguments
-        .get(field)
-        .and_then(Value::as_str)
-        .is_some_and(|path| !Path::new(path).is_absolute())
-}
-
-fn positive_usize(
-    value: &Value,
-    field: &str,
-    descriptor: &CommandDescriptor,
-) -> Result<usize, CommandError> {
-    let value = positive_u64(value, field, descriptor)?;
-    usize::try_from(value).map_err(|_| context_error(descriptor, format!("{field} is too large")))
-}
-
-fn positive_u64(
-    value: &Value,
-    field: &str,
-    descriptor: &CommandDescriptor,
-) -> Result<u64, CommandError> {
-    value
-        .as_u64()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| context_error(descriptor, format!("{field} must be a positive integer")))
-}
-
-fn context_error(descriptor: &CommandDescriptor, cause: impl Into<String>) -> CommandError {
-    CommandError::new(
-        command_domain(&descriptor.id),
-        Some(descriptor.id.clone()),
-        "INVALID_CONTEXT",
-        "Invalid MCP execution context",
-        cause,
-        2,
-        false,
-    )
-}
-
-fn typed_response_result(response: TypedInvocationResponse, request_id: &str) -> CallToolResult {
-    if !response.success {
-        return command_error_result(response.error.unwrap_or_else(|| {
-            CommandError::new(
-                None,
-                None,
-                "INVALID_TYPED_RESPONSE",
-                "Typed command returned an invalid error response",
-                "success=false without a diagnostic",
-                1,
-                false,
-            )
-        }));
-    }
-    let Some(data) = response.data else {
-        return command_error_result(CommandError::new(
-            None,
-            None,
-            "INVALID_TYPED_RESPONSE",
-            "Typed command returned an invalid success response",
-            "success=true without structured data",
-            1,
-            false,
-        ));
-    };
-    let compact = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_owned());
-    let mut result = CallToolResult::structured(data);
-    result.content = vec![ContentBlock::text(compact)];
-    let mut execution = Map::new();
-    execution.insert(
-        "request_id".to_owned(),
-        Value::String(request_id.to_owned()),
-    );
-    if let Some(text) = response.text {
-        execution.insert("text".to_owned(), Value::String(text));
-    }
-    if !response.notices.is_empty() {
-        execution.insert(
-            "notices".to_owned(),
-            serde_json::to_value(response.notices)
-                .expect("command notices should always serialize"),
-        );
-    }
-    let mut meta = Map::new();
-    meta.insert(EXECUTION_META_KEY.to_owned(), Value::Object(execution));
-    result.meta = Some(Meta(meta));
-    result
-}
-
-fn command_error_result(error: CommandError) -> CallToolResult {
-    let text = format!("{}: {}", error.code, error.message);
-    let mut result = CallToolResult::error(vec![ContentBlock::text(text)]);
-    let mut meta = Map::new();
-    meta.insert(
-        DIAGNOSTIC_META_KEY.to_owned(),
-        serde_json::to_value(error).expect("command error should always serialize"),
-    );
-    result.meta = Some(Meta(meta));
-    result
-}
-
-fn command_event_outcome(
-    result: &Result<CallToolResult, rmcp::ErrorData>,
-    canonical_command: Option<&str>,
-) -> (McpCommandStatus, Option<CommandError>) {
-    match result {
-        Ok(result) if result.is_error == Some(true) => {
-            let diagnostic = result
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.0.get(DIAGNOSTIC_META_KEY))
-                .and_then(|value| serde_json::from_value(value.clone()).ok())
-                .unwrap_or_else(|| {
-                    adapter_command_error(
-                        canonical_command,
-                        "MCP_ERROR_DIAGNOSTIC_MISSING",
-                        "MCP tool returned an error without a diagnostic",
-                        "the CallToolResult diagnostic metadata was missing or invalid",
-                    )
-                });
-            (McpCommandStatus::Error, Some(diagnostic))
-        }
-        Ok(_) => (McpCommandStatus::Success, None),
-        Err(error) => (
-            McpCommandStatus::Error,
-            Some(adapter_command_error(
-                canonical_command,
-                "MCP_PROTOCOL_ERROR",
-                "MCP tool call failed",
-                error.to_string(),
-            )),
-        ),
-    }
-}
-
-fn command_event_run_check_outcome(
-    result: &Result<CallToolResult, rmcp::ErrorData>,
-    canonical_command: Option<&str>,
-) -> Option<InvocationOutcome> {
-    let result = result.as_ref().ok()?;
-    if result.is_error == Some(true) {
-        return None;
-    }
-    run_check_outcome(canonical_command?, result.structured_content.as_ref())
-}
-
-pub(crate) fn run_check_outcome(
-    canonical_command: &str,
-    data: Option<&Value>,
-) -> Option<InvocationOutcome> {
-    if canonical_command != "run.check" {
-        return None;
-    }
-    let data = data?;
-    let success = data.get("success")?.as_bool()?;
-    let timed_out = data.get("timed_out")?.as_bool()?;
-    let exit_code = match data.get("exit_code")? {
-        Value::Null => None,
-        value => Some(i32::try_from(value.as_i64()?).ok()?),
-    };
-    Some(InvocationOutcome::RunCheck(RunCheckOutcome {
-        success,
-        timed_out,
-        exit_code,
-    }))
-}
-
-fn adapter_command_error(
-    canonical_command: Option<&str>,
-    code: &'static str,
-    message: &'static str,
-    cause: impl Into<String>,
-) -> CommandError {
-    CommandError::new(
-        canonical_command.and_then(command_domain),
-        canonical_command.map(str::to_owned),
-        code,
-        message,
-        cause,
-        1,
-        false,
-    )
-}
-
-fn command_domain(command: &str) -> Option<String> {
-    command.split_once('.').map(|(domain, _)| domain.to_owned())
-}
-
-fn execution_request_id(request_id: &NumberOrString) -> String {
-    match request_id {
-        NumberOrString::Number(value) => format!("mcp:n:{value}"),
-        NumberOrString::String(value) => format!("mcp:s:{value}"),
-    }
-}
-
-fn unknown_tool_error(name: &str) -> rmcp::ErrorData {
-    rmcp::ErrorData::new(
-        ErrorCode::METHOD_NOT_FOUND,
-        format!("unknown MCP tool '{name}'"),
-        None,
-    )
-}
-
-fn internal_catalog_error(error: impl std::fmt::Display) -> rmcp::ErrorData {
-    rmcp::ErrorData::internal_error(
-        Cow::Owned(format!("AIHelper command catalog failed: {error}")),
-        None,
-    )
-}
-
-fn build_catalog_snapshot(manager: &PluginManager) -> Result<CatalogSnapshot, McpAdapterError> {
-    loop {
-        let runtime_revision = manager.catalog_revision();
-        let commands = manager.list_enabled_commands()?;
-        let mut tools = Vec::with_capacity(commands.len() + 4);
-        let mut tools_by_name = HashMap::with_capacity(commands.len() + 4);
-        let mut commands_by_name = HashMap::with_capacity(commands.len());
-        for command in commands {
-            let name = format!("{TOOL_PREFIX}{}", command.descriptor.id);
-            if let Some(error) = reserved_job_namespace_error(&command.descriptor.id) {
-                return Err(error);
-            }
-            let tool = command_to_tool(&command)?;
-            tools_by_name.insert(name.clone(), tool.clone());
-            commands_by_name.insert(name, command);
-            tools.push(tool);
-        }
-        for tool in job_tools() {
-            tools_by_name.insert(tool.name.to_string(), tool.clone());
-            tools.push(tool);
-        }
-        if manager.catalog_revision() == runtime_revision {
-            return Ok(CatalogSnapshot {
-                runtime_revision,
-                tools,
-                tools_by_name,
-                commands_by_name,
-            });
-        }
-    }
-}
-
-fn reserved_job_namespace_error(command: &str) -> Option<McpAdapterError> {
-    format!("{TOOL_PREFIX}{command}")
-        .starts_with(JOB_TOOL_PREFIX)
-        .then(|| McpAdapterError::InvalidSchema {
-            command: command.to_owned(),
-            reason: "the MCP namespace 'ah.job.*' is reserved for built-in job tools".to_owned(),
-        })
 }
 
 #[cfg(test)]
@@ -2274,13 +864,20 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
+    use ah_redact::REDACTED;
+
     use super::{
-        EventSink, Executor, HttpLifecycleController, HttpLifecycleState, JOB_START_TOOL,
-        McpAdapterError, McpCommandEvent, McpCommandStatus, McpServer, McpServerConfig, REDACTED,
-        RISK_META_KEY, ShutdownReader, ShutdownTracker, event_parameters, extract_context,
-        peer_generation_matches, redact_mcp_plaintext_auth, refresh_catalog_after_job,
-        requires_explicit_cwd, run_check_outcome, spawn_best_effort_notification,
-        validate_mcp_plaintext_auth, wait_for_transport,
+        EventSink, Executor, JOB_START_TOOL, McpAdapterError, McpCommandEvent, McpCommandStatus,
+        McpServer, McpServerConfig, RISK_META_KEY, event_parameters, peer_generation_matches,
+        refresh_catalog_after_job, spawn_best_effort_notification,
+    };
+    use crate::{
+        mapping::{
+            extract_context, requires_explicit_cwd, reserved_job_namespace_error, run_check_outcome,
+        },
+        plaintext_auth::{redact_mcp_plaintext_auth, validate_mcp_plaintext_auth},
+        shutdown::{ShutdownReader, ShutdownTracker},
+        transport::{HttpLifecycleController, HttpLifecycleState, wait_for_transport},
     };
 
     struct TypedPlugin;
@@ -2924,10 +1521,10 @@ mod tests {
 
     #[test]
     fn rejects_plugin_commands_in_reserved_job_namespace() {
-        let error = super::reserved_job_namespace_error("job.extra")
+        let error = reserved_job_namespace_error("job.extra")
             .expect("reserved job command should be rejected");
         assert!(error.to_string().contains("ah.job.*"));
-        assert!(super::reserved_job_namespace_error("jobs.extra").is_none());
+        assert!(reserved_job_namespace_error("jobs.extra").is_none());
     }
 
     #[test]
