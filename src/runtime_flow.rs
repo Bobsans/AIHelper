@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, btree_map::Entry},
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -32,13 +32,16 @@ const MCP_RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 pub(crate) fn run() -> Result<(), AppError> {
     let started = Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
-    if is_installed_smoke_fast_path(&raw_args) {
+    // One reading of argv, before anything is built. Recovery still runs before
+    // the plugin-aware parse, because it must not depend on a command being
+    // valid; what it no longer depends on is four separate scans of raw argv.
+    let entry = crate::entry::detect(&raw_args)?;
+    if entry.handoff == Some(crate::entry::Handoff::InstalledSmoke) {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    if !is_updater_mcp_restore_fast_path(&raw_args) {
-        match crate::updater::recovery::recover_before_startup(is_managed_serve_request(&raw_args))?
-        {
+    if entry.handoff.is_none() {
+        match crate::updater::recovery::recover_before_startup(entry.managed_serve)? {
             crate::updater::recovery::EarlyRecoveryOutcome::Continue => {}
             crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched => {
                 emit_warning("update recovery started; rerun the command after recovery completes");
@@ -46,7 +49,7 @@ pub(crate) fn run() -> Result<(), AppError> {
             }
         }
     }
-    if is_version_fast_path(&raw_args) {
+    if entry.version_only {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -141,39 +144,6 @@ pub(crate) fn run() -> Result<(), AppError> {
         );
     }
     result.map(|_| ())
-}
-
-fn is_installed_smoke_fast_path(raw_args: &[OsString]) -> bool {
-    std::env::var_os("AH_UPDATER_INSTALLED_SMOKE").as_deref() == Some(OsStr::new("1"))
-        && is_version_fast_path(raw_args)
-}
-
-fn is_updater_mcp_restore_fast_path(raw_args: &[OsString]) -> bool {
-    std::env::var_os("AH_UPDATER_MCP_RESTORE").as_deref() == Some(OsStr::new("1"))
-        && raw_args.len() == 5
-        && raw_args[1] == "--json"
-        && raw_args[2] == "mcp"
-        && raw_args[3] == "service"
-        && matches!(raw_args[4].to_str(), Some("install" | "start" | "status"))
-}
-
-fn is_managed_serve_request(raw_args: &[OsString]) -> bool {
-    raw_args
-        .windows(2)
-        .any(|pair| pair[0] == "mcp" && pair[1] == "serve")
-        && raw_args.iter().any(|argument| {
-            argument == "--managed-config"
-                || argument
-                    .to_str()
-                    .is_some_and(|value| value.starts_with("--managed-config="))
-        })
-}
-
-fn is_version_fast_path(raw_args: &[OsString]) -> bool {
-    raw_args.len() == 2
-        && raw_args[1]
-            .to_str()
-            .is_some_and(|argument| matches!(argument, "--version" | "-V"))
 }
 
 struct RuntimeStartup {
@@ -810,7 +780,6 @@ fn mark_managed_failure(runner: &Option<Arc<ManagedRunner>>, kind: ExitKind, err
 #[cfg(test)]
 mod tests {
     use std::{
-        ffi::OsString,
         sync::mpsc,
         time::{Duration, Instant},
     };
@@ -818,8 +787,8 @@ mod tests {
     use ah_runtime::PluginManager;
 
     use super::{
-        extract_credential_args, is_updater_mcp_restore_fast_path, is_version_fast_path,
-        map_mcp_transport_error, resolve_invocation_command, shutdown_runtime,
+        extract_credential_args, map_mcp_transport_error, resolve_invocation_command,
+        shutdown_runtime,
     };
 
     #[test]
@@ -879,51 +848,6 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1));
 
         release_tx.send(()).unwrap();
-    }
-
-    #[test]
-    fn version_fast_path_accepts_only_standalone_version_flags() {
-        assert!(is_version_fast_path(&[
-            OsString::from("ah"),
-            OsString::from("--version"),
-        ]));
-        assert!(is_version_fast_path(&[
-            OsString::from("ah"),
-            OsString::from("-V"),
-        ]));
-        assert!(!is_version_fast_path(&[
-            OsString::from("ah"),
-            OsString::from("--quiet"),
-            OsString::from("--version"),
-        ]));
-        assert!(!is_version_fast_path(&[
-            OsString::from("ah"),
-            OsString::from("file"),
-            OsString::from("--version"),
-        ]));
-    }
-
-    #[test]
-    fn updater_mcp_restore_fast_path_allows_reconcile_install() {
-        unsafe { std::env::set_var("AH_UPDATER_MCP_RESTORE", "1") };
-        let allowed = is_updater_mcp_restore_fast_path(
-            &["ah", "--json", "mcp", "service", "install"].map(OsString::from),
-        );
-        unsafe { std::env::remove_var("AH_UPDATER_MCP_RESTORE") };
-
-        assert!(allowed);
-    }
-
-    #[test]
-    fn recovery_is_routed_before_version_config_and_plugin_discovery() {
-        let source = include_str!("runtime_flow.rs");
-        let recovery = source.find("recover_before_startup(").unwrap();
-        let version = source.find("if is_version_fast_path").unwrap();
-        let config = source.find("ConfigContext::load()").unwrap();
-        let discovery = source.find("let mut load_report = discovery(").unwrap();
-        assert!(recovery < version);
-        assert!(recovery < config);
-        assert!(recovery < discovery);
     }
 
     #[test]

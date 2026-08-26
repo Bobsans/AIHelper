@@ -11,6 +11,7 @@
 //! however the routing is rearranged.
 
 use super::common::IsolatedAhCommand as Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 /// The one-shot version flags answer without loading anything.
@@ -133,4 +134,45 @@ fn managed_serve_rejects_a_missing_definition_either_spelling() {
             .assert()
             .failure();
     }
+}
+
+/// The handoffs are a contract between two of our binaries, so they are stated
+/// in the parser as a hidden flag. The environment variables remain the only
+/// thing an older `ah` understands, so both spellings have to work at once.
+#[test]
+fn the_handoff_flag_and_the_legacy_variable_agree() {
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--internal-handoff", "installed-smoke", "--version"])
+        .assert()
+        .success()
+        .stdout(contains(concat!("ah ", env!("CARGO_PKG_VERSION"))));
+
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--internal-handoff=installed-smoke", "--version"])
+        .assert()
+        .success()
+        .stdout(contains(concat!("ah ", env!("CARGO_PKG_VERSION"))));
+}
+
+/// Hidden, not absent: it must not appear in help a person reads.
+#[test]
+fn the_handoff_flag_is_not_advertised() {
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("internal-handoff").not());
+}
+
+/// An unknown kind is refused rather than ignored.
+#[test]
+fn an_unknown_handoff_kind_is_refused() {
+    Command::cargo_bin("ah")
+        .expect("binary should compile")
+        .args(["--internal-handoff=nonsense", "--version"])
+        .assert()
+        .failure();
 }

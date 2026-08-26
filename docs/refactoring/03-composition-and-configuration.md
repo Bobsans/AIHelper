@@ -6,23 +6,30 @@ hardest to test.
 
 ## Findings
 
-### 3.1 Seven parsers run before the real parser *(the duplication is gone; the count is not)*
+### 3.1 Seven parsers run before the real parser *(four sniffers folded into one)*
 
-**Status:** the argv knowledge those parsers shared is now declared once, in
-`src/entry.rs`. There were three copies of the four global flags - the main CLI,
-the updater route, the managed-service route - and two copies of a hand-rolled
-walker that skips those flags to find the leading positional.
+**Status:** the four raw-argv sniffers in `run()` are one `entry::detect` call,
+and the argv knowledge the early parsers shared is declared once in
+`src/entry.rs`.
 
-They had already drifted, with a user-visible consequence: the updater's copy
-declared `--json`, `--quiet`, `--cwd` and `--limit` with no help text, so
-`ah upgrade --help` printed four blank descriptions. The golden CLI snapshot
-showed them filled in, because it renders the *main* command tree - which is not
-what answers that command. The snapshot was guarding help output no user sees.
-Sharing the declaration fixes the output and makes the snapshot true.
+There had been three copies of the four global flags - the main CLI, the updater
+route, the managed-service route - and two copies of a hand-rolled walker that
+skips those flags to find the leading positional. They had drifted, with a
+user-visible result: the updater's copy declared its globals with no help text,
+so `ah upgrade --help` printed four blank descriptions while the golden CLI
+snapshot showed them filled in. The snapshot renders the *main* command tree,
+which is not what answers that command, so it was pinning help nobody reads.
 
-Still open: the four raw-argv sniffers in `run()`, and folding the two routes
-into one `Entry`. What changed is that they no longer each carry their own idea
-of what a global flag is.
+`is_updater_mcp_restore_fast_path` is gone with the rest. Its narrowing is not:
+a leaked variable still must not change an unrelated invocation. What changed is
+that the narrowing is stated against parsed positionals rather than
+`raw_args.len() == 5` and fixed offsets, so `--json` written after the command no
+longer turns the path off.
+
+Still open: `updater::command::route`, `mcp_service::command::route` and
+`prepare_run_check_passthrough` are separate parses. Folding them in needs the
+`Entry` enum's `Domain { domain, argv }` deferral, because the full CLI shape
+depends on which plugins loaded and therefore cannot be the first parse.
 
 ### 3.1 Seven parsers run before the real parser
 
@@ -42,6 +49,19 @@ of what a global flag is.
 `is_updater_mcp_restore_fast_path` is the clearest symptom: it hard-codes
 `raw_args.len() == 5` and positional string comparisons. Any flag reordering,
 an added `--quiet`, or an `=`-style argument silently disables the path.
+
+### 3.2 Control flow driven by undocumented environment variables *(stated in the parser; the variables remain)*
+
+**Status:** both handoffs are now expressible as `--internal-handoff <kind>`, a
+hidden global flag. Hidden rather than absent: a handoff is not something a
+person should invoke, but it is a contract between two of our binaries, and a
+contract belongs in the parser.
+
+The variables are still honoured, and must be. The two ends ship separately: a
+helper from one release may activate, fail, roll back, and then drive the
+*previous* `ah`, which knows only the variable. The flag cannot replace it until
+every supported `ah` understands the flag, which is the deprecation window the
+migration already calls for. The helper is unchanged.
 
 ### 3.2 Control flow driven by undocumented environment variables
 
