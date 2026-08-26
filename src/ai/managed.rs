@@ -159,13 +159,9 @@ pub fn planned_action(snapshot: &Snapshot) -> ManagedAction {
 
 #[cfg(windows)]
 pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppError> {
-    use crate::{
-        cli::GlobalOptions,
-        mcp_service::{
-            command::InstallOptions,
-            model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS},
-        },
-        output::OutputMode,
+    use crate::mcp_service::{
+        model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS},
+        operation::InstallSettings,
     };
 
     require_usable(snapshot)?;
@@ -179,19 +175,14 @@ pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppE
             Ok((output.endpoint, ManagedAction::Started))
         }
         ManagedState::NotInstalled => {
-            let options = InstallOptions {
+            let settings = InstallSettings {
                 no_start: false,
                 port: DEFAULT_PORT,
                 max_active: DEFAULT_MAX_ACTIVE,
                 default_timeout_ms: DEFAULT_TIMEOUT_MS,
-                options: GlobalOptions {
-                    output: OutputMode::Text,
-                    quiet: true,
-                    limit: None,
-                    cwd: None,
-                },
+                limit: None,
             };
-            let output = crate::mcp_service::lifecycle::install_quietly(&options)?;
+            let output = crate::mcp_service::lifecycle::install_quietly(&settings)?;
             Ok((output.endpoint, ManagedAction::Installed))
         }
         ManagedState::NeedsRepair => Err(not_healthy(snapshot)),

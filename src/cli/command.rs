@@ -87,9 +87,9 @@ pub(super) fn build_mcp_command() -> Command {
                         .default_value("300000")
                         .help("Default command execution timeout"),
                 )
-                .arg(crate::mcp_service::command::managed_config_arg()),
+                .arg(crate::service::route::managed_config_arg()),
         )
-        .subcommand(crate::mcp_service::command::build_service_help_command())
+        .subcommand(crate::service::route::build_service_help_command())
 }
 
 pub(super) fn build_ai_command() -> Command {

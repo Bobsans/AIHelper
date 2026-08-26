@@ -1,7 +1,7 @@
-pub mod command;
 pub mod lifecycle;
 pub mod lock;
 pub mod model;
+pub mod operation;
 pub mod output;
 pub mod paths;
 pub mod readiness;

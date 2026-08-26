@@ -11,14 +11,10 @@ use std::{
 use tempfile::TempDir;
 
 use super::super::*;
-use crate::mcp_service::lock;
-use crate::{
-    cli::GlobalOptions,
-    mcp_service::{
-        readiness::ReadinessProbe,
-        scheduler::{SchedulerDeleteReceipt, SchedulerRunReceipt, SchedulerStopReceipt},
-    },
-    output::OutputMode,
+use crate::mcp_service::{
+    lock,
+    readiness::ReadinessProbe,
+    scheduler::{SchedulerDeleteReceipt, SchedulerRunReceipt, SchedulerStopReceipt},
 };
 
 const TEST_START_TIMEOUT: Duration = Duration::from_millis(25);
@@ -928,18 +924,13 @@ pub(super) fn ready_section(instance_id: Uuid, pid: u32) -> ReadinessSection {
     }
 }
 
-pub(super) fn install_options(no_start: bool) -> InstallOptions {
-    InstallOptions {
+pub(super) fn install_options(no_start: bool) -> InstallSettings {
+    InstallSettings {
         no_start,
         port: 8787,
         max_active: 32,
         default_timeout_ms: 300_000,
-        options: GlobalOptions {
-            output: OutputMode::Json,
-            quiet: false,
-            limit: None,
-            cwd: None,
-        },
+        limit: None,
     }
 }
 

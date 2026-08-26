@@ -23,6 +23,7 @@ use ah_runtime::{
     executor::{Executor, ParallelExecutor},
 };
 
+use crate::service::route::EarlyRoute;
 use crate::{
     ai,
     cli::{self, CliParseResult, RuntimeCommand},
@@ -30,7 +31,6 @@ use crate::{
     error::{AppError, CommandSuggestion, FollowUpSuggestion, suggested_subcommand},
     event_log::{EventDiagnostic, EventLogger, SystemEventSeverity},
     mcp_service::{
-        command::EarlyRoute,
         lifecycle::ManagedMcpGuard,
         model::ExitKind,
         runner::{ManagedPreflight, ManagedRunner},
@@ -190,10 +190,10 @@ fn route_without_plugins(
             }
         },
         crate::entry::Route::Service | crate::entry::Route::ManagedServe => {
-            match crate::mcp_service::command::parse(raw_args)? {
+            match crate::service::route::parse(raw_args)? {
                 EarlyRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
-                EarlyRoute::Service(command) => {
-                    Ok(Step::Done(crate::mcp_service::lifecycle::execute(command)))
+                EarlyRoute::Service { operation, options } => {
+                    Ok(Step::Done(crate::service::execute(operation, options)))
                 }
                 EarlyRoute::ManagedServe { definition_path } => {
                     match ManagedRunner::preflight(&definition_path)? {

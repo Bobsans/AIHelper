@@ -27,10 +27,9 @@ use std::{
 
 use uuid::Uuid;
 
-use crate::{config::ConfigContext, error::AppError, output::Emitter};
+use crate::{config::ConfigContext, error::AppError};
 
 use super::{
-    command::{InstallOptions, ServiceCommand},
     lock::{self, FileLease},
     model::{
         CurrentPointer, DriftEntry, DriftKind, ExitKind, LifecycleOperation, LifecycleState,
@@ -38,10 +37,10 @@ use super::{
         SCHEMA_VERSION, ServerDefinition, ServiceDefinition, ServiceEndpoint, TASK_SPEC_VERSION,
         TaskMarker, UninstallOutput, now_timestamp,
     },
+    operation::{InstallSettings, Operation, Report},
     output::{
         LifecycleOperationSection, LifecycleStatus, ReadinessSection, ReadinessStatus,
-        RegistrationStatus, SchedulerSection, SchedulerState, StatusOutput, emit_mutation,
-        emit_status, emit_uninstall,
+        RegistrationStatus, SchedulerSection, SchedulerState, StatusOutput,
     },
     paths::{
         ServicePaths, current_executable_path, current_user_sid, normalize_absolute_path,
@@ -82,10 +81,16 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
 const STOP_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
+/// Run one lifecycle operation and report what it did.
+///
+/// # Errors
+///
+/// [`AppError`] when the operation fails, or off Windows, where there is no
+/// managed service to operate.
+pub fn run(operation: Operation) -> Result<Report, AppError> {
     #[cfg(windows)]
     {
-        if matches!(&command, ServiceCommand::Install(_)) {
+        if matches!(&operation, Operation::Install(_)) {
             require_managed_service_executable(&current_executable_path()?)?;
         }
         let paths = ServicePaths::discover()?;
@@ -97,37 +102,29 @@ pub fn execute(command: ServiceCommand) -> Result<(), AppError> {
             )
         })?;
         let service = LifecycleService::new(paths, scheduler, readiness);
-        match command {
-            ServiceCommand::Install(options) => {
-                let output = service.install(&options)?;
-                emit_mutation(&output, &mut Emitter::stdio(&options.options))
-            }
-            ServiceCommand::Start { options } => {
-                let output = service.start()?;
-                emit_mutation(&output, &mut Emitter::stdio(&options))
-            }
-            ServiceCommand::Stop { options } => {
-                let output = service.stop()?;
-                emit_mutation(&output, &mut Emitter::stdio(&options))
-            }
-            ServiceCommand::Restart { options } => {
-                let output = service.restart()?;
-                emit_mutation(&output, &mut Emitter::stdio(&options))
-            }
-            ServiceCommand::Status { options } => {
-                let output = service.status();
-                emit_status(&output, &mut Emitter::stdio(&options))
-            }
-            ServiceCommand::Uninstall { options } => {
-                let output = service.uninstall()?;
-                emit_uninstall(&output, &mut Emitter::stdio(&options))
-            }
+        match operation {
+            Operation::Install(settings) => service
+                .install(&settings)
+                .map(|output| Report::Mutation(Box::new(output))),
+            Operation::Start => service
+                .start()
+                .map(|output| Report::Mutation(Box::new(output))),
+            Operation::Stop => service
+                .stop()
+                .map(|output| Report::Mutation(Box::new(output))),
+            Operation::Restart => service
+                .restart()
+                .map(|output| Report::Mutation(Box::new(output))),
+            Operation::Status => Ok(Report::Status(Box::new(service.status()))),
+            Operation::Uninstall => service
+                .uninstall()
+                .map(|output| Report::Uninstall(Box::new(output))),
         }
     }
 
     #[cfg(not(windows))]
     {
-        let _ = command;
+        let _ = operation;
         Err(AppError::external(
             "MCP_SERVICE_UNSUPPORTED_PLATFORM",
             "managed MCP service lifecycle is supported only on Windows",
@@ -143,9 +140,9 @@ pub(crate) fn snapshot_status() -> Result<StatusOutput, AppError> {
 }
 
 #[cfg(windows)]
-pub(crate) fn install_quietly(options: &InstallOptions) -> Result<MutationOutput, AppError> {
+pub(crate) fn install_quietly(settings: &InstallSettings) -> Result<MutationOutput, AppError> {
     require_managed_service_executable(&current_executable_path()?)?;
-    update_service()?.install(options)
+    update_service()?.install(settings)
 }
 
 #[cfg(windows)]
@@ -233,7 +230,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
     }
 
-    pub fn install(&self, options: &InstallOptions) -> Result<MutationOutput, AppError> {
+    pub fn install(&self, options: &InstallSettings) -> Result<MutationOutput, AppError> {
         self.with_operation(LifecycleOperation::Install, None, || {
             self.install_locked(options)
         })

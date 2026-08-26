@@ -1,35 +1,31 @@
+//! Reading `ah mcp service` off the command line, before the plugin catalog
+//! exists.
+
 use std::{ffi::OsString, path::PathBuf};
 
 use clap::{Arg, ArgAction, Command, ValueHint, error::ErrorKind, value_parser};
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
-
-use super::model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS};
+use crate::{
+    cli::GlobalOptions,
+    error::AppError,
+    mcp_service::{
+        model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS},
+        operation::{InstallSettings, Operation},
+    },
+    output::OutputMode,
+};
 
 #[derive(Debug)]
-pub enum EarlyRoute {
+pub(crate) enum EarlyRoute {
     ExitSuccess,
-    Service(ServiceCommand),
-    ManagedServe { definition_path: PathBuf },
-}
-
-#[derive(Debug)]
-pub enum ServiceCommand {
-    Install(InstallOptions),
-    Start { options: GlobalOptions },
-    Stop { options: GlobalOptions },
-    Restart { options: GlobalOptions },
-    Status { options: GlobalOptions },
-    Uninstall { options: GlobalOptions },
-}
-
-#[derive(Debug, Clone)]
-pub struct InstallOptions {
-    pub no_start: bool,
-    pub port: u16,
-    pub max_active: usize,
-    pub default_timeout_ms: u64,
-    pub options: GlobalOptions,
+    /// A lifecycle operation, with the options it is to be reported under.
+    Service {
+        operation: Operation,
+        options: GlobalOptions,
+    },
+    ManagedServe {
+        definition_path: PathBuf,
+    },
 }
 
 /// Parse an argv that `entry::detect` has already identified as
@@ -86,8 +82,8 @@ pub fn parse(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
             Ok(EarlyRoute::ManagedServe { definition_path })
         }
         Some(("service", service)) => match service.subcommand() {
-            Some(("install", install)) => Ok(EarlyRoute::Service(ServiceCommand::Install(
-                InstallOptions {
+            Some(("install", install)) => Ok(EarlyRoute::Service {
+                operation: Operation::Install(InstallSettings {
                     no_start: install.get_flag("no-start"),
                     port: install
                         .get_one::<u16>("port")
@@ -101,16 +97,30 @@ pub fn parse(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
                         .get_one::<u64>("default-timeout-ms")
                         .copied()
                         .unwrap_or(DEFAULT_TIMEOUT_MS),
-                    options,
-                },
-            ))),
-            Some(("start", _)) => Ok(EarlyRoute::Service(ServiceCommand::Start { options })),
-            Some(("stop", _)) => Ok(EarlyRoute::Service(ServiceCommand::Stop { options })),
-            Some(("restart", _)) => Ok(EarlyRoute::Service(ServiceCommand::Restart { options })),
-            Some(("status", _)) => Ok(EarlyRoute::Service(ServiceCommand::Status { options })),
-            Some(("uninstall", _)) => {
-                Ok(EarlyRoute::Service(ServiceCommand::Uninstall { options }))
-            }
+                    limit: options.limit,
+                }),
+                options,
+            }),
+            Some(("start", _)) => Ok(EarlyRoute::Service {
+                operation: Operation::Start,
+                options,
+            }),
+            Some(("stop", _)) => Ok(EarlyRoute::Service {
+                operation: Operation::Stop,
+                options,
+            }),
+            Some(("restart", _)) => Ok(EarlyRoute::Service {
+                operation: Operation::Restart,
+                options,
+            }),
+            Some(("status", _)) => Ok(EarlyRoute::Service {
+                operation: Operation::Status,
+                options,
+            }),
+            Some(("uninstall", _)) => Ok(EarlyRoute::Service {
+                operation: Operation::Uninstall,
+                options,
+            }),
             _ => Err(AppError::invalid_argument(
                 "missing or unsupported mcp service subcommand",
             )),
@@ -213,13 +223,20 @@ mod tests {
             "--limit=4",
         ]))
         .unwrap();
-        let EarlyRoute::Service(ServiceCommand::Install(options)) = route else {
+        let EarlyRoute::Service {
+            operation: Operation::Install(settings),
+            options,
+        } = route
+        else {
             panic!("expected install route")
         };
-        assert!(options.no_start);
-        assert_eq!(options.port, 9000);
-        assert_eq!(options.options.limit, Some(4));
-        assert_eq!(options.options.output, OutputMode::Json);
+        assert!(settings.no_start);
+        assert_eq!(settings.port, 9000);
+        // `--limit` reaches the definition as well as the report, because the
+        // installed service serves under it.
+        assert_eq!(settings.limit, Some(4));
+        assert_eq!(options.limit, Some(4));
+        assert_eq!(options.output, OutputMode::Json);
     }
 
     /// Which argv reaches this parser at all is
@@ -252,11 +269,26 @@ mod tests {
         ] {
             let route = parse(&args(&["ah", "mcp", "service", name])).unwrap();
             let actual = match route {
-                EarlyRoute::Service(ServiceCommand::Start { .. }) => "start",
-                EarlyRoute::Service(ServiceCommand::Stop { .. }) => "stop",
-                EarlyRoute::Service(ServiceCommand::Restart { .. }) => "restart",
-                EarlyRoute::Service(ServiceCommand::Status { .. }) => "status",
-                EarlyRoute::Service(ServiceCommand::Uninstall { .. }) => "uninstall",
+                EarlyRoute::Service {
+                    operation: Operation::Start,
+                    ..
+                } => "start",
+                EarlyRoute::Service {
+                    operation: Operation::Stop,
+                    ..
+                } => "stop",
+                EarlyRoute::Service {
+                    operation: Operation::Restart,
+                    ..
+                } => "restart",
+                EarlyRoute::Service {
+                    operation: Operation::Status,
+                    ..
+                } => "status",
+                EarlyRoute::Service {
+                    operation: Operation::Uninstall,
+                    ..
+                } => "uninstall",
                 _ => "other",
             };
             assert_eq!(actual, expected);
@@ -270,11 +302,8 @@ mod tests {
                 "ah", "--cwd", ".", "mcp", "service", name, "--json", "--quiet", "--limit", "7",
             ]))
             .unwrap();
-            let options = match parsed {
-                EarlyRoute::Service(ServiceCommand::Stop { options })
-                | EarlyRoute::Service(ServiceCommand::Restart { options })
-                | EarlyRoute::Service(ServiceCommand::Uninstall { options }) => options,
-                _ => panic!("expected lifecycle mutation route"),
+            let EarlyRoute::Service { options, .. } = parsed else {
+                panic!("expected lifecycle mutation route")
             };
             assert_eq!(options.output, OutputMode::Json);
             assert!(options.quiet);

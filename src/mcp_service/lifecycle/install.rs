@@ -6,14 +6,14 @@ use super::*;
 impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     pub(super) fn install_locked(
         &self,
-        options: &InstallOptions,
+        options: &InstallSettings,
     ) -> Result<MutationOutput, AppError> {
         if options.max_active == 0 || options.default_timeout_ms == 0 {
             return Err(AppError::invalid_argument(
                 "--max-active and --default-timeout-ms must be positive",
             ));
         }
-        if options.options.limit == Some(0) {
+        if options.limit == Some(0) {
             return Err(AppError::invalid_argument("--limit must be positive"));
         }
         self.store.ensure_directories()?;
@@ -92,7 +92,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             .unwrap_or_else(Uuid::new_v4);
         let endpoint = ServiceEndpoint::loopback(options.port)?;
         let server = ServerDefinition {
-            limit: options.options.limit,
+            limit: options.limit,
             max_active: options.max_active,
             default_timeout_ms: options.default_timeout_ms,
         };
