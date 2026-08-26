@@ -1,0 +1,617 @@
+[
+  {
+    "file": "lib.rs",
+    "symbols": [
+      {
+        "kind": "fn",
+        "line": 1,
+        "name": "build_index"
+      },
+      {
+        "kind": "struct",
+        "line": 2,
+        "name": "Config"
+      },
+      {
+        "kind": "enum",
+        "line": 3,
+        "name": "Mode"
+      },
+      {
+        "kind": "trait",
+        "line": 4,
+        "name": "Render"
+      },
+      {
+        "kind": "impl",
+        "line": 5,
+        "name": "Render"
+      },
+      {
+        "kind": "mod",
+        "line": 6,
+        "name": "helpers"
+      }
+    ]
+  },
+  {
+    "file": "README.md",
+    "symbols": [
+      {
+        "kind": "h1",
+        "line": 1,
+        "name": "Title"
+      },
+      {
+        "kind": "h2",
+        "line": 2,
+        "name": "Section"
+      },
+      {
+        "kind": "h3",
+        "line": 3,
+        "name": "Sub section"
+      },
+      {
+        "kind": "h4",
+        "line": 4,
+        "name": "Deep"
+      }
+    ]
+  },
+  {
+    "file": "app.py",
+    "symbols": [
+      {
+        "kind": "class",
+        "line": 1,
+        "name": "Service"
+      },
+      {
+        "kind": "def",
+        "line": 2,
+        "name": "handle"
+      },
+      {
+        "kind": "def",
+        "line": 3,
+        "name": "plain"
+      }
+    ]
+  },
+  {
+    "file": "app.ts",
+    "symbols": [
+      {
+        "kind": "class",
+        "line": 1,
+        "name": "Widget"
+      },
+      {
+        "kind": "function",
+        "line": 2,
+        "name": "render"
+      },
+      {
+        "kind": "interface",
+        "line": 3,
+        "name": "Props"
+      },
+      {
+        "kind": "type",
+        "line": 4,
+        "name": "Alias"
+      },
+      {
+        "kind": "const-fn",
+        "line": 5,
+        "name": "build"
+      }
+    ]
+  },
+  {
+    "file": "main.go",
+    "symbols": [
+      {
+        "kind": "func",
+        "line": 1,
+        "name": "Serve"
+      },
+      {
+        "kind": "type",
+        "line": 2,
+        "name": "Server"
+      }
+    ]
+  },
+  {
+    "file": "Main.java",
+    "symbols": [
+      {
+        "kind": "package",
+        "line": 1,
+        "name": "com.example.demo"
+      },
+      {
+        "kind": "class",
+        "line": 3,
+        "name": "App"
+      },
+      {
+        "kind": "method",
+        "line": 4,
+        "name": "render"
+      }
+    ]
+  },
+  {
+    "file": "App.kt",
+    "symbols": [
+      {
+        "kind": "package",
+        "line": 1,
+        "name": "com.example.demo"
+      },
+      {
+        "kind": "class",
+        "line": 2,
+        "name": "Person"
+      },
+      {
+        "kind": "fun",
+        "line": 3,
+        "name": "boot"
+      }
+    ]
+  },
+  {
+    "file": "App.scala",
+    "symbols": [
+      {
+        "kind": "package",
+        "line": 1,
+        "name": "com.example"
+      },
+      {
+        "kind": "class",
+        "line": 2,
+        "name": "Item"
+      },
+      {
+        "kind": "def",
+        "line": 3,
+        "name": "run"
+      }
+    ]
+  },
+  {
+    "file": "Program.cs",
+    "symbols": [
+      {
+        "kind": "namespace",
+        "line": 1,
+        "name": "Demo.App"
+      },
+      {
+        "kind": "record",
+        "line": 2,
+        "name": "Item"
+      },
+      {
+        "kind": "method",
+        "line": 3,
+        "name": "Render"
+      }
+    ]
+  },
+  {
+    "file": "lib.php",
+    "symbols": [
+      {
+        "kind": "namespace",
+        "line": 1,
+        "name": "App\\Domain"
+      },
+      {
+        "kind": "class",
+        "line": 2,
+        "name": "Handler"
+      },
+      {
+        "kind": "function",
+        "line": 3,
+        "name": "handle"
+      }
+    ]
+  },
+  {
+    "file": "worker.rb",
+    "symbols": [
+      {
+        "kind": "module",
+        "line": 1,
+        "name": "Demo"
+      },
+      {
+        "kind": "class",
+        "line": 2,
+        "name": "Worker"
+      },
+      {
+        "kind": "def",
+        "line": 3,
+        "name": "perform!"
+      }
+    ]
+  },
+  {
+    "file": "app.ex",
+    "symbols": [
+      {
+        "kind": "defmodule",
+        "line": 1,
+        "name": "Demo.Worker"
+      },
+      {
+        "kind": "def",
+        "line": 2,
+        "name": "perform"
+      },
+      {
+        "kind": "defp",
+        "line": 3,
+        "name": "helper?"
+      },
+      {
+        "kind": "defmacro",
+        "line": 4,
+        "name": "guarded"
+      }
+    ]
+  },
+  {
+    "file": "app.erl",
+    "symbols": [
+      {
+        "kind": "module",
+        "line": 1,
+        "name": "demo_worker"
+      },
+      {
+        "kind": "function",
+        "line": 2,
+        "name": "handle"
+      }
+    ]
+  },
+  {
+    "file": "App.swift",
+    "symbols": [
+      {
+        "kind": "struct",
+        "line": 1,
+        "name": "Model"
+      },
+      {
+        "kind": "actor",
+        "line": 2,
+        "name": "Store"
+      },
+      {
+        "kind": "func",
+        "line": 3,
+        "name": "reload"
+      }
+    ]
+  },
+  {
+    "file": "main.dart",
+    "symbols": [
+      {
+        "kind": "class",
+        "line": 1,
+        "name": "Widget"
+      },
+      {
+        "kind": "mixin",
+        "line": 2,
+        "name": "Logging"
+      },
+      {
+        "kind": "function",
+        "line": 3,
+        "name": "render"
+      }
+    ]
+  },
+  {
+    "file": "main.cpp",
+    "symbols": [
+      {
+        "kind": "namespace",
+        "line": 1,
+        "name": "demo::core"
+      },
+      {
+        "kind": "class",
+        "line": 2,
+        "name": "Engine"
+      },
+      {
+        "kind": "struct",
+        "line": 3,
+        "name": "Point"
+      },
+      {
+        "kind": "function",
+        "line": 4,
+        "name": "compute"
+      }
+    ]
+  },
+  {
+    "file": "main.zig",
+    "symbols": [
+      {
+        "kind": "fn",
+        "line": 1,
+        "name": "main"
+      },
+      {
+        "kind": "const",
+        "line": 2,
+        "name": "Config"
+      }
+    ]
+  },
+  {
+    "file": "init.lua",
+    "symbols": [
+      {
+        "kind": "function",
+        "line": 1,
+        "name": "setup"
+      },
+      {
+        "kind": "function",
+        "line": 2,
+        "name": "M.teardown"
+      }
+    ]
+  },
+  {
+    "file": "Module.pm",
+    "symbols": [
+      {
+        "kind": "package",
+        "line": 1,
+        "name": "Demo::Module"
+      },
+      {
+        "kind": "sub",
+        "line": 2,
+        "name": "render"
+      }
+    ]
+  },
+  {
+    "file": "analysis.r",
+    "symbols": [
+      {
+        "kind": "function",
+        "line": 1,
+        "name": "summarise"
+      },
+      {
+        "kind": "function",
+        "line": 2,
+        "name": "plot.data"
+      }
+    ]
+  },
+  {
+    "file": "model.jl",
+    "symbols": [
+      {
+        "kind": "struct",
+        "line": 1,
+        "name": "Point"
+      },
+      {
+        "kind": "mutable struct",
+        "line": 2,
+        "name": "Buffer"
+      },
+      {
+        "kind": "function",
+        "line": 3,
+        "name": "solve"
+      }
+    ]
+  },
+  {
+    "file": "Lib.hs",
+    "symbols": [
+      {
+        "kind": "module",
+        "line": 1,
+        "name": "Demo.Lib"
+      },
+      {
+        "kind": "data",
+        "line": 2,
+        "name": "Shape"
+      },
+      {
+        "kind": "newtype",
+        "line": 3,
+        "name": "Wrapper"
+      },
+      {
+        "kind": "class",
+        "line": 4,
+        "name": "Render"
+      },
+      {
+        "kind": "function",
+        "line": 5,
+        "name": "render"
+      }
+    ]
+  },
+  {
+    "file": "lib.ml",
+    "symbols": [
+      {
+        "kind": "module",
+        "line": 1,
+        "name": "Store"
+      },
+      {
+        "kind": "type",
+        "line": 2,
+        "name": "shape"
+      },
+      {
+        "kind": "let",
+        "line": 3,
+        "name": "walk"
+      }
+    ]
+  },
+  {
+    "file": "main.tf",
+    "symbols": [
+      {
+        "kind": "resource",
+        "line": 1,
+        "name": "aws_s3_bucket.logs"
+      },
+      {
+        "kind": "module",
+        "line": 2,
+        "name": "network"
+      },
+      {
+        "kind": "variable",
+        "line": 3,
+        "name": "region"
+      }
+    ]
+  },
+  {
+    "file": "config.yml",
+    "symbols": [
+      {
+        "kind": "key",
+        "line": 1,
+        "name": "service"
+      },
+      {
+        "kind": "key",
+        "line": 2,
+        "name": "image_name"
+      }
+    ]
+  },
+  {
+    "file": "Cargo.toml",
+    "symbols": [
+      {
+        "kind": "section",
+        "line": 1,
+        "name": "package"
+      },
+      {
+        "kind": "section",
+        "line": 2,
+        "name": "bin"
+      },
+      {
+        "kind": "section",
+        "line": 3,
+        "name": "dependencies.serde"
+      }
+    ]
+  },
+  {
+    "file": "deploy.sh",
+    "symbols": [
+      {
+        "kind": "function",
+        "line": 1,
+        "name": "build"
+      },
+      {
+        "kind": "function",
+        "line": 2,
+        "name": "teardown"
+      }
+    ]
+  },
+  {
+    "file": "Module.psm1",
+    "symbols": [
+      {
+        "kind": "function",
+        "line": 1,
+        "name": "Invoke-Build"
+      }
+    ]
+  },
+  {
+    "file": "Dockerfile",
+    "symbols": [
+      {
+        "kind": "stage",
+        "line": 1,
+        "name": "builder"
+      },
+      {
+        "kind": "stage",
+        "line": 2,
+        "name": "debian:bookworm"
+      }
+    ]
+  },
+  {
+    "file": "Makefile",
+    "symbols": [
+      {
+        "kind": "target",
+        "line": 1,
+        "name": "build"
+      },
+      {
+        "kind": "target",
+        "line": 2,
+        "name": "test-all"
+      }
+    ]
+  },
+  {
+    "file": "notes.txt",
+    "symbols": [
+      {
+        "kind": "symbol",
+        "line": 1,
+        "name": "class Loose"
+      },
+      {
+        "kind": "symbol",
+        "line": 2,
+        "name": "interface Loose"
+      },
+      {
+        "kind": "symbol",
+        "line": 3,
+        "name": "fn loose"
+      },
+      {
+        "kind": "symbol",
+        "line": 4,
+        "name": "def loose"
+      }
+    ]
+  }
+]
