@@ -13,9 +13,6 @@ use std::process::{Command, Stdio};
 #[cfg(not(windows))]
 use command_group::{CommandGroup, GroupChild};
 
-#[cfg(windows)]
-use std::env;
-
 use crate::error::AppError;
 
 #[cfg(windows)]
@@ -306,82 +303,29 @@ fn resolve_program_for_spawn(program: &str, cwd: Option<&Path>) -> PathBuf {
     path
 }
 
+/// Resolve a bare program name the way Windows would, before spawning.
+///
+/// `Command` searches PATH for the name and `.exe` alone, so an npm shim that
+/// exists only as `.cmd` is invisible to it. A name that already carries an
+/// extension is left alone - it is not ours to rewrite - and so is a name with
+/// a separator in it, which the caller resolves against the request directory.
 #[cfg(windows)]
 fn resolve_windows_program_from(program: &str, current_dir: Option<&Path>) -> Option<PathBuf> {
     let original = Path::new(program);
     if original.extension().is_some() {
         return None;
     }
-    let path_exts = path_ext_candidates();
     if has_path_separator(program) {
-        return find_existing_with_extensions(original, &path_exts);
+        return ah_platform::exec::with_executable_extension(
+            original,
+            &ah_platform::exec::executable_extensions(),
+        );
     }
-
-    let path_dirs = env::var_os("PATH").map(|paths| env::split_paths(&paths).collect::<Vec<_>>());
-    resolve_windows_program_in(program, current_dir, path_dirs.as_deref(), &path_exts)
-}
-
-#[cfg(windows)]
-fn resolve_windows_program_in(
-    program: &str,
-    current_dir: Option<&Path>,
-    path_dirs: Option<&[PathBuf]>,
-    path_exts: &[String],
-) -> Option<PathBuf> {
-    if let Some(current_dir) = current_dir {
-        let candidate = current_dir.join(program);
-        if let Some(resolved) = find_existing_with_extensions(&candidate, path_exts) {
-            return Some(resolved);
-        }
-    }
-
-    for dir in path_dirs.unwrap_or_default() {
-        let candidate = dir.join(program);
-        if let Some(resolved) = find_existing_with_extensions(&candidate, path_exts) {
-            return Some(resolved);
-        }
-    }
-
-    None
-}
-
-#[cfg(windows)]
-fn find_existing_with_extensions(candidate: &Path, path_exts: &[String]) -> Option<PathBuf> {
-    for extension in path_exts {
-        let mut extended = candidate.to_path_buf();
-        extended.set_extension(extension.trim_start_matches('.'));
-        if extended.is_file() {
-            return Some(extended);
-        }
-    }
-
-    None
-}
-
-#[cfg(windows)]
-fn path_ext_candidates() -> Vec<String> {
-    env::var_os("PATHEXT")
-        .map(|raw| {
-            raw.to_string_lossy()
-                .split(';')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| {
-                    if value.starts_with('.') {
-                        value.to_owned()
-                    } else {
-                        format!(".{value}")
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .filter(|values| !values.is_empty())
-        .unwrap_or_else(|| {
-            [".COM", ".EXE", ".BAT", ".CMD"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
-        })
+    let directories = current_dir
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect::<Vec<_>>();
+    ah_platform::exec::find_executable(program, &directories)
 }
 
 #[cfg(windows)]
@@ -496,19 +440,16 @@ mod windows_tests {
 
     use super::*;
 
+    /// An npm shim exists only as `.cmd`, and the request directory is
+    /// searched before PATH.
     #[test]
-    fn resolves_extensionless_program_from_path_with_pathext_order() {
+    fn resolves_an_extensionless_program_from_the_request_directory() {
         let temp_dir = tempfile::tempdir().expect("temp dir should be created");
         let shim = temp_dir.path().join("npx.CMD");
         fs::write(&shim, "@echo off\r\n").expect("shim should be written");
 
-        let resolved = resolve_windows_program_in(
-            "npx",
-            None,
-            Some(&[temp_dir.path().to_path_buf()]),
-            &[".EXE".to_owned(), ".CMD".to_owned()],
-        )
-        .expect("npx should resolve through PATHEXT");
+        let resolved = resolve_windows_program_from("npx", Some(temp_dir.path()))
+            .expect("npx should resolve through PATHEXT");
 
         assert_eq!(resolved, shim);
     }

@@ -140,40 +140,12 @@ fn missing(program: &str) -> AppError {
 /// Agent CLIs are usually npm shims, which on Windows exist only as `.cmd`
 /// files. `Command` searches PATH for the bare name and `.exe` alone, so the
 /// PATHEXT candidates have to be resolved before spawning.
-#[cfg(windows)]
 fn resolve_program(program: &str) -> Option<PathBuf> {
     let candidate = Path::new(program);
     if candidate.components().count() > 1 {
         return candidate.is_file().then(|| candidate.to_path_buf());
     }
-    let extensions = std::env::var("PATHEXT")
-        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
-        .to_lowercase();
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        for extension in extensions.split(';').map(str::trim) {
-            if extension.is_empty() {
-                continue;
-            }
-            let candidate = directory.join(format!("{program}{extension}"));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-#[cfg(not(windows))]
-fn resolve_program(program: &str) -> Option<PathBuf> {
-    let candidate = Path::new(program);
-    if candidate.components().count() > 1 {
-        return candidate.is_file().then(|| candidate.to_path_buf());
-    }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
+    ah_platform::exec::find_executable(program, &[])
 }
 
 pub fn available(program: &str) -> bool {

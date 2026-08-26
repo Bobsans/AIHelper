@@ -10,4 +10,5 @@
 //! the caller is doing. Callers have their own error types and their own
 //! wording; what they were duplicating is the mechanism.
 
+pub mod exec;
 pub mod fs;

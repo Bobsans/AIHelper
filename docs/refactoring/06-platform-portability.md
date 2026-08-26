@@ -143,8 +143,30 @@ the port has `cfg`.
    behaviour change: every platform's policy is now a table the tests read on
    any machine, which the `cfg` blocks made impossible. The service is
    deliberately excluded, see 6.4.
-2. Introduce `platform::fs` / `platform::process` / `platform::exec`; move existing
-   `cfg` pairs in as-is.
+2. ~~Introduce `platform::fs` / `platform::exec`; move existing `cfg` pairs in
+   as-is.~~ **(done)** as the `ah-platform` crate - a crate rather than a module
+   because `ah-update-helper` and the postgres plugin held copies too.
+
+   `platform::process` was **not** extracted, and the reason is that 6.3
+   overstated it:
+
+   - Spawn flags already have a port. `ah_plugin_api::noninteractive_command`
+     is it, and every plugin already goes through it. Moving it would churn
+     the surface every plugin links against for no behavioural gain.
+   - The two job-object users overlap but are not copies.
+     `commands/run/windows_job.rs` also queries accounting information and
+     terminates a tree; `bin/ah-mcp-service.rs` is a supervisor whose whole
+     body is that one job. Step 6 below removes the second one from
+     non-Windows builds entirely, which is the cheaper fix and is already on
+     the list.
+   - Process *groups* off Windows are `command_group`, a dependency, not code
+     of ours.
+
+   What was genuine duplication: the reparse-point check (five copies, three
+   spellings of one constant), the hard-link check (two), `MoveFileExW` (two),
+   and PATH+PATHEXT resolution (three, which disagreed - one defaulted to
+   `.exe` alone when `PATHEXT` was unset, and sorted its candidates
+   alphabetically, so a `.bat` shim would beat a real `.exe`).
 3. Introduce `ServiceSpec` + `ServiceScheduler`; reimplement `WindowsTaskScheduler`
    as a projection. The lifecycle tests already use fake schedulers, so this step is
    well covered from day one.

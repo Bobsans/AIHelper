@@ -94,7 +94,7 @@ Mostly moves, made safe by phases 0–1.
 | Single-parse `Entry` enum; hidden subcommands replace env-var routing                    | 03     |
 | ~~`run()` split into parse → bootstrap → dispatch → report~~ **(done)**                  | 03     |
 | ~~Remove `set_current_dir`; request-scoped cwd; concurrency test~~ **(done)**            | 03     |
-| `ah-paths`; `platform::{fs,process,exec}` ports                                          | 03, 06 |
+| ~~`ah-paths`; `platform::{fs,process,exec}` ports~~ **(done)**                           | 03, 06 |
 
 **Exit criterion:** no file over ~800 production lines; one parse of argv; no
 process-global working directory.

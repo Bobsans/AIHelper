@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ah-paths = { path = "../../crates/ah-paths" }
+ah-platform = { path = "../../crates/ah-platform" }
 ah-plugin-api = { path = "../../crates/ah-plugin-api" }
 ah-plugin-sdk = { path = "../../crates/ah-plugin-sdk" }
 clap.workspace = true

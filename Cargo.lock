@@ -131,6 +131,7 @@ name = "ah-plugin-postgres"
 version = "1.4.0"
 dependencies = [
  "ah-paths",
+ "ah-platform",
  "ah-plugin-api",
  "ah-plugin-sdk",
  "clap",

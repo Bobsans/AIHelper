@@ -1316,35 +1316,7 @@ fn parse_psql_major(raw: &str) -> Option<u32> {
 }
 
 fn find_psql_in_path() -> Option<PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    for dir in env::split_paths(&path_var) {
-        for name in path_executable_names("psql") {
-            let candidate = dir.join(&name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn path_executable_names(base: &str) -> Vec<String> {
-    if cfg!(windows) {
-        let mut names = Vec::new();
-        names.push(format!("{base}.exe"));
-        if let Some(pathext) = env::var_os("PATHEXT") {
-            for ext in env::split_paths(&pathext) {
-                if let Some(ext) = ext.to_str() {
-                    names.push(format!("{base}{ext}"));
-                }
-            }
-        }
-        names.sort();
-        names.dedup();
-        names
-    } else {
-        vec![base.to_owned()]
-    }
+    ah_platform::exec::find_executable("psql", &[])
 }
 
 fn psql_exe_name() -> &'static str {
