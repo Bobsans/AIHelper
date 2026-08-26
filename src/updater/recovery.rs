@@ -37,13 +37,9 @@ pub(crate) fn recover_before_startup(
                 .map_err(|_| recovery_error("failed to resolve the running executable"))?,
         )
         .map_err(|_| recovery_error("failed to canonicalize the running executable"))?;
-        let Some(app_data) = std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-        else {
+        let Some(updater_root) = crate::updater::installation::updater_root() else {
             return Ok(EarlyRecoveryOutcome::Continue);
         };
-        let updater_root = app_data.join("AIHelper").join("updater");
         let Some(initial_paths) = discover_pending(&executable, &updater_root)? else {
             return Ok(EarlyRecoveryOutcome::Continue);
         };

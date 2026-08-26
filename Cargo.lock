@@ -64,6 +64,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-paths"
+version = "1.4.0"
+
+[[package]]
 name = "ah-plugin-api"
 version = "1.4.0"
 dependencies = [
@@ -118,6 +122,7 @@ dependencies = [
 name = "ah-plugin-postgres"
 version = "1.4.0"
 dependencies = [
+ "ah-paths",
  "ah-plugin-api",
  "ah-plugin-sdk",
  "clap",
@@ -260,6 +265,7 @@ version = "1.4.0"
 dependencies = [
  "aes-gcm",
  "ah-mcp",
+ "ah-paths",
  "ah-plugin-api",
  "ah-redact",
  "ah-release-manifest",

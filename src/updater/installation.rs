@@ -70,6 +70,17 @@ pub(crate) trait LegacyReleaseSource {
     fn download(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError>;
 }
 
+/// Where a per-user updater keeps its transaction state.
+///
+/// Resolved from the platform location and *not* from `AH_CONFIG_DIR`: a helper
+/// from one release hands off to an `ah` from another, and an override set for
+/// one command must not move the transaction the other is finishing.
+pub(crate) fn updater_root() -> Option<PathBuf> {
+    ah_paths::platform_config_dir(ah_paths::Layout::host(), &ah_paths::ProcessEnvironment)
+        .ok()
+        .map(|root| root.join("updater"))
+}
+
 #[derive(Debug, Clone)]
 struct InstallationStatePaths {
     root: PathBuf,
@@ -94,11 +105,10 @@ impl InstallationStatePaths {
     fn discover() -> Result<Self, UpdaterError> {
         #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
         {
-            let app_data = std::env::var_os("APPDATA")
-                .map(PathBuf::from)
-                .filter(|path| !path.as_os_str().is_empty())
-                .ok_or_else(|| installation("unable to resolve per-user updater state"))?;
-            Self::from_root(&app_data.join("AIHelper").join("updater"))
+            Self::from_root(
+                &updater_root()
+                    .ok_or_else(|| installation("unable to resolve per-user updater state"))?,
+            )
         }
         #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
         {

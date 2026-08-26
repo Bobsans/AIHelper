@@ -1819,124 +1819,51 @@ fn postgres_cache_root() -> Result<PathBuf, InvocationResponse> {
     Ok(cache_dir()?.join("tools").join("postgres"))
 }
 
+/// The plugin's own view of where AIHelper keeps configuration.
+///
+/// This used to be a character-for-character copy of the host's resolution -
+/// two implementations that agreed only because nobody had edited one of them.
 fn config_dir() -> Result<PathBuf, InvocationResponse> {
-    if let Some(value) = env::var_os("AH_CONFIG_DIR") {
-        let path = PathBuf::from(value);
-        if path.as_os_str().is_empty() {
-            return Err(InvocationResponse::error(
-                "INVALID_ARGUMENT",
-                "AH_CONFIG_DIR must not be empty",
-            ));
-        }
-        return Ok(path);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join("AIHelper"))
-            .ok_or_else(|| {
-                InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    "unable to resolve %APPDATA% for postgres plugin config; set AH_CONFIG_DIR",
-                )
-            })
-    }
-    #[cfg(target_os = "macos")]
-    {
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| {
-                path.join("Library")
-                    .join("Application Support")
-                    .join("AIHelper")
-            })
-            .ok_or_else(|| {
-                InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    "unable to resolve $HOME for postgres plugin config; set AH_CONFIG_DIR",
-                )
-            })
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Some(value) = env::var_os("XDG_CONFIG_HOME") {
-            let path = PathBuf::from(value);
-            if !path.as_os_str().is_empty() {
-                return Ok(path.join("aihelper"));
-            }
-        }
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join(".config").join("aihelper"))
-            .ok_or_else(|| {
-                InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    "unable to resolve config directory for postgres plugin; set AH_CONFIG_DIR",
-                )
-            })
-    }
+    ah_paths::config_dir(ah_paths::Layout::host(), &ah_paths::ProcessEnvironment)
+        .map(|resolved| resolved.path)
+        .map_err(|error| path_error(error, "config"))
 }
 
 fn cache_dir() -> Result<PathBuf, InvocationResponse> {
-    if let Some(value) = env::var_os("AH_CACHE_DIR") {
-        let path = PathBuf::from(value);
-        if path.as_os_str().is_empty() {
-            return Err(InvocationResponse::error(
-                "INVALID_ARGUMENT",
-                "AH_CACHE_DIR must not be empty",
-            ));
+    ah_paths::cache_dir(ah_paths::Layout::host(), &ah_paths::ProcessEnvironment)
+        .map(|resolved| resolved.path)
+        .map_err(|error| path_error(error, "cache"))
+}
+
+/// The wording each failure had before the resolution moved out of this file.
+fn path_error(error: ah_paths::Error, what: &str) -> InvocationResponse {
+    if error.kind == ah_paths::ErrorKind::Empty {
+        return InvocationResponse::error(
+            "INVALID_ARGUMENT",
+            format!("{} must not be empty", error.variable),
+        );
+    }
+    let override_variable = if what == "cache" {
+        "AH_CACHE_DIR"
+    } else {
+        "AH_CONFIG_DIR"
+    };
+    let detail = match ah_paths::Layout::host() {
+        ah_paths::Layout::Windows => format!(
+            "unable to resolve %{}% for postgres plugin {what}",
+            error.variable
+        ),
+        ah_paths::Layout::MacOs => {
+            format!("unable to resolve $HOME for postgres plugin {what}")
         }
-        return Ok(path);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join("AIHelper"))
-            .ok_or_else(|| {
-                InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    "unable to resolve %LOCALAPPDATA% for postgres plugin cache; set AH_CACHE_DIR",
-                )
-            })
-    }
-    #[cfg(target_os = "macos")]
-    {
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join("Library").join("Caches").join("AIHelper"))
-            .ok_or_else(|| {
-                InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    "unable to resolve $HOME for postgres plugin cache; set AH_CACHE_DIR",
-                )
-            })
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Some(value) = env::var_os("XDG_CACHE_HOME") {
-            let path = PathBuf::from(value);
-            if !path.as_os_str().is_empty() {
-                return Ok(path.join("aihelper"));
-            }
+        ah_paths::Layout::Xdg => {
+            format!("unable to resolve {what} directory for postgres plugin")
         }
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join(".cache").join("aihelper"))
-            .ok_or_else(|| {
-                InvocationResponse::error(
-                    "INVALID_ARGUMENT",
-                    "unable to resolve cache directory for postgres plugin; set AH_CACHE_DIR",
-                )
-            })
-    }
+    };
+    InvocationResponse::error(
+        "INVALID_ARGUMENT",
+        format!("{detail}; set {override_variable}"),
+    )
 }
 
 fn execute_ping(

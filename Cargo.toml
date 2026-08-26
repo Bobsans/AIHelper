@@ -14,6 +14,7 @@ publish = false
 [workspace]
 members = [
     "crates/ah-mcp",
+    "crates/ah-paths",
     "crates/ah-plugin-api",
     "crates/ah-plugin-sdk",
     "crates/ah-redact",
@@ -94,6 +95,7 @@ reqwest = { workspace = true, features = ["json"] }
 sha2.workspace = true
 tempfile.workspace = true
 zip.workspace = true
+ah-paths = { path = "crates/ah-paths" }
 ah-plugin-api = { path = "crates/ah-plugin-api" }
 ah-redact = { path = "crates/ah-redact" }
 ah-runtime = { path = "crates/ah-runtime" }

@@ -58,73 +58,33 @@ pub(crate) fn set_base_dir(directory: PathBuf) {
 }
 
 fn resolve_config_dir() -> Result<PathBuf, AppError> {
-    if let Some(value) = env::var_os("AH_CONFIG_DIR") {
-        let path = PathBuf::from(value);
-        if path.as_os_str().is_empty() {
-            return Err(AppError::invalid_argument(
-                "AH_CONFIG_DIR must not be empty",
-            ));
-        }
-        if let Some(base) = BASE_DIR.get().filter(|_| path.is_relative()) {
-            return Ok(base.join(path));
-        }
-        return Ok(path);
+    let resolved = ah_paths::config_dir(ah_paths::Layout::host(), &ah_paths::ProcessEnvironment)
+        .map_err(config_error)?;
+    // A relative override is taken relative to the request directory. Only an
+    // override can be relative, which is why the resolution reports its source
+    // rather than leaving this to a guess.
+    if let (ah_paths::Source::Environment(_), Some(base)) = (resolved.source, BASE_DIR.get()) {
+        return Ok(ah_paths::rebase(base, &resolved.path));
     }
+    Ok(resolved.path)
+}
 
-    default_config_dir()
+/// The wording each failure had before this crate owned the resolution.
+fn config_error(error: ah_paths::Error) -> AppError {
+    AppError::invalid_argument(match error.kind {
+        ah_paths::ErrorKind::Empty => format!("{} must not be empty", error.variable),
+        ah_paths::ErrorKind::Unresolved => match error.variable {
+            "APPDATA" => {
+                "unable to resolve %APPDATA% for configuration; set AH_CONFIG_DIR".to_owned()
+            }
+            "HOME" => "unable to resolve $HOME for configuration; set AH_CONFIG_DIR".to_owned(),
+            _ => "unable to resolve config directory; set AH_CONFIG_DIR".to_owned(),
+        },
+    })
 }
 
 pub(crate) fn resolve_log_dir() -> Option<PathBuf> {
     resolve_config_dir().ok().map(|dir| dir.join(LOG_DIR))
-}
-
-fn default_config_dir() -> Result<PathBuf, AppError> {
-    #[cfg(target_os = "windows")]
-    {
-        env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join("AIHelper"))
-            .ok_or_else(|| {
-                AppError::invalid_argument(
-                    "unable to resolve %APPDATA% for configuration; set AH_CONFIG_DIR",
-                )
-            })
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| {
-                path.join("Library")
-                    .join("Application Support")
-                    .join("AIHelper")
-            })
-            .ok_or_else(|| {
-                AppError::invalid_argument(
-                    "unable to resolve $HOME for configuration; set AH_CONFIG_DIR",
-                )
-            })
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Some(value) = env::var_os("XDG_CONFIG_HOME") {
-            let path = PathBuf::from(value);
-            if !path.as_os_str().is_empty() {
-                return Ok(path.join("aihelper"));
-            }
-        }
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.join(".config").join("aihelper"))
-            .ok_or_else(|| {
-                AppError::invalid_argument("unable to resolve config directory; set AH_CONFIG_DIR")
-            })
-    }
 }
 
 fn resolve_plugin_dirs() -> Result<Vec<PathBuf>, AppError> {

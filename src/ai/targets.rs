@@ -374,16 +374,16 @@ fn join_relative(base: &Path, relative: &str) -> PathBuf {
 }
 
 pub fn home_dir() -> Result<PathBuf, AppError> {
-    let variable = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(variable)
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .ok_or_else(|| {
-            AppError::external(
-                "AI_HOME_UNRESOLVED",
-                format!("unable to resolve %{variable}% for agent configuration"),
-            )
-        })
+    let layout = ah_paths::Layout::host();
+    ah_paths::home_dir(layout, &ah_paths::ProcessEnvironment).map_err(|_| {
+        AppError::external(
+            "AI_HOME_UNRESOLVED",
+            format!(
+                "unable to resolve %{}% for agent configuration",
+                ah_paths::home_variable(layout)
+            ),
+        )
+    })
 }
 
 #[cfg(test)]

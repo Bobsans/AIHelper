@@ -61,6 +61,20 @@ Note also that `ai/targets.rs:244` hard-codes `.config/opencode` as `user_dir` o
 every platform, including Windows — correct for OpenCode, but it demonstrates that
 target path policy is per-tool knowledge that belongs in one place.
 
+**Corrected while acting on this.** Two of the six are not duplication and must
+not be merged away:
+
+- The managed service resolves LocalAppData through `SHGetKnownFolderPath`, not
+  `%LOCALAPPDATA%`. A service must not take its state directory from an
+  environment variable a caller can set; the difference is the point.
+- `copilot_user_mcp_path` and `opencode_config::config_directory` locate *other
+  tools'* configuration. That is per-tool knowledge, as the paragraph above
+  says — a different owner from AIHelper's own directories.
+
+The remaining four — host config, postgres plugin, updater installation,
+updater recovery — plus `targets::home_dir` were genuine duplication, and the
+postgres plugin's copy was character-for-character identical to the host's.
+
 ## Why it hurts
 
 - macOS and Linux users get the CLI and `mcp serve` but not the managed service,
@@ -125,8 +139,10 @@ the port has `cfg`.
 
 ## Migration
 
-1. Extract `ah-paths`; migrate host, service, updater, then plugins. No behavior
-   change: each move is covered by asserting the resolved path before and after.
+1. ~~Extract `ah-paths`; migrate host, updater, then plugins.~~ **(done)** No
+   behaviour change: every platform's policy is now a table the tests read on
+   any machine, which the `cfg` blocks made impossible. The service is
+   deliberately excluded, see 6.4.
 2. Introduce `platform::fs` / `platform::process` / `platform::exec`; move existing
    `cfg` pairs in as-is.
 3. Introduce `ServiceSpec` + `ServiceScheduler`; reimplement `WindowsTaskScheduler`
