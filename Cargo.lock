@@ -44,6 +44,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-error"
+version = "1.4.0"
+dependencies = [
+ "ah-plugin-api",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "ah-mcp"
 version = "1.4.0"
 dependencies = [
@@ -274,6 +283,7 @@ name = "aihelper"
 version = "1.4.0"
 dependencies = [
  "aes-gcm",
+ "ah-error",
  "ah-mcp",
  "ah-paths",
  "ah-platform",

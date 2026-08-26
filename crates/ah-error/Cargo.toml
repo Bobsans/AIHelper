@@ -1,0 +1,16 @@
+[package]
+name = "ah-error"
+version = "1.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AIHelper's error type, and what a user sees when one reaches the surface"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
+
+[dependencies]
+ah-plugin-api = { path = "../ah-plugin-api" }
+serde_json.workspace = true
+thiserror.workspace = true

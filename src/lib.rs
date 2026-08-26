@@ -3,7 +3,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 mod entry;
-pub mod error;
+pub(crate) use ah_error as error;
 pub(crate) mod event_log;
 pub(crate) mod git_status;
 pub(crate) mod host_commands;

@@ -28,7 +28,7 @@ pub(super) fn parse_clap_suggestion(line: &str) -> Option<&str> {
         .and_then(|value| value.strip_suffix('\''))
 }
 
-pub(crate) fn suggested_subcommand(message: &str) -> Option<&str> {
+pub fn suggested_subcommand(message: &str) -> Option<&str> {
     message.lines().find_map(parse_clap_suggestion)
 }
 

@@ -1,5 +1,9 @@
 //! `AppError`, and what a user sees when one reaches the surface.
 //!
+//! Its own crate because every subsystem returns it, which made it the thing
+//! that kept them all inside the root crate. It depends on nothing of AIHelper
+//! beyond the plugin ABI's text formatter, so the move was a relocation.
+//!
 //! The 1047 production lines this came from mixed the error type with the
 //! console renderer and with thirteen small functions for cleaning up message
 //! text, so the shape of the type was hard to see past the presentation:
@@ -14,11 +18,11 @@ use std::{ffi::OsStr, io, path::PathBuf};
 use ah_plugin_api::ErrorDiagnostic;
 use thiserror::Error;
 
-use crate::output::{TextFormatter, TextStyle};
+use ah_plugin_api::{TextFormatter, TextStyle};
 
 mod message;
 mod render;
-pub(crate) use message::suggested_subcommand;
+pub use message::suggested_subcommand;
 use message::{
     compact_message, help_command_from_usage, normalize_message, parse_clap_suggestion,
     parse_usage_lines, regex_error_summary, strip_after_colon, strip_clap_error_prefix,
@@ -593,7 +597,7 @@ mod tests {
         AppError, CommandSuggestion, console_diagnostic_from_invalid_argument,
         render_console_diagnostic,
     };
-    use crate::output::TextFormatter;
+    use ah_plugin_api::TextFormatter;
 
     #[test]
     fn unknown_command_rendering_is_actionable_without_internal_code() {
