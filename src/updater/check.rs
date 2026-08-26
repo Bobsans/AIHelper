@@ -9,8 +9,8 @@ use crate::{
     error::AppError,
     output::Emitter,
     updater::{
-        command::UpgradeRequest, github::GitHubReleaseClient, map_updater_error,
-        service::ServiceGuard, trust::production_release_trust,
+        Host, command::UpgradeRequest, github::GitHubReleaseClient, map_updater_error,
+        trust::production_release_trust,
     },
 };
 
@@ -22,14 +22,14 @@ pub(crate) trait ReleaseCheckSource {
 pub(crate) fn execute(
     request: UpgradeRequest,
     options: GlobalOptions,
-    guard: &dyn ServiceGuard,
+    host: &Host<'_>,
 ) -> Result<(), AppError> {
     match request {
-        // A check mutates nothing, so it never touches the service.
+        // A check mutates nothing, so it needs neither port.
         UpgradeRequest::Check => execute_check(options),
         request @ (UpgradeRequest::Upgrade
         | UpgradeRequest::Version(_)
-        | UpgradeRequest::Rollback) => super::activate::execute(request, options, guard),
+        | UpgradeRequest::Rollback) => super::activate::execute(request, options, host),
     }
 }
 

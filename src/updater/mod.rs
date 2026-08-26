@@ -8,7 +8,7 @@ mod handoff;
 mod installation;
 pub(crate) mod recovery;
 pub(crate) mod service;
-mod smoke;
+pub(crate) mod smoke;
 mod trust;
 
 pub(crate) use check::execute;
@@ -16,6 +16,18 @@ pub(crate) use check::execute;
 use ah_updater_core::UpdaterError;
 
 use crate::error::AppError;
+
+/// What the updater needs from the process it runs inside.
+///
+/// Two ports, because the mechanism must not reach for either itself: it may
+/// have to hold a managed service still while it swaps the binary under it, and
+/// it has to run the candidate binary before trusting it. The implementations
+/// are the CLI's - `mcp_service::lifecycle::guard` and `upgrade`'s bounded
+/// runner - which is exactly what an extracted crate must not know.
+pub(crate) struct Host<'a> {
+    pub(crate) service: &'a dyn service::ServiceGuard,
+    pub(crate) smoke: &'a dyn smoke::SmokeRunner,
+}
 
 /// The updater's errors, reported under the code the core assigned them.
 ///

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, ffi::OsStr, fs, path::Path, time::Duration};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use ah_plugin_api::AH_PLUGIN_ABI_VERSION;
 use ah_updater_core::{
@@ -7,12 +7,8 @@ use ah_updater_core::{
 };
 use serde::Deserialize;
 
-use crate::commands::run::io::{EnvironmentOverride, RunCommandOptions};
-
 use super::candidate::PreparedCandidate;
 
-const SMOKE_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_SMOKE_OUTPUT_BYTES: usize = 1024 * 1024;
 const REQUIRED_BUILTINS: [(&str, &str); 8] = [
     ("ctx", "builtin-ctx"),
     ("file", "builtin-file"),
@@ -41,9 +37,10 @@ impl SmokeCheckedCandidate {
 
 pub(crate) fn run_offline_smoke(
     prepared: PreparedCandidate,
+    runner: &dyn SmokeRunner,
 ) -> Result<SmokeCheckedCandidate, UpdaterError> {
     perform_offline_smoke(
-        &BoundedSmokeRunner,
+        runner,
         prepared.root(),
         prepared.staging_root(),
         prepared.verified_release().manifest(),
@@ -52,7 +49,7 @@ pub(crate) fn run_offline_smoke(
 }
 
 fn perform_offline_smoke(
-    runner: &impl SmokeRunner,
+    runner: &dyn SmokeRunner,
     candidate_root: &Path,
     staging_root: &Path,
     manifest: &ReleaseManifest,
@@ -269,67 +266,38 @@ struct PluginCatalogEntry {
     mcp_omission_reason: Option<String>,
 }
 
-struct SmokeRequest<'a> {
-    program: &'a Path,
-    arguments: &'a [&'a str],
-    cwd: &'a Path,
-    config_dir: &'a Path,
+/// One command the smoke check wants run against the candidate.
+pub(crate) struct SmokeRequest<'a> {
+    pub(crate) program: &'a Path,
+    pub(crate) arguments: &'a [&'a str],
+    pub(crate) cwd: &'a Path,
+    /// An empty directory, so the candidate answers from a clean configuration
+    /// rather than the running installation's.
+    pub(crate) config_dir: &'a Path,
 }
 
 #[derive(Debug)]
-struct SmokeProcessOutput {
-    exit_code: Option<i32>,
-    timed_out: bool,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    stdout_truncated: bool,
-    stderr_truncated: bool,
+pub(crate) struct SmokeProcessOutput {
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) timed_out: bool,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
 }
 
-trait SmokeRunner {
+/// Running a bounded, cancellable child process.
+///
+/// A port rather than a call, because the implementation is the CLI's process
+/// runner and the smoke check must not know that. The truncation flags are part
+/// of the contract: a candidate that floods stdout has to fail the check rather
+/// than be believed.
+pub(crate) trait SmokeRunner {
+    /// # Errors
+    ///
+    /// [`UpdaterError`] when the process cannot be launched or waited on. A
+    /// process that runs and fails is a successful call with a failing output.
     fn run(&self, request: SmokeRequest<'_>) -> Result<SmokeProcessOutput, UpdaterError>;
-}
-
-struct BoundedSmokeRunner;
-
-impl SmokeRunner for BoundedSmokeRunner {
-    fn run(&self, request: SmokeRequest<'_>) -> Result<SmokeProcessOutput, UpdaterError> {
-        let arguments = request
-            .arguments
-            .iter()
-            .map(|argument| (*argument).to_owned())
-            .collect::<Vec<_>>();
-        let environment = [EnvironmentOverride {
-            name: OsStr::new("AH_CONFIG_DIR"),
-            value: request.config_dir.as_os_str(),
-        }];
-        let output = crate::commands::run::io::run_program(
-            request.program,
-            &arguments,
-            RunCommandOptions {
-                timeout: SMOKE_TIMEOUT,
-                command_label: "candidate offline smoke",
-                max_output_bytes: MAX_SMOKE_OUTPUT_BYTES,
-                tail_lines: None,
-                cwd: Some(request.cwd),
-                environment: &environment,
-                cancelled: never_cancelled,
-            },
-        )
-        .map_err(|_| candidate("failed to execute candidate smoke command"))?;
-        Ok(SmokeProcessOutput {
-            exit_code: output.exit_code,
-            timed_out: output.timed_out,
-            stdout: output.stdout.bytes,
-            stderr: output.stderr.bytes,
-            stdout_truncated: output.stdout.truncated,
-            stderr_truncated: output.stderr.truncated,
-        })
-    }
-}
-
-fn never_cancelled() -> bool {
-    false
 }
 
 fn candidate(detail: &'static str) -> UpdaterError {

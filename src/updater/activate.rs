@@ -19,7 +19,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{cli::GlobalOptions, error::AppError, output::Emitter, updater::service::ServiceGuard};
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter, updater::Host};
 
 use super::{
     candidate::prepare_candidate,
@@ -51,15 +51,15 @@ struct UpgradeLaunchResult<'a> {
 pub(super) fn execute(
     request: UpgradeRequest,
     options: GlobalOptions,
-    guard: &dyn ServiceGuard,
+    host: &Host<'_>,
 ) -> Result<(), AppError> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        execute_windows(request, options, guard)
+        execute_windows(request, options, host)
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
-        let _ = (request, options, guard);
+        let _ = (request, options, host);
         Err(map_updater_error(UpdaterError::new(
             UpdaterErrorCode::UnsupportedPlatform,
             "self-update requires Windows x86_64",
@@ -71,10 +71,10 @@ pub(super) fn execute(
 fn execute_windows(
     request: UpgradeRequest,
     options: GlobalOptions,
-    guard: &dyn ServiceGuard,
+    host: &Host<'_>,
 ) -> Result<(), AppError> {
     if request == UpgradeRequest::Rollback {
-        return execute_rollback(options, guard);
+        return execute_rollback(options, host);
     }
     let operation = match request {
         UpgradeRequest::Upgrade => UpdateOperation::Upgrade,
@@ -142,7 +142,7 @@ fn execute_windows(
     }
 
     let prepared = prepare_candidate(&source, verified, installation.state_root())
-        .and_then(run_offline_smoke)
+        .and_then(|prepared| run_offline_smoke(prepared, host.smoke))
         .map_err(map_updater_error)?;
     launch_transaction(
         operation,
@@ -155,12 +155,12 @@ fn execute_windows(
         &selected_version_text,
         "github_release",
         &trust,
-        guard,
+        host,
     )
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn execute_rollback(options: GlobalOptions, guard: &dyn ServiceGuard) -> Result<(), AppError> {
+fn execute_rollback(options: GlobalOptions, host: &Host<'_>) -> Result<(), AppError> {
     let trust = production_release_trust().map_err(map_updater_error)?;
     let installation = load_current_managed_installation(&trust).map_err(map_updater_error)?;
     let backup = load_permanent_backup(
@@ -187,7 +187,7 @@ fn execute_rollback(options: GlobalOptions, guard: &dyn ServiceGuard) -> Result<
         &selected_version,
         "permanent_backup",
         &trust,
-        guard,
+        host,
     )
 }
 
@@ -204,7 +204,7 @@ fn launch_transaction(
     selected_version: &str,
     source: &str,
     trust: &ah_updater_core::ReleaseTrust,
-    guard: &dyn ServiceGuard,
+    host: &Host<'_>,
 ) -> Result<(), AppError> {
     let transaction_id = Uuid::new_v4();
     let transactions = installation.state_root().join("transactions");
@@ -215,9 +215,9 @@ fn launch_transaction(
         transactions.join(transaction_id.to_string()),
     );
 
-    let hold = guard.hold(LIFECYCLE_LOCK_TIMEOUT)?;
+    let hold = host.service.hold(LIFECYCLE_LOCK_TIMEOUT)?;
     cleanup_activation_helpers(installation.state_root()).map_err(map_updater_error)?;
-    let mcp_state = guard.capture(&hold)?;
+    let mcp_state = host.service.capture(&hold)?;
     let plan = TransactionPlanV1::build_for_operation(
         operation,
         transaction_id,
@@ -255,17 +255,17 @@ fn launch_transaction(
             return Err(map_updater_error(error));
         }
     };
-    let stopped = match guard.stop(&hold) {
+    let stopped = match host.service.stop(&hold) {
         Ok(stopped) => stopped,
         Err(error) => {
-            let _ = guard.restore(&hold, mcp_state);
+            let _ = host.service.restore(&hold, mcp_state);
             let _ = remove_completed_transaction(&paths, trust);
             let _ = fs::remove_file(&helper);
             return Err(error);
         }
     };
     if stopped != mcp_state.was_running {
-        let _ = guard.restore(&hold, mcp_state);
+        let _ = host.service.restore(&hold, mcp_state);
         let _ = remove_completed_transaction(&paths, trust);
         let _ = fs::remove_file(&helper);
         return Err(AppError::external(
@@ -295,7 +295,7 @@ fn launch_transaction(
     };
     if let Err(failure) = launch {
         if failure.cleanup_safe() {
-            let restore = guard.restore(&hold, mcp_state);
+            let restore = host.service.restore(&hold, mcp_state);
             let _ = remove_completed_transaction(&paths, trust);
             let _ = fs::remove_file(&helper);
             restore?;

@@ -255,7 +255,7 @@ fn persist_verified_legacy_installation(
     let manifest_bytes = verified.manifest_bytes().to_vec();
     let signature_bytes = verified.signature_bytes().to_vec();
 
-    crate::persistence::transaction(binding_path, || {
+    ah_persist::transaction(binding_path, || {
         if let Some(existing) = load_identity(binding_path).map_err(persistence_bridge)? {
             return Ok(existing);
         }
@@ -267,7 +267,7 @@ fn persist_verified_legacy_installation(
             let _ = remove_created_identity_directory(state, &directory);
             return Err(persistence_bridge(error));
         }
-        if let Err(error) = crate::persistence::atomic_write_json(binding_path, &identity) {
+        if let Err(error) = ah_persist::atomic_write_json(binding_path, &identity) {
             let _ = remove_created_identity_directory(state, &directory);
             return Err(error);
         }
@@ -895,7 +895,7 @@ mod tests {
             .to_str()
             .unwrap()
             .to_owned();
-        crate::persistence::atomic_write_json(&binding, &mismatched).unwrap();
+        ah_persist::atomic_write_json(&binding, &mismatched).unwrap();
         let offline = OfflineSource::default();
 
         let error = resolve_managed_installation(

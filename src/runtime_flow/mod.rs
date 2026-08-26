@@ -56,6 +56,14 @@ use invoke::{extract_credential_args, resolve_invocation_command};
 #[cfg(test)]
 use mcp_serve::{map_mcp_transport_error, shutdown_runtime};
 
+/// The two ports the updater asks for, wired to this process's answers.
+fn updater_host() -> crate::updater::Host<'static> {
+    crate::updater::Host {
+        service: &ManagedMcpGuard,
+        smoke: &crate::upgrade::BoundedSmokeRunner,
+    }
+}
+
 /// What a phase decides: either the process is done, or it may continue.
 enum Step<T> {
     Done(Result<(), AppError>),
@@ -186,7 +194,7 @@ fn route_without_plugins(
         crate::entry::Route::Upgrade => match crate::updater::command::parse(raw_args)? {
             crate::updater::command::EarlyUpgradeRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
             crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => Ok(
-                Step::Done(crate::updater::execute(request, options, &ManagedMcpGuard)),
+                Step::Done(crate::updater::execute(request, options, &updater_host())),
             ),
         },
         crate::entry::Route::Service | crate::entry::Route::ManagedServe => {
