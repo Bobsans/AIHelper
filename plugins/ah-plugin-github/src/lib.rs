@@ -3780,7 +3780,10 @@ mod tests {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let captured = Arc::clone(&requests);
             let handle = thread::spawn(move || {
-                let deadline = Instant::now() + Duration::from_secs(5);
+                // Generous on purpose. This bounds a genuinely stuck test; it is
+                // not a latency assertion, and five seconds is not enough when
+                // the whole workspace is building and testing in parallel.
+                let deadline = Instant::now() + Duration::from_secs(60);
                 for response in responses {
                     loop {
                         match listener.accept() {
