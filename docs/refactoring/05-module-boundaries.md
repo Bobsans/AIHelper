@@ -172,14 +172,26 @@ half of this finding - moving the table to an embedded asset validated at build
 time - which also gets the "reviewable without reading Rust" property that a
 Rust table only approximates.
 
-### 5.7 `src/ai/install.rs` — 1 367 lines mixing four layers
+### 5.7 `src/ai/install.rs` — 1 367 lines mixing four layers *(done)*
 
-Business logic (install/uninstall/status), a hand-rolled thread pool
-(`parallel_map:818`, `std::thread::scope`), a live-updating terminal UI
-(`render_live_lines:897`, `write_live_frame:963`, `emit_live_status:973`), and
-network probing (`probe_readiness:406`). Split: `ai::install` (logic, returns
-events), `ai::progress` (renderer consuming events), and reuse a shared parallel
-helper rather than a local one.
+Business logic (install/uninstall/status), a hand-rolled thread pool, a
+live-updating terminal UI, and network probing, in one file. Now three:
+
+| Module | Production lines | Owns |
+|---|---|---|
+| `ai::install` | ~1 260 | install, uninstall, status, path resolution, probing |
+| `ai::progress` | ~400 | the live screen: cursor control, frame clipping, column widths |
+| `ai::output` | ~180 | rendering a finished report, and the action label/style vocabulary |
+
+`StatusProgress` — the event the logic emits and the screen consumes — stays
+with the producer. The renderers are the consumers.
+
+Two corrections to this finding. There is no shared parallel helper to reuse:
+`parallel_map` is the only one in the workspace and has one caller, so it stays
+where it is. And the "four layers" included the report renderers, which were
+still calling `println!` directly; they now go through `Emitter`, which closes
+the last thirteen print sites outside finding 4.2's live frames and 4.3's error
+rendering.
 
 ### 5.8 Inconsistent and ceremonial layering in `src/commands/`
 

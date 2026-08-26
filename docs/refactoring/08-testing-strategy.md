@@ -143,6 +143,15 @@ down from 7.6k.
 - **Fuzz targets must not become required CI blockers** on first introduction; run
   them nightly until stable, then gate.
 
+## Open flakes
+
+- `ah_plugin_ollama::tests::invalid_json_response_has_stable_error_code` failed
+  twice during full-workspace runs and has not been reproduced since, in either
+  direction: fourteen runs passed after the mock server's accept deadline was
+  raised, and eight more passed after reverting it. The failing assertion was
+  never captured, so the cause is unknown. If it recurs, capture the actual
+  `error_code` before changing anything.
+
 ## Acceptance criteria
 
 - Output, error rendering and catalog shape are covered by reviewed snapshots.

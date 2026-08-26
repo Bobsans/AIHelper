@@ -2,6 +2,8 @@ pub mod install;
 mod json_config;
 pub mod managed;
 mod opencode_config;
+mod output;
+mod progress;
 mod prompt;
 
 /// Whether `ah ai install` should prompt: a terminal invocation that carried no

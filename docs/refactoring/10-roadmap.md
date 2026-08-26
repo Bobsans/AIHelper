@@ -89,7 +89,7 @@ Mostly moves, made safe by phases 0–1.
 | ~~Split `http/domain.rs` into `client`/`curl`/`jsonpath`/`assert`/`spec`~~ **(done)**    | 05, 08 |
 | ~~Move the secret-setup UI out of `ah-mcp`; split protocol/transport/shutdown/jobs~~     | 05     |
 | ~~Split `event_log` into record shaping and rotation~~ **(done)**                        | 05     |
-| Separate `ai/install` logic from progress rendering                                      | 04, 05 |
+| ~~Separate `ai/install` logic from progress rendering~~ **(done)**                       | 04, 05 |
 | One `commands/*` layout; delete the eight `mod adapters` shims                           | 05     |
 | Single-parse `Entry` enum; hidden subcommands replace env-var routing                    | 03     |
 | `run()` split into parse → bootstrap → dispatch → report                                 | 03     |

@@ -1,19 +1,9 @@
-use std::{
-    borrow::Cow,
-    io::{self, IsTerminal, Write},
-    path::PathBuf,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::{io::IsTerminal, path::PathBuf};
 
 use ah_runtime::PluginManager;
 use serde::Serialize;
 
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::{OutputMode, TextFormatter, TextStyle, emit_warning},
-};
+use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
 
 use super::{
     json_config,
@@ -23,6 +13,11 @@ use super::{
     targets::{
         self, LEGACY_SERVER_NAMES, Registrar, SERVER_NAME, Scope, ServerSpec, Target, Transport,
     },
+};
+
+use super::{
+    output::{emit, emit_status},
+    progress::emit_live_status,
 };
 
 pub const DEFAULT_HTTP_URL: &str = "http://127.0.0.1:8787/mcp";
@@ -64,96 +59,111 @@ pub enum AiCommand {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct McpReport {
-    action: Action,
-    registrar: &'static str,
-    scope: Scope,
-    transport: Option<Transport>,
-    url: Option<String>,
-    path: Option<String>,
-    commands: Vec<String>,
+pub(super) struct McpReport {
+    pub(super) action: Action,
+    pub(super) registrar: &'static str,
+    pub(super) scope: Scope,
+    pub(super) transport: Option<Transport>,
+    pub(super) url: Option<String>,
+    pub(super) path: Option<String>,
+    pub(super) commands: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct RulesReport {
-    action: Action,
-    path: String,
+pub(super) struct RulesReport {
+    pub(super) action: Action,
+    pub(super) path: String,
 }
 
 #[derive(Debug, Serialize)]
-struct ManagedReport {
-    action: ManagedAction,
-    endpoint: String,
+pub(super) struct ManagedReport {
+    pub(super) action: ManagedAction,
+    pub(super) endpoint: String,
 }
 
 #[derive(Debug, Serialize)]
-struct TargetReport {
-    command: &'static str,
-    schema_version: u32,
-    target: &'static str,
-    scope: Scope,
-    changed: bool,
-    dry_run: bool,
-    mcp: McpReport,
-    rules: RulesReport,
-    managed_service: Option<ManagedReport>,
-    warnings: Vec<String>,
+pub(super) struct TargetReport {
+    pub(super) command: &'static str,
+    pub(super) schema_version: u32,
+    pub(super) target: &'static str,
+    pub(super) scope: Scope,
+    pub(super) changed: bool,
+    pub(super) dry_run: bool,
+    pub(super) mcp: McpReport,
+    pub(super) rules: RulesReport,
+    pub(super) managed_service: Option<ManagedReport>,
+    pub(super) warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct StatusReport {
-    command: &'static str,
-    schema_version: u32,
-    targets: Vec<TargetStatus>,
+pub(super) struct StatusReport {
+    pub(super) command: &'static str,
+    pub(super) schema_version: u32,
+    pub(super) targets: Vec<TargetStatus>,
 }
 
 #[derive(Debug, Serialize)]
-struct TargetStatus {
-    target: &'static str,
-    scope: Scope,
-    cli: Option<&'static str>,
-    cli_available: bool,
+pub(super) struct TargetStatus {
+    pub(super) target: &'static str,
+    pub(super) scope: Scope,
+    pub(super) cli: Option<&'static str>,
+    pub(super) cli_available: bool,
     /// A registration left by an older AIHelper under its previous server name.
-    legacy_server: Option<&'static str>,
-    mcp: McpReport,
-    rules: RulesReport,
-    scopes: Vec<ScopeStatus>,
+    pub(super) legacy_server: Option<&'static str>,
+    pub(super) mcp: McpReport,
+    pub(super) rules: RulesReport,
+    pub(super) scopes: Vec<ScopeStatus>,
 }
 
 #[derive(Debug, Serialize)]
-struct ScopeStatus {
-    scope: Scope,
-    mcp: Option<ScopedMcpReport>,
-    rules: Option<ScopedRulesReport>,
+pub(super) struct ScopeStatus {
+    pub(super) scope: Scope,
+    pub(super) mcp: Option<ScopedMcpReport>,
+    pub(super) rules: Option<ScopedRulesReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ScopedMcpReport {
-    action: StatusAction,
-    registrar: &'static str,
-    scope: Scope,
-    transport: Option<Transport>,
-    url: Option<String>,
-    path: Option<String>,
-    detail: Option<String>,
+pub(super) struct ScopedMcpReport {
+    pub(super) action: StatusAction,
+    pub(super) registrar: &'static str,
+    pub(super) scope: Scope,
+    pub(super) transport: Option<Transport>,
+    pub(super) url: Option<String>,
+    pub(super) path: Option<String>,
+    pub(super) detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ScopedRulesReport {
-    action: StatusAction,
-    path: Option<String>,
-    detail: Option<String>,
+pub(super) struct ScopedRulesReport {
+    pub(super) action: StatusAction,
+    pub(super) path: Option<String>,
+    pub(super) detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum StatusAction {
+pub(super) enum StatusAction {
     Installed,
     NotPresent,
     Unknown,
 }
 
-const SCHEMA_VERSION: u32 = 1;
+pub(super) enum StatusProgress {
+    Cli {
+        cli: Option<&'static str>,
+        available: bool,
+    },
+    Mcp {
+        scope: Scope,
+        report: ScopedMcpReport,
+    },
+    Rules {
+        scope: Scope,
+        report: ScopedRulesReport,
+    },
+}
+
+pub(super) const SCHEMA_VERSION: u32 = 1;
 
 pub fn execute(
     manager: &PluginManager,
@@ -183,11 +193,11 @@ pub fn execute(
     }
 }
 
-fn project_root() -> Result<PathBuf, AppError> {
+pub(super) fn project_root() -> Result<PathBuf, AppError> {
     std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))
 }
 
-fn status_project_root(cwd: &std::path::Path) -> Option<PathBuf> {
+pub(super) fn status_project_root(cwd: &std::path::Path) -> Option<PathBuf> {
     if let Some(root) = cwd.ancestors().find(|path| path.join(".git").exists()) {
         return Some(root.to_path_buf());
     }
@@ -217,13 +227,13 @@ fn status_project_root(cwd: &std::path::Path) -> Option<PathBuf> {
         .then(|| cwd.to_path_buf())
 }
 
-fn resolve_scope(target: &Target, requested: Option<Scope>) -> Result<Scope, AppError> {
+pub(super) fn resolve_scope(target: &Target, requested: Option<Scope>) -> Result<Scope, AppError> {
     let scope = requested.unwrap_or(target.default_scope);
     target.require_scope(scope)?;
     Ok(scope)
 }
 
-fn stdio_spec() -> Result<ServerSpec, AppError> {
+pub(super) fn stdio_spec() -> Result<ServerSpec, AppError> {
     let executable = std::env::current_exe().map_err(|source| {
         AppError::external(
             "AI_EXECUTABLE_UNRESOLVED",
@@ -238,7 +248,7 @@ fn stdio_spec() -> Result<ServerSpec, AppError> {
 
 /// The server has no authentication or TLS, so only loopback endpoints are
 /// ever written into an agent configuration.
-fn http_spec(url: Option<&str>) -> Result<ServerSpec, AppError> {
+pub(super) fn http_spec(url: Option<&str>) -> Result<ServerSpec, AppError> {
     let url = url.unwrap_or(DEFAULT_HTTP_URL).to_owned();
     let parsed = reqwest::Url::parse(&url).map_err(|source| {
         AppError::external("AI_URL_INVALID", format!("invalid MCP URL {url}: {source}"))
@@ -272,7 +282,7 @@ fn http_spec(url: Option<&str>) -> Result<ServerSpec, AppError> {
     Ok(ServerSpec::Http { url })
 }
 
-fn rules_block(manager: &PluginManager) -> String {
+pub(super) fn rules_block(manager: &PluginManager) -> String {
     let mut domains = manager
         .collect_plugin_manuals()
         .into_iter()
@@ -283,7 +293,10 @@ fn rules_block(manager: &PluginManager) -> String {
     rules::render_block(&domains)
 }
 
-fn install(manager: &PluginManager, mut request: InstallRequest) -> Result<TargetReport, AppError> {
+pub(super) fn install(
+    manager: &PluginManager,
+    mut request: InstallRequest,
+) -> Result<TargetReport, AppError> {
     let target = targets::find(&request.target)?;
     if request.interactive {
         let answers = prompt::ask(target, DEFAULT_HTTP_URL)?;
@@ -410,13 +423,13 @@ fn install(manager: &PluginManager, mut request: InstallRequest) -> Result<Targe
 
 /// Classify the managed service without provisioning it. Refuses an
 /// unsupported platform and a drifted registration before anything happens.
-fn plan_managed() -> Result<managed::Snapshot, AppError> {
+pub(super) fn plan_managed() -> Result<managed::Snapshot, AppError> {
     let snapshot = managed::detect()?;
     managed::require_usable(&snapshot)?;
     Ok(snapshot)
 }
 
-fn plan_summary(
+pub(super) fn plan_summary(
     target: &Target,
     scope: Scope,
     spec: Option<&ServerSpec>,
@@ -449,7 +462,7 @@ fn plan_summary(
     lines.join("\n")
 }
 
-fn cancelled_report(target: &Target, scope: Scope, rules_path: String) -> TargetReport {
+pub(super) fn cancelled_report(target: &Target, scope: Scope, rules_path: String) -> TargetReport {
     TargetReport {
         command: "ai.install",
         schema_version: SCHEMA_VERSION,
@@ -468,7 +481,7 @@ fn cancelled_report(target: &Target, scope: Scope, rules_path: String) -> Target
 }
 
 /// A refused connection is the agent's problem later, so warn rather than fail.
-fn probe_readiness(spec: &ServerSpec) -> Option<String> {
+pub(super) fn probe_readiness(spec: &ServerSpec) -> Option<String> {
     let url = spec.url()?;
     let readiness = url
         .strip_suffix("/mcp")
@@ -486,14 +499,14 @@ fn probe_readiness(spec: &ServerSpec) -> Option<String> {
     }
 }
 
-fn registrar_label(target: &Target) -> &'static str {
+pub(super) fn registrar_label(target: &Target) -> &'static str {
     match target.registrar {
         Registrar::Cli { .. } => "cli",
         Registrar::File => "file",
     }
 }
 
-fn skipped_mcp(target: &Target, scope: Scope) -> McpReport {
+pub(super) fn skipped_mcp(target: &Target, scope: Scope) -> McpReport {
     McpReport {
         action: Action::Skipped,
         registrar: registrar_label(target),
@@ -505,7 +518,7 @@ fn skipped_mcp(target: &Target, scope: Scope) -> McpReport {
     }
 }
 
-fn config_path_for(
+pub(super) fn config_path_for(
     target: &Target,
     scope: Scope,
     root: &std::path::Path,
@@ -524,7 +537,7 @@ fn config_path_for(
 }
 
 /// A registration under a superseded server name, if the agent still has one.
-fn legacy_registration(
+pub(super) fn legacy_registration(
     target: &Target,
     scope: Scope,
     root: &std::path::Path,
@@ -543,7 +556,7 @@ fn legacy_registration(
 }
 
 /// Remove one server name through whichever backend the target uses.
-fn apply_remove(
+pub(super) fn apply_remove(
     target: &Target,
     scope: Scope,
     root: &std::path::Path,
@@ -578,7 +591,7 @@ fn apply_remove(
     }
 }
 
-fn install_mcp(
+pub(super) fn install_mcp(
     target: &Target,
     scope: Scope,
     spec: &ServerSpec,
@@ -685,7 +698,7 @@ fn install_mcp(
     })
 }
 
-fn install_rules(
+pub(super) fn install_rules(
     target: &Target,
     scope: Scope,
     root: &std::path::Path,
@@ -702,7 +715,7 @@ fn install_rules(
     Ok(RulesReport { action, path: hint })
 }
 
-fn uninstall(request: UninstallRequest) -> Result<TargetReport, AppError> {
+pub(super) fn uninstall(request: UninstallRequest) -> Result<TargetReport, AppError> {
     let target = targets::find(&request.target)?;
     let scope = resolve_scope(target, request.scope)?;
     let root = project_root()?;
@@ -797,7 +810,7 @@ fn uninstall(request: UninstallRequest) -> Result<TargetReport, AppError> {
     })
 }
 
-fn status(request: StatusRequest) -> Result<StatusReport, AppError> {
+pub(super) fn status(request: StatusRequest) -> Result<StatusReport, AppError> {
     let selected: Vec<&Target> = match request.target {
         Some(name) => vec![targets::find(&name)?],
         None => targets::TARGETS.iter().collect(),
@@ -818,7 +831,7 @@ fn status(request: StatusRequest) -> Result<StatusReport, AppError> {
     })
 }
 
-fn status_target(
+pub(super) fn status_target(
     target: &Target,
     root: &std::path::Path,
     in_project: bool,
@@ -985,7 +998,7 @@ fn status_target(
     })
 }
 
-fn status_scopes(target: &Target, in_project: bool) -> Vec<Scope> {
+pub(super) fn status_scopes(target: &Target, in_project: bool) -> Vec<Scope> {
     [Scope::System, Scope::User, Scope::Project, Scope::Local]
         .into_iter()
         .filter(|scope| target.supports_status_mcp(*scope) || target.supports_status_rules(*scope))
@@ -993,7 +1006,7 @@ fn status_scopes(target: &Target, in_project: bool) -> Vec<Scope> {
         .collect()
 }
 
-fn scoped_rules_status(
+pub(super) fn scoped_rules_status(
     target: &Target,
     scope: Scope,
     root: &std::path::Path,
@@ -1024,7 +1037,7 @@ fn scoped_rules_status(
     }))
 }
 
-fn scoped_mcp_status(
+pub(super) fn scoped_mcp_status(
     target: &Target,
     scope: Scope,
     root: &std::path::Path,
@@ -1074,7 +1087,9 @@ fn scoped_mcp_status(
     }))
 }
 
-fn system_mcp_status(target: &Target) -> Result<(Option<ServerSpec>, PathBuf), AppError> {
+pub(super) fn system_mcp_status(
+    target: &Target,
+) -> Result<(Option<ServerSpec>, PathBuf), AppError> {
     let paths = system_mcp_paths(target)?;
     for path in &paths {
         let existing = if target.name == "opencode" {
@@ -1095,7 +1110,7 @@ fn system_mcp_status(target: &Target) -> Result<(Option<ServerSpec>, PathBuf), A
     Ok((None, paths[0].clone()))
 }
 
-fn copilot_user_mcp_path() -> Result<PathBuf, AppError> {
+pub(super) fn copilot_user_mcp_path() -> Result<PathBuf, AppError> {
     #[cfg(windows)]
     {
         std::env::var_os("APPDATA")
@@ -1128,7 +1143,7 @@ fn copilot_user_mcp_path() -> Result<PathBuf, AppError> {
     }
 }
 
-fn codex_config_path(scope: Scope, root: &std::path::Path) -> Result<PathBuf, AppError> {
+pub(super) fn codex_config_path(scope: Scope, root: &std::path::Path) -> Result<PathBuf, AppError> {
     match scope {
         Scope::System => system_mcp_path(targets::find("codex")?),
         Scope::User => Ok(targets::home_dir()?.join(".codex").join("config.toml")),
@@ -1136,7 +1151,10 @@ fn codex_config_path(scope: Scope, root: &std::path::Path) -> Result<PathBuf, Ap
     }
 }
 
-fn codex_mcp_entry(path: &std::path::Path, name: &str) -> Result<Option<ServerSpec>, AppError> {
+pub(super) fn codex_mcp_entry(
+    path: &std::path::Path,
+    name: &str,
+) -> Result<Option<ServerSpec>, AppError> {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -1172,7 +1190,7 @@ fn codex_mcp_entry(path: &std::path::Path, name: &str) -> Result<Option<ServerSp
     Ok(None)
 }
 
-fn toml_string(line: &str, key: &str) -> Option<String> {
+pub(super) fn toml_string(line: &str, key: &str) -> Option<String> {
     let (candidate, value) = line.split_once('=')?;
     if candidate.trim() != key {
         return None;
@@ -1188,11 +1206,11 @@ fn toml_string(line: &str, key: &str) -> Option<String> {
         })
 }
 
-fn system_mcp_path(target: &Target) -> Result<PathBuf, AppError> {
+pub(super) fn system_mcp_path(target: &Target) -> Result<PathBuf, AppError> {
     Ok(system_mcp_paths(target)?[0].clone())
 }
 
-fn system_mcp_paths(target: &Target) -> Result<Vec<PathBuf>, AppError> {
+pub(super) fn system_mcp_paths(target: &Target) -> Result<Vec<PathBuf>, AppError> {
     let directory = system_config_directory(target)?;
     Ok(match target.name {
         "claude" => vec![directory.join("managed-mcp.json")],
@@ -1208,7 +1226,7 @@ fn system_mcp_paths(target: &Target) -> Result<Vec<PathBuf>, AppError> {
     })
 }
 
-fn system_config_directory(target: &Target) -> Result<PathBuf, AppError> {
+pub(super) fn system_config_directory(target: &Target) -> Result<PathBuf, AppError> {
     #[cfg(windows)]
     {
         // Every agent keeps its machine-wide configuration under %ProgramData%,
@@ -1248,7 +1266,10 @@ fn system_config_directory(target: &Target) -> Result<PathBuf, AppError> {
     }
 }
 
-fn parallel_map<T: Sync, R: Send>(values: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+pub(super) fn parallel_map<T: Sync, R: Send>(
+    values: &[T],
+    work: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
     std::thread::scope(|scope| {
         let work = &work;
         values
@@ -1261,610 +1282,8 @@ fn parallel_map<T: Sync, R: Send>(values: &[T], work: impl Fn(&T) -> R + Sync) -
     })
 }
 
-struct LiveTarget {
-    target: &'static Target,
-    cli: Option<(Option<&'static str>, bool)>,
-    scopes: Vec<LiveScope>,
-    legacy_server: Option<&'static str>,
-    error: bool,
-}
-
-struct LiveScope {
-    scope: Scope,
-    mcp_supported: bool,
-    mcp: Option<ScopedMcpReport>,
-    rules_supported: bool,
-    rules: Option<ScopedRulesReport>,
-}
-
-impl LiveTarget {
-    fn new(target: &'static Target, in_project: bool) -> Self {
-        Self {
-            target,
-            cli: None,
-            scopes: status_scopes(target, in_project)
-                .into_iter()
-                .map(|scope| LiveScope {
-                    scope,
-                    mcp_supported: target.supports_status_mcp(scope),
-                    mcp: None,
-                    rules_supported: target.supports_status_rules(scope),
-                    rules: None,
-                })
-                .collect(),
-            legacy_server: None,
-            error: false,
-        }
-    }
-
-    fn apply(&mut self, progress: StatusProgress) {
-        match progress {
-            StatusProgress::Cli { cli, available } => self.cli = Some((cli, available)),
-            StatusProgress::Mcp { scope, report } => {
-                self.scopes
-                    .iter_mut()
-                    .find(|status| status.scope == scope)
-                    .expect("status scope should be preallocated")
-                    .mcp = Some(report)
-            }
-            StatusProgress::Rules { scope, report } => {
-                self.scopes
-                    .iter_mut()
-                    .find(|status| status.scope == scope)
-                    .expect("status scope should be preallocated")
-                    .rules = Some(report)
-            }
-        }
-    }
-
-    fn complete(&mut self, result: &Result<TargetStatus, AppError>) {
-        match result {
-            Ok(status) => self.legacy_server = status.legacy_server,
-            Err(_) => self.error = true,
-        }
-    }
-}
-
-enum StatusProgress {
-    Cli {
-        cli: Option<&'static str>,
-        available: bool,
-    },
-    Mcp {
-        scope: Scope,
-        report: ScopedMcpReport,
-    },
-    Rules {
-        scope: Scope,
-        report: ScopedRulesReport,
-    },
-}
-
-enum LiveEvent {
-    Progress(usize, StatusProgress),
-    Complete(usize, Result<TargetStatus, AppError>),
-}
-
-struct CursorGuard;
-
-impl Drop for CursorGuard {
-    fn drop(&mut self) {
-        let mut output = io::stdout();
-        let _ = write!(output, "\u{1b}[?25h");
-        let _ = output.flush();
-    }
-}
-
-/// One scope of one target: `mcp` and `rules` side by side under a heading.
-struct LiveRow {
-    target: usize,
-    scope: &'static str,
-    mcp: String,
-    rules: String,
-}
-
-const UNSUPPORTED: &str = "not supported";
-
-/// Widest cell a finished `mcp` check can produce, reserved before the first
-/// frame so the `rules` column never shifts as spinners become results.
-fn mcp_width() -> usize {
-    let transport = [Transport::Stdio, Transport::Http]
-        .into_iter()
-        .map(|transport| transport.as_str().len())
-        .max()
-        .unwrap_or(0);
-    [
-        StatusAction::Installed,
-        StatusAction::NotPresent,
-        StatusAction::Unknown,
-    ]
-    .into_iter()
-    .map(|action| {
-        let label = status_action_label(action).len();
-        // Only a registration carries a transport in parentheses.
-        match action {
-            StatusAction::Installed => label + " (".len() + transport + ")".len(),
-            _ => label,
-        }
-    })
-    .chain([UNSUPPORTED.len()])
-    .max()
-    .unwrap_or(UNSUPPORTED.len())
-}
-
-fn render_live_lines(
-    targets: &[LiveTarget],
-    spinner: &str,
-    formatter: TextFormatter,
-) -> Vec<String> {
-    let error = formatter.paint(TextStyle::Error, "error");
-    let unsupported = formatter.paint(TextStyle::Muted, UNSUPPORTED);
-    let headings = targets.iter().map(|target| {
-        let cli = match target.cli {
-            Some((Some(cli), true)) => {
-                formatter.paint(TextStyle::Success, format!("`{cli}` available"))
-            }
-            Some((Some(cli), false)) => {
-                formatter.paint(TextStyle::Warning, format!("`{cli}` missing"))
-            }
-            Some((None, _)) => formatter.paint(TextStyle::Muted, "config file"),
-            None if target.error => error.clone(),
-            None => spinner.to_owned(),
-        };
-        // A legacy registration belongs to the target rather than to one of its
-        // scopes, and would widen the mcp column it used to sit in.
-        let legacy = target
-            .legacy_server
-            .map(|name| formatter.paint(TextStyle::Warning, format!(", legacy `{name}` present")))
-            .unwrap_or_default();
-        format!(
-            "{} ({cli}{legacy})",
-            formatter.paint(TextStyle::Heading, target.target.name),
-        )
-    });
-    let error = error.as_str();
-    let unsupported = unsupported.as_str();
-    let rows: Vec<LiveRow> = targets
-        .iter()
-        .enumerate()
-        .flat_map(|(index, target)| {
-            let pending = move || {
-                if target.error {
-                    error.to_owned()
-                } else {
-                    spinner.to_owned()
-                }
-            };
-            target.scopes.iter().map(move |scope| {
-                let mcp = if !scope.mcp_supported {
-                    unsupported.to_owned()
-                } else if let Some(mcp) = &scope.mcp {
-                    let details: Vec<String> = mcp
-                        .transport
-                        .map(|transport| transport.as_str().to_owned())
-                        .into_iter()
-                        .chain(mcp.detail.clone())
-                        .collect();
-                    state_cell(mcp.action, &details, formatter)
-                } else {
-                    pending()
-                };
-                let rules = if !scope.rules_supported {
-                    unsupported.to_owned()
-                } else if let Some(rules) = &scope.rules {
-                    state_cell(rules.action, rules.detail.as_slice(), formatter)
-                } else {
-                    pending()
-                };
-                LiveRow {
-                    target: index,
-                    scope: scope.scope.as_str(),
-                    mcp,
-                    rules,
-                }
-            })
-        })
-        .collect();
-    let scope_width = rows.iter().map(|row| row.scope.len()).max().unwrap_or(0);
-    let mcp_width = mcp_width();
-    let separator = formatter.paint(TextStyle::Muted, "::");
-    let mut lines = Vec::with_capacity(targets.len() + rows.len());
-    for (index, heading) in headings.enumerate() {
-        lines.push(heading);
-        for row in rows.iter().filter(|row| row.target == index) {
-            lines.push(format!(
-                "  {} {separator} mcp {} rules {}",
-                pad(&formatter.paint(TextStyle::Key, row.scope), scope_width),
-                pad(&row.mcp, mcp_width),
-                row.rules,
-            ));
-        }
-    }
-    lines
-}
-
-fn state_cell(action: StatusAction, details: &[String], formatter: TextFormatter) -> String {
-    let state = formatter.paint(status_action_style(action), status_action_label(action));
-    if details.is_empty() {
-        return state;
-    }
-    format!("{state} ({})", details.join(", "))
-}
-
-/// Pads to a visible width, which `{:<width$}` cannot do once a cell carries
-/// colour escapes.
-fn pad(cell: &str, width: usize) -> String {
-    let padding = width.saturating_sub(console::measure_text_width(cell));
-    format!("{cell}{:padding$}", "")
-}
-
-/// A live block redrawn in place, kept inside the terminal it lands in.
-struct LiveScreen {
-    /// Widest column a line may occupy before it wraps and desynchronises the
-    /// cursor arithmetic below.
-    width: Option<usize>,
-    /// Tallest block that may be animated: once the block scrolls, its first row
-    /// is out of reach, `\u{1b}[<n>A` clamps at the top of the screen and every
-    /// frame is appended instead of replacing the previous one.
-    height: Option<usize>,
-    drawn: usize,
-}
-
-impl LiveScreen {
-    fn new() -> Self {
-        let size = console::Term::stdout().size_checked();
-        Self {
-            // Terminals differ on whether a line filling the last column wraps
-            // immediately, so keep one column and one row spare.
-            width: size.map(|(_, width)| usize::from(width).saturating_sub(1)),
-            height: size.map(|(height, _)| usize::from(height).saturating_sub(1)),
-            drawn: 0,
-        }
-    }
-
-    /// One animation frame, clipped to the visible viewport.
-    fn draw(&mut self, output: &mut impl Write, lines: &[String]) -> io::Result<()> {
-        let visible = clip_height(lines, self.height);
-        self.rewind(output)?;
-        write_live_lines(output, &visible, self.width)?;
-        self.drawn = visible.len();
-        output.flush()
-    }
-
-    /// The finished report, in full: the clipped frames are erased first so the
-    /// rows the viewport could not hold are not left behind as a stale copy.
-    fn finish(&mut self, output: &mut impl Write, lines: &[String]) -> io::Result<()> {
-        self.rewind(output)?;
-        if self.drawn > 0 {
-            write!(output, "\r\u{1b}[J")?;
-        }
-        write_live_lines(output, lines, self.width)?;
-        self.drawn = lines.len();
-        output.flush()
-    }
-
-    fn rewind(&self, output: &mut impl Write) -> io::Result<()> {
-        if self.drawn > 0 {
-            write!(output, "\u{1b}[{}A", self.drawn)?;
-        }
-        Ok(())
-    }
-}
-
-/// Keeps the block inside `height` rows, replacing the rows that do not fit with
-/// a count of what the finished report will add.
-fn clip_height(lines: &[String], height: Option<usize>) -> Vec<String> {
-    let Some(height) = height.filter(|height| lines.len() > *height) else {
-        return lines.to_vec();
-    };
-    let kept = height.saturating_sub(1);
-    let mut visible = lines[..kept].to_vec();
-    if height > 0 {
-        visible.push(format!("… {} more", lines.len() - kept));
-    }
-    visible
-}
-
-fn write_live_lines(
-    output: &mut impl Write,
-    lines: &[String],
-    width: Option<usize>,
-) -> io::Result<()> {
-    for line in lines {
-        let line = match width {
-            Some(width) => console::truncate_str(line, width, ""),
-            None => Cow::Borrowed(line.as_str()),
-        };
-        // Overwrite in place and clear the tail: clearing first would blank the
-        // row for a frame and read as flicker.
-        write!(output, "\r{line}\u{1b}[K\n")?;
-    }
-    Ok(())
-}
-
-fn emit_live_status(request: StatusRequest) -> Result<(), AppError> {
-    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    const FRAME_INTERVAL: Duration = Duration::from_millis(80);
-
-    let selected: Vec<&Target> = match request.target {
-        Some(name) => vec![targets::find(&name)?],
-        None => targets::TARGETS.iter().collect(),
-    };
-    let cwd = project_root()?;
-    let project = status_project_root(&cwd);
-    let in_project = project.is_some();
-    let root = project.as_deref().unwrap_or(&cwd);
-    let mut targets = selected
-        .iter()
-        .map(|target| LiveTarget::new(target, in_project))
-        .collect::<Vec<_>>();
-    let mut results = std::iter::repeat_with(|| None)
-        .take(selected.len())
-        .collect::<Vec<Option<Result<TargetStatus, AppError>>>>();
-    let formatter = TextFormatter::stdout();
-    let mut output = io::stdout();
-    let started = Instant::now();
-    let frame = |elapsed: Duration| {
-        FRAMES[(elapsed.as_millis() / FRAME_INTERVAL.as_millis()) as usize % FRAMES.len()]
-    };
-    let mut screen = LiveScreen::new();
-    write!(output, "\u{1b}[?25l").map_err(status_render_error)?;
-    let _cursor = CursorGuard;
-    screen
-        .draw(
-            &mut output,
-            &render_live_lines(&targets, FRAMES[0], formatter),
-        )
-        .map_err(status_render_error)?;
-
-    std::thread::scope(|scope| -> Result<(), AppError> {
-        let (sender, receiver) = mpsc::channel();
-        for (index, target) in selected.iter().copied().enumerate() {
-            let sender = sender.clone();
-            let root = &root;
-            scope.spawn(move || {
-                let result = status_target(target, root, in_project, |progress| {
-                    let _ = sender.send(LiveEvent::Progress(index, progress));
-                });
-                let _ = sender.send(LiveEvent::Complete(index, result));
-            });
-        }
-        drop(sender);
-
-        let mut completed = 0;
-        while completed < selected.len() {
-            match receiver.recv_timeout(FRAME_INTERVAL) {
-                Ok(LiveEvent::Progress(index, progress)) => targets[index].apply(progress),
-                Ok(LiveEvent::Complete(index, result)) => {
-                    targets[index].complete(&result);
-                    if results[index].is_none() {
-                        completed += 1;
-                    }
-                    results[index] = Some(result);
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(AppError::external(
-                        "AI_STATUS_WORKER_FAILED",
-                        "an AI status worker stopped without returning a result",
-                    ));
-                }
-            }
-            screen
-                .draw(
-                    &mut output,
-                    &render_live_lines(&targets, frame(started.elapsed()), formatter),
-                )
-                .map_err(status_render_error)?;
-        }
-        Ok(())
-    })?;
-
-    screen
-        .finish(
-            &mut output,
-            &render_live_lines(&targets, FRAMES[0], formatter),
-        )
-        .map_err(status_render_error)?;
-
-    results
-        .into_iter()
-        .map(|result| {
-            result.unwrap_or_else(|| {
-                Err(AppError::external(
-                    "AI_STATUS_WORKER_FAILED",
-                    "an AI status worker stopped without returning a result",
-                ))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(())
-}
-
-fn status_render_error(source: io::Error) -> AppError {
-    AppError::external(
-        "AI_STATUS_RENDER_FAILED",
-        format!("unable to render AI status: {source}"),
-    )
-}
-
-fn cli_available(program: &str) -> bool {
+pub(super) fn cli_available(program: &str) -> bool {
     registrar::available(program)
-}
-
-fn action_label(action: Action) -> &'static str {
-    match action {
-        Action::Installed => "installed",
-        Action::Updated => "updated",
-        Action::Unchanged => "unchanged",
-        Action::Removed => "removed",
-        Action::NotPresent => "not present",
-        Action::Skipped => "skipped",
-    }
-}
-
-fn action_style(action: Action) -> TextStyle {
-    match action {
-        Action::Installed | Action::Updated | Action::Removed => TextStyle::Success,
-        Action::Unchanged | Action::NotPresent | Action::Skipped => TextStyle::Muted,
-    }
-}
-
-fn status_action_label(action: StatusAction) -> &'static str {
-    match action {
-        StatusAction::Installed => "installed",
-        StatusAction::NotPresent => "not present",
-        StatusAction::Unknown => "unknown",
-    }
-}
-
-fn status_action_style(action: StatusAction) -> TextStyle {
-    match action {
-        StatusAction::Installed => TextStyle::Success,
-        StatusAction::NotPresent | StatusAction::Unknown => TextStyle::Muted,
-    }
-}
-
-fn emit(report: &TargetReport, options: GlobalOptions) -> Result<(), AppError> {
-    for warning in &report.warnings {
-        emit_warning(warning);
-    }
-    if options.quiet {
-        return Ok(());
-    }
-    match options.output {
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(report)?),
-        OutputMode::Text => {
-            let formatter = TextFormatter::stdout();
-            let prefix = if report.dry_run { "would be " } else { "" };
-            let mut detail = format!("scope {}", report.mcp.scope.as_str());
-            if let Some(transport) = report.mcp.transport {
-                detail = format!("{}, {detail}", transport.as_str());
-            }
-            println!(
-                "{} mcp {}{} ({detail})",
-                formatter.paint(TextStyle::Heading, report.target),
-                prefix,
-                formatter.paint(
-                    action_style(report.mcp.action),
-                    action_label(report.mcp.action)
-                ),
-            );
-            println!(
-                "{} rules {}{} ({})",
-                formatter.paint(TextStyle::Heading, report.target),
-                prefix,
-                formatter.paint(
-                    action_style(report.rules.action),
-                    action_label(report.rules.action)
-                ),
-                formatter.paint(TextStyle::Key, &report.rules.path),
-            );
-            if let Some(managed) = &report.managed_service {
-                println!(
-                    "{} managed service {}{} ({})",
-                    formatter.paint(TextStyle::Heading, report.target),
-                    prefix,
-                    formatter.paint(TextStyle::Success, managed.action.as_str()),
-                    formatter.paint(TextStyle::Key, &managed.endpoint),
-                );
-            }
-            for invocation in &report.mcp.commands {
-                println!(
-                    "  {} {}",
-                    formatter.paint(
-                        TextStyle::Muted,
-                        if report.dry_run { "would run" } else { "ran" }
-                    ),
-                    formatter.paint(TextStyle::Muted, invocation),
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn emit_status(report: &StatusReport, options: GlobalOptions) -> Result<(), AppError> {
-    if options.quiet {
-        return Ok(());
-    }
-    match options.output {
-        OutputMode::Json => println!("{}", serde_json::to_string_pretty(report)?),
-        OutputMode::Text => {
-            let formatter = TextFormatter::stdout();
-            for entry in &report.targets {
-                let cli_state = match entry.cli {
-                    Some(cli) if entry.cli_available => {
-                        formatter.paint(TextStyle::Success, format!("`{cli}` available"))
-                    }
-                    Some(cli) => formatter.paint(TextStyle::Warning, format!("`{cli}` missing")),
-                    None => formatter.paint(TextStyle::Muted, "config file"),
-                };
-                println!(
-                    "{} ({cli_state})",
-                    formatter.paint(TextStyle::Heading, entry.target)
-                );
-                if let Some(legacy) = entry.legacy_server {
-                    println!(
-                        "  {}",
-                        formatter.paint(
-                            TextStyle::Warning,
-                            format!(
-                                "legacy `{legacy}` registration present;                                  `ah ai install` or `ah ai uninstall` removes it"
-                            )
-                        )
-                    );
-                }
-                for scope in &entry.scopes {
-                    println!(
-                        "  {}",
-                        formatter.paint(TextStyle::Key, scope.scope.as_str())
-                    );
-                    if let Some(mcp) = &scope.mcp {
-                        let detail = mcp
-                            .transport
-                            .map(|transport| transport.as_str())
-                            .or(mcp.detail.as_deref())
-                            .map(|detail| format!(" ({detail})"))
-                            .unwrap_or_default();
-                        println!(
-                            "    mcp   {}{detail}",
-                            formatter.paint(
-                                status_action_style(mcp.action),
-                                status_action_label(mcp.action)
-                            ),
-                        );
-                    } else {
-                        println!(
-                            "    mcp   {}",
-                            formatter.paint(TextStyle::Muted, "not supported")
-                        );
-                    }
-                    if let Some(rules) = &scope.rules {
-                        let detail = rules
-                            .path
-                            .as_deref()
-                            .or(rules.detail.as_deref())
-                            .map(|detail| format!(" ({})", formatter.paint(TextStyle::Key, detail)))
-                            .unwrap_or_default();
-                        println!(
-                            "    rules {}{detail}",
-                            formatter.paint(
-                                status_action_style(rules.action),
-                                status_action_label(rules.action)
-                            ),
-                        );
-                    } else {
-                        println!(
-                            "    rules {}",
-                            formatter.paint(TextStyle::Muted, "not supported")
-                        );
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1877,14 +1296,8 @@ mod tests {
         time::Duration,
     };
 
-    use std::io;
-
-    use super::{
-        DEFAULT_HTTP_URL, LiveScreen, LiveTarget, ScopedMcpReport, StatusAction, StatusProgress,
-        http_spec, parallel_map, render_live_lines, status_target,
-    };
-    use crate::ai::targets::{Scope, ServerSpec, Transport};
-    use crate::output::TextFormatter;
+    use super::{DEFAULT_HTTP_URL, StatusProgress, http_spec, parallel_map, status_target};
+    use crate::ai::targets::{Scope, ServerSpec};
 
     #[test]
     fn http_spec_defaults_to_the_managed_loopback_endpoint() {
@@ -1945,101 +1358,6 @@ mod tests {
     }
 
     #[test]
-    fn pending_status_renders_each_supported_scope() {
-        let targets = [LiveTarget::new(
-            crate::ai::targets::find("cursor").unwrap(),
-            true,
-        )];
-
-        assert_eq!(
-            render_live_lines(&targets, "*", TextFormatter::with_color(false)),
-            vec![
-                "cursor (*)",
-                "  user    :: mcp *                 rules *",
-                "  project :: mcp *                 rules *",
-            ]
-        );
-    }
-
-    #[test]
-    fn live_status_replaces_ready_slots_without_waiting_for_mcp() {
-        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
-        target.apply(StatusProgress::Cli {
-            cli: None,
-            available: true,
-        });
-        target.apply(StatusProgress::Rules {
-            scope: Scope::User,
-            report: super::ScopedRulesReport {
-                action: super::StatusAction::Unknown,
-                path: None,
-                detail: Some("Cursor settings".to_owned()),
-            },
-        });
-
-        assert_eq!(
-            render_live_lines(&[target], "*", TextFormatter::with_color(false)),
-            vec![
-                "cursor (config file)",
-                "  user    :: mcp *                 rules unknown (Cursor settings)",
-                "  project :: mcp *                 rules *",
-            ]
-        );
-    }
-
-    #[test]
-    fn live_status_replaces_the_mcp_slot_when_its_probe_finishes() {
-        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
-        target.apply(StatusProgress::Mcp {
-            scope: Scope::Project,
-            report: ScopedMcpReport {
-                action: StatusAction::Installed,
-                registrar: "file",
-                scope: Scope::Project,
-                transport: Some(Transport::Http),
-                url: Some("http://127.0.0.1:8787/mcp".to_owned()),
-                path: Some("opencode.json".to_owned()),
-                detail: None,
-            },
-        });
-
-        assert_eq!(
-            render_live_lines(&[target], "*", TextFormatter::with_color(false))[2],
-            "  project :: mcp installed (http)  rules *"
-        );
-    }
-
-    #[test]
-    fn the_rules_column_does_not_move_when_a_spinner_becomes_a_result() {
-        let formatter = TextFormatter::with_color(false);
-        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
-        let pending = render_live_lines(std::slice::from_ref(&target), "*", formatter);
-        target.apply(StatusProgress::Mcp {
-            scope: Scope::User,
-            report: ScopedMcpReport {
-                action: StatusAction::Installed,
-                registrar: "file",
-                scope: Scope::User,
-                transport: Some(Transport::Stdio),
-                url: None,
-                path: None,
-                detail: None,
-            },
-        });
-
-        let column = |lines: &[String]| {
-            lines[1..]
-                .iter()
-                .map(|line| line.find("rules ").expect("every row has a rules cell"))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            column(&pending),
-            column(&render_live_lines(&[target], "*", formatter))
-        );
-    }
-
-    #[test]
     fn status_target_reports_cli_and_rules_before_mcp() {
         let root = tempfile::tempdir().unwrap();
         let mut events = Vec::new();
@@ -2075,85 +1393,6 @@ mod tests {
                 "rules:project",
                 "mcp:project"
             ]
-        );
-    }
-
-    fn screen(width: Option<usize>, height: Option<usize>) -> LiveScreen {
-        LiveScreen {
-            width,
-            height,
-            drawn: 0,
-        }
-    }
-
-    #[test]
-    fn the_first_frame_is_written_where_the_cursor_already_is() {
-        let mut output = Vec::new();
-
-        screen(None, None)
-            .draw(&mut output, &["one".to_owned(), "two".to_owned()])
-            .unwrap();
-
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            "\rone\u{1b}[K\n\rtwo\u{1b}[K\n"
-        );
-    }
-
-    #[test]
-    fn every_later_frame_rewinds_over_the_rows_it_drew() {
-        let mut output = Vec::new();
-        let mut screen = screen(None, None);
-        let lines = ["one".to_owned(), "two".to_owned()];
-
-        screen.draw(&mut io::sink(), &lines).unwrap();
-        screen.draw(&mut output, &lines).unwrap();
-
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            "\u{1b}[2A\rone\u{1b}[K\n\rtwo\u{1b}[K\n"
-        );
-    }
-
-    #[test]
-    fn lines_are_clipped_to_the_terminal_width_ansi_aside() {
-        let mut output = Vec::new();
-
-        screen(Some(9), None)
-            .draw(&mut output, &["\u{1b}[1msome very long line".to_owned()])
-            .unwrap();
-
-        let rendered = String::from_utf8(output).unwrap();
-        assert!(
-            rendered.contains("some very") && !rendered.contains("long"),
-            "{rendered:?} should keep nine visible columns"
-        );
-    }
-
-    #[test]
-    fn a_block_taller_than_the_terminal_is_animated_within_the_viewport() {
-        let lines: Vec<String> = (0..8).map(|row| format!("row {row}")).collect();
-
-        assert_eq!(
-            super::clip_height(&lines, Some(3)),
-            vec!["row 0", "row 1", "… 6 more"]
-        );
-        assert_eq!(super::clip_height(&lines, Some(8)), lines);
-        assert_eq!(super::clip_height(&lines, None), lines);
-    }
-
-    #[test]
-    fn the_finished_report_erases_the_clipped_frames_before_printing_in_full() {
-        let mut output = Vec::new();
-        let mut screen = screen(None, Some(2));
-        let lines = ["one".to_owned(), "two".to_owned(), "three".to_owned()];
-
-        screen.draw(&mut io::sink(), &lines).unwrap();
-        screen.finish(&mut output, &lines).unwrap();
-
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            "\u{1b}[2A\r\u{1b}[J\rone\u{1b}[K\n\rtwo\u{1b}[K\n\rthree\u{1b}[K\n"
         );
     }
 }
