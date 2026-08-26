@@ -1,3 +1,10 @@
+//! The event log: what this process did, in a form that can be read after the
+//! fact.
+//!
+//! Every record goes through `ah-redact` before it reaches the disk, because a
+//! log is the one artefact that outlives the invocation - a credential written
+//! here is a credential leaked for as long as the file exists.
+
 use std::{
     env,
     ffi::OsStr,
@@ -21,7 +28,7 @@ use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
 
-use crate::{config, error::AppError};
+use ah_error::AppError;
 
 mod record;
 mod rotation;
@@ -29,7 +36,7 @@ mod rotation;
 use record::{RecordKind, bounded_line};
 use rotation::{acquire_lock, cleanup_old_logs, log_filename};
 
-pub(crate) const SCHEMA_VERSION: u64 = 1;
+pub const SCHEMA_VERSION: u64 = 1;
 
 trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
@@ -44,7 +51,7 @@ impl Clock for SystemClock {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SystemEventSeverity {
+pub enum SystemEventSeverity {
     Warning,
     Error,
 }
@@ -59,22 +66,18 @@ impl SystemEventSeverity {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct EventDiagnostic {
-    pub(crate) domain: Option<String>,
-    pub(crate) operation: Option<String>,
-    pub(crate) code: String,
-    pub(crate) message: String,
-    pub(crate) cause: Option<String>,
-    pub(crate) exit_code_hint: i32,
-    pub(crate) retryable: Option<bool>,
+pub struct EventDiagnostic {
+    pub domain: Option<String>,
+    pub operation: Option<String>,
+    pub code: String,
+    pub message: String,
+    pub cause: Option<String>,
+    pub exit_code_hint: i32,
+    pub retryable: Option<bool>,
 }
 
 impl EventDiagnostic {
-    pub(crate) fn new(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        exit_code_hint: i32,
-    ) -> Self {
+    pub fn new(code: impl Into<String>, message: impl Into<String>, exit_code_hint: i32) -> Self {
         Self {
             domain: None,
             operation: None,
@@ -86,7 +89,7 @@ impl EventDiagnostic {
         }
     }
 
-    pub(crate) fn from_app_error(error: &AppError) -> Self {
+    pub fn from_app_error(error: &AppError) -> Self {
         let diagnostic = error.diagnostic();
         Self {
             domain: diagnostic.domain,
@@ -99,17 +102,13 @@ impl EventDiagnostic {
         }
     }
 
-    pub(crate) fn with_identity(
-        mut self,
-        domain: Option<String>,
-        operation: Option<String>,
-    ) -> Self {
+    pub fn with_identity(mut self, domain: Option<String>, operation: Option<String>) -> Self {
         self.domain = domain;
         self.operation = operation;
         self
     }
 
-    pub(crate) fn with_cause(mut self, cause: impl Into<String>) -> Self {
+    pub fn with_cause(mut self, cause: impl Into<String>) -> Self {
         self.cause = non_empty(cause.into());
         self
     }
@@ -135,7 +134,7 @@ impl EventDiagnostic {
     }
 }
 
-pub(crate) struct EventLogger {
+pub struct EventLogger {
     log_dir: PathBuf,
     unredacted: bool,
     clock: Arc<dyn Clock>,
@@ -143,8 +142,8 @@ pub(crate) struct EventLogger {
 }
 
 impl EventLogger {
-    pub(crate) fn new() -> Option<Self> {
-        let log_dir = config::resolve_log_dir()?;
+    pub fn new() -> Option<Self> {
+        let log_dir = ah_config::resolve_log_dir()?;
         fs::create_dir_all(&log_dir).ok()?;
         Some(Self {
             log_dir,
@@ -154,7 +153,7 @@ impl EventLogger {
         })
     }
 
-    pub(crate) fn record_cli_command(
+    pub fn record_cli_command(
         &self,
         command: &str,
         argv: Vec<String>,
@@ -164,7 +163,7 @@ impl EventLogger {
         self.record_cli_command_with_outcome(command, argv, duration, None, error);
     }
 
-    pub(crate) fn record_cli_command_with_outcome(
+    pub fn record_cli_command_with_outcome(
         &self,
         command: &str,
         argv: Vec<String>,
@@ -203,7 +202,7 @@ impl EventLogger {
         self.write_best_effort(&mut record, RecordKind::Command);
     }
 
-    pub(crate) fn record_system_event(
+    pub fn record_system_event(
         &self,
         component: &str,
         severity: SystemEventSeverity,
@@ -448,7 +447,7 @@ mod tests {
         Clock, EventDiagnostic, EventLogger, SystemEventSeverity, log_filename,
         record::MAX_LINE_BYTES,
     };
-    use crate::error::AppError;
+    use ah_error::AppError;
 
     struct FixedClock(DateTime<Utc>);
 

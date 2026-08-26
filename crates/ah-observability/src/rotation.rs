@@ -14,15 +14,15 @@ use std::{
 use chrono::{Days, NaiveDate};
 use fs2::FileExt;
 
-pub(crate) const FILE_PREFIX: &str = "aihelper-";
+pub const FILE_PREFIX: &str = "aihelper-";
 
-pub(crate) const FILE_SUFFIX: &str = ".jsonl";
+pub const FILE_SUFFIX: &str = ".jsonl";
 
-pub(crate) const LOCK_TIMEOUT: Duration = Duration::from_millis(50);
+pub const LOCK_TIMEOUT: Duration = Duration::from_millis(50);
 
-pub(crate) const LOCK_RETRY_DELAY: Duration = Duration::from_millis(2);
+pub const LOCK_RETRY_DELAY: Duration = Duration::from_millis(2);
 
-pub(crate) fn acquire_lock(file: &File) -> io::Result<()> {
+pub fn acquire_lock(file: &File) -> io::Result<()> {
     let started = Instant::now();
     loop {
         match file.try_lock_exclusive() {
@@ -38,7 +38,7 @@ pub(crate) fn acquire_lock(file: &File) -> io::Result<()> {
     }
 }
 
-pub(crate) fn retryable_lock_error(error: &io::Error) -> bool {
+pub fn retryable_lock_error(error: &io::Error) -> bool {
     if error.kind() == io::ErrorKind::WouldBlock {
         return true;
     }
@@ -58,11 +58,11 @@ pub(crate) fn retryable_lock_error(error: &io::Error) -> bool {
     }
 }
 
-pub(crate) fn log_filename(date: NaiveDate) -> String {
+pub fn log_filename(date: NaiveDate) -> String {
     format!("{FILE_PREFIX}{}{FILE_SUFFIX}", date.format("%Y-%m-%d"))
 }
 
-pub(crate) fn cleanup_old_logs(log_dir: &Path, current_date: NaiveDate) -> io::Result<()> {
+pub fn cleanup_old_logs(log_dir: &Path, current_date: NaiveDate) -> io::Result<()> {
     let oldest_retained = current_date
         .checked_sub_days(Days::new(9))
         .unwrap_or(NaiveDate::MIN);
@@ -86,7 +86,7 @@ pub(crate) fn cleanup_old_logs(log_dir: &Path, current_date: NaiveDate) -> io::R
     Ok(())
 }
 
-pub(crate) fn parse_log_filename(name: &str) -> Option<NaiveDate> {
+pub fn parse_log_filename(name: &str) -> Option<NaiveDate> {
     if name.len() != FILE_PREFIX.len() + 10 + FILE_SUFFIX.len()
         || !name.starts_with(FILE_PREFIX)
         || !name.ends_with(FILE_SUFFIX)

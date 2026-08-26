@@ -373,7 +373,7 @@ mod tests {
     use ah_mcp::{SecretSetupRequest, SecretSetupService};
 
     use super::{SecretSetupCapabilities, SecretSetupTarget, VaultSetupService};
-    use crate::secrets::{KeyProvider, SecretKind, VaultError, VaultStore};
+    use crate::{KeyProvider, SecretKind, VaultError, VaultStore};
 
     struct FixedKey;
 

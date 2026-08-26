@@ -157,7 +157,7 @@ pub struct ResolvedSecret {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct StoredSecret {
+pub struct StoredSecret {
     pub id: String,
     pub label: String,
     #[serde(default)]

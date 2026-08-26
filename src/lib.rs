@@ -1,10 +1,10 @@
 pub mod ai;
 pub mod cli;
 pub mod commands;
-pub mod config;
+pub(crate) use ah_config as config;
 mod entry;
 pub(crate) use ah_error as error;
-pub(crate) mod event_log;
+pub(crate) use ah_observability as event_log;
 pub(crate) mod git_status;
 pub(crate) mod host_commands;
 pub mod mcp_service;
@@ -17,16 +17,14 @@ pub mod plugins;
 mod reference_docs;
 mod runtime_flow;
 pub mod safety;
-pub mod secrets;
+pub use ah_secrets as secrets;
 #[cfg(test)]
 mod snapshots;
 
 use std::{path::PathBuf, sync::Arc};
 
-use ah_plugin_api::{InvocationResponse, RequiredTool, ResolvedSecret};
-use ah_runtime::{
-    PluginManager, PluginSource, RuntimeError, SecretResolver, SecretResolverError, core,
-};
+use ah_plugin_api::{InvocationResponse, RequiredTool};
+use ah_runtime::{PluginManager, PluginSource, RuntimeError, core};
 use serde::Serialize;
 
 use crate::{
@@ -55,22 +53,6 @@ fn runtime_vault(config: &config::ConfigContext) -> Arc<secrets::VaultStore> {
         config,
         Box::new(RuntimeVaultKeyProvider),
     ))
-}
-
-impl SecretResolver for secrets::VaultStore {
-    fn resolve(&self, id: &str) -> Result<ResolvedSecret, SecretResolverError> {
-        let secret =
-            secrets::VaultStore::resolve(self, id).map_err(|error| match error.code() {
-                "VAULT_SECRET_NOT_FOUND" | "VAULT_NOT_INITIALIZED" => SecretResolverError::NotFound,
-                "VAULT_KEY_UNAVAILABLE" => SecretResolverError::VaultKeyUnavailable,
-                _ => SecretResolverError::VaultLocked,
-            })?;
-        Ok(ResolvedSecret {
-            id: secret.metadata.id,
-            kind: secret.metadata.kind.to_string(),
-            values: secret.values,
-        })
-    }
 }
 
 fn execute_plugins_list(

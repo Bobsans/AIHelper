@@ -1,10 +1,17 @@
+//! Where AIHelper reads its configuration from.
+//!
+//! Its own crate because the log directory and the secret vault both resolve
+//! against it, and they are crates of their own - not because configuration is
+//! complicated. The per-platform layout policy lives in `ah-paths`; what is
+//! here is the process-scoped answer to "relative to what".
+
 use std::{
     env,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 const PLUGIN_SETTINGS_FILE: &str = "plugins.json";
 const LOG_DIR: &str = "logs";
@@ -53,7 +60,7 @@ static BASE_DIR: OnceLock<PathBuf> = OnceLock::new();
 ///
 /// Ignored after the first call, so a test that runs commands in-process does
 /// not have later ones silently reinterpret earlier paths.
-pub(crate) fn set_base_dir(directory: PathBuf) {
+pub fn set_base_dir(directory: PathBuf) {
     let _ = BASE_DIR.set(directory);
 }
 
@@ -83,7 +90,7 @@ fn config_error(error: ah_paths::Error) -> AppError {
     })
 }
 
-pub(crate) fn resolve_log_dir() -> Option<PathBuf> {
+pub fn resolve_log_dir() -> Option<PathBuf> {
     resolve_config_dir().ok().map(|dir| dir.join(LOG_DIR))
 }
 

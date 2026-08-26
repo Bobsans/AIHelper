@@ -14,13 +14,16 @@ publish = false
 [workspace]
 members = [
     "crates/ah-mcp",
+    "crates/ah-observability",
     "crates/ah-paths",
     "crates/ah-persist",
+    "crates/ah-config",
     "crates/ah-error",
     "crates/ah-platform",
     "crates/ah-plugin-api",
     "crates/ah-plugin-sdk",
     "crates/ah-redact",
+    "crates/ah-secrets",
     "crates/ah-setup-ui",
     "crates/ah-release-manifest",
     "crates/ah-release-tool",
@@ -51,12 +54,16 @@ repository = "https://github.com/Bobsans/AIHelper"
 # Members may add features on top with `features = [...]`; they must not
 # override the version.
 [workspace.dependencies]
+aes-gcm = { version = "0.10.3", features = ["aes"] }
 assert_cmd = "2.0.17"
 axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5.39", features = ["derive"] }
 command-group = "5.0.1"
 ed25519-dalek = "3"
+fs2 = "0.4.3"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
 schemars = "1.2.2"
 semver = "1"
@@ -75,16 +82,13 @@ windows-sys = "0.61.2"
 zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 
 [dependencies]
-aes-gcm = { version = "0.10.3", features = ["aes"] }
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+chrono.workspace = true
 clap = { workspace = true, features = ["string"] }
 console = "0.16.4"
 dialoguer = "0.12.0"
-fs2 = "0.4.3"
 globset = "0.4.16"
 ignore = "0.4.27"
 jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
-keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 libc = "0.2.185"
 regex = "1.12.2"
 schemars.workspace = true
@@ -97,12 +101,15 @@ thiserror.workspace = true
 walkdir = "2.5.0"
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
+ah-observability = { path = "crates/ah-observability" }
 ah-paths = { path = "crates/ah-paths" }
 ah-persist = { path = "crates/ah-persist" }
+ah-config = { path = "crates/ah-config" }
 ah-error = { path = "crates/ah-error" }
 ah-platform = { path = "crates/ah-platform" }
 ah-plugin-api = { path = "crates/ah-plugin-api" }
 ah-redact = { path = "crates/ah-redact" }
+ah-secrets = { path = "crates/ah-secrets" }
 ah-runtime = { path = "crates/ah-runtime" }
 ah-mcp = { path = "crates/ah-mcp" }
 ah-update-helper = { path = "crates/ah-update-helper" }
@@ -143,6 +150,8 @@ command-group.workspace = true
 ah-release-manifest = { path = "crates/ah-release-manifest" }
 assert_cmd.workspace = true
 base64.workspace = true
+# The log rotation test takes the same lock the event log does.
+fs2.workspace = true
 command-group.workspace = true
 predicates = "3.1.3"
 

@@ -44,6 +44,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-config"
+version = "1.4.0"
+dependencies = [
+ "ah-error",
+ "ah-paths",
+]
+
+[[package]]
 name = "ah-error"
 version = "1.4.0"
 dependencies = [
@@ -70,6 +78,22 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "uuid",
+]
+
+[[package]]
+name = "ah-observability"
+version = "1.4.0"
+dependencies = [
+ "ah-config",
+ "ah-error",
+ "ah-mcp",
+ "ah-plugin-api",
+ "ah-redact",
+ "ah-runtime",
+ "chrono",
+ "fs2",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -226,6 +250,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-secrets"
+version = "1.4.0"
+dependencies = [
+ "aes-gcm",
+ "ah-config",
+ "ah-error",
+ "ah-mcp",
+ "ah-persist",
+ "ah-plugin-api",
+ "ah-runtime",
+ "fs2",
+ "keyring",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ah-setup-ui"
 version = "1.4.0"
 dependencies = [
@@ -319,9 +363,10 @@ dependencies = [
 name = "aihelper"
 version = "1.4.0"
 dependencies = [
- "aes-gcm",
+ "ah-config",
  "ah-error",
  "ah-mcp",
+ "ah-observability",
  "ah-paths",
  "ah-persist",
  "ah-platform",
@@ -329,6 +374,7 @@ dependencies = [
  "ah-redact",
  "ah-release-manifest",
  "ah-runtime",
+ "ah-secrets",
  "ah-update-helper",
  "ah-updater",
  "ah-updater-core",
@@ -343,7 +389,6 @@ dependencies = [
  "globset",
  "ignore",
  "jsonc-parser",
- "keyring",
  "libc",
  "predicates",
  "regex",

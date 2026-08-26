@@ -12,7 +12,8 @@ use aes_gcm::{
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::{config::ConfigContext, persistence::atomic_write_json};
+use ah_config::ConfigContext;
+use ah_persist::atomic_write_json;
 
 use super::{
     KeyProvider, NewSecret, ResolvedSecret, SecretKind, SecretMetadata, kinds::StoredSecret,
@@ -34,7 +35,7 @@ impl VaultError {
         self.code
     }
 
-    pub(crate) fn key_unavailable() -> Self {
+    pub fn key_unavailable() -> Self {
         Self::new("VAULT_KEY_UNAVAILABLE", "vault key is unavailable")
     }
 
@@ -273,6 +274,31 @@ struct Envelope {
     ciphertext: Vec<u8>,
 }
 
+/// The vault satisfies the runtime's secret port.
+///
+/// The mapping is deliberately coarse: a command that asked for a credential
+/// learns whether it does not exist, whether the key is unavailable, or whether
+/// the vault is locked - never which of the vault's internal states it is in.
+impl ah_runtime::SecretResolver for VaultStore {
+    fn resolve(
+        &self,
+        id: &str,
+    ) -> Result<ah_plugin_api::ResolvedSecret, ah_runtime::SecretResolverError> {
+        let secret = VaultStore::resolve(self, id).map_err(|error| match error.code() {
+            "VAULT_SECRET_NOT_FOUND" | "VAULT_NOT_INITIALIZED" => {
+                ah_runtime::SecretResolverError::NotFound
+            }
+            "VAULT_KEY_UNAVAILABLE" => ah_runtime::SecretResolverError::VaultKeyUnavailable,
+            _ => ah_runtime::SecretResolverError::VaultLocked,
+        })?;
+        Ok(ah_plugin_api::ResolvedSecret {
+            id: secret.metadata.id,
+            kind: secret.metadata.kind.to_string(),
+            values: secret.values,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -283,7 +309,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::secrets::{KeyProvider, NewSecret, SecretKind, VaultError, VaultStore};
+    use crate::{KeyProvider, NewSecret, SecretKind, VaultError, VaultStore};
 
     #[derive(Clone)]
     struct FixedKey([u8; 32]);

@@ -10,17 +10,17 @@ use ah_redact::truncate_with_marker;
 
 use super::SCHEMA_VERSION;
 
-pub(crate) const COMPACT_DIAGNOSTIC_BYTES: usize = 1024;
+pub const COMPACT_DIAGNOSTIC_BYTES: usize = 1024;
 
-pub(crate) const MAX_LINE_BYTES: usize = 65_536;
+pub const MAX_LINE_BYTES: usize = 65_536;
 
 #[derive(Clone, Copy)]
-pub(crate) enum RecordKind {
+pub enum RecordKind {
     Command,
     System,
 }
 
-pub(crate) fn bounded_line(record: &mut Value, kind: RecordKind) -> Option<Vec<u8>> {
+pub fn bounded_line(record: &mut Value, kind: RecordKind) -> Option<Vec<u8>> {
     let first = serde_json::to_vec(record).ok()?;
     if first.len() < MAX_LINE_BYTES {
         return Some(first);
@@ -36,7 +36,7 @@ pub(crate) fn bounded_line(record: &mut Value, kind: RecordKind) -> Option<Vec<u
     (line.len() < MAX_LINE_BYTES).then_some(line)
 }
 
-pub(crate) fn compact_record(record: &mut Value, kind: RecordKind, original_bounded_bytes: u64) {
+pub fn compact_record(record: &mut Value, kind: RecordKind, original_bounded_bytes: u64) {
     let payload = match kind {
         RecordKind::Command => "parameters",
         RecordKind::System => "context",
@@ -60,11 +60,7 @@ pub(crate) fn compact_record(record: &mut Value, kind: RecordKind, original_boun
     }
 }
 
-pub(crate) fn minimal_record(
-    record: &Value,
-    kind: RecordKind,
-    original_bounded_bytes: u64,
-) -> Value {
+pub fn minimal_record(record: &Value, kind: RecordKind, original_bounded_bytes: u64) -> Value {
     let compact_payload = json!({
         "_truncated": true,
         "original_bounded_bytes": original_bounded_bytes,
@@ -113,11 +109,11 @@ pub(crate) fn minimal_record(
     }
 }
 
-pub(crate) fn value_or(record: &Value, field: &str, default: Value) -> Value {
+pub fn value_or(record: &Value, field: &str, default: Value) -> Value {
     record.get(field).cloned().unwrap_or(default)
 }
 
-pub(crate) fn minimal_diagnostic(diagnostic: Option<&Value>) -> Value {
+pub fn minimal_diagnostic(diagnostic: Option<&Value>) -> Value {
     let code = diagnostic
         .and_then(|value| value.get("code"))
         .cloned()
