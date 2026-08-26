@@ -1,3 +1,13 @@
+//! `ah http assert`: running a spec file's cases in order, each able to use
+//! what earlier ones captured.
+//!
+//! | Module        | Owns                                                  |
+//! |---------------|-------------------------------------------------------|
+//! | `format`      | the spec file as written on disk                      |
+//! | `interpolate` | substituting captured values into a later case        |
+//! | `extract`     | pulling those values out of a response                |
+//! | `junit`       | the XML a CI run consumes                             |
+
 //! The spec-file runner: the on-disk case format, variable interpolation,
 //! response extraction, and the JUnit reporter.
 //!
@@ -29,124 +39,25 @@ use crate::{
     output::OutputMode,
 };
 
-#[derive(Debug, Deserialize)]
-pub(super) struct HttpSpec {
-    version: u32,
-    #[serde(default)]
-    defaults: SpecDefaults,
-    #[serde(default)]
-    vars: BTreeMap<String, String>,
-    #[serde(default)]
-    cases: Vec<SpecCase>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct SpecDefaults {
-    base_url: Option<String>,
-    timeout_secs: Option<u64>,
-    max_response_bytes: Option<usize>,
-    #[serde(default)]
-    headers: BTreeMap<String, String>,
-    #[serde(default)]
-    query: BTreeMap<String, String>,
-    bearer: Option<String>,
-    basic: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct SpecCase {
-    name: String,
-    request: SpecRequest,
-    #[serde(default)]
-    expect: SpecExpect,
-    #[serde(default)]
-    extract: BTreeMap<String, SpecExtractRule>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct SpecRequest {
-    method: Option<String>,
-    path: Option<String>,
-    url: Option<String>,
-    #[serde(default)]
-    headers: BTreeMap<String, String>,
-    #[serde(default)]
-    query: BTreeMap<String, String>,
-    timeout_secs: Option<u64>,
-    max_response_bytes: Option<usize>,
-    bearer: Option<String>,
-    basic: Option<String>,
-    json: Option<Value>,
-    json_file: Option<String>,
-    body: Option<String>,
-    body_file: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct SpecExpect {
-    status: Option<SpecStatusValue>,
-    #[serde(default)]
-    headers: BTreeMap<String, String>,
-    body_contains: Option<OneOrManyStrings>,
-    #[serde(default)]
-    json: Vec<SpecJsonCheck>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum SpecStatusValue {
-    Number(u16),
-    Text(String),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OneOrManyStrings {
-    One(String),
-    Many(Vec<String>),
-}
-
-#[derive(Debug, Deserialize)]
-struct SpecJsonCheck {
-    path: String,
-    eq: Option<Value>,
-    contains: Option<Value>,
-    exists: Option<bool>,
-    #[serde(rename = "match")]
-    regex: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SpecExtractRule {
-    json: Option<String>,
-    header: Option<String>,
-    text: Option<SpecTextExtract>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SpecTextExtract {
-    regex: String,
-    #[serde(default = "default_extract_group")]
-    group: usize,
-}
-
-fn default_extract_group() -> usize {
-    1
-}
+mod extract;
+mod format;
+mod interpolate;
+mod junit;
+pub(super) use extract::{Extractor, extract_response_values, parse_extractors};
+use format::{OneOrManyStrings, SpecExpect, SpecJsonCheck, SpecRequest, SpecStatusValue};
+pub(super) use format::{SpecCase, SpecDefaults, SpecExtractRule, read_spec_file};
+pub(super) use interpolate::interpolate_string;
+use interpolate::{interpolate_json_value, resolve_case_url};
+// Reached only from `tests`, which globs this module, not its children.
+#[cfg(test)]
+use extract::extract_response_value;
+pub(crate) use junit::render_assert_junit;
 
 pub(super) struct PreparedSpecCase {
     case_name: String,
     request: RequestConfig,
     expectations: RequestExpectations,
     extractors: BTreeMap<String, Extractor>,
-}
-
-pub(super) enum Extractor {
-    Json { path: String },
-    Header { name: String },
-    Text { regex: Regex, group: usize },
 }
 
 pub(super) fn build_case_request(
@@ -269,118 +180,6 @@ pub(super) fn build_case_request(
         expectations,
         extractors,
     })
-}
-
-pub(super) fn parse_extractors(
-    rules: &BTreeMap<String, SpecExtractRule>,
-) -> Result<BTreeMap<String, Extractor>, AppError> {
-    let mut extractors = BTreeMap::new();
-    for (variable, rule) in rules {
-        if variable.trim().is_empty() {
-            return Err(AppError::invalid_argument(
-                "extract variable name must not be empty",
-            ));
-        }
-        let selector_count = usize::from(rule.json.is_some())
-            + usize::from(rule.header.is_some())
-            + usize::from(rule.text.is_some());
-        if selector_count != 1 {
-            return Err(AppError::invalid_argument(format!(
-                "extract '{variable}' must define exactly one selector (json, header, text)"
-            )));
-        }
-        let extractor = if let Some(path) = &rule.json {
-            parse_json_path_tokens(path)?;
-            Extractor::Json { path: path.clone() }
-        } else if let Some(name) = &rule.header {
-            if name.trim().is_empty() {
-                return Err(AppError::invalid_argument(format!(
-                    "extract '{variable}' header must not be empty"
-                )));
-            }
-            Extractor::Header {
-                name: name.to_ascii_lowercase(),
-            }
-        } else {
-            let text = rule.text.as_ref().expect("selector count checked");
-            let regex = Regex::new(&text.regex).map_err(|error| {
-                AppError::invalid_argument(format!(
-                    "extract '{variable}' has invalid text regex: {error}"
-                ))
-            })?;
-            if text.group >= regex.captures_len() {
-                return Err(AppError::invalid_argument(format!(
-                    "extract '{variable}' group {} does not exist in text regex",
-                    text.group
-                )));
-            }
-            Extractor::Text {
-                regex,
-                group: text.group,
-            }
-        };
-        extractors.insert(variable.clone(), extractor);
-    }
-    Ok(extractors)
-}
-
-pub(super) fn extract_response_values(
-    response: &ResponseSnapshot,
-    extractors: &BTreeMap<String, Extractor>,
-) -> (BTreeMap<String, String>, Vec<String>) {
-    let mut values = BTreeMap::new();
-    let mut failures = Vec::new();
-
-    for (variable, extractor) in extractors {
-        match extract_response_value(response, extractor) {
-            Ok(value) => {
-                values.insert(variable.clone(), value);
-            }
-            Err(source) => failures.push(format!("extract '{variable}' failed: {source}")),
-        }
-    }
-    if failures.is_empty() {
-        (values, failures)
-    } else {
-        (BTreeMap::new(), failures)
-    }
-}
-
-pub(super) fn extract_response_value(
-    response: &ResponseSnapshot,
-    extractor: &Extractor,
-) -> Result<String, &'static str> {
-    match extractor {
-        Extractor::Json { path } => {
-            if response.body_truncated {
-                return Err("response body was truncated");
-            }
-            let root = response
-                .body_json
-                .as_ref()
-                .ok_or("response body is not valid JSON")?;
-            let value = resolve_json_path(root, path).ok_or("JSON path was not found")?;
-            match value {
-                Value::String(value) => Ok(value.clone()),
-                value => Ok(value.to_string()),
-            }
-        }
-        Extractor::Header { name } => response
-            .headers
-            .get(name)
-            .cloned()
-            .ok_or("response header was not found"),
-        Extractor::Text { regex, group } => {
-            if response.body_truncated {
-                return Err("response body was truncated");
-            }
-            regex
-                .captures(&response.body)
-                .and_then(|captures| captures.get(*group))
-                .map(|capture| capture.as_str().to_owned())
-                .ok_or("text regex did not match the requested group")
-        }
-    }
 }
 
 fn parse_spec_expectations(
@@ -523,179 +322,6 @@ fn parse_spec_payload(
     }
 
     parse_payload(&options, Some(spec_dir))
-}
-
-fn resolve_case_url(
-    request: &SpecRequest,
-    defaults: &SpecDefaults,
-    vars: &BTreeMap<String, String>,
-) -> Result<String, AppError> {
-    if request.url.is_some() && request.path.is_some() {
-        return Err(AppError::invalid_argument(
-            "request.url and request.path are mutually exclusive",
-        ));
-    }
-
-    if let Some(url) = request.url.as_ref() {
-        let interpolated = interpolate_string(url, vars)?;
-        if interpolated.trim().is_empty() {
-            return Err(AppError::invalid_argument("request.url must not be empty"));
-        }
-        return Ok(interpolated);
-    }
-
-    if let Some(path) = request.path.as_ref() {
-        let base = defaults
-            .base_url
-            .as_ref()
-            .ok_or_else(|| AppError::invalid_argument("request.path requires defaults.base_url"))?;
-        let base = interpolate_string(base, vars)?;
-        let path = interpolate_string(path, vars)?;
-        if path.starts_with("http://") || path.starts_with("https://") {
-            return Ok(path);
-        }
-        return Ok(join_base_and_path(&base, &path));
-    }
-
-    Err(AppError::invalid_argument(
-        "request must define either url or path",
-    ))
-}
-
-fn join_base_and_path(base: &str, path: &str) -> String {
-    let base = base.trim_end_matches('/');
-    if path.starts_with('/') {
-        format!("{base}{path}")
-    } else {
-        format!("{base}/{path}")
-    }
-}
-
-pub(super) fn read_spec_file(path: &Path) -> Result<HttpSpec, AppError> {
-    let raw = crate::commands::http::io::read_to_string(path)?;
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    if extension == "json" {
-        serde_json::from_str(&raw).map_err(|error| {
-            AppError::invalid_argument(format!(
-                "failed to parse spec JSON '{}': {error}",
-                path.display()
-            ))
-        })
-    } else {
-        serde_yaml::from_str(&raw).map_err(|error| {
-            AppError::invalid_argument(format!(
-                "failed to parse spec YAML '{}': {error}",
-                path.display()
-            ))
-        })
-    }
-}
-
-pub(super) fn interpolate_string(
-    input: &str,
-    vars: &BTreeMap<String, String>,
-) -> Result<String, AppError> {
-    let mut remaining = input;
-    let mut output = String::with_capacity(input.len());
-
-    while let Some(start) = remaining.find("{{") {
-        output.push_str(&remaining[..start]);
-        let after_start = &remaining[(start + 2)..];
-        let end = after_start.find("}}").ok_or_else(|| {
-            AppError::invalid_argument(format!("unterminated template expression in '{input}'"))
-        })?;
-        let key = after_start[..end].trim();
-        if key.is_empty() {
-            return Err(AppError::invalid_argument(format!(
-                "empty template expression in '{input}'"
-            )));
-        }
-        let value = vars.get(key).ok_or_else(|| {
-            AppError::invalid_argument(format!("unknown template variable '{key}'"))
-        })?;
-        output.push_str(value);
-        remaining = &after_start[(end + 2)..];
-    }
-
-    output.push_str(remaining);
-    Ok(output)
-}
-
-fn interpolate_json_value(
-    value: &Value,
-    vars: &BTreeMap<String, String>,
-) -> Result<Value, AppError> {
-    match value {
-        Value::Null => Ok(Value::Null),
-        Value::Bool(boolean) => Ok(Value::Bool(*boolean)),
-        Value::Number(number) => Ok(Value::Number(number.clone())),
-        Value::String(text) => Ok(Value::String(interpolate_string(text, vars)?)),
-        Value::Array(items) => {
-            let mut result = Vec::with_capacity(items.len());
-            for item in items {
-                result.push(interpolate_json_value(item, vars)?);
-            }
-            Ok(Value::Array(result))
-        }
-        Value::Object(map) => {
-            let mut result = serde_json::Map::new();
-            for (key, item) in map {
-                let new_key = interpolate_string(key, vars)?;
-                result.insert(new_key, interpolate_json_value(item, vars)?);
-            }
-            Ok(Value::Object(result))
-        }
-    }
-}
-
-pub(crate) fn render_assert_junit(report: &HttpAssertOutput) -> String {
-    let mut xml = String::new();
-    xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
-    xml.push('\n');
-    xml.push_str(&format!(
-        r#"<testsuite name="http.assert" tests="{}" failures="{}" time="{}">"#,
-        report.summary.total,
-        report.summary.failed,
-        duration_secs_string(report.summary.duration_ms)
-    ));
-    xml.push('\n');
-    for case in &report.cases {
-        xml.push_str(&format!(
-            r#"  <testcase name="{}" classname="http.assert" time="{}">"#,
-            xml_escape(&case.name),
-            duration_secs_string(case.duration_ms)
-        ));
-        xml.push('\n');
-        if !case.passed {
-            let message = case.failures.join("; ");
-            xml.push_str(&format!(
-                r#"    <failure message="{}">{}</failure>"#,
-                xml_escape(&message),
-                xml_escape(&message)
-            ));
-            xml.push('\n');
-        }
-        xml.push_str("  </testcase>\n");
-    }
-    xml.push_str("</testsuite>");
-    xml
-}
-
-fn xml_escape(raw: &str) -> String {
-    raw.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-fn duration_secs_string(duration_ms: u64) -> String {
-    format!("{:.3}", (duration_ms as f64) / 1000.0)
 }
 
 pub(crate) fn run_assert(
