@@ -28,6 +28,8 @@ mod run;
 mod search;
 #[path = "integration/secrets.rs"]
 mod secrets;
+#[path = "integration/startup.rs"]
+mod startup;
 #[path = "integration/task.rs"]
 mod task;
 #[path = "integration/upgrade.rs"]
