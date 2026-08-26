@@ -170,7 +170,7 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 | Work                                                        | Group  |
 |-------------------------------------------------------------|--------|
 | ~~`ServiceGuard` trait; invert the updater↔service dependency~~ **(done)** | 07 |
-| Extract `ah-updater` from `src/updater/`                    | 07, 09 |
+| ~~Extract `ah-updater` from `src/updater/`~~ **(done)**      | 07, 09 |
 | Extract `ah-secrets`, `ah-observability`, `ah-service`      | 09     |
 | One `fsverify` module for updater hardening primitives      | 07     |
 | ↳ partly landed: `ah-update-helper::apply::fsverify` now names them in that crate; the row's "one" still wants them shared with `src/updater/` | |
@@ -195,6 +195,29 @@ checked by the signature. `src/updater/` no longer names anything in
   is part of extracting `ah-updater`, and so is the larger question that row has
   to answer: `AppError` is the root crate's type, and every updater signature
   returns it.
+
+**`ah-updater` landed, and the blockers were never its own code.** `cargo tree`
+shows neither `aihelper` nor anything of `mcp_service` in its graph, and its 35
+tests run without them. Five things had to move first, and four of them were
+worth doing on their own:
+
+| Blocker                                          | Answer                        |
+|--------------------------------------------------|-------------------------------|
+| `AppError`, named by every signature             | `ah-error` (a relocation - it depended on nothing but `ah_plugin_api`) |
+| atomic JSON writes in `installation.rs`          | `ah-persist`, which nine subsystems share |
+| the lifecycle lease held across an activation    | `ah_platform::lease`, reporting `io::Error` |
+| `CREATE_PROCESS_LOCK`, in three copies           | `ah_platform::exec`, one lock and one explanation |
+| the bounded process runner, and the rendering    | ports (`Host`) and `upgrade::render` |
+
+Two of those were latent problems rather than obstacles. The lock guards
+process-global inheritance state, and a fourth spawn site added beside one of
+the three copies would not have known to take a lock at all. And building
+`ah-platform` alone surfaced two `windows-sys` features that workspace feature
+unification had been supplying for it.
+
+What stayed in the root is what the criterion allows: `src/upgrade/` is the clap
+route, the two port implementations and the renderer. The root crate also lost
+`sha2`, `zip` and `ed25519-dalek`, which it no longer needs.
 
 The three lifecycle helpers that remain (`snapshot_status`, `install_quietly`,
 `start_quietly`) serve `ai install --transport managed`. Group 07 counted them
