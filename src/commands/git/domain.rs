@@ -1,3 +1,14 @@
+//! `ah git`: one function per subcommand, over `io::GitIo`.
+//!
+//! The 848 lines this came from also held every output struct and every parser
+//! for git's ad-hoc text formats, so the subcommands - the part a reader is
+//! usually looking for - were a third of the file scattered through it.
+//!
+//! | Module   | Owns                                            |
+//! |----------|-------------------------------------------------|
+//! | `output` | what each subcommand reports                     |
+//! | `parse`  | reading git's porcelain, name-status and numstat |
+
 use super::io;
 use regex::Regex;
 use schemars::JsonSchema;
@@ -15,190 +26,18 @@ use super::{
     TagCreateArgs, TagsArgs,
 };
 
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChangedEntry {
-    pub status: String,
-    pub path: String,
-    pub old_path: Option<String>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitChangedOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub changed_count: usize,
-    pub truncated: bool,
-    pub entries: Vec<ChangedEntry>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitStatusOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub branch: Option<String>,
-    pub upstream: Option<String>,
-    pub ahead: Option<usize>,
-    pub behind: Option<usize>,
-    pub clean: bool,
-    pub staged_count: usize,
-    pub unstaged_count: usize,
-    pub untracked_count: usize,
-    pub changed_count: usize,
-    pub latest_commit: Option<CommitSummary>,
-    pub latest_tag: Option<String>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CommitSummary {
-    pub(crate) hash: String,
-    pub(crate) short_hash: String,
-    pub(crate) subject: String,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CommitInfoOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub reference: String,
-    pub commit: Option<CommitInfo>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CommitInfo {
-    pub(crate) hash: String,
-    pub(crate) short_hash: String,
-    pub(crate) author: GitPerson,
-    pub(crate) author_date: Option<String>,
-    pub(crate) committer: GitPerson,
-    pub(crate) committer_date: Option<String>,
-    pub(crate) subject: String,
-    pub(crate) body: String,
-    pub(crate) file_count: usize,
-    pub(crate) additions: Option<usize>,
-    pub(crate) deletions: Option<usize>,
-    pub(crate) files: Vec<CommitFile>,
-    pub(crate) truncated: bool,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitPerson {
-    pub(crate) name: String,
-    pub(crate) email: String,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CommitFile {
-    pub(crate) status: Option<String>,
-    pub(crate) path: String,
-    pub(crate) old_path: Option<String>,
-    pub(crate) additions: Option<usize>,
-    pub(crate) deletions: Option<usize>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TagEntry {
-    pub(crate) name: String,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitTagsOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub latest: bool,
-    pub tag_count: usize,
-    pub truncated: bool,
-    pub tags: Vec<TagEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RemoteEntry {
-    pub(crate) name: String,
-    pub(crate) fetch_url: Option<String>,
-    pub(crate) push_url: Option<String>,
-    pub(crate) provider: String,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitRemotesOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub remote_count: usize,
-    pub remotes: Vec<RemoteEntry>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitDiffOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub path_filter: Option<String>,
-    pub line_count: usize,
-    pub truncated: bool,
-    pub diff: String,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BlameEntry {
-    #[schemars(range(min = 1))]
-    pub(crate) line: usize,
-    pub(crate) commit: String,
-    pub(crate) author: String,
-    pub(crate) author_mail: String,
-    pub(crate) author_time: Option<i64>,
-    pub(crate) summary: String,
-    pub(crate) text: String,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitBlameOutput {
-    pub command: &'static str,
-    pub path: String,
-    #[schemars(range(min = 1))]
-    pub line_filter: Option<usize>,
-    pub entry_count: usize,
-    pub truncated: bool,
-    pub entries: Vec<BlameEntry>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitTagCreateOutput {
-    pub command: &'static str,
-    pub in_git_repo: bool,
-    pub tag: String,
-    pub reference: String,
-    pub annotated: bool,
-    pub target_commit: Option<CommitSummary>,
-}
-
-#[derive(Debug)]
-pub(crate) enum GitResult {
-    Status(GitStatusOutput),
-    Tags(GitTagsOutput),
-    Remotes(GitRemotesOutput),
-    Changed(GitChangedOutput),
-    Diff(GitDiffOutput),
-    Blame {
-        payload: GitBlameOutput,
-        in_git_repo: bool,
-    },
-    CommitInfo(CommitInfoOutput),
-    TagCreate(GitTagCreateOutput),
-}
+mod output;
+mod parse;
+use output::empty_status_result;
+pub(crate) use output::{
+    BlameEntry, ChangedEntry, CommitFile, CommitInfo, CommitInfoOutput, CommitSummary,
+    GitBlameOutput, GitChangedOutput, GitDiffOutput, GitPerson, GitRemotesOutput, GitResult,
+    GitStatusOutput, GitTagCreateOutput, GitTagsOutput, RemoteEntry, TagEntry,
+};
+use parse::{
+    changed_entry, is_no_commit_error, normalize_path, optional_trimmed, parse_line_porcelain,
+    parse_name_status, parse_numstat, parse_remotes, short_commit, sum_optional,
+};
 
 pub(crate) fn execute(
     args: super::GitArgs,
@@ -262,24 +101,6 @@ fn execute_status(_args: StatusArgs, io: &io::GitIo) -> Result<GitResult, AppErr
         latest_commit,
         latest_tag,
     }))
-}
-
-fn empty_status_result() -> GitResult {
-    GitResult::Status(GitStatusOutput {
-        command: "git.status",
-        in_git_repo: false,
-        branch: None,
-        upstream: None,
-        ahead: None,
-        behind: None,
-        clean: true,
-        staged_count: 0,
-        unstaged_count: 0,
-        untracked_count: 0,
-        changed_count: 0,
-        latest_commit: None,
-        latest_tag: None,
-    })
 }
 
 fn execute_tags(
@@ -637,212 +458,4 @@ fn read_commit_files(io: &io::GitIo, reference: &str) -> Result<Vec<CommitFile>,
             .collect();
     }
     Ok(files)
-}
-
-fn changed_entry(entry: StatusEntry) -> ChangedEntry {
-    ChangedEntry {
-        status: entry.status,
-        path: normalize_slashes(&entry.path),
-        old_path: entry.old_path.map(|path| normalize_slashes(&path)),
-    }
-}
-
-fn blame_header_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^([0-9a-f^]{7,40})\s+\d+\s+(\d+)(?:\s+\d+)?$").unwrap())
-}
-
-fn parse_line_porcelain(raw: &str) -> Result<Vec<BlameEntry>, AppError> {
-    let header_re = blame_header_regex();
-
-    let mut entries = Vec::new();
-    let mut lines = raw.lines().peekable();
-
-    while let Some(line) = lines.next() {
-        let Some(captures) = header_re.captures(line) else {
-            continue;
-        };
-
-        let commit = captures[1].to_owned();
-        let final_line = captures[2].parse::<usize>().unwrap_or(0);
-
-        let mut author = String::new();
-        let mut author_mail = String::new();
-        let mut author_time = None;
-        let mut summary = String::new();
-        let mut text = String::new();
-
-        for metadata_line in lines.by_ref() {
-            if let Some(value) = metadata_line.strip_prefix('\t') {
-                text = value.to_owned();
-                break;
-            }
-            if let Some(value) = metadata_line.strip_prefix("author ") {
-                author = value.to_owned();
-                continue;
-            }
-            if let Some(value) = metadata_line.strip_prefix("author-mail ") {
-                author_mail = value.trim_matches(['<', '>']).to_owned();
-                continue;
-            }
-            if let Some(value) = metadata_line.strip_prefix("author-time ") {
-                author_time = value.parse::<i64>().ok();
-                continue;
-            }
-            if let Some(value) = metadata_line.strip_prefix("summary ") {
-                summary = value.to_owned();
-            }
-        }
-
-        entries.push(BlameEntry {
-            line: final_line,
-            commit,
-            author,
-            author_mail,
-            author_time,
-            summary,
-            text,
-        });
-    }
-
-    Ok(entries)
-}
-
-fn parse_name_status(raw: &str) -> Vec<CommitFile> {
-    raw.lines()
-        .filter_map(|line| {
-            let parts = line.split('\t').collect::<Vec<_>>();
-            let status = parts.first()?.to_string();
-            if status.starts_with('R') || status.starts_with('C') {
-                let old_path = parts.get(1).map(|value| normalize_slashes(value));
-                let path = parts.get(2).map(|value| normalize_slashes(value))?;
-                Some(CommitFile {
-                    status: Some(status),
-                    path,
-                    old_path,
-                    additions: None,
-                    deletions: None,
-                })
-            } else {
-                let path = parts.get(1).map(|value| normalize_slashes(value))?;
-                Some(CommitFile {
-                    status: Some(status),
-                    path,
-                    old_path: None,
-                    additions: None,
-                    deletions: None,
-                })
-            }
-        })
-        .collect()
-}
-
-fn parse_numstat(raw: &str) -> Vec<CommitFile> {
-    raw.lines()
-        .filter_map(|line| {
-            let mut parts = line.split('\t');
-            let additions = parse_optional_usize(parts.next()?);
-            let deletions = parse_optional_usize(parts.next()?);
-            let path = normalize_slashes(parts.next()?);
-            Some(CommitFile {
-                status: None,
-                path,
-                old_path: None,
-                additions,
-                deletions,
-            })
-        })
-        .collect()
-}
-
-fn parse_remotes(raw: &str) -> Vec<RemoteEntry> {
-    let mut remotes: Vec<RemoteEntry> = Vec::new();
-    for line in raw.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(name) = parts.next() else { continue };
-        let Some(url) = parts.next() else { continue };
-        let Some(kind) = parts.next() else { continue };
-        let entry_index = remotes
-            .iter()
-            .position(|entry| entry.name == name)
-            .unwrap_or_else(|| {
-                remotes.push(RemoteEntry {
-                    name: name.to_owned(),
-                    fetch_url: None,
-                    push_url: None,
-                    provider: "unknown".to_owned(),
-                });
-                remotes.len() - 1
-            });
-        let entry = &mut remotes[entry_index];
-        match kind {
-            "(fetch)" => entry.fetch_url = Some(url.to_owned()),
-            "(push)" => entry.push_url = Some(url.to_owned()),
-            _ => {}
-        }
-        entry.provider = detect_provider(entry.fetch_url.as_deref().or(entry.push_url.as_deref()));
-    }
-    remotes
-}
-
-fn parse_optional_usize(raw: &str) -> Option<usize> {
-    raw.parse::<usize>().ok()
-}
-
-fn optional_trimmed(raw: &str) -> Option<String> {
-    let value = raw.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_owned())
-    }
-}
-
-fn short_commit(commit: &str) -> String {
-    commit.chars().take(8).collect()
-}
-
-fn detect_provider(url: Option<&str>) -> String {
-    let Some(url) = url else {
-        return "unknown".to_owned();
-    };
-    let lower = url.to_ascii_lowercase();
-    if lower.contains("github.com") {
-        "github".to_owned()
-    } else if lower.contains("gitlab.com") {
-        "gitlab".to_owned()
-    } else if lower.contains("bitbucket.org") {
-        "bitbucket".to_owned()
-    } else {
-        "unknown".to_owned()
-    }
-}
-
-fn sum_optional(values: impl Iterator<Item = Option<usize>>) -> Option<usize> {
-    let mut saw_value = false;
-    let mut total = 0usize;
-    for value in values.flatten() {
-        saw_value = true;
-        total += value;
-    }
-    if saw_value { Some(total) } else { None }
-}
-
-fn normalize_slashes(path: &str) -> String {
-    path.replace('\\', "/")
-}
-
-fn normalize_path(path: &str) -> String {
-    normalize_slashes(path)
-}
-
-fn is_no_commit_error(error: &AppError) -> bool {
-    match error {
-        AppError::CommandFailed { stderr, .. } => {
-            stderr.contains("no such ref: HEAD")
-                || stderr.contains("has no commits yet")
-                || stderr.contains("no commits yet")
-        }
-        _ => false,
-    }
 }
