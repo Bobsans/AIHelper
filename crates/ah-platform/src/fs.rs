@@ -30,6 +30,131 @@ pub fn is_reparse_point(metadata: &Metadata) -> bool {
     }
 }
 
+/// Why a path is not the plain, unredirected thing a caller required.
+///
+/// Named variants rather than one boolean because the callers report them
+/// differently: "must not be a hard link" and "is not a direct regular file"
+/// are separate diagnostics, and a missing file is not a redirection at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Redirection {
+    /// Nothing is there, or it cannot be inspected.
+    Missing,
+    /// A symbolic link.
+    Symlink,
+    /// Something other than the required kind.
+    WrongKind,
+    /// A junction, mount point or other reparse point.
+    ReparsePoint,
+    /// A second name for the same file.
+    HardLinked,
+}
+
+/// Reject anything that is not a plain regular file with exactly one name.
+///
+/// The composition of the two checks below, in one place, because it is a
+/// *security* check and four copies of it existed: an update path that follows
+/// a link writes through a name nobody signed, with the installation's
+/// privileges. Every caller requires the whole set; they differ only in how
+/// they word the refusal.
+///
+/// # Errors
+///
+/// [`Redirection`] naming the first thing found wrong.
+pub fn direct_file(path: &Path) -> Result<(), Redirection> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| Redirection::Missing)?;
+    if metadata.file_type().is_symlink() {
+        return Err(Redirection::Symlink);
+    }
+    if !metadata.is_file() {
+        return Err(Redirection::WrongKind);
+    }
+    if is_reparse_point(&metadata) {
+        return Err(Redirection::ReparsePoint);
+    }
+    if !has_single_hard_link(path, &metadata).map_err(|_| Redirection::Missing)? {
+        return Err(Redirection::HardLinked);
+    }
+    Ok(())
+}
+
+/// Reject anything that is not a plain directory.
+///
+/// # Errors
+///
+/// [`Redirection`] naming the first thing found wrong. A directory has no
+/// hard-link equivalent to check.
+pub fn direct_directory(path: &Path) -> Result<(), Redirection> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| Redirection::Missing)?;
+    direct_directory_metadata(&metadata)
+}
+
+/// [`direct_directory`] against metadata already in hand.
+///
+/// # Errors
+///
+/// [`Redirection`] naming the first thing found wrong.
+pub fn direct_directory_metadata(metadata: &Metadata) -> Result<(), Redirection> {
+    if metadata.file_type().is_symlink() {
+        return Err(Redirection::Symlink);
+    }
+    if !metadata.is_dir() {
+        return Err(Redirection::WrongKind);
+    }
+    if is_reparse_point(metadata) {
+        return Err(Redirection::ReparsePoint);
+    }
+    Ok(())
+}
+
+/// Which step of a bounded read refused.
+///
+/// One variant per step because the callers word them differently, and because
+/// "larger than the limit" is a refusal a caller may want to report as such
+/// rather than as a read failure.
+#[derive(Debug)]
+pub enum BoundedRead {
+    /// The path is not a plain, unredirected file.
+    Redirected(Redirection),
+    /// The file could not be inspected.
+    Inspect(io::Error),
+    /// It is larger than the limit.
+    TooLarge,
+    /// It could not be opened.
+    Open(io::Error),
+    /// It could not be read.
+    Read(io::Error),
+}
+
+/// Read a whole file, refusing anything over `maximum` bytes.
+///
+/// Bounded twice on purpose: the size is checked before the read *and* the read
+/// itself is capped, because a file can grow between the two. An unbounded read
+/// of a file an attacker can append to is a way to exhaust this process rather
+/// than to be refused by it.
+///
+/// # Errors
+///
+/// [`BoundedRead`] naming the step that refused.
+pub fn read_bounded(path: &Path, maximum: usize) -> Result<Vec<u8>, BoundedRead> {
+    use std::io::Read as _;
+
+    direct_file(path).map_err(BoundedRead::Redirected)?;
+    let limit = u64::try_from(maximum).expect("a byte limit fits u64");
+    let metadata = std::fs::metadata(path).map_err(BoundedRead::Inspect)?;
+    if metadata.len() > limit {
+        return Err(BoundedRead::TooLarge);
+    }
+    let file = std::fs::File::open(path).map_err(BoundedRead::Open)?;
+    let mut bytes = Vec::with_capacity(maximum.min(8 * 1024));
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(BoundedRead::Read)?;
+    if bytes.len() > maximum {
+        return Err(BoundedRead::TooLarge);
+    }
+    Ok(bytes)
+}
+
 /// Whether the file has exactly one name on disk.
 ///
 /// The other half of the same check: a second hard link is another way for a
@@ -219,6 +344,38 @@ mod tests {
         );
     }
 
+    /// The limit is inclusive, and one byte past it is refused rather than
+    /// truncated. Silently truncating a bounded read would hand the caller a
+    /// prefix of a file it would then parse as the whole thing.
+    #[test]
+    fn a_bounded_read_accepts_the_limit_and_refuses_one_more() {
+        let temp = tempfile::TempDir::new().expect("temporary dir should be created");
+        let exact = temp.path().join("exact");
+        let over = temp.path().join("over");
+        fs::write(&exact, b"1234").expect("file should be written");
+        fs::write(&over, b"12345").expect("file should be written");
+
+        assert_eq!(
+            read_bounded(&exact, 4).expect("the limit is allowed"),
+            b"1234"
+        );
+        assert!(matches!(read_bounded(&over, 4), Err(BoundedRead::TooLarge)));
+    }
+
+    #[test]
+    fn a_bounded_read_refuses_a_path_it_cannot_verify() {
+        let temp = tempfile::TempDir::new().expect("temporary dir should be created");
+
+        assert!(matches!(
+            read_bounded(&temp.path().join("absent"), 16),
+            Err(BoundedRead::Redirected(Redirection::Missing))
+        ));
+        assert!(matches!(
+            read_bounded(temp.path(), 16),
+            Err(BoundedRead::Redirected(Redirection::WrongKind))
+        ));
+    }
+
     #[test]
     fn replacing_overwrites_the_destination() {
         let temp = tempfile::TempDir::new().expect("temporary dir should be created");
@@ -262,5 +419,31 @@ mod tests {
     fn syncing_a_directory_that_exists_succeeds() {
         let temp = tempfile::TempDir::new().expect("temporary dir should be created");
         sync_directory(temp.path()).expect("an existing directory should sync");
+    }
+
+    #[test]
+    fn a_plain_file_is_direct_and_a_directory_is_not() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let file = temp.path().join("plain");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert_eq!(direct_file(&file), Ok(()));
+        assert_eq!(direct_directory(temp.path()), Ok(()));
+        assert_eq!(direct_file(temp.path()), Err(Redirection::WrongKind));
+        assert_eq!(direct_directory(&file), Err(Redirection::WrongKind));
+    }
+
+    #[test]
+    fn nothing_there_is_missing_rather_than_redirected() {
+        let temp = tempfile::TempDir::new().unwrap();
+
+        assert_eq!(
+            direct_file(&temp.path().join("absent")),
+            Err(Redirection::Missing)
+        );
+        assert_eq!(
+            direct_directory(&temp.path().join("absent")),
+            Err(Redirection::Missing)
+        );
     }
 }

@@ -722,7 +722,7 @@ fn signed_manifest(
         .map(|(path, bytes)| ManagedFile {
             path: path.clone(),
             size: bytes.len() as u64,
-            sha256: encode_digest(Sha256::digest(bytes)),
+            sha256: ah_updater_core::encode_digest(Sha256::digest(bytes)),
             purpose: if path == "ah.exe" {
                 FilePurpose::Executable
             } else if path.starts_with("plugins/") {
@@ -791,12 +791,4 @@ fn assert_tree_matches(root: &Path, files: &BTreeMap<String, Vec<u8>>) {
         let path = root.join(relative.split('/').collect::<PathBuf>());
         assert_eq!(fs::read(path).unwrap(), *bytes);
     }
-}
-
-fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
-    bytes
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }

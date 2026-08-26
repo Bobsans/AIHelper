@@ -27,7 +27,7 @@ pub use installation::{
 };
 pub use plan::{
     ManagedFileOperationV1, TRANSACTION_JOURNAL_SCHEMA_VERSION, TRANSACTION_PLAN_SCHEMA_VERSION,
-    TransactionJournalV1, TransactionPlanV1, TransactionStateV1,
+    TransactionJournalV1, TransactionPlanV1, TransactionStateV1, encode_digest,
 };
 pub use production::production_release_trust;
 pub use release::{

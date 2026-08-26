@@ -432,7 +432,14 @@ fn validate_digest(digest: &str) -> Result<(), UpdaterError> {
     Ok(())
 }
 
-fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
+/// Lowercase hex, which is the only digest spelling the manifest, the journal
+/// and every verification path use.
+///
+/// Public because five byte-identical copies of it existed: three in
+/// `ah-updater`, one in `ah-update-helper` and this one. A digest that is
+/// compared as text has to be *spelled* the same everywhere or the comparison
+/// silently fails.
+pub fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
     let bytes = bytes.as_ref();
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

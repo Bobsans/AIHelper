@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -400,29 +399,19 @@ fn ensure_real_directory(path: &Path) -> Result<(), UpdaterError> {
 }
 
 fn ensure_real_directory_metadata(metadata: &fs::Metadata) -> Result<(), UpdaterError> {
-    if metadata.file_type().is_symlink()
-        || !metadata.is_dir()
-        || ah_platform::fs::is_reparse_point(metadata)
-    {
-        return Err(candidate(
-            "candidate staging path must be a real directory without reparse points",
-        ));
-    }
-    Ok(())
+    ah_platform::fs::direct_directory_metadata(metadata).map_err(|_| {
+        candidate("candidate staging path must be a real directory without reparse points")
+    })
 }
 
+/// The shared check also refuses a hard-linked file, which this one did not.
+/// A staged candidate file with a second name is a file something outside the
+/// staging directory can rewrite between verification and installation.
 fn ensure_regular_file(path: &Path) -> Result<(), UpdaterError> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|_| candidate("failed to inspect candidate file"))?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || ah_platform::fs::is_reparse_point(&metadata)
-    {
-        return Err(candidate(
-            "candidate staging file must be a regular file without reparse points",
-        ));
-    }
-    Ok(())
+    ah_platform::fs::direct_file(path).map_err(|reason| match reason {
+        ah_platform::fs::Redirection::Missing => candidate("failed to inspect candidate file"),
+        _ => candidate("candidate staging file must be a regular file without reparse points"),
+    })
 }
 
 fn copy_and_hash(
@@ -451,7 +440,7 @@ fn copy_and_hash(
             .map_err(|_| candidate("failed to write candidate output file"))?;
         digest.update(&buffer[..read]);
     }
-    Ok((total, encode_digest(digest.finalize())))
+    Ok((total, ah_updater_core::encode_digest(digest.finalize())))
 }
 
 struct BoundedHashWriter<W> {
@@ -477,7 +466,7 @@ impl<W: Write> BoundedHashWriter<W> {
         self.inner
             .flush()
             .map_err(|_| candidate("failed to flush candidate archive"))?;
-        let digest = encode_digest(self.digest.finalize());
+        let digest = ah_updater_core::encode_digest(self.digest.finalize());
         Ok((self.inner, self.total, digest))
     }
 }
@@ -502,15 +491,6 @@ impl<W: Write> Write for BoundedHashWriter<W> {
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
     }
-}
-
-fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
 }
 
 fn candidate(detail: &'static str) -> UpdaterError {
@@ -895,7 +875,7 @@ mod tests {
     }
 
     fn sha256(bytes: &[u8]) -> String {
-        encode_digest(Sha256::digest(bytes))
+        ah_updater_core::encode_digest(Sha256::digest(bytes))
     }
 
     struct FakeSource {

@@ -1,7 +1,6 @@
 use std::{
-    fmt::Write as _,
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -405,38 +404,22 @@ fn direct_managed_file(root: &Path, relative: &str) -> Result<PathBuf, UpdaterEr
 }
 
 fn ensure_direct_directory(path: &Path) -> Result<(), UpdaterError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| installation("installed managed directory is missing"))?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_dir()
-        || ah_platform::fs::is_reparse_point(&metadata)
-    {
-        return Err(installation(
-            "installed managed directory is not a direct directory",
-        ));
-    }
-    Ok(())
+    ah_platform::fs::direct_directory(path).map_err(|reason| match reason {
+        ah_platform::fs::Redirection::Missing => {
+            installation("installed managed directory is missing")
+        }
+        _ => installation("installed managed directory is not a direct directory"),
+    })
 }
 
 fn ensure_direct_file(path: &Path) -> Result<(), UpdaterError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| installation("installed managed file is missing"))?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || ah_platform::fs::is_reparse_point(&metadata)
-    {
-        return Err(installation(
-            "installed managed file is not a direct regular file",
-        ));
-    }
-    if !ah_platform::fs::has_single_hard_link(path, &metadata)
-        .map_err(|_| installation("failed to inspect installed managed file links"))?
-    {
-        return Err(installation(
-            "installed managed file must not be a hard link",
-        ));
-    }
-    Ok(())
+    ah_platform::fs::direct_file(path).map_err(|reason| match reason {
+        ah_platform::fs::Redirection::Missing => installation("installed managed file is missing"),
+        ah_platform::fs::Redirection::HardLinked => {
+            installation("installed managed file must not be a hard link")
+        }
+        _ => installation("installed managed file is not a direct regular file"),
+    })
 }
 
 fn hash_file(path: &Path, expected_size: u64) -> Result<String, UpdaterError> {
@@ -469,7 +452,7 @@ fn hash_file(path: &Path, expected_size: u64) -> Result<String, UpdaterError> {
             "installed managed file exceeds its signed size",
         ));
     }
-    Ok(encode_digest(digest.finalize()))
+    Ok(ah_updater_core::encode_digest(digest.finalize()))
 }
 
 fn load_identity(path: &Path) -> Result<Option<InstallationIdentityV1>, UpdaterError> {
@@ -488,33 +471,25 @@ fn load_required_identity(path: &Path) -> Result<InstallationIdentityV1, Updater
     Ok(identity)
 }
 
+/// The step-by-step wording this file has always reported.
 fn read_bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, UpdaterError> {
-    ensure_direct_file(path)?;
-    let metadata = fs::metadata(path)
-        .map_err(|_| installation("failed to inspect installation state file"))?;
-    if metadata.len() > maximum as u64 {
-        return Err(installation(
-            "installation state file exceeds its size limit",
-        ));
-    }
-    let file =
-        File::open(path).map_err(|_| installation("failed to open installation state file"))?;
-    match read_at_most(file, maximum)
-        .map_err(|_| installation("failed to read installation state file"))?
-    {
-        Some(bytes) => Ok(bytes),
-        None => Err(installation(
-            "installation state file exceeds its size limit",
-        )),
-    }
-}
-
-pub(crate) fn read_at_most(reader: impl Read, maximum: usize) -> io::Result<Option<Vec<u8>>> {
-    let mut bytes = Vec::with_capacity(maximum.min(8 * 1024));
-    reader
-        .take(maximum.saturating_add(1) as u64)
-        .read_to_end(&mut bytes)?;
-    Ok((bytes.len() <= maximum).then_some(bytes))
+    ah_platform::fs::read_bounded(path, maximum).map_err(|reason| match reason {
+        ah_platform::fs::BoundedRead::Redirected(_) => {
+            installation("installation state file is not a direct regular file")
+        }
+        ah_platform::fs::BoundedRead::Inspect(_) => {
+            installation("failed to inspect installation state file")
+        }
+        ah_platform::fs::BoundedRead::TooLarge => {
+            installation("installation state file exceeds its size limit")
+        }
+        ah_platform::fs::BoundedRead::Open(_) => {
+            installation("failed to open installation state file")
+        }
+        ah_platform::fs::BoundedRead::Read(_) => {
+            installation("failed to read installation state file")
+        }
+    })
 }
 
 fn ensure_state_directory(path: &Path) -> Result<(), UpdaterError> {
@@ -530,7 +505,9 @@ fn executable_binding_key(executable: &Path) -> Result<String, UpdaterError> {
         .replace('/', "\\");
     #[cfg(windows)]
     let value = value.to_lowercase();
-    Ok(encode_digest(Sha256::digest(value.as_bytes())))
+    Ok(ah_updater_core::encode_digest(Sha256::digest(
+        value.as_bytes(),
+    )))
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -550,15 +527,6 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     {
         left == right
     }
-}
-
-fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
 }
 
 fn persistence_bridge(_error: UpdaterError) -> AppError {
@@ -598,6 +566,9 @@ fn inspect_portable_installation(executable: &Path) -> Result<PortableInstallati
     Ok(PortableInstallation { executable, root })
 }
 
+/// The running executable, which is checked for redirection like any other
+/// managed file - except that it may legitimately have a second name, since a
+/// portable install can be hard-linked into place by whoever unpacked it.
 fn ensure_direct_executable(path: &Path) -> Result<(), UpdaterError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| installation("failed to inspect the running AIHelper executable"))?;
@@ -643,6 +614,10 @@ fn cargo_install_root(installation_root: &Path) -> Option<PathBuf> {
         .then(|| cargo_root.to_path_buf())
 }
 
+/// Deliberately not `ah_platform::fs::direct_file`: this is detection, not
+/// verification. It asks whether a cargo marker file is really there, and a
+/// marker with a second name is still a marker - refusing it would misread a
+/// cargo installation as a portable one.
 fn is_direct_regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| {
         !metadata.file_type().is_symlink()
@@ -667,7 +642,7 @@ fn installation(detail: &'static str) -> UpdaterError {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, fs, io::Cursor};
+    use std::{cell::Cell, fs};
 
     use ah_release_manifest::{
         ArchiveMetadata, FilePurpose, ManagedFile, ReleaseMetadata, RequiredFiles, SCHEMA_VERSION,
@@ -684,15 +659,6 @@ mod tests {
     const TEST_VERSION: &str = "1.1.0";
     const EXECUTABLE_BYTES: &[u8] = b"portable executable";
     const PLUGIN_BYTES: &[u8] = b"plugin-good";
-
-    #[test]
-    fn bounded_reader_rejects_limit_plus_one() {
-        assert_eq!(
-            read_at_most(Cursor::new(b"1234"), 4).unwrap(),
-            Some(b"1234".to_vec())
-        );
-        assert_eq!(read_at_most(Cursor::new(b"12345"), 4).unwrap(), None);
-    }
 
     #[test]
     fn derives_canonical_root_without_mutating_portable_installation() {
@@ -1112,7 +1078,7 @@ mod tests {
         ManagedFile {
             path,
             size: bytes.len() as u64,
-            sha256: encode_digest(Sha256::digest(bytes)),
+            sha256: ah_updater_core::encode_digest(Sha256::digest(bytes)),
             purpose,
         }
     }

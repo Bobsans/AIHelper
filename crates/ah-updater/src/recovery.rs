@@ -1,8 +1,6 @@
 use std::{
     ffi::OsStr,
-    fmt::Write as _,
-    fs::{self, File},
-    io,
+    fs, io,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -294,21 +292,29 @@ fn read_optional_identity(path: &Path) -> Result<Option<InstallationIdentityV1>,
     }
 }
 
+/// The shared bounded read also refuses a hard-linked file, which this path's
+/// own copy of the check did not. That is the union the deduplication owed: a
+/// hard-linked identity file is one a second name can rewrite while recovery is
+/// reading it.
 fn read_required_identity(path: &Path) -> Result<InstallationIdentityV1, AppError> {
-    ensure_direct_file(path)?;
-    let metadata = fs::metadata(path)
-        .map_err(|_| recovery_error("failed to inspect updater identity file"))?;
-    if metadata.len() > MAX_IDENTITY_BYTES as u64 {
-        return Err(recovery_error("updater identity file exceeds its limit"));
-    }
-    let file =
-        File::open(path).map_err(|_| recovery_error("failed to open updater identity file"))?;
-    let bytes = match super::installation::read_at_most(file, MAX_IDENTITY_BYTES)
-        .map_err(|_| recovery_error("failed to read updater identity file"))?
-    {
-        Some(bytes) => bytes,
-        None => return Err(recovery_error("updater identity file exceeds its limit")),
-    };
+    let bytes =
+        ah_platform::fs::read_bounded(path, MAX_IDENTITY_BYTES).map_err(|reason| match reason {
+            ah_platform::fs::BoundedRead::Redirected(_) => {
+                recovery_error("updater identity file is not a direct regular file")
+            }
+            ah_platform::fs::BoundedRead::Inspect(_) => {
+                recovery_error("failed to inspect updater identity file")
+            }
+            ah_platform::fs::BoundedRead::TooLarge => {
+                recovery_error("updater identity file exceeds its limit")
+            }
+            ah_platform::fs::BoundedRead::Open(_) => {
+                recovery_error("failed to open updater identity file")
+            }
+            ah_platform::fs::BoundedRead::Read(_) => {
+                recovery_error("failed to read updater identity file")
+            }
+        })?;
     let identity: InstallationIdentityV1 = serde_json::from_slice(&bytes)
         .map_err(|_| recovery_error("updater identity file is malformed"))?;
     identity.validate().map_err(map_updater_error)?;
@@ -322,16 +328,9 @@ fn executable_binding_key(executable: &Path) -> Result<String, AppError> {
         .replace('/', "\\");
     #[cfg(windows)]
     let value = value.to_lowercase();
-    Ok(encode_digest(Sha256::digest(value.as_bytes())))
-}
-
-fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
+    Ok(ah_updater_core::encode_digest(Sha256::digest(
+        value.as_bytes(),
+    )))
 }
 
 #[cfg(windows)]
@@ -346,30 +345,9 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     left == right
 }
 
-fn ensure_direct_file(path: &Path) -> Result<(), AppError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| recovery_error("failed to inspect updater state file"))?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || ah_platform::fs::is_reparse_point(&metadata)
-    {
-        return Err(recovery_error(
-            "updater state file is not a direct regular file",
-        ));
-    }
-    Ok(())
-}
-
 fn ensure_direct_directory_metadata(metadata: &fs::Metadata) -> Result<(), AppError> {
-    if metadata.file_type().is_symlink()
-        || !metadata.is_dir()
-        || ah_platform::fs::is_reparse_point(metadata)
-    {
-        return Err(recovery_error(
-            "updater state contains a redirected directory",
-        ));
-    }
-    Ok(())
+    ah_platform::fs::direct_directory_metadata(metadata)
+        .map_err(|_| recovery_error("updater state contains a redirected directory"))
 }
 
 /// Recovery reports every failure as one code, with the original in the detail.
@@ -672,7 +650,7 @@ mod tests {
             .map(|(path, bytes)| ManagedFile {
                 path: path.clone(),
                 size: bytes.len() as u64,
-                sha256: encode_digest(Sha256::digest(bytes)),
+                sha256: ah_updater_core::encode_digest(Sha256::digest(bytes)),
                 purpose: if path == "ah-update-helper.exe" {
                     FilePurpose::UpdateHelper
                 } else {

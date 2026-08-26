@@ -6,7 +6,6 @@
 //! into following is a privilege escalation.
 
 use std::{
-    fmt::Write as _,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -172,16 +171,7 @@ pub(super) fn hash_stream<R: Read, W: Write>(
             "transaction managed file exceeds its signed size",
         ));
     }
-    Ok(encode_digest(digest.finalize()))
-}
-
-pub(super) fn encode_digest(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
+    Ok(ah_updater_core::encode_digest(digest.finalize()))
 }
 
 pub(super) fn existing_managed_file(root: &Path, relative: &str) -> Result<PathBuf, UpdaterError> {
@@ -259,46 +249,33 @@ pub(super) fn paths_equal(left: &Path, right: &Path) -> bool {
 }
 
 pub(super) fn ensure_direct_directory(path: &Path) -> Result<(), UpdaterError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| transaction("failed to inspect transaction directory"))?;
-    ensure_direct_directory_metadata(&metadata)
+    ah_platform::fs::direct_directory(path).map_err(describe_directory)
 }
 
 pub(super) fn ensure_direct_directory_metadata(
     metadata: &fs::Metadata,
 ) -> Result<(), UpdaterError> {
-    if metadata.file_type().is_symlink() || !metadata.is_dir() || is_reparse_point(metadata) {
-        return Err(transaction(
-            "transaction path contains a redirected directory",
-        ));
+    ah_platform::fs::direct_directory_metadata(metadata).map_err(describe_directory)
+}
+
+/// The wording this crate has always used, per reason.
+fn describe_directory(reason: ah_platform::fs::Redirection) -> UpdaterError {
+    match reason {
+        ah_platform::fs::Redirection::Missing => {
+            transaction("failed to inspect transaction directory")
+        }
+        _ => transaction("transaction path contains a redirected directory"),
     }
-    Ok(())
 }
 
 pub(super) fn ensure_direct_file(path: &Path) -> Result<(), UpdaterError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| transaction("failed to inspect transaction file"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || is_reparse_point(&metadata) {
-        return Err(transaction("transaction path is not a direct regular file"));
-    }
-    if !has_single_hard_link(path, &metadata)? {
-        return Err(transaction(
-            "transaction managed file must not be a hard link",
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn has_single_hard_link(
-    path: &Path,
-    metadata: &fs::Metadata,
-) -> Result<bool, UpdaterError> {
-    ah_platform::fs::has_single_hard_link(path, metadata)
-        .map_err(|_| transaction("failed to inspect transaction file links"))
-}
-
-pub(super) fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    ah_platform::fs::is_reparse_point(metadata)
+    ah_platform::fs::direct_file(path).map_err(|reason| match reason {
+        ah_platform::fs::Redirection::Missing => transaction("failed to inspect transaction file"),
+        ah_platform::fs::Redirection::HardLinked => {
+            transaction("transaction managed file must not be a hard link")
+        }
+        _ => transaction("transaction path is not a direct regular file"),
+    })
 }
 
 pub(super) fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
@@ -322,21 +299,5 @@ pub(super) fn read_bounded(
     maximum: usize,
     detail: &'static str,
 ) -> Result<Vec<u8>, UpdaterError> {
-    ensure_direct_file(path)?;
-    let maximum_u64 = u64::try_from(maximum).expect("transaction read limit fits u64");
-    let metadata = fs::metadata(path).map_err(|_| recovery(detail))?;
-    if metadata.len() > maximum_u64 {
-        return Err(recovery(detail));
-    }
-    let file = File::open(path).map_err(|_| recovery(detail))?;
-    let mut bytes = Vec::with_capacity(
-        usize::try_from(metadata.len()).expect("bounded transaction file length fits usize"),
-    );
-    file.take(maximum_u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| recovery(detail))?;
-    if bytes.len() > maximum {
-        return Err(recovery(detail));
-    }
-    Ok(bytes)
+    ah_platform::fs::read_bounded(path, maximum).map_err(|_| recovery(detail))
 }
