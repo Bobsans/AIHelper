@@ -16,16 +16,16 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::{error::AppError, mcp_service::lock::FileLease};
+use crate::error::AppError;
 
 /// The lifecycle lease, held for as long as the update needs the service to
 /// stay where it was put.
 ///
-/// Concretely a `FileLease`, because the update helper inherits its handle and
-/// needs the real thing. `FileLease` still lives under `mcp_service`; moving it
-/// somewhere neutral belongs with extracting `ah-updater`, which is what needs
-/// it.
-pub(crate) type ServiceHold = FileLease;
+/// Concretely a process lease, because the update helper inherits its handle
+/// and needs the real thing. It is `ah_platform`'s rather than
+/// `mcp_service`'s - the updater must not know which subsystem the lease
+/// belongs to, only that it holds one.
+pub(crate) type ServiceHold = ah_platform::lease::FileLease;
 
 /// What the service was, so it can be put back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

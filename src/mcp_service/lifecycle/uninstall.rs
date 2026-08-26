@@ -213,13 +213,12 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 "owned task path changed before uninstall",
             ));
         }
-        let guard =
-            FileLease::try_acquire(&self.store.paths().instance_lock)?.ok_or_else(|| {
-                AppError::external(
-                    "MCP_SERVICE_STOP_UNSAFE",
-                    "owned task has no valid definition and the managed instance lease is occupied",
-                )
-            })?;
+        let guard = lock::try_acquire(&self.store.paths().instance_lock)?.ok_or_else(|| {
+            AppError::external(
+                "MCP_SERVICE_STOP_UNSAFE",
+                "owned task has no valid definition and the managed instance lease is occupied",
+            )
+        })?;
         if matches!(
             observed.scheduler_state,
             SchedulerState::Running | SchedulerState::Queued

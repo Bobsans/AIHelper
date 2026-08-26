@@ -1,144 +1,75 @@
-use std::{
-    path::{Path, PathBuf},
-    thread,
-    time::{Duration, Instant},
-};
+//! The managed service's lifecycle and instance leases, in this CLI's wording.
+//!
+//! The lease mechanism is `ah_platform::lease`, which reports `io::Error` and
+//! knows nothing about a managed MCP service. This module is the layer that
+//! gives those failures the three error codes the service has always reported,
+//! and that supplies the mutex name - derived by the rule `ah` and the update
+//! helper both have to agree on.
+
+use std::{path::Path, time::Duration};
 
 use crate::error::AppError;
-#[cfg(windows)]
-use std::sync::Mutex;
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::HANDLE;
 
-const RETRY_INTERVAL: Duration = Duration::from_millis(25);
+pub(crate) use ah_platform::lease::FileLease;
 
-#[derive(Debug)]
-pub struct FileLease {
-    path: PathBuf,
-    #[cfg(windows)]
-    mutex_handle: Mutex<HANDLE>,
+/// Take the lease if it is free, reporting `Ok(None)` if the service holds it.
+///
+/// # Errors
+///
+/// [`AppError`] with `MCP_SERVICE_UNSUPPORTED_PLATFORM` off Windows, or
+/// `MCP_SERVICE_STATE_INVALID` when the OS refuses to name the lease.
+pub(crate) fn try_acquire(path: &Path) -> Result<Option<FileLease>, AppError> {
+    FileLease::try_acquire(path, &ah_updater_core::lifecycle_mutex_name(path))
+        .map_err(|error| describe(path, error))
 }
 
-impl FileLease {
-    pub fn try_acquire(path: &Path) -> Result<Option<Self>, AppError> {
-        #[cfg(windows)]
-        {
-            try_acquire_windows(path)
-        }
-
-        #[cfg(not(windows))]
-        {
-            let _ = path;
-            Err(AppError::external(
-                "MCP_SERVICE_UNSUPPORTED_PLATFORM",
-                "managed MCP service lifecycle is supported only on Windows",
-            ))
-        }
-    }
-
-    pub fn acquire(path: &Path, timeout: Duration) -> Result<Self, AppError> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Some(lease) = Self::try_acquire(path)? {
-                return Ok(lease);
-            }
-            if Instant::now() >= deadline {
-                return Err(AppError::external(
-                    "MCP_SERVICE_BUSY",
-                    format!(
-                        "timed out waiting for managed MCP lifecycle lease '{}'",
-                        path.display()
-                    ),
-                ));
-            }
-            thread::sleep(RETRY_INTERVAL);
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn raw_handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
-        *self.mutex_handle.lock().unwrap()
-    }
+/// Take the lease, waiting up to `timeout` for whoever holds it.
+///
+/// # Errors
+///
+/// [`AppError`] with `MCP_SERVICE_BUSY` when it is still held at the deadline;
+/// otherwise as [`try_acquire`].
+pub(crate) fn acquire(path: &Path, timeout: Duration) -> Result<FileLease, AppError> {
+    FileLease::acquire(path, &ah_updater_core::lifecycle_mutex_name(path), timeout)
+        .map_err(|error| describe(path, error))
 }
 
-#[cfg(windows)]
-impl Drop for FileLease {
-    fn drop(&mut self) {
-        use windows_sys::Win32::Foundation::CloseHandle;
-
-        let handle = *self.mutex_handle.lock().unwrap();
-        if !handle.is_null() {
-            let _ = unsafe { CloseHandle(handle) };
-        }
-    }
-}
-
-#[cfg(windows)]
-fn try_acquire_windows(path: &Path) -> Result<Option<FileLease>, AppError> {
-    use std::sync::Mutex;
-
-    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
-    use windows_sys::Win32::System::Threading::CreateMutexW;
-    use windows_sys::core::PCWSTR;
-
-    let mutex_name = ah_updater_core::lifecycle_mutex_name(path);
-    let mutex_name_wide: Vec<u16> = mutex_name.encode_utf16().chain(Some(0)).collect();
-
-    let handle =
-        unsafe { CreateMutexW(std::ptr::null_mut(), 0, mutex_name_wide.as_ptr() as PCWSTR) };
-
-    let error_code = unsafe { GetLastError() };
-    if handle.is_null() {
-        return Err(AppError::external(
+/// The three codes this has always reported, kept exactly.
+fn describe(path: &Path, error: std::io::Error) -> AppError {
+    match error.kind() {
+        std::io::ErrorKind::Unsupported => AppError::external(
+            "MCP_SERVICE_UNSUPPORTED_PLATFORM",
+            "managed MCP service lifecycle is supported only on Windows",
+        ),
+        std::io::ErrorKind::TimedOut => AppError::external(
+            "MCP_SERVICE_BUSY",
+            format!(
+                "timed out waiting for managed MCP lifecycle lease '{}'",
+                path.display()
+            ),
+        ),
+        _ => AppError::external(
             "MCP_SERVICE_STATE_INVALID",
             format!(
-                "failed to create managed MCP mutex '{}': {}",
-                path.display(),
-                std::io::Error::from_raw_os_error(error_code as i32)
+                "failed to create managed MCP mutex '{}': {error}",
+                path.display()
             ),
-        ));
+        ),
     }
-
-    if error_code == ERROR_ALREADY_EXISTS {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
-        return Ok(None);
-    }
-
-    Ok(Some(FileLease {
-        path: path.to_path_buf(),
-        mutex_handle: Mutex::new(handle),
-    }))
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
-    #[cfg(windows)]
     use super::*;
 
-    #[cfg(windows)]
     #[test]
-    fn lease_is_owned_by_the_open_handle_not_file_age() {
+    fn a_busy_lease_reports_the_stable_diagnostic() {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("lifecycle.lock");
-        let first = FileLease::try_acquire(&path).unwrap().unwrap();
-        // With named mutex, no lock file is created; test intra-process blocking
-        assert!(FileLease::try_acquire(&path).unwrap().is_none());
-        drop(first);
-        let second = FileLease::try_acquire(&path).unwrap().unwrap();
-        assert_eq!(second.path(), path);
-    }
+        let _held = try_acquire(&path).unwrap().unwrap();
 
-    #[cfg(windows)]
-    #[test]
-    fn bounded_acquire_reports_stable_busy_diagnostic() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let path = temp.path().join("lifecycle.lock");
-        let _first = FileLease::try_acquire(&path).unwrap().unwrap();
-        let error = FileLease::acquire(&path, Duration::from_millis(1)).unwrap_err();
+        let error = acquire(&path, Duration::from_millis(1)).unwrap_err();
+
         assert_eq!(error.code(), "MCP_SERVICE_BUSY");
     }
 }

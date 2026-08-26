@@ -284,9 +284,7 @@ fn scheduler_stop_without_lease_release_times_out() {
             engine_pid: Some(75),
         }],
     );
-    let _occupied = FileLease::try_acquire(&paths.instance_lock)
-        .unwrap()
-        .unwrap();
+    let _occupied = lock::try_acquire(&paths.instance_lock).unwrap().unwrap();
     service.stop_timeout = Duration::from_millis(2);
     service.poll_interval = Duration::from_millis(1);
 
@@ -395,7 +393,7 @@ fn restart_start_failure_leaves_stopped_evidence_and_later_start_converges() {
     );
     assert_eq!(harness.scheduler.stop_count(), 0);
     assert_eq!(harness.scheduler.run_count(), 1);
-    let lease_proof = FileLease::try_acquire(&harness.paths.instance_lock)
+    let lease_proof = lock::try_acquire(&harness.paths.instance_lock)
         .unwrap()
         .expect("successful stop should release the instance lease");
     drop(lease_proof);

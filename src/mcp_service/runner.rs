@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 
 use super::{
+    lock,
     lock::FileLease,
     model::{ExitKind, LastExit, RuntimePhase, RuntimeState, ServiceDefinition, now_timestamp},
     paths::{ServicePaths, current_user_sid, paths_equal},
@@ -95,7 +96,7 @@ impl ManagedRunner {
                 "managed MCP definition belongs to a different Windows user",
             ));
         }
-        let Some(instance_lease) = FileLease::try_acquire(&paths.instance_lock)? else {
+        let Some(instance_lease) = lock::try_acquire(&paths.instance_lock)? else {
             return Ok(ManagedPreflight::AlreadyRunning);
         };
         let runtime_pid = if apply_environment {

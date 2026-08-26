@@ -16,7 +16,7 @@ pub(crate) struct ManagedMcpGuard;
 impl ServiceGuard for ManagedMcpGuard {
     fn hold(&self, timeout: Duration) -> Result<ServiceHold, AppError> {
         let paths = ServicePaths::discover()?;
-        FileLease::acquire(&paths.lifecycle_lock, timeout)
+        lock::acquire(&paths.lifecycle_lock, timeout)
     }
 
     fn capture(&self, _hold: &ServiceHold) -> Result<ServiceState, AppError> {

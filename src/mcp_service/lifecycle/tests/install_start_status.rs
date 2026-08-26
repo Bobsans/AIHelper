@@ -597,7 +597,7 @@ fn status_reports_busy_lifecycle_without_waiting_or_writing() {
     let (pointer, _) = harness.installed_definition();
     let active = LifecycleState::active(LifecycleOperation::Restart, Some(pointer.service_id));
     harness.store().write_lifecycle(&active).unwrap();
-    let lifecycle_lease = FileLease::try_acquire(&harness.paths.lifecycle_lock)
+    let lifecycle_lease = lock::try_acquire(&harness.paths.lifecycle_lock)
         .unwrap()
         .expect("lifecycle lease should be available");
     let before = harness.durable_bytes();

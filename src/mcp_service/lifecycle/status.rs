@@ -450,7 +450,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     pub(super) fn observe_lifecycle(&self, output: &mut StatusOutput) {
-        match FileLease::try_acquire(&self.store.paths().lifecycle_lock) {
+        match lock::try_acquire(&self.store.paths().lifecycle_lock) {
             Ok(Some(lease)) => {
                 drop(lease);
                 if matches!(

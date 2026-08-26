@@ -237,7 +237,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             }
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                match FileLease::try_acquire(&self.store.paths().instance_lock)? {
+                match lock::try_acquire(&self.store.paths().instance_lock)? {
                     Some(lease) => {
                         drop(lease);
                         return Ok(());

@@ -435,7 +435,21 @@ impl Drop for OwnedHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_service::lock::FileLease;
+
+    /// The lease the updater holds is the *service's*, but a test may take one
+    /// directly: what matters here is that a launch failure does not release
+    /// whichever lease the parent held.
+    fn hold(path: &Path) -> ServiceHold {
+        ServiceHold::try_acquire(path, &ah_updater_core::lifecycle_mutex_name(path))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn is_held(path: &Path) -> bool {
+        ServiceHold::try_acquire(path, &ah_updater_core::lifecycle_mutex_name(path))
+            .unwrap()
+            .is_none()
+    }
 
     #[test]
     fn quotes_windows_arguments_without_trailing_backslash_escape() {
@@ -456,16 +470,16 @@ mod tests {
     fn launch_failure_keeps_parent_lifecycle_lease() {
         let temp = tempfile::TempDir::new().unwrap();
         let lock = temp.path().join("lifecycle.lock");
-        let lease = FileLease::try_acquire(&lock).unwrap().unwrap();
+        let lease = hold(&lock);
 
         let error = launch_recovery(&temp.path().join("missing-helper.exe"), &[], &lease)
             .unwrap_err()
             .into_error();
 
         assert_eq!(error.code(), "UPDATER_RECOVERY");
-        assert!(FileLease::try_acquire(&lock).unwrap().is_none());
+        assert!(is_held(&lock));
         drop(lease);
-        assert!(FileLease::acquire(&lock, Duration::from_secs(1)).is_ok());
+        assert!(!is_held(&lock));
     }
 
     #[test]
@@ -474,7 +488,7 @@ mod tests {
 
         let temp = tempfile::TempDir::new().unwrap();
         let lock = temp.path().join("lifecycle.lock");
-        let lease = FileLease::try_acquire(&lock).unwrap().unwrap();
+        let lease = hold(&lock);
         let invalid = std::ffi::OsString::from_wide(&[b'x' as u16, 0, b'y' as u16]);
         let helper = Path::new(&invalid);
 

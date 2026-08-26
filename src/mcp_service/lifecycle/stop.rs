@@ -81,7 +81,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         let old_instance_id = (readiness.status == ReadinessStatus::Ready)
             .then_some(readiness.instance_id)
             .flatten();
-        let initial_guard = FileLease::try_acquire(&self.store.paths().instance_lock)?;
+        let initial_guard = lock::try_acquire(&self.store.paths().instance_lock)?;
         let scheduler_active = matches!(
             context.observed.scheduler_state,
             SchedulerState::Running | SchedulerState::Queued
@@ -220,7 +220,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     ) -> Result<Option<FileLease>, AppError> {
         loop {
             if guard.is_none() {
-                guard = FileLease::try_acquire(&self.store.paths().instance_lock)?;
+                guard = lock::try_acquire(&self.store.paths().instance_lock)?;
             }
             let observation = self.scheduler.inspect(&context.current.task_path)?;
             let TaskObservation::Owned(observed) = observation else {
@@ -257,7 +257,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     pub(super) fn stop_orphan(&self) -> Result<StopResult, AppError> {
-        if let Some(guard) = FileLease::try_acquire(&self.store.paths().instance_lock)? {
+        if let Some(guard) = lock::try_acquire(&self.store.paths().instance_lock)? {
             return Ok(StopResult {
                 ownership: None,
                 context: None,
@@ -349,7 +349,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             }
         }
         loop {
-            if let Some(guard) = FileLease::try_acquire(&self.store.paths().instance_lock)? {
+            if let Some(guard) = lock::try_acquire(&self.store.paths().instance_lock)? {
                 let runtime = self.store.read_runtime().valid()?;
                 let readiness = self.readiness.inspect(&definition, runtime.as_ref(), false);
                 if readiness.instance_id != Some(instance_id) {

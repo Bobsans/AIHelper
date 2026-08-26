@@ -11,6 +11,7 @@ use std::{
 use tempfile::TempDir;
 
 use super::super::*;
+use crate::mcp_service::lock;
 use crate::{
     cli::GlobalOptions,
     mcp_service::{
@@ -43,7 +44,7 @@ impl LeaseHolder {
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let (release_sender, release_receiver) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let lease = match FileLease::try_acquire(&path) {
+            let lease = match lock::try_acquire(&path) {
                 Ok(Some(lease)) => {
                     let _ = ready_sender.send(Ok(()));
                     lease

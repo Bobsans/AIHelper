@@ -31,7 +31,7 @@ use crate::{config::ConfigContext, error::AppError, output::Emitter};
 
 use super::{
     command::{InstallOptions, ServiceCommand},
-    lock::FileLease,
+    lock::{self, FileLease},
     model::{
         CurrentPointer, DriftEntry, DriftKind, ExitKind, LifecycleOperation, LifecycleState,
         LifecycleStateKind, MutationOutput, RuntimePhase, RuntimeState, RuntimeStatus,
@@ -419,7 +419,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     fn instance_lease_is_occupied(&self) -> bool {
-        match FileLease::try_acquire(&self.store.paths().instance_lock) {
+        match lock::try_acquire(&self.store.paths().instance_lock) {
             Ok(Some(lease)) => {
                 drop(lease);
                 false
@@ -467,8 +467,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         success: OperationSuccess,
         callback: impl FnOnce() -> Result<T, AppError>,
     ) -> Result<T, AppError> {
-        let _lease =
-            FileLease::acquire(&self.store.paths().lifecycle_lock, LIFECYCLE_LOCK_TIMEOUT)?;
+        let _lease = lock::acquire(&self.store.paths().lifecycle_lock, LIFECYCLE_LOCK_TIMEOUT)?;
         if let Document::UnsupportedVersion(version) = self.store.read_lifecycle() {
             return Err(AppError::external(
                 "MCP_SERVICE_STATE_INVALID",
