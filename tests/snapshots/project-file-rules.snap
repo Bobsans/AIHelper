@@ -38,6 +38,18 @@
   {
     "detections": [
       {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "eslint",
+        "role": "quality",
+        "tool": "eslint"
+      }
+    ],
+    "path": ".eslintrc.json"
+  },
+  {
+    "detections": [
+      {
         "ecosystem": null,
         "group": "Ci",
         "kind": "gitlab-ci",
@@ -94,6 +106,18 @@
       }
     ],
     "path": ".prettierrc"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "prettier",
+        "role": "quality",
+        "tool": "prettier"
+      }
+    ],
+    "path": ".prettierrc.json"
   },
   {
     "detections": [
@@ -358,6 +382,18 @@
       }
     ],
     "path": "build.gradle.kts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "perl",
+        "group": "Package",
+        "kind": "perl-meta",
+        "role": "source",
+        "tool": "perl"
+      }
+    ],
+    "path": "build.pl"
   },
   {
     "detections": [
@@ -709,6 +745,18 @@
         "tool": "docker-compose"
       }
     ],
+    "path": "docker-compose.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "compose",
+        "role": "container",
+        "tool": "docker-compose"
+      }
+    ],
     "path": "docker-compose.yml"
   },
   {
@@ -758,6 +806,18 @@
       }
     ],
     "path": "dune-project"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "eslint",
+        "role": "quality",
+        "tool": "eslint"
+      }
+    ],
+    "path": "eslint.config.js"
   },
   {
     "detections": [
@@ -883,6 +943,18 @@
     "detections": [
       {
         "ecosystem": null,
+        "group": "Docs",
+        "kind": "static-site-config",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "hugo.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
         "group": "Ci",
         "kind": "jenkins",
         "role": "ci",
@@ -954,6 +1026,18 @@
   {
     "detections": [
       {
+        "ecosystem": "perl",
+        "group": "Package",
+        "kind": "perl-meta",
+        "role": "source",
+        "tool": "perl"
+      }
+    ],
+    "path": "makefile.pl"
+  },
+  {
+    "detections": [
+      {
         "ecosystem": "python",
         "group": "Config",
         "kind": "django",
@@ -986,6 +1070,42 @@
       }
     ],
     "path": "meson.build"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "perl",
+        "group": "Package",
+        "kind": "perl-meta",
+        "role": "source",
+        "tool": "perl"
+      }
+    ],
+    "path": "meta.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "perl",
+        "group": "Package",
+        "kind": "perl-meta",
+        "role": "source",
+        "tool": "perl"
+      }
+    ],
+    "path": "meta.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "perl",
+        "group": "Package",
+        "kind": "perl-meta",
+        "role": "source",
+        "tool": "perl"
+      }
+    ],
+    "path": "meta6.json"
   },
   {
     "detections": [
@@ -1170,6 +1290,30 @@
   {
     "detections": [
       {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-playbook",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "playbook.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-playbook",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "playbook.yml"
+  },
+  {
+    "detections": [
+      {
         "ecosystem": "node",
         "group": "Lock",
         "kind": "pnpm-lock",
@@ -1266,6 +1410,18 @@
   {
     "detections": [],
     "path": "projectversion.txt"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "static-analysis",
+        "role": "quality",
+        "tool": null
+      }
+    ],
+    "path": "psalm.xml"
   },
   {
     "detections": [
@@ -1421,6 +1577,18 @@
         "tool": "semgrep"
       }
     ],
+    "path": "semgrep.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "semgrep",
+        "role": "security",
+        "tool": "semgrep"
+      }
+    ],
     "path": "semgrep.yml"
   },
   {
@@ -1494,6 +1662,30 @@
       }
     ],
     "path": "shell.nix"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-playbook",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "site.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-playbook",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "site.yml"
   },
   {
     "detections": [
@@ -1903,6 +2095,61 @@
     "detections": [
       {
         "ecosystem": null,
+        "group": "Docs",
+        "kind": "static-site-config",
+        "role": "docs",
+        "tool": null
+      },
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "circleci",
+        "role": "ci",
+        "tool": "circleci"
+      }
+    ],
+    "path": ".circleci/config.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "circleci",
+        "role": "ci",
+        "tool": "circleci"
+      }
+    ],
+    "path": ".circleci/config.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "android",
+        "group": "Config",
+        "kind": "android-gradle",
+        "role": "mobile",
+        "tool": "gradle"
+      }
+    ],
+    "path": "settings.gradle"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "android",
+        "group": "Config",
+        "kind": "android-gradle",
+        "role": "mobile",
+        "tool": "gradle"
+      }
+    ],
+    "path": "settings.gradle.kts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
         "group": "Ci",
         "kind": "buildkite",
         "role": "ci",
@@ -2050,61 +2297,6 @@
       }
     ],
     "path": "nested/gotk-components/entry.yml"
-  },
-  {
-    "detections": [
-      {
-        "ecosystem": null,
-        "group": "Docs",
-        "kind": "static-site-config",
-        "role": "docs",
-        "tool": null
-      },
-      {
-        "ecosystem": null,
-        "group": "Ci",
-        "kind": "circleci",
-        "role": "ci",
-        "tool": "circleci"
-      }
-    ],
-    "path": ".circleci/config.yaml"
-  },
-  {
-    "detections": [
-      {
-        "ecosystem": null,
-        "group": "Ci",
-        "kind": "circleci",
-        "role": "ci",
-        "tool": "circleci"
-      }
-    ],
-    "path": ".circleci/config.yml"
-  },
-  {
-    "detections": [
-      {
-        "ecosystem": "android",
-        "group": "Config",
-        "kind": "android-gradle",
-        "role": "mobile",
-        "tool": "gradle"
-      }
-    ],
-    "path": "settings.gradle"
-  },
-  {
-    "detections": [
-      {
-        "ecosystem": "android",
-        "group": "Config",
-        "kind": "android-gradle",
-        "role": "mobile",
-        "tool": "gradle"
-      }
-    ],
-    "path": "settings.gradle.kts"
   },
   {
     "detections": [

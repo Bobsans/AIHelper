@@ -101,13 +101,23 @@ per dispatch arm, taken before any edit. Coverage of that corpus was checked
 mechanically: every one of the 61 regexes matches at least one fixture line, and
 a unit test now fails if a table row is added that no fixture reaches.
 
-### 5.6 `src/commands/project/rules.rs` — a 550-line `match` that is really a table
+### 5.6 `src/commands/project/rules.rs` — a 550-line `match` that is really a table *(done)*
 
-`classify_file:24` is a single match over filenames and path fragments producing
-`FileRuleDetection` records. It is pure data expressed as control flow. Move it to
-a static table (or an embedded TOML/JSON asset validated at build time) plus a small
-matcher. Community contributions ("detect Bazel", "detect uv") then become data
-changes, reviewable without reading Rust.
+`classify_file` was one match over 95 file names followed by 26 `if` blocks over
+suffixes and path fragments - pure data expressed as control flow.
+
+**Status:** 121 `rule(when, detection)` entries plus a small matcher. Conditions
+are a closed set - name, name prefix, name suffix, path, path prefix, path
+fragment, `Any`, `All` - which is exactly what the old code tested and nothing
+more. Adding a file type is one line.
+
+**Caveat, stated rather than hidden:** the file is now 1 068 lines, over this
+phase's ~800 line criterion. It grew because rustfmt gives a rule one to four
+lines where the old `match` arm took one, not because anything was added: there
+is no control flow left in it at all. Closing the gap for real means the other
+half of this finding - moving the table to an embedded asset validated at build
+time - which also gets the "reviewable without reading Rust" property that a
+Rust table only approximates.
 
 ### 5.7 `src/ai/install.rs` — 1 367 lines mixing four layers
 
@@ -159,7 +169,9 @@ Ordering is chosen so that each split is mechanical and low-risk:
    integration tests assert only that a few expected symbols are present for
    seven of the twenty-eight languages. A characterization snapshot was taken
    first.
-2. `project/rules` → table-driven (same).
+2. ~~`project/rules` → table-driven (same).~~ **(done)** — and, as with
+   `ctx_symbols`, it was not covered either: a characterization snapshot of 208
+   paths was taken first.
 3. ~~`event_log` → extract `ah-redact`~~ **(done)**; still to do: split sink/rotation.
 4. `http/domain` → extract `curl`, `jsonpath`, `assert`, `spec` as sibling modules;
    add focused unit tests and a fuzz target for the two parsers.
