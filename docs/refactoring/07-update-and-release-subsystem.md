@@ -146,7 +146,7 @@ A user or an agent must be able to tell that an invocation was consumed by recov
 - **Do not weaken verification while deduplicating it.** The union of all three
   implementations is the required behavior, not the intersection; enumerate the
   checks each site performs before merging them.
-- The existing acceptance work in `docs/plans/2026-07-22-managed-mcp-self-update-*`
+- The existing acceptance work for managed MCP self-update
   and `scripts/release_smoke.py` is the safety net — run it at every step.
 
 ## Acceptance criteria

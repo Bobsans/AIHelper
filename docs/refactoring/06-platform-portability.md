@@ -142,7 +142,7 @@ the port has `cfg`.
 ## Risks and invariants
 
 - **Windows behavior must not regress.** The task definition currently written is
-  the product of several rounds of hardening (`docs/plans/2026-08-06-mcp-*`). The
+  the product of several rounds of hardening, recorded in the Git history. The
   projection must produce a byte-identical task; assert with a snapshot of the
   generated definition before step 3.
 - **Do not lose drift detection fidelity.** The current implementation compares 27

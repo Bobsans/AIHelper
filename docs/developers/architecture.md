@@ -15,6 +15,14 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
   - C ABI structures (`AhPluginApiV1`) and symbol constants
   - transport-neutral typed command descriptors, effects, execution context,
     and structured errors
+- `crates/ah-plugin-sdk`:
+  - shared implementation for what every plugin would otherwise rewrite:
+    `credentials` (where a token may be sent and where an unattended one may come
+    from), `http` (a blocking JSON client with authority-bound credentials and
+    uniform error mapping), `render` (success rendering, ANSI stripping,
+    truncation)
+  - a Rust-side convenience only: the C ABI is unchanged, so a plugin built
+    without it still loads
 - `crates/ah-redact`:
   - the single redaction engine: rewriters (`sanitize_*`) for sinks that record a
     value, detectors (`url_contains_userinfo`, `curl_contains_auth`,

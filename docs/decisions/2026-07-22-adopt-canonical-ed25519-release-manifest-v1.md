@@ -22,10 +22,9 @@ The decision is how to encode and authenticate that manifest so the main
 the same bytes without expanding the released CLI, JSON, MCP, or plugin ABI
 contracts.
 
-Related specifications:
-
-- [Managed MCP and self-update roadmap](../../roadmap/managed-mcp-and-self-update.md)
-- [Design specification](../plans/2026-07-22-signed-release-manifest-foundation-design.md)
+The roadmap and design specification this decision was drawn from were the
+planning artefacts for work that has since shipped; they were removed with the
+rest of that archive and remain in the Git history.
 
 ## Decision Drivers
 
@@ -123,8 +122,7 @@ all `ah upgrade` commands.
   `crates/ah-release-manifest/src/`, and
   `crates/ah-release-manifest/tests/fixtures/`; add the crate to the workspace
   in `Cargo.toml`; update `Cargo.lock`; remove only the completed schema,
-  inventory, and signature-format items from
-  `roadmap/managed-mcp-and-self-update.md`.
+  inventory, and signature-format items from the self-update roadmap.
 - **Dependencies**: use compatible requirements `ed25519-dalek = "3"`,
   `sha2 = "0.11"`, `base64 = "0.22"`, `semver = "1"`, `url = "2"`,
   `serde = "1"`, `serde_json = "1"`, and `thiserror = "2"`. Do not enable
