@@ -27,7 +27,7 @@ work (`no_store:1443`, `page_nonce:1467`) is reviewed as part of protocol change
 `ah-setup-ui` (or serve it from a dedicated small crate), since it is a web
 application, not an MCP concern.
 
-### 5.2 `src/commands/http/domain.rs` — 1 983 lines, a test framework in disguise
+### 5.2 `src/commands/http/domain.rs` — 1 983 lines, a test framework in disguise *(done)*
 
 It contains, in one file: an HTTP client with retry and deadline handling
 (`send_with_retry:309`), **a curl command-line parser** (`parse_curl_replay:1086`),
@@ -41,8 +41,28 @@ These are four separately valuable, separately testable libraries. As one module
 they cannot be fuzzed independently, and the parsers — which consume untrusted
 input — are buried where they get no focused review.
 
-**Split into:** `http::client`, `http::curl` (parser), `http::jsonpath`,
-`http::assert` (DSL + evaluation), `http::spec` (runner + reporters).
+**Status: split.** `domain/{assert,curl,jsonpath,spec}.rs` sit beside a `domain.rs`
+that keeps the client and the request-building helpers the others share. The
+modules nest under `domain` rather than under `http` so the domain/adapter line
+stays where it is; finding 5.8 reorganises `commands/*` layout as a whole.
+
+`run_assert` moved into `spec` with the runner it drives — leaving it in
+`domain.rs` would have meant publishing most of the spec types.
+
+The parsers now have generated-input coverage: a fixed-seed corpus over an
+alphabet built from the delimiters each one slices on, asserting no panic and
+bounded output. It earned itself on first run by finding that `curl ''` parsed
+into an empty URL, which surfaced downstream as "url must not be empty" — a
+message that does not say which argument was wrong. The parser rejects it now.
+
+`cargo-fuzz` is still the right tool and is still deferred for the reason the
+roadmap gives: nightly plus a CI lane of its own. What changed is that the
+parsers are now reachable as units, which was the blocker.
+
+`spec.rs` is 869 lines, over this phase's criterion. It is the runner, the case
+format, interpolation, extraction and the JUnit reporter; the reporter is the
+obvious next split.
+
 Consider whether `jsonpath` should be a dependency rather than an implementation.
 
 ### 5.3 `src/event_log.rs` — logging plus a redaction engine *(engine extracted)*
@@ -173,8 +193,9 @@ Ordering is chosen so that each split is mechanical and low-risk:
    `ctx_symbols`, it was not covered either: a characterization snapshot of 208
    paths was taken first.
 3. ~~`event_log` → extract `ah-redact`~~ **(done)**; still to do: split sink/rotation.
-4. `http/domain` → extract `curl`, `jsonpath`, `assert`, `spec` as sibling modules;
-   add focused unit tests and a fuzz target for the two parsers.
+4. ~~`http/domain` → extract `curl`, `jsonpath`, `assert`, `spec` as sibling modules;
+   add focused unit tests and a fuzz target for the two parsers.~~ **(done, with
+   generated-input tests standing in for the fuzz target)**
 5. `ah-mcp/server` → move the setup UI out first (largest, most orthogonal chunk),
    then split transport/shutdown/protocol.
 6. `ai/install` → separate progress rendering from logic.

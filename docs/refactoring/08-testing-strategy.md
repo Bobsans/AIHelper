@@ -49,7 +49,7 @@ files in group 05 look even more unmanageable than they are.
 | golden snapshot of command catalog / manuals | **none** | prerequisite for every refactor in this program |
 | golden snapshot of rendered text output | partial (a few in `src/output.rs`, `src/lib.rs`) | output determinism is a stated invariant |
 | property/fuzz tests for redaction | **none** | ~550 lines of security-critical heuristics |
-| fuzz tests for the curl and JSONPath parsers | **none** | untrusted input parsers (`src/commands/http/domain.rs:1086`, `:918`) |
+| ~~fuzz tests for the curl and JSONPath parsers~~ generated-input tests | both parsers are their own modules now and have fixed-seed corpora; `cargo-fuzz` still deferred |
 | concurrency tests for parallel typed execution | minimal (`mcp_service/lifecycle/tests/concurrency.rs`, 54 lines) | the executor is the flagship path; the process-cwd issue (group 03) would be caught here |
 | docs freshness | ~~none~~ drift test | `docs/reference` is checked against the catalogs |
 | cross-version updater compatibility | manual (`scripts/release_smoke.py`) | highest-risk area (group 07) |
