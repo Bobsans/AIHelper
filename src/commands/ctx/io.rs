@@ -97,7 +97,3 @@ pub(crate) fn read_git_status_bytes_at(cwd: &Path) -> Result<Vec<u8>, AppError> 
 
     Ok(output.stdout)
 }
-
-pub(crate) fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}

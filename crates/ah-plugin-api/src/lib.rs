@@ -19,7 +19,6 @@ pub const AH_PLUGIN_MANUAL_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_manual_json_v1\0"
 pub const AH_PLUGIN_COMMAND_CATALOG_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_command_catalog_json_v1\0";
 pub const AH_PLUGIN_INVOKE_COMMAND_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_invoke_command_json_v1\0";
 pub const AH_PLUGIN_CANCEL_COMMAND_V1_SYMBOL: &[u8] = b"ah_plugin_cancel_command_v1\0";
-pub const AH_PLUGIN_ARGV_TO_TYPED_JSON_V1_SYMBOL: &[u8] = b"ah_plugin_argv_to_typed_json_v1\0";
 pub const AH_VAULT_MASTER_KEY_ENV: &str = "AH_VAULT_MASTER_KEY";
 
 pub mod cancellation;
@@ -40,8 +39,6 @@ pub fn noninteractive_command<S: AsRef<OsStr>>(program: S) -> Command {
 
 pub mod plugin_capabilities {
     pub const MANUAL_JSON: &str = "manual_json";
-    pub const REQUIRED_TOOLS: &str = "required_tools";
-    pub const ERROR_DIAGNOSTIC: &str = "error_diagnostic";
     pub const TYPED_COMMANDS_V1: &str = "typed_commands_v1";
 }
 
@@ -319,13 +316,6 @@ impl InvocationResponse {
     pub fn with_error_domain(mut self, domain: impl Into<String>) -> Self {
         if let Some(diagnostic) = self.diagnostic.take() {
             self.diagnostic = Some(Box::new(diagnostic.with_domain(domain)));
-        }
-        self
-    }
-
-    pub fn with_error_operation(mut self, operation: impl Into<String>) -> Self {
-        if let Some(diagnostic) = self.diagnostic.take() {
-            self.diagnostic = Some(Box::new(diagnostic.with_operation(operation)));
         }
         self
     }
@@ -837,13 +827,6 @@ pub type AhPluginCommandCatalogJsonV1 = unsafe extern "C" fn() -> *mut c_char;
 pub type AhPluginInvokeCommandJsonV1 =
     unsafe extern "C" fn(request_json: *const c_char) -> *mut c_char;
 pub type AhPluginCancelCommandV1 = unsafe extern "C" fn(request_id: *const c_char) -> i32;
-
-pub fn to_c_string_ptr(value: &str) -> *const c_char {
-    let sanitized = value.replace('\0', "\\0");
-    CString::new(sanitized)
-        .expect("CString conversion should succeed after sanitization")
-        .into_raw()
-}
 
 /// Frees a C string pointer previously returned by this API.
 ///

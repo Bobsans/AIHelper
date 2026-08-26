@@ -419,7 +419,7 @@ impl PluginsHostPlugin {
             "command": command,
             "domain": domain,
             "changed": changed,
-            "config_path": crate::normalize_path(settings.path()),
+            "config_path": ah_runtime::core::forward_slashes(settings.path()),
             "disabled_domains": disabled_domains
         });
         Ok(TypedInvocationResponse::success(data, Some(message)))

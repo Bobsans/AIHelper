@@ -356,13 +356,6 @@ impl McpServer {
         self.shared.catalog_generation.load(Ordering::Acquire)
     }
 
-    pub fn dropped_event_count(&self) -> u64 {
-        self.shared
-            .event_dispatcher
-            .as_ref()
-            .map_or(0, |dispatcher| dispatcher.dropped_count())
-    }
-
     pub fn tools(&self) -> Result<Vec<Tool>, McpAdapterError> {
         Ok(self.catalog_snapshot().tools.clone())
     }

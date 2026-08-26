@@ -307,11 +307,6 @@ fn resolve_program_for_spawn(program: &str, cwd: Option<&Path>) -> PathBuf {
 }
 
 #[cfg(windows)]
-pub(crate) fn resolve_windows_program(program: &str) -> Option<PathBuf> {
-    resolve_windows_program_from(program, env::current_dir().ok().as_deref())
-}
-
-#[cfg(windows)]
 fn resolve_windows_program_from(program: &str, current_dir: Option<&Path>) -> Option<PathBuf> {
     let original = Path::new(program);
     if original.extension().is_some() {
@@ -327,7 +322,7 @@ fn resolve_windows_program_from(program: &str, current_dir: Option<&Path>) -> Op
 }
 
 #[cfg(windows)]
-pub(crate) fn resolve_windows_program_in(
+fn resolve_windows_program_in(
     program: &str,
     current_dir: Option<&Path>,
     path_dirs: Option<&[PathBuf]>,
@@ -492,5 +487,34 @@ mod tests {
             "isolated-value"
         );
         assert!(output.stderr.bytes.is_empty());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn resolves_extensionless_program_from_path_with_pathext_order() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let shim = temp_dir.path().join("npx.CMD");
+        fs::write(&shim, "@echo off\r\n").expect("shim should be written");
+
+        let resolved = resolve_windows_program_in(
+            "npx",
+            None,
+            Some(&[temp_dir.path().to_path_buf()]),
+            &[".EXE".to_owned(), ".CMD".to_owned()],
+        )
+        .expect("npx should resolve through PATHEXT");
+
+        assert_eq!(resolved, shim);
+    }
+
+    #[test]
+    fn does_not_rewrite_programs_that_already_have_an_extension() {
+        assert!(resolve_windows_program_from("npx.cmd", None).is_none());
     }
 }

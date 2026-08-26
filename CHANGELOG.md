@@ -7,6 +7,50 @@ Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- `gitlab.issues` and `gitlab.pipelines` published an output schema that
+  declared four of the ten properties they actually serialize, with
+  `additionalProperties: false`, so every typed call returned
+  `OUTPUT_SCHEMA_VIOLATION`. Both schemas are now derived from the types that
+  produce them and cannot disagree again.
+- MCP clients could receive a credential id in an error `cause`. The MCP
+  fallback arm rendered the raw `Display` of `SecretNotFound`,
+  `SecretKindMismatch`, `VaultLocked` and `VaultKeyUnavailable`; redaction had
+  only ever been applied on the CLI side. Both surfaces now project from one
+  table.
+- `gitlab.job.trace` and `gitlab.job.warnings` left OSC terminal sequences
+  (window titles, `ESC ] … BEL`) in the trace text and in the warning scan run
+  over it, so a warning wrapped in one did not match. GitLab now uses the same
+  stripper as GitHub, which handles both OSC and CSI.
+- `postgres.exec` published its `yes` confirmation flag as optional and relied
+  on the handler to refuse; it is now required by the schema. `postgres.describe`
+  did not require `object` although the extractor errored without it.
+
+### Changed
+
+- Published JSON Schemas are derived from the Rust types they describe rather
+  than hand-written, across every built-in domain, the host commands, and all
+  four dynamic plugins. The resulting shape differs in four ways that carry no
+  meaning: `required` is alphabetical, a nullable field spells itself
+  `type: [T, "null"]` instead of `oneOf: [T, null]`, array arguments advertise
+  `"default": []`, and an empty `required` is omitted rather than published as
+  `[]`. Property names, types and constraints are unchanged.
+- `file.stat.kind` and `plugins.list.source`/`state` were documented in prose
+  only; they now publish their `enum` values. The three `plugins.*` mutations
+  publish `const` on `command`.
+- Ollama's decode failure said `failed to decode response from '<url>'` and now
+  says `failed to decode ollama response for '<path>'`, matching the GitHub and
+  GitLab wording. `OLLAMA_RESPONSE_INVALID` is unchanged.
+- A write to stdout that the stream refuses is now reported as
+  `OUTPUT_WRITE_FAILED` instead of panicking the process.
+
+### Removed
+
+- `AH_POSTGRES_TEST_SYSTEM_PATH` no longer overrides `psql` resolution. It was
+  named as a test seam but shipped in the plugin, ahead of `PATH` itself, and no
+  test referenced it.
+
 ## [1.4.0] - 2026-08-25
 
 ### Added

@@ -2,7 +2,6 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
         mpsc::{SyncSender, TrySendError, sync_channel},
     },
     thread,
@@ -17,7 +16,6 @@ pub(crate) const DEFAULT_EVENT_QUEUE_CAPACITY: usize = 256;
 
 pub(crate) struct EventDispatcher {
     sender: SyncSender<EventMessage>,
-    dropped: AtomicU64,
 }
 
 enum EventMessage {
@@ -33,10 +31,7 @@ struct EventDelivery {
 impl EventDispatcher {
     pub(crate) fn new(sink: Arc<dyn EventSink>, capacity: usize) -> Arc<Self> {
         let (sender, receiver) = sync_channel(capacity);
-        let dispatcher = Arc::new(Self {
-            sender,
-            dropped: AtomicU64::new(0),
-        });
+        let dispatcher = Arc::new(Self { sender });
         let _ = thread::Builder::new()
             .name("ah-mcp-events".to_owned())
             .spawn(move || {
@@ -75,15 +70,10 @@ impl EventDispatcher {
                 telemetry,
             }))) {
             Ok(()) => true,
-            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
-                self.dropped.fetch_add(1, Ordering::Relaxed);
-                false
-            }
+            // Overflow drops the event rather than blocking the caller. The
+            // `false` is the whole report: nothing surfaces an aggregate count.
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
         }
-    }
-
-    pub(crate) fn dropped_count(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
     }
 
     pub(crate) async fn flush(&self, timeout: std::time::Duration) -> bool {
@@ -156,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn blocking_sink_does_not_block_dispatch_and_overflow_is_counted() {
+    fn blocking_sink_does_not_block_dispatch_and_overflow_is_dropped() {
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let dispatcher = EventDispatcher::new(
@@ -171,7 +161,6 @@ mod tests {
         started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(dispatcher.dispatch(event("second"), None));
         assert!(!dispatcher.dispatch(event("third"), None));
-        assert_eq!(dispatcher.dropped_count(), 1);
         release_tx.send(()).unwrap();
     }
 

@@ -11,6 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use ah_runtime::core;
+
 use crate::{error::AppError, output::OutputMode};
 
 use super::{
@@ -495,7 +497,7 @@ pub(crate) fn run_assert(
 
     let output = HttpAssertOutput {
         command: "http.assert",
-        spec_path: normalize_path(&spec_path),
+        spec_path: core::forward_slashes(&spec_path),
         fail_fast: args.fail_fast,
         summary: HttpAssertSummary {
             total: cases.len(),
@@ -1846,10 +1848,6 @@ fn resolve_spec_relative_path(base_dir: &Path, value: &str) -> PathBuf {
 
 fn duration_millis(value: Duration) -> u64 {
     value.as_millis().min(u128::from(u64::MAX)) as u64
-}
-
-fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]

@@ -28,8 +28,10 @@ pub fn truncate_lines(content: &str, limit: Option<usize>) -> (String, bool) {
     (content.to_owned(), false)
 }
 
+/// A path for JSON output, with separators forward and any Windows verbatim
+/// prefix removed, so `\\?\C:\x` reads as `C:/x`.
 pub fn normalize_path(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized = forward_slashes(path);
     if let Some(path) = normalized.strip_prefix("//?/UNC/") {
         format!("//{path}")
     } else if let Some(path) = normalized.strip_prefix("//?/") {
@@ -37,6 +39,15 @@ pub fn normalize_path(path: &Path) -> String {
     } else {
         normalized
     }
+}
+
+/// A path for JSON output with separators forward and nothing else changed.
+///
+/// Distinct from [`normalize_path`] on purpose: these are paths whose published
+/// form predates the verbatim-prefix handling, and rewriting them would change
+/// output that callers already parse.
+pub fn forward_slashes(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub fn run_command<I, S>(program: &str, args: I) -> std::io::Result<Output>
@@ -76,12 +87,4 @@ where
     run_command(program, args)
         .map(|output| output.status.success())
         .unwrap_or(false)
-}
-
-pub fn run_shell_command(command: &str) -> std::io::Result<Output> {
-    if cfg!(target_os = "windows") {
-        run_command("powershell", ["-NoProfile", "-Command", command])
-    } else {
-        run_command("sh", ["-lc", command])
-    }
 }

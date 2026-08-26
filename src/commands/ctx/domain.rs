@@ -3,6 +3,8 @@ use std::path::Path;
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use ah_runtime::core;
+
 use crate::commands::ctx_symbols::{Symbol, extract_symbols};
 use crate::error::AppError;
 use crate::git_status::{StatusEntry, parse_porcelain_v1_z};
@@ -160,7 +162,7 @@ pub(crate) fn execute_pack(args: PackArgs, limit: Option<usize>) -> Result<CtxRe
         preset: args.preset.as_str().to_owned(),
         roots: roots
             .iter()
-            .map(|path| adapters::io::normalize_path(path))
+            .map(|path| core::forward_slashes(path))
             .collect(),
         item_count: items.len(),
         file_count,
@@ -231,7 +233,7 @@ fn process_pack_entry(
     *symbol_total += symbols.len();
 
     items.push(PackItem {
-        path: adapters::io::normalize_path(path),
+        path: core::forward_slashes(path),
         kind,
         size_bytes: metadata.len(),
         line_count,
@@ -306,7 +308,7 @@ pub(crate) fn execute_symbols(
     Ok(CtxResult::Symbols(CtxSymbolsOutput {
         command: "ctx.symbols",
         preset: args.preset.as_str().to_owned(),
-        root: adapters::io::normalize_path(args.path.as_path()),
+        root: core::forward_slashes(args.path.as_path()),
         file_count: files.len(),
         symbol_count: symbol_total,
         skipped_binary_files: skip_stats.binary_files,
@@ -361,7 +363,7 @@ fn collect_symbols_for_file(
     }
 
     files.push(SymbolsFileOutput {
-        path: adapters::io::normalize_path(path),
+        path: core::forward_slashes(path),
         symbol_count: symbols.len(),
         symbols,
     });
@@ -437,7 +439,7 @@ fn is_symlink_path(path: &Path) -> Result<bool, AppError> {
 }
 
 fn normalize_path(value: &str) -> String {
-    adapters::io::normalize_path(Path::new(value))
+    core::forward_slashes(Path::new(value))
 }
 
 fn is_text_candidate(path: &Path, _size_bytes: u64) -> bool {

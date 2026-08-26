@@ -85,15 +85,6 @@ pub fn external_array(generator: &mut schemars::SchemaGenerator) -> schemars::Sc
     })
 }
 
-/// An input schema for a command that takes no arguments.
-pub fn empty_input_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-    })
-}
-
 fn raw_schema<T: JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T))
         .expect("a generated JSON Schema is always representable as a value")

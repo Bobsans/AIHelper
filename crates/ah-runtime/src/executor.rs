@@ -197,10 +197,6 @@ impl ParallelExecutor {
         self.max_active
     }
 
-    pub fn available_capacity(&self) -> usize {
-        self.permits.available_permits()
-    }
-
     pub fn is_draining(&self, request_id: &str) -> bool {
         lock_coordinator(&self.coordinator)
             .tracked
@@ -647,6 +643,16 @@ mod tests {
     type Gate = Arc<(Mutex<GateState>, Condvar)>;
     type ExecutorFixture = (ParallelExecutor, Arc<ProbePlugin>, Gate);
 
+    /// How long a probe handler may stay parked before it gives up. Generous,
+    /// because it exists only so a test cannot hang forever - never to make a
+    /// timing assertion pass.
+    const PROBE_BLOCK_LIMIT: Duration = Duration::from_secs(60);
+
+    /// How long a test waits for handlers to reach the gate. Long enough for a
+    /// loaded machine running the whole workspace, short enough to fail rather
+    /// than stall.
+    const PROBE_START_LIMIT: Duration = Duration::from_secs(30);
+
     impl ProbePlugin {
         fn new(block: bool, honor_cancel: bool) -> (Arc<Self>, Gate) {
             let gate = Arc::new((
@@ -732,8 +738,18 @@ mod tests {
                 let mut state = state.lock().unwrap();
                 state.started += 1;
                 changed.notify_all();
+                // Bounded on purpose. A blocking task cannot be aborted, so an
+                // unbounded wait here does not fail a test that never reaches
+                // `release` - it hangs the test binary, which keeps holding its
+                // own output file and turns the next build into a linker error.
+                let deadline = std::time::Instant::now() + PROBE_BLOCK_LIMIT;
                 while state.block && !state.cancelled {
-                    state = changed.wait(state).unwrap();
+                    let Some(remaining) =
+                        deadline.checked_duration_since(std::time::Instant::now())
+                    else {
+                        break;
+                    };
+                    state = changed.wait_timeout(state, remaining).unwrap().0;
                 }
             }
             thread::sleep(Duration::from_millis(5));
@@ -788,9 +804,7 @@ mod tests {
             let (state, changed) = &*gate;
             let state = state.lock().unwrap();
             let (state, _) = changed
-                .wait_timeout_while(state, Duration::from_secs(1), |state| {
-                    state.started < expected
-                })
+                .wait_timeout_while(state, PROBE_START_LIMIT, |state| state.started < expected)
                 .unwrap();
             assert!(
                 state.started >= expected,

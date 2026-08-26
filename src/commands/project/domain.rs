@@ -8,6 +8,8 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
 
+use ah_runtime::core;
+
 use crate::error::AppError;
 
 use super::{
@@ -202,7 +204,7 @@ fn detect_project(path: &Path) -> Result<ProjectSnapshot, AppError> {
     let commands = suggest_commands(&ecosystems, &tools, &files, &root)?;
 
     Ok(ProjectSnapshot {
-        root: normalize_path(&root),
+        root: core::normalize_path(&root),
         ecosystems,
         tools,
         roles,
@@ -1173,17 +1175,6 @@ fn detected(kind: &str, path: &str) -> DetectedFile {
 
 fn normalize_relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
-        .map(normalize_path)
-        .unwrap_or_else(|_| normalize_path(path))
-}
-
-fn normalize_path(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if let Some(path) = normalized.strip_prefix("//?/UNC/") {
-        format!("//{path}")
-    } else if let Some(path) = normalized.strip_prefix("//?/") {
-        path.to_owned()
-    } else {
-        normalized
-    }
+        .map(core::normalize_path)
+        .unwrap_or_else(|_| core::normalize_path(path))
 }

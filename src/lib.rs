@@ -20,13 +20,12 @@ pub mod secrets;
 mod snapshots;
 pub(crate) mod updater;
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use ah_plugin_api::{InvocationResponse, RequiredTool, ResolvedSecret};
-use ah_runtime::{PluginManager, PluginSource, RuntimeError, SecretResolver, SecretResolverError};
+use ah_runtime::{
+    PluginManager, PluginSource, RuntimeError, SecretResolver, SecretResolverError, core,
+};
 use serde::Serialize;
 
 use crate::{
@@ -227,7 +226,7 @@ fn render_plugin_state_mutation(
     let payload = PluginStateMutationOutput {
         command,
         changed,
-        config_path: normalize_path(settings.path()),
+        config_path: core::forward_slashes(settings.path()),
         disabled_domains: settings.disabled_domains().cloned().collect(),
         domain: domain.map(str::to_owned),
     };
@@ -341,10 +340,6 @@ fn validate_known_domain(manager: &PluginManager, domain: &str) -> Result<String
         )));
     }
     Ok(normalized)
-}
-
-fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 fn handle_response(

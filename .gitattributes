@@ -1,0 +1,8 @@
+# Line endings are normalised in the index and checked out as LF everywhere, so
+# a tool that rewrites a file in place cannot flip it to CRLF for one developer
+# and leave a diff nobody intended. `.editorconfig` states the same rule for
+# editors; this states it for Git.
+* text=auto eol=lf
+
+# Golden snapshots are compared byte for byte.
+*.snap -text
