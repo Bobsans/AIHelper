@@ -16,9 +16,9 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    /// Modules that are a single file on purpose: they have no adapters to
-    /// separate, because they do no I/O and render nothing themselves.
-    const FLAT_MODULES: &[&str] = &["symbols", "layout", "mod", "secrets"];
+    /// Files under `commands/` that are not command modules at all, so the
+    /// layout does not apply to them.
+    const FLAT_MODULES: &[&str] = &["layout", "mod"];
 
     /// Files a command directory may hold beyond the three required ones, each
     /// because it is a genuine third concern rather than a layering variant.
