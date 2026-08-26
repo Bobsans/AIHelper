@@ -1,12 +1,15 @@
 //! `--cwd` is honoured by every command that resolves a relative path.
 //!
-//! Until now the flag worked by calling `std::env::set_current_dir` at startup,
-//! so each command that read the ambient directory got the right answer by
-//! accident of process state rather than by being told. That makes the answer
+//! The flag used to work by calling `std::env::set_current_dir` at startup, so
+//! each command that read the ambient directory got the right answer by
+//! accident of process state rather than by being told. That made the answer
 //! process-global, and `mcp serve` runs commands in parallel.
 //!
-//! These tests pin the *behaviour* so the mechanism can be replaced: every
-//! ambient-directory reader in the tree is exercised through `--cwd` here.
+//! These tests pinned the *behaviour* while the mechanism was replaced: every
+//! ambient-directory reader in the tree is exercised through `--cwd` here. The
+//! request directory is now carried on `GlobalOptions`, and the parallel case
+//! the old mechanism could not serve is covered by a unit test in
+//! `commands::file`.
 
 use std::fs;
 

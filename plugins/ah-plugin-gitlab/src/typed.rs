@@ -104,6 +104,7 @@ fn invoke_inner(request: &TypedInvocationRequest) -> TypedInvocationResponse {
         json: true,
         quiet: false,
         limit: request.context.limit,
+        cwd: None,
     };
     invocation_response(request, execute(cli, &globals))
 }

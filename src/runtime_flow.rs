@@ -101,15 +101,22 @@ impl Session {
             .skip(1)
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        if let Err(error) = cli::apply_initial_cwd_from_raw_args(raw_args) {
-            let logger = EventLogger::new();
-            record_app_system_error(
-                logger.as_ref(),
-                "startup",
-                &error,
-                serde_json::json!({"argv": logged_argv}),
-            );
-            return Err(error);
+        // Resolved before the logger, because a relative `AH_CONFIG_DIR` is
+        // taken relative to this directory and the logger is the first thing
+        // that opens it.
+        match cli::initial_cwd_from_raw_args(raw_args) {
+            Ok(Some(cwd)) => crate::config::set_base_dir(cwd),
+            Ok(None) => {}
+            Err(error) => {
+                let logger = EventLogger::new();
+                record_app_system_error(
+                    logger.as_ref(),
+                    "startup",
+                    &error,
+                    serde_json::json!({"argv": logged_argv}),
+                );
+                return Err(error);
+            }
         }
         Ok(Self {
             logged_argv,
@@ -682,6 +689,8 @@ fn execute_mcp_serve(config: McpServeConfig) -> Result<(), AppError> {
             let definition = runner.definition();
             let mut managed_options = config.options;
             managed_options.limit = definition.server.limit;
+            // What the preflight used to apply with a process-wide `chdir`.
+            managed_options.cwd = Some(definition.working_directory.clone());
             (
                 cli::McpTransport::Http,
                 definition.endpoint.port,
@@ -698,9 +707,16 @@ fn execute_mcp_serve(config: McpServeConfig) -> Result<(), AppError> {
                 config.options,
             )
         };
-    let cwd = std::env::current_dir()
-        .map_err(|source| AppError::cwd(std::path::PathBuf::from("."), source))
-        .map_err(|error| record_mcp_system_error(config.logger.as_deref(), "mcp_server", error));
+    // The directory a request that names none is served from. A request may
+    // still carry its own `context.cwd`; this is only the default.
+    let cwd = match options.cwd.clone() {
+        Some(cwd) => Ok(cwd),
+        None => std::env::current_dir()
+            .map_err(|source| AppError::cwd(std::path::PathBuf::from("."), source))
+            .map_err(|error| {
+                record_mcp_system_error(config.logger.as_deref(), "mcp_server", error)
+            }),
+    };
     let cwd = match cwd {
         Ok(cwd) => cwd,
         Err(error) => {

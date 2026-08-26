@@ -1,6 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use crate::error::AppError;
@@ -40,6 +41,22 @@ impl ConfigContext {
     }
 }
 
+/// The directory a relative `AH_CONFIG_DIR` is resolved against.
+///
+/// Process-scoped on purpose: a process has one configuration and one log
+/// directory whatever it is asked to do, so this is written once at startup and
+/// only ever read afterwards. That is the whole difference from the `chdir` it
+/// replaces, which every later reader had to consult as live state.
+static BASE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Fix the base directory for relative configuration.
+///
+/// Ignored after the first call, so a test that runs commands in-process does
+/// not have later ones silently reinterpret earlier paths.
+pub(crate) fn set_base_dir(directory: PathBuf) {
+    let _ = BASE_DIR.set(directory);
+}
+
 fn resolve_config_dir() -> Result<PathBuf, AppError> {
     if let Some(value) = env::var_os("AH_CONFIG_DIR") {
         let path = PathBuf::from(value);
@@ -47,6 +64,9 @@ fn resolve_config_dir() -> Result<PathBuf, AppError> {
             return Err(AppError::invalid_argument(
                 "AH_CONFIG_DIR must not be empty",
             ));
+        }
+        if let Some(base) = BASE_DIR.get().filter(|_| path.is_relative()) {
+            return Ok(base.join(path));
         }
         return Ok(path);
     }

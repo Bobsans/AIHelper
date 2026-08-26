@@ -108,6 +108,7 @@ mod tests {
             json: true,
             quiet: true,
             limit: None,
+            cwd: None,
         };
         assert_eq!(
             render_success(&globals, &"payload", "text".to_owned()).message,

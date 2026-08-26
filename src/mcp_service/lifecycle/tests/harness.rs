@@ -937,6 +937,7 @@ pub(super) fn install_options(no_start: bool) -> InstallOptions {
             output: OutputMode::Json,
             quiet: false,
             limit: None,
+            cwd: None,
         },
     }
 }

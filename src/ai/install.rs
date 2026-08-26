@@ -170,31 +170,40 @@ pub fn execute(
     command: AiCommand,
     options: GlobalOptions,
 ) -> Result<(), AppError> {
+    let cwd = options.cwd.clone();
     match command {
         AiCommand::Install(request) => {
-            let report = install(manager, request)?;
-            emit(&report, options)
+            let report = install(manager, request, cwd.as_deref())?;
+            emit(&report, &options)
         }
         AiCommand::Uninstall(request) => {
-            let report = uninstall(request)?;
-            emit(&report, options)
+            let report = uninstall(request, cwd.as_deref())?;
+            emit(&report, &options)
         }
         AiCommand::Status(request) => {
             if !options.quiet
                 && matches!(options.output, OutputMode::Text)
                 && std::io::stdout().is_terminal()
             {
-                emit_live_status(request)
+                emit_live_status(request, cwd.as_deref())
             } else {
-                let report = status(request)?;
-                emit_status(&report, options)
+                let report = status(request, cwd.as_deref())?;
+                emit_status(&report, &options)
             }
         }
     }
 }
 
-pub(super) fn project_root() -> Result<PathBuf, AppError> {
-    std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source))
+/// The directory the request is about.
+///
+/// `None` means the process directory: what the shell handed us, and the right
+/// answer when `--cwd` was not given. It used to be the only answer, because
+/// `--cwd` was applied by moving the whole process.
+pub(super) fn project_root(cwd: Option<&std::path::Path>) -> Result<PathBuf, AppError> {
+    match cwd {
+        Some(cwd) => Ok(cwd.to_path_buf()),
+        None => std::env::current_dir().map_err(|source| AppError::cwd(PathBuf::from("."), source)),
+    }
 }
 
 pub(super) fn status_project_root(cwd: &std::path::Path) -> Option<PathBuf> {
@@ -296,6 +305,7 @@ pub(super) fn rules_block(manager: &PluginManager) -> String {
 pub(super) fn install(
     manager: &PluginManager,
     mut request: InstallRequest,
+    cwd: Option<&std::path::Path>,
 ) -> Result<TargetReport, AppError> {
     let target = targets::find(&request.target)?;
     if request.interactive {
@@ -327,7 +337,7 @@ pub(super) fn install(
         }
     }
     let scope = resolve_scope(target, request.scope)?;
-    let root = project_root()?;
+    let root = project_root(cwd)?;
     let mut warnings = Vec::new();
 
     // Everything up to the confirmation is read-only: classification, path
@@ -715,10 +725,13 @@ pub(super) fn install_rules(
     Ok(RulesReport { action, path: hint })
 }
 
-pub(super) fn uninstall(request: UninstallRequest) -> Result<TargetReport, AppError> {
+pub(super) fn uninstall(
+    request: UninstallRequest,
+    cwd: Option<&std::path::Path>,
+) -> Result<TargetReport, AppError> {
     let target = targets::find(&request.target)?;
     let scope = resolve_scope(target, request.scope)?;
-    let root = project_root()?;
+    let root = project_root(cwd)?;
     let mcp_scope = target.mcp_scope(scope);
     let mut warnings = Vec::new();
 
@@ -810,12 +823,15 @@ pub(super) fn uninstall(request: UninstallRequest) -> Result<TargetReport, AppEr
     })
 }
 
-pub(super) fn status(request: StatusRequest) -> Result<StatusReport, AppError> {
+pub(super) fn status(
+    request: StatusRequest,
+    cwd: Option<&std::path::Path>,
+) -> Result<StatusReport, AppError> {
     let selected: Vec<&Target> = match request.target {
         Some(name) => vec![targets::find(&name)?],
         None => targets::TARGETS.iter().collect(),
     };
-    let cwd = project_root()?;
+    let cwd = project_root(cwd)?;
     let project = status_project_root(&cwd);
     let in_project = project.is_some();
     let root = project.as_deref().unwrap_or(&cwd);

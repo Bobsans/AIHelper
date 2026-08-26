@@ -89,19 +89,31 @@ pub enum PluginStateFilter {
     Disabled,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GlobalOptions {
     pub output: OutputMode,
     pub quiet: bool,
     pub limit: Option<usize>,
+    /// The directory this request resolves relative paths against.
+    ///
+    /// `None` means the process directory, which is what the shell handed us
+    /// and is the right answer when `--cwd` was not given. It is read, never
+    /// written: the previous mechanism was a process-wide `chdir` at startup,
+    /// which made the answer global to a process that serves requests in
+    /// parallel.
+    pub cwd: Option<PathBuf>,
 }
 
 impl GlobalOptions {
-    pub fn to_wire(self) -> GlobalOptionsWire {
+    pub fn to_wire(&self) -> GlobalOptionsWire {
         GlobalOptionsWire {
             json: self.output == OutputMode::Json,
             quiet: self.quiet,
             limit: self.limit,
+            cwd: self
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
         }
     }
 }
@@ -116,15 +128,52 @@ impl From<GlobalOptionsWire> for GlobalOptions {
             },
             quiet: value.quiet,
             limit: value.limit,
+            cwd: value.cwd.map(PathBuf::from),
         }
     }
 }
 
-pub fn apply_initial_cwd_from_raw_args(raw_args: &[OsString]) -> Result<(), AppError> {
-    if let Some(cwd) = extract_last_cwd(raw_args)? {
-        std::env::set_current_dir(&cwd).map_err(|source| AppError::cwd(cwd, source))?;
+/// The request directory named by `--cwd`, resolved against the process
+/// directory so that later consumers never have to.
+///
+/// This used to call `std::env::set_current_dir`, which made the answer a
+/// property of the process rather than of the request - and `mcp serve` runs
+/// requests in parallel. The directory is now read here and carried.
+///
+/// # Errors
+///
+/// [`AppError`] when `--cwd` ends argv with no value, or names something that
+/// is not a readable directory.
+pub fn initial_cwd_from_raw_args(raw_args: &[OsString]) -> Result<Option<PathBuf>, AppError> {
+    let Some(cwd) = extract_last_cwd(raw_args)? else {
+        return Ok(None);
+    };
+    resolve_request_dir(cwd).map(Some)
+}
+
+/// Turn a `--cwd` value into the absolute directory consumers resolve against.
+///
+/// One rule, used by both the early resolution and the full parse, so the two
+/// cannot disagree about what `--cwd` meant.
+///
+/// # Errors
+///
+/// [`AppError`] when the path is not a readable directory. The `chdir` this
+/// replaces failed the same way, so a missing `--cwd` still fails rather than
+/// being silently ignored.
+pub fn resolve_request_dir(cwd: PathBuf) -> Result<PathBuf, AppError> {
+    // Absolute, so a consumer joining a relative path onto it cannot fall back
+    // to the process directory without saying so.
+    let resolved = cwd
+        .canonicalize()
+        .map_err(|source| AppError::cwd(cwd.clone(), source))?;
+    if !resolved.is_dir() {
+        return Err(AppError::invalid_argument(format!(
+            "--cwd is not a directory: {}",
+            cwd.display()
+        )));
     }
-    Ok(())
+    Ok(resolved)
 }
 
 pub fn parse_runtime_command(
@@ -151,18 +200,7 @@ pub fn parse_runtime_command(
         },
     };
 
-    let mut options = GlobalOptions {
-        output: if matches.get_flag("json") {
-            OutputMode::Json
-        } else {
-            OutputMode::Text
-        },
-        quiet: matches.get_flag("quiet"),
-        limit: matches.get_one::<usize>("limit").copied(),
-    };
-    if options.limit == Some(0) {
-        return Err(AppError::invalid_argument("--limit must be >= 1"));
-    }
+    let mut options = crate::entry::global_options(&matches)?;
     let runtime_command = match matches.subcommand() {
         Some((HOST_COMMAND_MCP, mcp_matches)) => {
             let Some((subcommand, mcp_submatches)) = mcp_matches.subcommand() else {
@@ -251,7 +289,7 @@ pub fn parse_runtime_command(
                         dry_run: ai_submatches.get_flag("dry-run"),
                         interactive: crate::ai::prompt_wanted(has_decision_flags(
                             ai_submatches,
-                            options,
+                            &options,
                         )),
                         assume_yes: ai_submatches.get_flag("yes"),
                     }),
@@ -754,7 +792,7 @@ fn dry_run_arg() -> Arg {
 
 /// Any decision supplied on the command line disables prompting, so scripts and
 /// pipes always take the documented defaults.
-fn has_decision_flags(matches: &ArgMatches, options: GlobalOptions) -> bool {
+fn has_decision_flags(matches: &ArgMatches, options: &GlobalOptions) -> bool {
     matches.contains_id("scope") && matches.get_one::<String>("scope").is_some()
         || matches.value_source("transport") == Some(ValueSource::CommandLine)
         || matches.get_one::<String>("url").is_some()
@@ -1157,12 +1195,13 @@ mod tests {
             output: OutputMode::Text,
             quiet: false,
             limit: None,
+            cwd: None,
         }
     }
 
     #[test]
     fn a_bare_install_carries_no_decision_flags() {
-        assert!(!has_decision_flags(&install_matches(&[]), text_options()));
+        assert!(!has_decision_flags(&install_matches(&[]), &text_options()));
     }
 
     #[test]
@@ -1177,7 +1216,7 @@ mod tests {
             vec!["--yes"],
         ] {
             assert!(
-                has_decision_flags(&install_matches(&args), text_options()),
+                has_decision_flags(&install_matches(&args), &text_options()),
                 "{args:?} must disable prompting"
             );
         }
@@ -1189,14 +1228,16 @@ mod tests {
             output: OutputMode::Json,
             quiet: false,
             limit: None,
+            cwd: None,
         };
         let quiet = GlobalOptions {
             output: OutputMode::Text,
             quiet: true,
             limit: None,
+            cwd: None,
         };
-        assert!(has_decision_flags(&install_matches(&[]), json));
-        assert!(has_decision_flags(&install_matches(&[]), quiet));
+        assert!(has_decision_flags(&install_matches(&[]), &json));
+        assert!(has_decision_flags(&install_matches(&[]), &quiet));
     }
 
     #[test]

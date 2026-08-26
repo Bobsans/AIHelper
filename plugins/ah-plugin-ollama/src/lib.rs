@@ -797,6 +797,7 @@ mod tests {
                 json: false,
                 quiet: true,
                 limit: None,
+                cwd: None,
             },
         );
 
@@ -811,6 +812,7 @@ mod tests {
                 json: true,
                 quiet: false,
                 limit: None,
+                cwd: None,
             },
         )
     }
@@ -822,6 +824,7 @@ mod tests {
                 json: false,
                 quiet: false,
                 limit: None,
+                cwd: None,
             },
         )
     }

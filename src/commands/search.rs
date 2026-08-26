@@ -110,9 +110,16 @@ pub(crate) mod output;
 mod domain;
 
 pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    let cwd = options.cwd.clone();
     let result = match args.command {
-        SearchCommand::Text(text_args) => domain::execute_text(text_args, options.limit)?,
-        SearchCommand::Files(files_args) => domain::execute_files(files_args, options.limit)?,
+        SearchCommand::Text(mut text_args) => {
+            text_args.cwd = cwd;
+            domain::execute_text(text_args, options.limit)?
+        }
+        SearchCommand::Files(mut files_args) => {
+            files_args.cwd = cwd;
+            domain::execute_files(files_args, options.limit)?
+        }
     };
     output::emit(result, &mut Emitter::stdio(options))
 }

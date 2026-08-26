@@ -332,7 +332,10 @@ pub(super) fn write_live_lines(
     Ok(())
 }
 
-pub(super) fn emit_live_status(request: StatusRequest) -> Result<(), AppError> {
+pub(super) fn emit_live_status(
+    request: StatusRequest,
+    requested_cwd: Option<&std::path::Path>,
+) -> Result<(), AppError> {
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     const FRAME_INTERVAL: Duration = Duration::from_millis(80);
 
@@ -340,7 +343,7 @@ pub(super) fn emit_live_status(request: StatusRequest) -> Result<(), AppError> {
         Some(name) => vec![targets::find(&name)?],
         None => targets::TARGETS.iter().collect(),
     };
-    let cwd = project_root()?;
+    let cwd = project_root(requested_cwd)?;
     let project = status_project_root(&cwd);
     let in_project = project.is_some();
     let root = project.as_deref().unwrap_or(&cwd);

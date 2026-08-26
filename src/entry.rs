@@ -82,7 +82,7 @@ pub(crate) fn with_global_flags(command: Command) -> Command {
 ///
 /// [`AppError`] when `--limit` is zero, which no command can honour.
 pub(crate) fn global_options(matches: &ArgMatches) -> Result<GlobalOptions, AppError> {
-    let options = GlobalOptions {
+    let mut options = GlobalOptions {
         output: if matches.get_flag("json") {
             OutputMode::Json
         } else {
@@ -90,10 +90,16 @@ pub(crate) fn global_options(matches: &ArgMatches) -> Result<GlobalOptions, AppE
         },
         quiet: matches.get_flag("quiet"),
         limit: matches.get_one::<usize>("limit").copied(),
+        cwd: None,
     };
     if options.limit == Some(0) {
         return Err(AppError::invalid_argument("--limit must be >= 1"));
     }
+    options.cwd = matches
+        .get_one::<std::path::PathBuf>("cwd")
+        .cloned()
+        .map(crate::cli::resolve_request_dir)
+        .transpose()?;
     Ok(options)
 }
 

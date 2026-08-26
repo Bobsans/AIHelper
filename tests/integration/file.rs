@@ -706,8 +706,14 @@ fn file_tree_handles_depth_zero_and_single_file_roots() {
         .stdout("child.txt\n");
 }
 
+/// `file tree` with no path lists the directory the request named.
+///
+/// It used to echo `"."`, because `--cwd` moved the whole process and `"."`
+/// then meant the right directory. The request directory is now data, so the
+/// path it resolved to is what comes back - which is also what the same command
+/// has always returned over MCP.
 #[test]
-fn file_tree_defaults_to_global_cwd() {
+fn file_tree_defaults_to_the_requested_directory() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     let cwd = path_arg(temp_dir.path());
     let assert = Command::cargo_bin("ah")
@@ -718,11 +724,21 @@ fn file_tree_defaults_to_global_cwd() {
     let payload: Value =
         serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected");
 
-    assert_eq!(payload["path"], ".");
+    let root = temp_dir
+        .path()
+        .canonicalize()
+        .expect("temporary dir should canonicalize");
+    let name = root
+        .file_name()
+        .expect("temporary dir should have a name")
+        .to_string_lossy()
+        .into_owned();
+    let root = root.to_string_lossy().into_owned();
+    assert_eq!(payload["path"], root);
     assert_eq!(payload["entry_count"], 1);
     assert_eq!(payload["entries"][0]["kind"], "directory");
-    assert_eq!(payload["entries"][0]["name"], ".");
-    assert_eq!(payload["entries"][0]["path"], ".");
+    assert_eq!(payload["entries"][0]["name"], name);
+    assert_eq!(payload["entries"][0]["path"], root);
 }
 
 #[test]

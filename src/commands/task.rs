@@ -94,9 +94,26 @@ pub(crate) mod output;
 
 mod domain;
 
-pub fn execute(args: TaskArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(mut args: TaskArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    if options.cwd.is_some() {
+        set_cwd(&mut args.command, options.cwd.clone());
+    }
     let result = domain::execute(args, options.limit)?;
     output::emit(result, &mut Emitter::stdio(options))
+}
+
+/// Point every task command at the directory the request named; the task store
+/// lives under it.
+///
+/// Shared by both entry points: the CLI used to get this by the process having
+/// been `chdir`-ed, which is the same answer only as long as one request is in
+/// flight at a time.
+fn set_cwd(command: &mut TaskCommand, cwd: Option<PathBuf>) {
+    match command {
+        TaskCommand::Save(args) => args.cwd = cwd,
+        TaskCommand::Run(args) => args.cwd = cwd,
+        TaskCommand::List(args) => args.cwd = cwd,
+    }
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {

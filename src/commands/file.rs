@@ -170,9 +170,32 @@ pub(crate) mod output;
 
 mod domain;
 
-pub fn execute(args: FileArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(mut args: FileArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    if let Some(cwd) = options.cwd.as_deref() {
+        rebase(&mut args.command, cwd);
+    }
     let result = domain::execute(args, options.limit)?;
     output::emit(result, &mut Emitter::stdio(options))
+}
+
+/// Resolve every path argument against the directory the request named.
+///
+/// Shared by both entry points: the CLI used to get this by the process having
+/// been `chdir`-ed, which is the same answer only as long as one request is in
+/// flight at a time.
+fn rebase(command: &mut FileCommand, cwd: &Path) {
+    match command {
+        FileCommand::Read(args) => args.path = resolve_context_path(cwd, &args.path),
+        FileCommand::Head(args) => args.path = resolve_context_path(cwd, &args.path),
+        FileCommand::Tail(args) => args.path = resolve_context_path(cwd, &args.path),
+        FileCommand::Stat(args) => args.path = resolve_context_path(cwd, &args.path),
+        FileCommand::Tree(args) => {
+            args.path = Some(match args.path.as_deref() {
+                Some(path) => resolve_context_path(cwd, path),
+                None => cwd.to_path_buf(),
+            });
+        }
+    }
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {
@@ -209,36 +232,12 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
 }
 
 fn typed_args(request: &TypedInvocationRequest) -> Result<FileArgs, AppError> {
-    let cwd = Path::new(&request.context.cwd);
-    let command = match request.command.as_str() {
-        "file.read" => {
-            let mut args: ReadArgs = decode(request)?;
-            args.path = resolve_context_path(cwd, &args.path);
-            FileCommand::Read(args)
-        }
-        "file.head" => {
-            let mut args: HeadArgs = decode(request)?;
-            args.path = resolve_context_path(cwd, &args.path);
-            FileCommand::Head(args)
-        }
-        "file.tail" => {
-            let mut args: TailArgs = decode(request)?;
-            args.path = resolve_context_path(cwd, &args.path);
-            FileCommand::Tail(args)
-        }
-        "file.stat" => {
-            let mut args: StatArgs = decode(request)?;
-            args.path = resolve_context_path(cwd, &args.path);
-            FileCommand::Stat(args)
-        }
-        "file.tree" => {
-            let mut args: TreeArgs = decode(request)?;
-            args.path = Some(match args.path.as_deref() {
-                Some(path) => resolve_context_path(cwd, path),
-                None => cwd.to_path_buf(),
-            });
-            FileCommand::Tree(args)
-        }
+    let mut command = match request.command.as_str() {
+        "file.read" => FileCommand::Read(decode(request)?),
+        "file.head" => FileCommand::Head(decode(request)?),
+        "file.tail" => FileCommand::Tail(decode(request)?),
+        "file.stat" => FileCommand::Stat(decode(request)?),
+        "file.tree" => FileCommand::Tree(decode(request)?),
         _ => {
             return Err(AppError::invalid_argument(format!(
                 "unknown typed file command: {}",
@@ -246,6 +245,7 @@ fn typed_args(request: &TypedInvocationRequest) -> Result<FileArgs, AppError> {
             )));
         }
     };
+    rebase(&mut command, Path::new(&request.context.cwd));
     Ok(FileArgs { command })
 }
 
@@ -391,4 +391,84 @@ fn file_read_effects(impact: &str) -> CommandEffects {
         impact,
         Reversibility::Yes,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::mpsc, thread};
+
+    use super::*;
+    use crate::{cli::GlobalOptions, output::OutputMode};
+
+    fn workspace(marker: &str) -> tempfile::TempDir {
+        let temp = tempfile::TempDir::new().expect("temporary dir should be created");
+        std::fs::write(temp.path().join("same-name.txt"), marker)
+            .expect("sample file should be written");
+        temp
+    }
+
+    fn options(cwd: &Path) -> GlobalOptions {
+        GlobalOptions {
+            output: OutputMode::Json,
+            quiet: false,
+            limit: None,
+            cwd: Some(cwd.to_path_buf()),
+        }
+    }
+
+    /// Two requests naming the same relative path in different directories,
+    /// in flight at once, each read their own file.
+    ///
+    /// This is what the process-wide `chdir` could not do. `mcp serve` executes
+    /// commands in parallel, so with the working directory held as process
+    /// state the answer to "which same-name.txt" depended on which request had
+    /// most recently moved the process - or, once the chdir happened only at
+    /// startup, on nothing the request said at all.
+    #[test]
+    fn parallel_requests_resolve_the_same_relative_path_in_their_own_directories() {
+        let first = workspace("first");
+        let second = workspace("second");
+        let (sender, receiver) = mpsc::channel();
+
+        thread::scope(|scope| {
+            for (workspace, expected) in [(&first, "first"), (&second, "second")] {
+                let sender = sender.clone();
+                scope.spawn(move || {
+                    let options = options(workspace.path());
+                    for _ in 0..32 {
+                        let mut args = FileArgs {
+                            command: FileCommand::Read(ReadArgs {
+                                path: PathBuf::from("same-name.txt"),
+                                number_lines: false,
+                                from: None,
+                                to: None,
+                                max_bytes: crate::safety::DEFAULT_MAX_TEXT_BYTES,
+                                follow_symlinks: false,
+                            }),
+                        };
+                        rebase(
+                            &mut args.command,
+                            options.cwd.as_deref().expect("cwd is set"),
+                        );
+                        let result =
+                            domain::execute(args, options.limit).expect("read should succeed");
+                        let domain::FileResult::Read(payload) = result else {
+                            panic!("file.read should return a read payload");
+                        };
+                        sender
+                            .send((expected, payload.content))
+                            .expect("receiver outlives the senders");
+                    }
+                });
+            }
+        });
+        drop(sender);
+
+        let mut seen = 0;
+        for (expected, found) in receiver {
+            assert_eq!(found, expected, "a request read another request's file");
+            seen += 1;
+        }
+        assert_eq!(seen, 64, "every request should have reported");
+    }
 }

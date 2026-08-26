@@ -24,6 +24,7 @@ pub(super) fn invoke(request: &TypedInvocationRequest) -> TypedInvocationRespons
         json: true,
         quiet: false,
         limit: request.context.limit,
+        cwd: None,
     };
     invocation_response(request, execute(OllamaCli { command }, &globals))
 }

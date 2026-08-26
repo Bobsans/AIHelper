@@ -104,8 +104,11 @@ impl ManagedRunner {
             std::process::id()
         };
         if apply_environment {
-            std::env::set_current_dir(&definition.working_directory)
-                .map_err(|source| AppError::cwd(definition.working_directory.clone(), source))?;
+            // The working directory is carried to the server as the default
+            // request directory rather than applied to the process. A managed
+            // server executes commands in parallel; a process-wide directory
+            // cannot be per-request, and this one was also being read by every
+            // command that resolved a relative path.
             // SAFETY: production preflight runs on the process main thread
             // before event logger construction, plugin discovery, or worker
             // thread creation.

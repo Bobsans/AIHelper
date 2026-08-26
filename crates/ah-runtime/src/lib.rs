@@ -2062,6 +2062,7 @@ mod tests {
                     json: false,
                     quiet: false,
                     limit: None,
+                    cwd: None,
                 },
                 &BTreeMap::from([("database".to_owned(), "app-db".to_owned())]),
             )
@@ -2216,6 +2217,7 @@ mod tests {
                     json: false,
                     quiet: false,
                     limit: None,
+                    cwd: None,
                 },
             )
             .expect("builtin plugin should still be invokable");
@@ -2233,6 +2235,7 @@ mod tests {
             json: false,
             quiet: false,
             limit: None,
+            cwd: None,
         };
 
         let observation = manager
@@ -2669,6 +2672,7 @@ mod tests {
                 json: false,
                 quiet: false,
                 limit: None,
+                cwd: None,
             },
         );
         let Err(RuntimeError::DomainDisabled(domain)) = invoke else {

@@ -145,20 +145,43 @@ mod domain;
 pub(crate) mod symbols;
 
 pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    let cwd = options.cwd.as_deref();
     match args.command {
-        CtxCommand::Pack(pack_args) => {
+        CtxCommand::Pack(mut pack_args) => {
+            if let Some(cwd) = cwd {
+                rebase_pack(&mut pack_args, cwd);
+            }
             let result = domain::execute_pack(pack_args, options.limit)?;
             output::emit(result, &mut Emitter::stdio(options))
         }
-        CtxCommand::Symbols(symbols_args) => {
+        CtxCommand::Symbols(mut symbols_args) => {
+            if let Some(cwd) = cwd {
+                symbols_args.path = resolve_context_path(cwd, &symbols_args.path);
+            }
             let result = domain::execute_symbols(symbols_args, options.limit)?;
             output::emit(result, &mut Emitter::stdio(options))
         }
         CtxCommand::Changed(changed_args) => {
-            let result = domain::execute_changed(changed_args)?;
+            let result = match cwd {
+                Some(cwd) => domain::execute_changed_at(changed_args, cwd)?,
+                None => domain::execute_changed(changed_args)?,
+            };
             output::emit(result, &mut Emitter::stdio(options))
         }
     }
+}
+
+/// Resolve every packed path against the directory the request named.
+///
+/// Shared by both entry points: the CLI used to get this by the process having
+/// been `chdir`-ed, which is the same answer only as long as one request is in
+/// flight at a time.
+fn rebase_pack(args: &mut PackArgs, cwd: &Path) {
+    args.paths = args
+        .paths
+        .iter()
+        .map(|path| resolve_context_path(cwd, path))
+        .collect();
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {
@@ -203,13 +226,8 @@ pub(crate) fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationR
 }
 
 fn typed_pack(request: &TypedInvocationRequest) -> Result<(Value, String), AppError> {
-    let cwd = Path::new(&request.context.cwd);
     let mut args: PackArgs = decode(request)?;
-    args.paths = args
-        .paths
-        .iter()
-        .map(|path| resolve_context_path(cwd, path))
-        .collect();
+    rebase_pack(&mut args, Path::new(&request.context.cwd));
     let result = domain::execute_pack(args, request.context.limit)?;
     let data = result_to_value(result)?;
     let count = data["item_count"].as_u64().unwrap_or(0);

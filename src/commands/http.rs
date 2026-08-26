@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -358,7 +358,10 @@ impl AssertWireArgs {
     }
 }
 
-pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(mut args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    if let Some(cwd) = options.cwd.as_deref() {
+        rebase(&mut args.command, cwd);
+    }
     match args.command {
         HttpCommand::Request(request_args) => execute_request(
             domain::run_request_command(request_args, "request"),
@@ -376,6 +379,36 @@ pub fn execute(args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> 
         }
         HttpCommand::Assert(assert_args) => execute_assert(assert_args, options, "assert"),
         HttpCommand::Run(assert_args) => execute_assert(assert_args, options, "run"),
+    }
+}
+
+/// Resolve every file argument against the directory the request named.
+///
+/// Shared by both entry points: the CLI used to get this by the process having
+/// been `chdir`-ed, which is the same answer only as long as one request is in
+/// flight at a time.
+fn rebase(command: &mut HttpCommand, cwd: &Path) {
+    let body = |request: &mut RequestOptionsArgs| {
+        request.json_file = request
+            .json_file
+            .as_deref()
+            .map(|path| rebase_path(cwd, path));
+        request.body_file = request
+            .body_file
+            .as_deref()
+            .map(|path| rebase_path(cwd, path));
+    };
+    match command {
+        HttpCommand::Request(args) => body(&mut args.request),
+        HttpCommand::Get(args)
+        | HttpCommand::Post(args)
+        | HttpCommand::Put(args)
+        | HttpCommand::Patch(args)
+        | HttpCommand::Delete(args) => body(&mut args.request),
+        HttpCommand::Replay(args) => body(&mut args.request),
+        HttpCommand::Assert(args) | HttpCommand::Run(args) => {
+            args.spec_path = rebase_path(cwd, &args.spec_path);
+        }
     }
 }
 
@@ -622,11 +655,14 @@ fn basic_from_resolved_secrets(
 }
 
 fn resolve_context_path(cwd: &str, path: &str) -> PathBuf {
-    let path = PathBuf::from(path);
+    rebase_path(Path::new(cwd), Path::new(path))
+}
+
+fn rebase_path(cwd: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
-        path
+        path.to_path_buf()
     } else {
-        PathBuf::from(cwd).join(path)
+        cwd.join(path)
     }
 }
 

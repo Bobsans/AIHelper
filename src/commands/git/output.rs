@@ -386,6 +386,7 @@ mod tests {
             output,
             quiet,
             limit: None,
+            cwd: None,
         }
     }
 

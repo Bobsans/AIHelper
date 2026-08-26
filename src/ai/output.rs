@@ -44,8 +44,8 @@ pub(super) fn status_action_style(action: StatusAction) -> TextStyle {
     }
 }
 
-pub(super) fn emit(report: &TargetReport, options: GlobalOptions) -> Result<(), AppError> {
-    let mut emitter = Emitter::stdio(&options);
+pub(super) fn emit(report: &TargetReport, options: &GlobalOptions) -> Result<(), AppError> {
+    let mut emitter = Emitter::stdio(options);
     for warning in &report.warnings {
         emitter.warning(warning);
     }
@@ -102,8 +102,8 @@ pub(super) fn emit(report: &TargetReport, options: GlobalOptions) -> Result<(), 
     })
 }
 
-pub(super) fn emit_status(report: &StatusReport, options: GlobalOptions) -> Result<(), AppError> {
-    Emitter::stdio(&options).value(report, |formatter| {
+pub(super) fn emit_status(report: &StatusReport, options: &GlobalOptions) -> Result<(), AppError> {
+    Emitter::stdio(options).value(report, |formatter| {
         let mut lines = Vec::new();
         for entry in &report.targets {
             let cli_state = match entry.cli {

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
@@ -50,10 +50,29 @@ fn current_directory() -> PathBuf {
 }
 
 pub fn execute(args: ProjectArgs, options: &GlobalOptions) -> Result<(), AppError> {
+    let rebase = |mut path_args: ProjectPathArgs| {
+        if let Some(cwd) = options.cwd.as_deref() {
+            path_args.path = rebase_path(cwd, &path_args.path);
+        }
+        path_args
+    };
     match args.command {
-        ProjectCommand::Detect(path_args) => execute_detect(path_args, options),
-        ProjectCommand::Commands(path_args) => execute_commands(path_args, options),
-        ProjectCommand::Version(path_args) => execute_version(path_args, options),
+        ProjectCommand::Detect(path_args) => execute_detect(rebase(path_args), options),
+        ProjectCommand::Commands(path_args) => execute_commands(rebase(path_args), options),
+        ProjectCommand::Version(path_args) => execute_version(rebase(path_args), options),
+    }
+}
+
+/// Resolve a project path against the directory the request named.
+///
+/// Shared by both entry points: the CLI used to get this by the process having
+/// been `chdir`-ed, which is the same answer only as long as one request is in
+/// flight at a time.
+fn rebase_path(cwd: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
     }
 }
 
@@ -140,9 +159,7 @@ fn typed_path_args(request: &TypedInvocationRequest) -> Result<ProjectPathArgs, 
                 request.command
             ))
         })?;
-    if !args.path.is_absolute() {
-        args.path = PathBuf::from(&request.context.cwd).join(&args.path);
-    }
+    args.path = rebase_path(Path::new(&request.context.cwd), &args.path);
     Ok(args)
 }
 

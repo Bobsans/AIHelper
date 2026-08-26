@@ -127,7 +127,7 @@ pub(crate) mod output;
 mod domain;
 
 pub fn execute(args: GitArgs, options: &GlobalOptions) -> Result<(), AppError> {
-    let result = domain::execute(args, options.limit, None)?;
+    let result = domain::execute(args, options.limit, options.cwd.as_deref())?;
     output::emit(result, &mut Emitter::stdio(options))
 }
 

@@ -356,6 +356,7 @@ fn handle_response(
                 output: output_mode,
                 quiet,
                 limit: None,
+                cwd: None,
             })
             .report(|_| Ok(message))?;
         }

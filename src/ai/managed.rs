@@ -188,6 +188,7 @@ pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppE
                     output: OutputMode::Text,
                     quiet: true,
                     limit: None,
+                    cwd: None,
                 },
             };
             let output = crate::mcp_service::lifecycle::install_quietly(&options)?;

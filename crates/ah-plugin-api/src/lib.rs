@@ -108,6 +108,14 @@ pub struct GlobalOptionsWire {
     pub json: bool,
     pub quiet: bool,
     pub limit: Option<usize>,
+    /// The directory the request resolves relative paths against.
+    ///
+    /// `None` means the plugin's own process directory, which is what a host
+    /// too old to send this field leaves it to. Defaulted rather than required
+    /// so a host and a plugin from different releases still understand each
+    /// other.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1333,6 +1341,7 @@ mod tests {
             json: false,
             quiet: false,
             limit: None,
+            cwd: None,
         }
     }
 

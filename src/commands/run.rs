@@ -81,7 +81,8 @@ pub(crate) fn execute_observed(
     options: &GlobalOptions,
 ) -> Result<RunCheckOutcome, AppError> {
     match args.command {
-        RunCommand::Check(check_args) => {
+        RunCommand::Check(mut check_args) => {
+            check_args.cwd = options.cwd.clone();
             let result = domain::run_check(check_args)?;
             let outcome = RunCheckOutcome {
                 success: result.success,

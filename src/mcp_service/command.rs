@@ -74,6 +74,7 @@ pub fn route(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
         },
         quiet: matches.get_flag("quiet"),
         limit: matches.get_one::<usize>("limit").copied(),
+        cwd: None,
     };
     let Some(("mcp", mcp)) = matches.subcommand() else {
         return Ok(EarlyRoute::NotManaged);

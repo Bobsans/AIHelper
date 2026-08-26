@@ -3630,6 +3630,7 @@ mod tests {
                 json: true,
                 quiet: false,
                 limit,
+                cwd: None,
             },
         };
         let request_json = serde_json::to_string(&request).expect("request should serialize");

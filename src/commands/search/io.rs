@@ -32,25 +32,30 @@ pub(crate) fn resolve_scope_at(
         paths.to_vec()
     };
 
-    for root in &requested_roots {
+    // Absolutized before the checks, not after: a relative path means "under
+    // the request directory", so testing it as given asks about whatever
+    // directory the process happens to sit in. That was invisible while the
+    // request directory was applied with `chdir`, because the two agreed.
+    let mut roots = requested_roots
+        .iter()
+        .map(|root| absolutize_path_at(root, &current_dir))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (root, requested) in roots.iter().zip(&requested_roots) {
         if !root.exists() {
             return Err(AppError::invalid_argument(format!(
                 "path does not exist: {}",
-                root.to_string_lossy()
+                requested.to_string_lossy()
             )));
         }
         if !follow_symlinks && is_symlink_path(root)? {
             return Err(AppError::invalid_argument(format!(
                 "path is a symlink and symlink traversal is disabled: {} (use --follow-symlinks)",
-                root.to_string_lossy()
+                requested.to_string_lossy()
             )));
         }
     }
 
-    let mut roots = requested_roots
-        .iter()
-        .map(|root| absolutize_path_at(root, &current_dir))
-        .collect::<Result<Vec<_>, _>>()?;
     roots.sort();
     roots.dedup();
 
