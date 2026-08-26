@@ -207,7 +207,7 @@ fn render_help_tree(command: &mut clap::Command, path: &str, out: &mut String) {
 /// tests of its own and the integration tests assert only that a handful of
 /// expected symbols are *present*, never that the whole extraction is
 /// unchanged.
-const SYMBOL_FIXTURES: &[(&str, &str)] = &[
+pub(crate) const SYMBOL_FIXTURES: &[(&str, &str)] = &[
     (
         "lib.rs",
         "pub async fn build_index(root: &Path) -> Result<()> {\nstruct Config {\npub enum Mode {\ntrait Render {\nimpl<T: Clone> Render for Config {\npub mod helpers {\n",

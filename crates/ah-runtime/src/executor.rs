@@ -122,6 +122,10 @@ impl ExecutionLifecycle {
         self.is_logically_complete() && !self.is_physically_complete()
     }
 
+    /// Resolves once the execution has fully released its slot.
+    ///
+    /// The permit and the coordinator entry are both gone by the time this
+    /// returns, so a caller may rely on the capacity being available.
     pub async fn wait_physical(&self) {
         loop {
             if self.is_physically_complete() {
@@ -532,8 +536,12 @@ async fn run_execution(
     }
 
     remove_tracked(&coordinator, &request_id, &state);
-    state.mark_physical_complete();
+    // The permit goes back before the signal, not after: `wait_physical` wakes
+    // on that signal, and a waiter that then reads `active_count` must see the
+    // slot already free. The other order left a window in which physical
+    // completion was announced while the permit was still held.
     drop(permit);
+    state.mark_physical_complete();
 }
 
 /// Wait for a stopped handler to drain, but give up after `grace`.

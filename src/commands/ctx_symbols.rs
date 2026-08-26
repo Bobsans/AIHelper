@@ -1,4 +1,4 @@
-use std::{path::Path, sync::OnceLock};
+use std::{path::Path, sync::LazyLock};
 
 use regex::Regex;
 use serde::Serialize;
@@ -12,8 +12,596 @@ pub struct Symbol {
     pub name: String,
 }
 
+/// Where a matched symbol's kind comes from.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    /// The pattern only ever yields this kind.
+    Fixed(&'static str),
+    /// The kind is whatever the pattern captured, so one row covers
+    /// `struct`/`enum`/`trait` rather than three.
+    Captured(usize),
+}
+
+/// How a matched symbol's name is assembled.
+#[derive(Debug, Clone, Copy)]
+enum Name {
+    /// One capture group is the name.
+    Capture(usize),
+    /// `head.tail` when the second group matched, otherwise `head` - the shape
+    /// Terraform blocks have, where `resource "aws_s3_bucket" "logs"` is one
+    /// name and `module "network"` is another.
+    Dotted { head: usize, tail: usize },
+    /// The first group when it matched, otherwise the fallback - a Dockerfile
+    /// stage is named by its `AS` alias when it has one and by its image
+    /// otherwise.
+    Preferred { first: usize, fallback: usize },
+}
+
+/// One line pattern: what to match, what kind it yields, how the name is built.
+#[derive(Debug, Clone, Copy)]
+struct Pattern {
+    regex: &'static str,
+    kind: Kind,
+    name: Name,
+}
+
+/// How one language is recognised and what its lines mean.
+///
+/// Pattern order is significant, and stating it as data is the point: the first
+/// pattern to match a line wins, so the order here reproduces the order the
+/// hand-written extractors tested their regexes in. Reordering rows changes
+/// user-visible output.
+#[derive(Debug, Clone, Copy)]
+struct LanguageSpec {
+    extensions: &'static [&'static str],
+    filenames: &'static [&'static str],
+    filename_prefixes: &'static [&'static str],
+    patterns: &'static [Pattern],
+}
+
+static LANGUAGES: &[LanguageSpec] = &[
+    // rust
+    LanguageSpec {
+        extensions: &["rs"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(pub\s+)?(async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("fn"),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(pub\s+)?(struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*impl(\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_:<>]*)",
+                kind: Kind::Fixed("impl"),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*(pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("mod"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // python
+    LanguageSpec {
+        extensions: &["py"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("class"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("def"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // js_ts
+    LanguageSpec {
+        extensions: &["js", "jsx", "ts", "tsx", "vue"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("class"),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*(export\s+)?(async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("interface"),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*(export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=",
+                kind: Kind::Fixed("type"),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*(export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(async\s*)?\(",
+                kind: Kind::Fixed("const-fn"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // go
+    LanguageSpec {
+        extensions: &["go"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("func"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+",
+                kind: Kind::Fixed("type"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // java_like
+    LanguageSpec {
+        extensions: &["java"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)",
+                kind: Kind::Fixed("package"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(public\s+|private\s+|protected\s+)?(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(public|private|protected)\s+(static\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]?]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                kind: Kind::Fixed("method"),
+                name: Name::Capture(3),
+            },
+        ],
+    },
+    // kotlin
+    LanguageSpec {
+        extensions: &["kt", "kts"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)",
+                kind: Kind::Fixed("package"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(data\s+|sealed\s+|open\s+)?(class|interface|object|enum class)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(public\s+|private\s+|protected\s+)?fun\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("fun"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // scala
+    LanguageSpec {
+        extensions: &["scala"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)",
+                kind: Kind::Fixed("package"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(case\s+)?(class|trait|object|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(override\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("def"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // csharp
+    LanguageSpec {
+        extensions: &["cs"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_.]*)",
+                kind: Kind::Fixed("namespace"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(public\s+|internal\s+|private\s+|protected\s+)?(class|interface|enum|struct|record)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(public|private|protected|internal)\s+(static\s+|async\s+)*[A-Za-z_][A-Za-z0-9_<>,\[\]?]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                kind: Kind::Fixed("method"),
+                name: Name::Capture(3),
+            },
+        ],
+    },
+    // php
+    LanguageSpec {
+        extensions: &["php"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*namespace\s+([A-Za-z_\\][A-Za-z0-9_\\]*)",
+                kind: Kind::Fixed("namespace"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(abstract\s+|final\s+)?(class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(public\s+|private\s+|protected\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // ruby
+    LanguageSpec {
+        extensions: &["rb"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(class|module)\s+([A-Za-z_][A-Za-z0-9_:]*)",
+                kind: Kind::Captured(1),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*def\s+([A-Za-z_][A-Za-z0-9_!?=.]*)",
+                kind: Kind::Fixed("def"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // elixir
+    LanguageSpec {
+        extensions: &["ex", "exs"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*defmodule\s+([A-Za-z_][A-Za-z0-9_.]*)",
+                kind: Kind::Fixed("defmodule"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(def|defp|defmacro)\s+([A-Za-z_][A-Za-z0-9_!?]*)",
+                kind: Kind::Captured(1),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // erlang
+    LanguageSpec {
+        extensions: &["erl", "hrl"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*-module\(([a-zA-Z0-9_@]+)\)",
+                kind: Kind::Fixed("module"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*([a-z][A-Za-z0-9_@]*)\s*\([^;]*\)\s*->",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // swift
+    LanguageSpec {
+        extensions: &["swift"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(public\s+|private\s+|internal\s+|open\s+)?(class|struct|enum|protocol|actor)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(2),
+                name: Name::Capture(3),
+            },
+            Pattern {
+                regex: r"^\s*(public\s+|private\s+|internal\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("func"),
+                name: Name::Capture(2),
+            },
+        ],
+    },
+    // dart
+    LanguageSpec {
+        extensions: &["dart"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(class|enum|mixin|extension)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(1),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*(?:[A-Za-z_][A-Za-z0-9_<>,?]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // c_cpp
+    LanguageSpec {
+        extensions: &["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "hxx"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_:]*)",
+                kind: Kind::Fixed("namespace"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(class|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(1),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*(?:[A-Za-z_][A-Za-z0-9_:<>,*&\s]+)\s+([A-Za-z_][A-Za-z0-9_:]*)\s*\([^;]*\)\s*(?:\{|$)",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // zig
+    LanguageSpec {
+        extensions: &["zig"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("fn"),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=",
+                kind: Kind::Fixed("const"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // lua
+    LanguageSpec {
+        extensions: &["lua"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[Pattern {
+            regex: r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)",
+            kind: Kind::Fixed("function"),
+            name: Name::Capture(1),
+        }],
+    },
+    // perl
+    LanguageSpec {
+        extensions: &["pl", "pm"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)",
+                kind: Kind::Fixed("package"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*sub\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Fixed("sub"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // r
+    LanguageSpec {
+        extensions: &["r"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[Pattern {
+            regex: r"^\s*([A-Za-z.][A-Za-z0-9._]*)\s*(?:<-|=)\s*function\s*\(",
+            kind: Kind::Fixed("function"),
+            name: Name::Capture(1),
+        }],
+    },
+    // julia
+    LanguageSpec {
+        extensions: &["jl"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(module|struct|mutable struct|abstract type)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                kind: Kind::Captured(1),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*function\s+([A-Za-z_][A-Za-z0-9_!.]*)",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // haskell
+    LanguageSpec {
+        extensions: &["hs"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*module\s+([A-Za-z_][A-Za-z0-9_.']*)",
+                kind: Kind::Fixed("module"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*(data|newtype|type|class)\s+([A-Z][A-Za-z0-9_']*)",
+                kind: Kind::Captured(1),
+                name: Name::Capture(2),
+            },
+            Pattern {
+                regex: r"^\s*([a-z_][A-Za-z0-9_']*)\s*::",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // ocaml
+    LanguageSpec {
+        extensions: &["ml", "mli"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*module\s+([A-Z][A-Za-z0-9_']*)",
+                kind: Kind::Fixed("module"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*type\s+([a-zA-Z_][A-Za-z0-9_']*)",
+                kind: Kind::Fixed("type"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*let\s+(?:rec\s+)?([a-z_][A-Za-z0-9_']*)",
+                kind: Kind::Fixed("let"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // yaml
+    LanguageSpec {
+        extensions: &["yml", "yaml"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[Pattern {
+            regex: r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:",
+            kind: Kind::Fixed("key"),
+            name: Name::Capture(1),
+        }],
+    },
+    // toml
+    LanguageSpec {
+        extensions: &["toml"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[Pattern {
+            regex: r"^\s*\[+([A-Za-z0-9_.-]+)\]+",
+            kind: Kind::Fixed("section"),
+            name: Name::Capture(1),
+        }],
+    },
+    // shell
+    LanguageSpec {
+        extensions: &["sh", "bash", "zsh", "ps1", "psm1"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[
+            Pattern {
+                regex: r"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\))\s*\{",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+            Pattern {
+                regex: r"^\s*function\s+([A-Za-z_][A-Za-z0-9_-]*)",
+                kind: Kind::Fixed("function"),
+                name: Name::Capture(1),
+            },
+        ],
+    },
+    // taskfile
+    LanguageSpec {
+        extensions: &[],
+        filenames: &["makefile", "justfile", "rakefile"],
+        filename_prefixes: &[],
+        patterns: &[Pattern {
+            regex: r"^([A-Za-z0-9_.-]+)\s*:",
+            kind: Kind::Fixed("target"),
+            name: Name::Capture(1),
+        }],
+    },
+    // terraform
+    LanguageSpec {
+        extensions: &["tf", "tofu"],
+        filenames: &[],
+        filename_prefixes: &[],
+        patterns: &[Pattern {
+            regex: r#"^\s*(resource|data|module|variable|output|provider|locals)\s+"([^"]+)"(?:\s+"([^"]+)")?"#,
+            kind: Kind::Captured(1),
+            name: Name::Dotted { head: 2, tail: 3 },
+        }],
+    },
+    // dockerfile
+    LanguageSpec {
+        extensions: &[],
+        filenames: &["dockerfile"],
+        filename_prefixes: &["dockerfile."],
+        patterns: &[Pattern {
+            regex: r"(?i)^\s*FROM\s+([^\s]+)(?:\s+AS\s+([A-Za-z_][A-Za-z0-9_-]*))?",
+            kind: Kind::Fixed("stage"),
+            name: Name::Preferred {
+                first: 2,
+                fallback: 1,
+            },
+        }],
+    },
+];
+
+/// Compiled once for the process. Compiling per call would undo the caching the
+/// per-regex `OnceLock` accessors used to provide, and extraction runs once per
+/// file across a whole tree.
+static COMPILED: LazyLock<Vec<Vec<Regex>>> = LazyLock::new(|| {
+    LANGUAGES
+        .iter()
+        .map(|spec| {
+            spec.patterns
+                .iter()
+                .map(|pattern| Regex::new(pattern.regex).expect("valid ctx symbol regex"))
+                .collect()
+        })
+        .collect()
+});
+
 pub fn extract_symbols(path: &Path, content: &str) -> Vec<Symbol> {
-    let ext = path
+    let extension = path
         .extension()
         .map(|value| value.to_string_lossy().to_lowercase())
         .unwrap_or_default();
@@ -22,78 +610,71 @@ pub fn extract_symbols(path: &Path, content: &str) -> Vec<Symbol> {
         .map(|value| value.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
-    match ext.as_str() {
-        "rs" => extract_rust_symbols(content),
-        "md" | "markdown" => extract_markdown_symbols(content),
-        "py" => extract_python_symbols(content),
-        "js" | "jsx" | "ts" | "tsx" | "vue" => extract_js_ts_symbols(content),
-        "go" => extract_go_symbols(content),
-        "java" => extract_java_like_symbols(content),
-        "kt" | "kts" => extract_kotlin_symbols(content),
-        "scala" => extract_scala_symbols(content),
-        "cs" => extract_csharp_symbols(content),
-        "php" => extract_php_symbols(content),
-        "rb" => extract_ruby_symbols(content),
-        "ex" | "exs" => extract_elixir_symbols(content),
-        "erl" | "hrl" => extract_erlang_symbols(content),
-        "swift" => extract_swift_symbols(content),
-        "dart" => extract_dart_symbols(content),
-        "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => extract_c_cpp_symbols(content),
-        "zig" => extract_zig_symbols(content),
-        "lua" => extract_lua_symbols(content),
-        "pl" | "pm" => extract_perl_symbols(content),
-        "r" => extract_r_symbols(content),
-        "jl" => extract_julia_symbols(content),
-        "hs" => extract_haskell_symbols(content),
-        "ml" | "mli" => extract_ocaml_symbols(content),
-        "tf" | "tofu" => extract_terraform_symbols(content),
-        "yml" | "yaml" => extract_yaml_symbols(content),
-        "toml" => extract_toml_symbols(content),
-        "sh" | "bash" | "zsh" | "ps1" | "psm1" => extract_shell_symbols(content),
-        _ if file_name == "dockerfile" || file_name.starts_with("dockerfile.") => {
-            extract_dockerfile_symbols(content)
-        }
-        _ if matches!(file_name.as_str(), "makefile" | "justfile" | "rakefile") => {
-            extract_taskfile_symbols(content)
-        }
-        _ => extract_generic_symbols(content),
+    if let Some(index) = language_for(&extension, &file_name) {
+        return extract_with(&COMPILED[index], LANGUAGES[index].patterns, content);
     }
+    if is_markdown(&extension) {
+        return extract_markdown_symbols(content);
+    }
+    extract_generic_symbols(content)
 }
 
-fn push_symbol(symbols: &mut Vec<Symbol>, line: usize, kind: &str, name: &str) {
-    let name = name.trim();
-    if name.is_empty() {
-        return;
-    }
-    symbols.push(Symbol {
-        line,
-        kind: kind.to_owned(),
-        name: name.to_owned(),
-    });
+/// Extension first, then whole file name, then file-name prefix - the order the
+/// hand-written `match` tested them in.
+fn language_for(extension: &str, file_name: &str) -> Option<usize> {
+    LANGUAGES
+        .iter()
+        .position(|spec| spec.extensions.contains(&extension))
+        .or_else(|| {
+            LANGUAGES
+                .iter()
+                .position(|spec| spec.filenames.contains(&file_name))
+        })
+        .or_else(|| {
+            LANGUAGES.iter().position(|spec| {
+                spec.filename_prefixes
+                    .iter()
+                    .any(|prefix| file_name.starts_with(prefix))
+            })
+        })
 }
 
-fn extract_rust_symbols(content: &str) -> Vec<Symbol> {
+fn extract_with(compiled: &[Regex], patterns: &[Pattern], content: &str) -> Vec<Symbol> {
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = rust_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "fn", &captures[3]);
-            continue;
-        }
-        if let Some(captures) = rust_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = rust_impl_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "impl", &captures[2]);
-            continue;
-        }
-        if let Some(captures) = rust_mod_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "mod", &captures[2]);
+        for (regex, pattern) in compiled.iter().zip(patterns) {
+            let Some(captures) = regex.captures(line) else {
+                continue;
+            };
+            let kind = match pattern.kind {
+                Kind::Fixed(kind) => kind.to_owned(),
+                Kind::Captured(group) => captures[group].to_owned(),
+            };
+            let name = match pattern.name {
+                Name::Capture(group) => captures[group].to_owned(),
+                Name::Dotted { head, tail } => captures
+                    .get(tail)
+                    .map(|tail| format!("{}.{}", &captures[head], tail.as_str()))
+                    .unwrap_or_else(|| captures[head].to_owned()),
+                Name::Preferred { first, fallback } => captures
+                    .get(first)
+                    .or_else(|| captures.get(fallback))
+                    .map(|value| value.as_str().to_owned())
+                    .unwrap_or_default(),
+            };
+            push_symbol(&mut symbols, index + 1, &kind, &name);
+            // First pattern to match a line wins, as it did before.
+            break;
         }
     }
     symbols
 }
 
+fn is_markdown(extension: &str) -> bool {
+    matches!(extension, "md" | "markdown")
+}
+
+/// Heading depth is counted rather than captured, so this one stays a function.
 fn extract_markdown_symbols(content: &str) -> Vec<Symbol> {
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
@@ -110,410 +691,8 @@ fn extract_markdown_symbols(content: &str) -> Vec<Symbol> {
     symbols
 }
 
-fn extract_python_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = python_class_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "class", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = python_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "def", &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_js_ts_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = js_class_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "class", &captures[2]);
-            continue;
-        }
-        if let Some(captures) = js_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[3]);
-            continue;
-        }
-        if let Some(captures) = js_interface_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "interface", &captures[2]);
-            continue;
-        }
-        if let Some(captures) = js_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "type", &captures[2]);
-            continue;
-        }
-        if let Some(captures) = js_const_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "const-fn", &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_go_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = go_func_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "func", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = go_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "type", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_java_like_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = java_package_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "package", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = java_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = java_method_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "method", &captures[3]);
-        }
-    }
-    symbols
-}
-
-fn extract_kotlin_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = java_package_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "package", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = kotlin_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = kotlin_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "fun", &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_scala_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = scala_package_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "package", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = scala_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = scala_def_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "def", &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_csharp_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = csharp_namespace_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "namespace", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = csharp_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = csharp_method_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "method", &captures[3]);
-        }
-    }
-    symbols
-}
-
-fn extract_php_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = php_namespace_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "namespace", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = php_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = php_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_ruby_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = ruby_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[1], &captures[2]);
-            continue;
-        }
-        if let Some(captures) = ruby_def_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "def", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_elixir_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = elixir_module_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "defmodule", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = elixir_def_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[1], &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_erlang_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = erlang_module_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "module", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = erlang_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_swift_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = swift_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[2], &captures[3]);
-            continue;
-        }
-        if let Some(captures) = swift_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "func", &captures[2]);
-        }
-    }
-    symbols
-}
-
-fn extract_dart_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = dart_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[1], &captures[2]);
-            continue;
-        }
-        if let Some(captures) = dart_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_c_cpp_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = cpp_namespace_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "namespace", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = cpp_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[1], &captures[2]);
-            continue;
-        }
-        if let Some(captures) = cpp_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_zig_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = zig_fn_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "fn", &captures[2]);
-            continue;
-        }
-        if let Some(captures) = zig_const_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "const", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_lua_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = lua_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_perl_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = perl_package_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "package", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = perl_sub_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "sub", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_r_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = r_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_julia_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = julia_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[1], &captures[2]);
-            continue;
-        }
-        if let Some(captures) = julia_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_haskell_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = haskell_module_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "module", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = haskell_decl_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, &captures[1], &captures[2]);
-            continue;
-        }
-        if let Some(captures) = haskell_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_ocaml_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = ocaml_module_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "module", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = ocaml_type_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "type", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = ocaml_let_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "let", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_terraform_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = terraform_block_re().captures(line) {
-            let kind = &captures[1];
-            let name = captures
-                .get(3)
-                .map(|name| format!("{}.{}", &captures[2], name.as_str()))
-                .unwrap_or_else(|| captures[2].to_owned());
-            push_symbol(&mut symbols, index + 1, kind, &name);
-        }
-    }
-    symbols
-}
-
-fn extract_yaml_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = yaml_key_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "key", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_toml_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = toml_section_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "section", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_shell_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = shell_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-            continue;
-        }
-        if let Some(captures) = powershell_function_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "function", &captures[1]);
-        }
-    }
-    symbols
-}
-
-fn extract_dockerfile_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = docker_stage_re().captures(line) {
-            let name = captures
-                .get(2)
-                .or_else(|| captures.get(1))
-                .map(|value| value.as_str())
-                .unwrap_or_default();
-            push_symbol(&mut symbols, index + 1, "stage", name);
-        }
-    }
-    symbols
-}
-
-fn extract_taskfile_symbols(content: &str) -> Vec<Symbol> {
-    let mut symbols = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(captures) = task_target_re().captures(line) {
-            push_symbol(&mut symbols, index + 1, "target", &captures[1]);
-        }
-    }
-    symbols
-}
-
+/// The fallback for an unrecognised file: no regex, and the whole trimmed line
+/// is the name.
 fn extract_generic_symbols(content: &str) -> Vec<Symbol> {
     let mut symbols = Vec::new();
     for (index, line) in content.lines().enumerate() {
@@ -529,363 +708,81 @@ fn extract_generic_symbols(content: &str) -> Vec<Symbol> {
     symbols
 }
 
-fn rust_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?(async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"))
+fn push_symbol(symbols: &mut Vec<Symbol>, line: usize, kind: &str, name: &str) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    symbols.push(Symbol {
+        line,
+        kind: kind.to_owned(),
+        name: name.to_owned(),
+    });
 }
 
-fn rust_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?(struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn rust_impl_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*impl(\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_:<>]*)"))
-}
+    /// A row has no name field - nothing in production would read it - so a
+    /// failure names the spec by the first thing that dispatches to it.
+    fn describe(spec: &LanguageSpec) -> &'static str {
+        spec.extensions
+            .first()
+            .or_else(|| spec.filenames.first())
+            .or_else(|| spec.filename_prefixes.first())
+            .copied()
+            .unwrap_or("<unreachable>")
+    }
 
-fn rust_mod_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
+    /// A table is only trustworthy if every row is exercised. The snapshot
+    /// corpus is what exercises it, so this fails on a row no fixture reaches -
+    /// which is also what would happen to a newly added language whose author
+    /// forgot the fixture.
+    #[test]
+    fn every_pattern_is_reachable_from_the_snapshot_corpus() {
+        let lines: Vec<&str> = crate::snapshots::SYMBOL_FIXTURES
+            .iter()
+            .flat_map(|(_, content)| content.lines())
+            .collect();
 
-fn python_class_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
+        let mut unreached = Vec::new();
+        for (spec, compiled) in LANGUAGES.iter().zip(COMPILED.iter()) {
+            for (index, regex) in compiled.iter().enumerate() {
+                if !lines.iter().any(|line| regex.is_match(line)) {
+                    unreached.push(format!("{}[{index}]", describe(spec)));
+                }
+            }
+        }
 
-fn python_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
+        assert!(
+            unreached.is_empty(),
+            "table rows no fixture reaches: {unreached:?}"
+        );
+    }
 
-fn js_class_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
+    #[test]
+    fn every_language_is_reachable_from_a_file_name() {
+        for spec in LANGUAGES {
+            assert!(
+                !spec.extensions.is_empty()
+                    || !spec.filenames.is_empty()
+                    || !spec.filename_prefixes.is_empty(),
+                "{} can never be dispatched to",
+                describe(spec)
+            );
+        }
+    }
 
-fn js_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(export\s+)?(async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn js_interface_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn js_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*="))
-}
-
-fn js_const_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(async\s*)?\(")
-    })
-}
-
-fn go_func_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn go_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+"))
-}
-
-fn java_package_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)"))
-}
-
-fn java_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(public\s+|private\s+|protected\s+)?(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-    })
-}
-
-fn java_method_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(public|private|protected)\s+(static\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]?]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-        )
-    })
-}
-
-fn kotlin_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(data\s+|sealed\s+|open\s+)?(class|interface|object|enum class)\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn kotlin_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(public\s+|private\s+|protected\s+)?fun\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn scala_package_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)"))
-}
-
-fn scala_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(case\s+)?(class|trait|object|enum)\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn scala_def_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(override\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn csharp_namespace_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_.]*)"))
-}
-
-fn csharp_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(public\s+|internal\s+|private\s+|protected\s+)?(class|interface|enum|struct|record)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-    })
-}
-
-fn csharp_method_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(public|private|protected|internal)\s+(static\s+|async\s+)*[A-Za-z_][A-Za-z0-9_<>,\[\]?]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-        )
-    })
-}
-
-fn php_namespace_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*namespace\s+([A-Za-z_\\][A-Za-z0-9_\\]*)"))
-}
-
-fn php_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(abstract\s+|final\s+)?(class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-    })
-}
-
-fn php_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(public\s+|private\s+|protected\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-    })
-}
-
-fn ruby_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(class|module)\s+([A-Za-z_][A-Za-z0-9_:]*)"))
-}
-
-fn ruby_def_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_!?=.]*)"))
-}
-
-fn elixir_module_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*defmodule\s+([A-Za-z_][A-Za-z0-9_.]*)"))
-}
-
-fn elixir_def_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(def|defp|defmacro)\s+([A-Za-z_][A-Za-z0-9_!?]*)"))
-}
-
-fn erlang_module_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*-module\(([a-zA-Z0-9_@]+)\)"))
-}
-
-fn erlang_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*([a-z][A-Za-z0-9_@]*)\s*\([^;]*\)\s*->"))
-}
-
-fn swift_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(public\s+|private\s+|internal\s+|open\s+)?(class|struct|enum|protocol|actor)\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn swift_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(public\s+|private\s+|internal\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)")
-    })
-}
-
-fn dart_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(class|enum|mixin|extension)\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn dart_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(?:[A-Za-z_][A-Za-z0-9_<>,?]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-    })
-}
-
-fn cpp_namespace_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_:]*)"))
-}
-
-fn cpp_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(class|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn cpp_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(?:[A-Za-z_][A-Za-z0-9_:<>,*&\s]+)\s+([A-Za-z_][A-Za-z0-9_:]*)\s*\([^;]*\)\s*(?:\{|$)")
-    })
-}
-
-fn zig_fn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn zig_const_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*="))
-}
-
-fn lua_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)"))
-}
-
-fn perl_package_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)"))
-}
-
-fn perl_sub_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*sub\s+([A-Za-z_][A-Za-z0-9_]*)"))
-}
-
-fn r_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*([A-Za-z.][A-Za-z0-9._]*)\s*(?:<-|=)\s*function\s*\("))
-}
-
-fn julia_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(
-            r"^\s*(module|struct|mutable struct|abstract type)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-    })
-}
-
-fn julia_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*function\s+([A-Za-z_][A-Za-z0-9_!.]*)"))
-}
-
-fn haskell_module_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_.']*)"))
-}
-
-fn haskell_decl_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*(data|newtype|type|class)\s+([A-Z][A-Za-z0-9_']*)"))
-}
-
-fn haskell_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*([a-z_][A-Za-z0-9_']*)\s*::"))
-}
-
-fn ocaml_module_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*module\s+([A-Z][A-Za-z0-9_']*)"))
-}
-
-fn ocaml_type_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*type\s+([a-zA-Z_][A-Za-z0-9_']*)"))
-}
-
-fn ocaml_let_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*let\s+(?:rec\s+)?([a-z_][A-Za-z0-9_']*)"))
-}
-
-fn terraform_block_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r#"^\s*(resource|data|module|variable|output|provider|locals)\s+"([^"]+)"(?:\s+"([^"]+)")?"#)
-    })
-}
-
-fn yaml_key_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:"))
-}
-
-fn toml_section_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*\[+([A-Za-z0-9_.-]+)\]+"))
-}
-
-fn shell_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\))\s*\{")
-    })
-}
-
-fn powershell_function_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^\s*function\s+([A-Za-z_][A-Za-z0-9_-]*)"))
-}
-
-fn docker_stage_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        compile_regex(r"(?i)^\s*FROM\s+([^\s]+)(?:\s+AS\s+([A-Za-z_][A-Za-z0-9_-]*))?")
-    })
-}
-
-fn task_target_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| compile_regex(r"^([A-Za-z0-9_.-]+)\s*:"))
-}
-
-fn compile_regex(pattern: &str) -> Regex {
-    Regex::new(pattern).expect("valid ctx symbol regex")
+    #[test]
+    fn markdown_stays_out_of_the_table() {
+        assert!(is_markdown("md"));
+        assert!(is_markdown("markdown"));
+        assert!(
+            LANGUAGES
+                .iter()
+                .all(|spec| !spec.extensions.contains(&"md")),
+            "markdown counts heading depth and cannot be a pattern row"
+        );
+    }
 }
