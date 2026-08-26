@@ -4,7 +4,7 @@
 use super::*;
 
 impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
-    pub(super) fn install_locked(
+    pub(crate) fn install_locked(
         &self,
         options: &InstallSettings,
     ) -> Result<MutationOutput, AppError> {
@@ -204,7 +204,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn prepare_configuration_replacement(
+    pub(crate) fn prepare_configuration_replacement(
         &self,
         old_definition: &ServiceDefinition,
     ) -> Result<(), AppError> {

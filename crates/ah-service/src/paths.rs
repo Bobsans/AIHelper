@@ -2,9 +2,9 @@ use std::path::{Component, Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
-pub(crate) const MANAGED_SERVICE_EXECUTABLE: &str = "ah-mcp-service.exe";
+pub const MANAGED_SERVICE_EXECUTABLE: &str = "ah-mcp-service.exe";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServicePaths {
@@ -53,7 +53,7 @@ impl ServicePaths {
     }
 }
 
-pub(crate) fn current_executable_path() -> Result<PathBuf, AppError> {
+pub fn current_executable_path() -> Result<PathBuf, AppError> {
     normalize_absolute_path(
         &std::env::current_exe().map_err(|error| {
             AppError::external(
@@ -65,7 +65,7 @@ pub(crate) fn current_executable_path() -> Result<PathBuf, AppError> {
     )
 }
 
-pub(crate) fn managed_service_executable_path(executable: &Path) -> PathBuf {
+pub fn managed_service_executable_path(executable: &Path) -> PathBuf {
     if cfg!(windows) {
         executable.with_file_name(MANAGED_SERVICE_EXECUTABLE)
     } else {
@@ -73,7 +73,7 @@ pub(crate) fn managed_service_executable_path(executable: &Path) -> PathBuf {
     }
 }
 
-pub(crate) fn require_managed_service_executable(executable: &Path) -> Result<(), AppError> {
+pub fn require_managed_service_executable(executable: &Path) -> Result<(), AppError> {
     let worker = managed_service_executable_path(executable);
     if !worker.is_file() {
         return Err(AppError::external(
@@ -161,7 +161,7 @@ pub fn current_user_sid() -> Result<String, AppError> {
 }
 
 #[cfg(windows)]
-pub(crate) fn account_sid(account: &str) -> Result<String, AppError> {
+pub fn account_sid(account: &str) -> Result<String, AppError> {
     use windows::{
         Win32::Security::{LookupAccountNameW, PSID, SID_NAME_USE},
         core::{PCWSTR, PWSTR},

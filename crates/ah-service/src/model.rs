@@ -4,7 +4,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const TASK_SPEC_VERSION: u32 = 1;
@@ -458,7 +458,7 @@ impl DriftEntry {
     }
 }
 
-pub(crate) fn require_schema(version: u32) -> Result<(), AppError> {
+pub fn require_schema(version: u32) -> Result<(), AppError> {
     if version == SCHEMA_VERSION {
         Ok(())
     } else {
@@ -468,11 +468,11 @@ pub(crate) fn require_schema(version: u32) -> Result<(), AppError> {
     }
 }
 
-pub(crate) fn state_invalid(message: impl Into<String>) -> AppError {
+pub fn state_invalid(message: impl Into<String>) -> AppError {
     AppError::external("MCP_SERVICE_STATE_INVALID", message)
 }
 
-pub(crate) fn validate_uuid_json_fields(value: &serde_json::Value) -> Result<(), String> {
+pub fn validate_uuid_json_fields(value: &serde_json::Value) -> Result<(), String> {
     match value {
         serde_json::Value::Object(object) => {
             for (key, value) in object {

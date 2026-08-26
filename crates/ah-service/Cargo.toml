@@ -1,0 +1,40 @@
+[package]
+name = "ah-service"
+version = "1.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AIHelper's managed MCP service: its definition, its scheduled task, and their lifecycle"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
+
+[dependencies]
+ah-config = { path = "../ah-config" }
+ah-error = { path = "../ah-error" }
+ah-persist = { path = "../ah-persist" }
+ah-platform = { path = "../ah-platform" }
+ah-updater = { path = "../ah-updater" }
+ah-updater-core = { path = "../ah-updater-core" }
+chrono.workspace = true
+reqwest = { workspace = true, features = ["blocking", "json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid = { workspace = true, features = ["serde", "v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_TaskScheduler",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true

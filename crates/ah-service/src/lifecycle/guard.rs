@@ -11,7 +11,7 @@ use super::*;
 use ah_updater::service::{ServiceGuard, ServiceHold, ServiceState};
 
 /// The real managed MCP service.
-pub(crate) struct ManagedMcpGuard;
+pub struct ManagedMcpGuard;
 
 impl ServiceGuard for ManagedMcpGuard {
     fn hold(&self, timeout: Duration) -> Result<ServiceHold, AppError> {

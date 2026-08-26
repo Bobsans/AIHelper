@@ -6,7 +6,7 @@
 
 use super::*;
 
-pub(super) fn require_ready_instance_id(readiness: &ReadinessSection) -> Result<Uuid, AppError> {
+pub(crate) fn require_ready_instance_id(readiness: &ReadinessSection) -> Result<Uuid, AppError> {
     readiness.instance_id.ok_or_else(|| {
         AppError::external(
             "MCP_SERVICE_STATE_INVALID",
@@ -16,7 +16,7 @@ pub(super) fn require_ready_instance_id(readiness: &ReadinessSection) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn configuration_matches(
+pub(crate) fn configuration_matches(
     existing: &ServiceDefinition,
     user_sid: &str,
     executable: &Path,
@@ -40,7 +40,7 @@ pub(super) fn configuration_matches(
         && &existing.server == server
 }
 
-pub(super) fn require_no_drift(
+pub(crate) fn require_no_drift(
     desired: &DesiredTaskSpec,
     observed: &ObservedTask,
 ) -> Result<(), AppError> {
@@ -58,13 +58,11 @@ pub(super) fn require_no_drift(
     }
 }
 
-pub(super) fn apply_scheduler_section(output: &mut StatusOutput, observed: &ObservedTask) {
+pub(crate) fn apply_scheduler_section(output: &mut StatusOutput, observed: &ObservedTask) {
     output.scheduler = SchedulerSection {
         state: observed.scheduler_state,
         last_result: observed.last_result,
-        last_result_hex: observed
-            .last_result
-            .map(crate::mcp_service::model::hresult_hex),
+        last_result_hex: observed.last_result.map(crate::model::hresult_hex),
         last_run_at: observed.last_run_at.clone(),
         diagnostic_code: None,
         hresult: None,
@@ -73,20 +71,20 @@ pub(super) fn apply_scheduler_section(output: &mut StatusOutput, observed: &Obse
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SchedulerRuntimeEvidence {
-    pub(super) state: SchedulerState,
-    pub(super) canonical_restart_policy: bool,
+pub(crate) struct SchedulerRuntimeEvidence {
+    pub(crate) state: SchedulerState,
+    pub(crate) canonical_restart_policy: bool,
 }
 
 impl SchedulerRuntimeEvidence {
-    pub(super) fn from_observed(observed: &ObservedTask) -> Self {
+    pub(crate) fn from_observed(observed: &ObservedTask) -> Self {
         Self {
             state: observed.scheduler_state,
             canonical_restart_policy: has_canonical_restart_policy(&observed.spec),
         }
     }
 
-    pub(super) fn unverified(state: SchedulerState) -> Self {
+    pub(crate) fn unverified(state: SchedulerState) -> Self {
         Self {
             state,
             canonical_restart_policy: false,
@@ -94,7 +92,7 @@ impl SchedulerRuntimeEvidence {
     }
 }
 
-pub(super) fn reduce_runtime(
+pub(crate) fn reduce_runtime(
     runtime: Option<&RuntimeState>,
     readiness: &ReadinessSection,
     scheduler: SchedulerRuntimeEvidence,
@@ -146,7 +144,7 @@ pub(super) fn reduce_runtime(
     RuntimeStatus::Stopped
 }
 
-pub(super) fn invalid_drift(field: &str) -> DriftEntry {
+pub(crate) fn invalid_drift(field: &str) -> DriftEntry {
     DriftEntry {
         field: field.to_owned(),
         kind: DriftKind::Invalid,
@@ -156,7 +154,7 @@ pub(super) fn invalid_drift(field: &str) -> DriftEntry {
     }
 }
 
-pub(super) fn is_registration_drift(entry: &DriftEntry) -> bool {
+pub(crate) fn is_registration_drift(entry: &DriftEntry) -> bool {
     [
         "task.",
         "current.",
@@ -173,7 +171,7 @@ pub(super) fn is_registration_drift(entry: &DriftEntry) -> bool {
     .any(|prefix| entry.field.starts_with(prefix))
 }
 
-pub(super) fn scheduler_error_values(error: &AppError) -> (Option<i32>, Option<String>) {
+pub(crate) fn scheduler_error_values(error: &AppError) -> (Option<i32>, Option<String>) {
     let detail = error.detail_message();
     let Some(suffix) = detail.split("hresult=").nth(1) else {
         return (None, None);
@@ -194,7 +192,7 @@ pub(super) fn scheduler_error_values(error: &AppError) -> (Option<i32>, Option<S
 }
 
 impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
-    pub(super) fn status_snapshot(&self) -> StatusOutput {
+    pub(crate) fn status_snapshot(&self) -> StatusOutput {
         let user_sid = match current_user_sid() {
             Ok(value) => value,
             Err(error) => {
@@ -405,7 +403,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         output
     }
 
-    pub(super) fn observe_runtime(
+    pub(crate) fn observe_runtime(
         &self,
         output: &mut StatusOutput,
         definition: &ServiceDefinition,
@@ -449,7 +447,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         };
     }
 
-    pub(super) fn observe_lifecycle(&self, output: &mut StatusOutput) {
+    pub(crate) fn observe_lifecycle(&self, output: &mut StatusOutput) {
         match lock::try_acquire(&self.store.paths().lifecycle_lock) {
             Ok(Some(lease)) => {
                 drop(lease);

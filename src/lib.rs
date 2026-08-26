@@ -7,7 +7,7 @@ pub(crate) use ah_error as error;
 pub(crate) use ah_observability as event_log;
 pub(crate) mod git_status;
 pub(crate) mod host_commands;
-pub mod mcp_service;
+pub use ah_service as mcp_service;
 pub mod output;
 pub(crate) mod service;
 pub(crate) mod upgrade;

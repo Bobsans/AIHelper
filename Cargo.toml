@@ -24,6 +24,7 @@ members = [
     "crates/ah-plugin-sdk",
     "crates/ah-redact",
     "crates/ah-secrets",
+    "crates/ah-service",
     "crates/ah-setup-ui",
     "crates/ah-release-manifest",
     "crates/ah-release-tool",
@@ -82,7 +83,6 @@ windows-sys = "0.61.2"
 zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 
 [dependencies]
-chrono.workspace = true
 clap = { workspace = true, features = ["string"] }
 console = "0.16.4"
 dialoguer = "0.12.0"
@@ -110,28 +110,23 @@ ah-platform = { path = "crates/ah-platform" }
 ah-plugin-api = { path = "crates/ah-plugin-api" }
 ah-redact = { path = "crates/ah-redact" }
 ah-secrets = { path = "crates/ah-secrets" }
+ah-service = { path = "crates/ah-service" }
 ah-runtime = { path = "crates/ah-runtime" }
 ah-mcp = { path = "crates/ah-mcp" }
 ah-update-helper = { path = "crates/ah-update-helper" }
 ah-updater = { path = "crates/ah-updater" }
 ah-updater-core = { path = "crates/ah-updater-core" }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "time"] }
-uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Security",
-    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Memory",
-    "Win32_System_Ole",
-    "Win32_System_TaskScheduler",
     "Win32_System_Threading",
-    "Win32_System_Variant",
-    "Win32_UI_Shell",
 ] }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
@@ -152,6 +147,8 @@ assert_cmd.workspace = true
 base64.workspace = true
 # The log rotation test takes the same lock the event log does.
 fs2.workspace = true
+# The managed-service integration tests build definitions by hand.
+uuid.workspace = true
 command-group.workspace = true
 predicates = "3.1.3"
 

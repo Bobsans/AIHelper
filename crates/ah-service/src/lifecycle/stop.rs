@@ -6,7 +6,7 @@
 use super::*;
 
 impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
-    pub(super) fn stop_locked_output(&self) -> Result<MutationOutput, AppError> {
+    pub(crate) fn stop_locked_output(&self) -> Result<MutationOutput, AppError> {
         let result = self.stop_locked(StopPolicy::RequireRegistration)?;
         let context = result.context.as_ref().ok_or_else(|| {
             AppError::external(
@@ -28,7 +28,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn restart_locked(&self) -> Result<MutationOutput, AppError> {
+    pub(crate) fn restart_locked(&self) -> Result<MutationOutput, AppError> {
         let initial = self.require_installed_context()?;
         require_no_drift(&initial.desired, &initial.observed)?;
         let stopped = self.stop_installed(initial)?;
@@ -59,7 +59,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn stop_locked(&self, policy: StopPolicy) -> Result<StopResult, AppError> {
+    pub(crate) fn stop_locked(&self, policy: StopPolicy) -> Result<StopResult, AppError> {
         match self.require_installed_context() {
             Ok(context) => self.stop_installed(context),
             Err(error)
@@ -72,7 +72,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
     }
 
-    pub(super) fn stop_installed(&self, context: InstalledContext) -> Result<StopResult, AppError> {
+    pub(crate) fn stop_installed(&self, context: InstalledContext) -> Result<StopResult, AppError> {
         let total_deadline = Instant::now() + self.stop_timeout;
         let runtime = self.store.read_runtime().valid()?;
         let readiness = self
@@ -159,7 +159,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn select_stop_target(
+    pub(crate) fn select_stop_target(
         &self,
         context: &InstalledContext,
         runtime: Option<&RuntimeState>,
@@ -211,7 +211,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         ))
     }
 
-    pub(super) fn wait_for_quiescence(
+    pub(crate) fn wait_for_quiescence(
         &self,
         context: &InstalledContext,
         old_instance_id: Option<Uuid>,
@@ -256,7 +256,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
     }
 
-    pub(super) fn stop_orphan(&self) -> Result<StopResult, AppError> {
+    pub(crate) fn stop_orphan(&self) -> Result<StopResult, AppError> {
         if let Some(guard) = lock::try_acquire(&self.store.paths().instance_lock)? {
             return Ok(StopResult {
                 ownership: None,

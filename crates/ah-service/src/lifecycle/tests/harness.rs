@@ -11,7 +11,7 @@ use std::{
 use tempfile::TempDir;
 
 use super::super::*;
-use crate::mcp_service::{
+use crate::{
     lock,
     readiness::ReadinessProbe,
     scheduler::{SchedulerDeleteReceipt, SchedulerRunReceipt, SchedulerStopReceipt},
@@ -29,13 +29,13 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-pub(super) struct LeaseHolder {
+pub(crate) struct LeaseHolder {
     release: Option<mpsc::Sender<()>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl LeaseHolder {
-    pub(super) fn acquire(path: &Path) -> Self {
+    pub(crate) fn acquire(path: &Path) -> Self {
         let path = path.to_path_buf();
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let (release_sender, release_receiver) = mpsc::channel();
@@ -94,7 +94,7 @@ impl Drop for LeaseHolder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SchedulerEvent {
+pub(crate) enum SchedulerEvent {
     Inspect { task_path: String },
     Register { desired: Box<DesiredTaskSpec> },
     Run { task_path: String },
@@ -116,7 +116,7 @@ impl SchedulerEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum RuntimeEvent {
+pub(crate) enum RuntimeEvent {
     Inspect {
         service_id: Uuid,
         configuration_id: Uuid,
@@ -129,7 +129,7 @@ pub(super) enum RuntimeEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum AdapterEvent {
+pub(crate) enum AdapterEvent {
     Scheduler(SchedulerEvent),
     Runtime(RuntimeEvent),
 }
@@ -141,7 +141,7 @@ fn push_event(journal: &EventJournal, event: AdapterEvent) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SchedulerFaultPoint {
+pub(crate) enum SchedulerFaultPoint {
     Inspect,
     Register,
     Run,
@@ -222,17 +222,17 @@ struct ScriptedSchedulerState {
 }
 
 #[derive(Clone)]
-pub(super) struct ScriptedScheduler {
+pub(crate) struct ScriptedScheduler {
     state: Arc<Mutex<ScriptedSchedulerState>>,
     journal: EventJournal,
 }
 
 impl ScriptedScheduler {
-    pub(super) fn missing() -> Self {
+    pub(crate) fn missing() -> Self {
         Self::with_journal(TaskObservation::Missing, Arc::new(Mutex::new(Vec::new())))
     }
 
-    pub(super) fn foreign() -> Self {
+    pub(crate) fn foreign() -> Self {
         Self::with_journal(
             TaskObservation::Foreign {
                 source: Some("Other".to_owned()),
@@ -257,15 +257,15 @@ impl ScriptedScheduler {
         }
     }
 
-    pub(super) fn observation(&self) -> TaskObservation {
+    pub(crate) fn observation(&self) -> TaskObservation {
         lock_unpoisoned(&self.state).observation.clone()
     }
 
-    pub(super) fn set_observation(&self, observation: TaskObservation) {
+    pub(crate) fn set_observation(&self, observation: TaskObservation) {
         lock_unpoisoned(&self.state).observation = observation;
     }
 
-    pub(super) fn update_observed(&self, update: impl FnOnce(&mut ObservedTask)) {
+    pub(crate) fn update_observed(&self, update: impl FnOnce(&mut ObservedTask)) {
         let mut state = lock_unpoisoned(&self.state);
         let TaskObservation::Owned(observed) = &mut state.observation else {
             panic!("task should be owned")
@@ -273,7 +273,7 @@ impl ScriptedScheduler {
         update(observed);
     }
 
-    pub(super) fn set_scheduler_state(
+    pub(crate) fn set_scheduler_state(
         &self,
         scheduler_state: SchedulerState,
         instances: Vec<SchedulerInstance>,
@@ -286,29 +286,29 @@ impl ScriptedScheduler {
         state.instances = instances;
     }
 
-    pub(super) fn update_instances(&self, update: impl FnOnce(&mut Vec<SchedulerInstance>)) {
+    pub(crate) fn update_instances(&self, update: impl FnOnce(&mut Vec<SchedulerInstance>)) {
         update(&mut lock_unpoisoned(&self.state).instances);
     }
 
-    pub(super) fn queue_register_readback(&self, observed: ObservedTask) {
+    pub(crate) fn queue_register_readback(&self, observed: ObservedTask) {
         lock_unpoisoned(&self.state)
             .register_readbacks
             .push_back(observed);
     }
 
-    pub(super) fn queue_observation_after_stop(&self, observation: TaskObservation) {
+    pub(crate) fn queue_observation_after_stop(&self, observation: TaskObservation) {
         lock_unpoisoned(&self.state)
             .observations_after_stop
             .push_back(observation);
     }
 
-    pub(super) fn fail_next(&self, point: SchedulerFaultPoint) {
+    pub(crate) fn fail_next(&self, point: SchedulerFaultPoint) {
         lock_unpoisoned(&self.state)
             .faults
             .queue(point, ScriptedFailure::scheduler(point));
     }
 
-    pub(super) fn fail_next_with(
+    pub(crate) fn fail_next_with(
         &self,
         point: SchedulerFaultPoint,
         code: impl Into<String>,
@@ -323,15 +323,15 @@ impl ScriptedScheduler {
         );
     }
 
-    pub(super) fn block_next_run(&self, gate: RunGate) {
+    pub(crate) fn block_next_run(&self, gate: RunGate) {
         lock_unpoisoned(&self.state).run_gates.push_back(gate);
     }
 
-    pub(super) fn release_instance_on_stop(&self, lease: LeaseHolder) {
+    pub(crate) fn release_instance_on_stop(&self, lease: LeaseHolder) {
         lock_unpoisoned(&self.state).release_on_stop = Some(lease);
     }
 
-    pub(super) fn scheduler_events(&self) -> Vec<SchedulerEvent> {
+    pub(crate) fn scheduler_events(&self) -> Vec<SchedulerEvent> {
         lock_unpoisoned(&self.journal)
             .iter()
             .filter_map(|event| match event {
@@ -341,42 +341,42 @@ impl ScriptedScheduler {
             .collect()
     }
 
-    pub(super) fn mutation_events(&self) -> Vec<SchedulerEvent> {
+    pub(crate) fn mutation_events(&self) -> Vec<SchedulerEvent> {
         self.scheduler_events()
             .into_iter()
             .filter(SchedulerEvent::is_mutation)
             .collect()
     }
 
-    pub(super) fn register_count(&self) -> usize {
+    pub(crate) fn register_count(&self) -> usize {
         self.scheduler_events()
             .iter()
             .filter(|event| matches!(event, SchedulerEvent::Register { .. }))
             .count()
     }
 
-    pub(super) fn run_count(&self) -> usize {
+    pub(crate) fn run_count(&self) -> usize {
         self.scheduler_events()
             .iter()
             .filter(|event| matches!(event, SchedulerEvent::Run { .. }))
             .count()
     }
 
-    pub(super) fn stop_count(&self) -> usize {
+    pub(crate) fn stop_count(&self) -> usize {
         self.scheduler_events()
             .iter()
             .filter(|event| matches!(event, SchedulerEvent::StopInstance { .. }))
             .count()
     }
 
-    pub(super) fn delete_count(&self) -> usize {
+    pub(crate) fn delete_count(&self) -> usize {
         self.scheduler_events()
             .iter()
             .filter(|event| matches!(event, SchedulerEvent::DeleteOwned { .. }))
             .count()
     }
 
-    pub(super) fn stop_targets(&self) -> Vec<SchedulerStopTarget> {
+    pub(crate) fn stop_targets(&self) -> Vec<SchedulerStopTarget> {
         self.scheduler_events()
             .into_iter()
             .filter_map(|event| match event {
@@ -521,7 +521,7 @@ impl SchedulerAdapter for ScriptedScheduler {
 }
 
 #[derive(Clone)]
-pub(super) struct RunGate {
+pub(crate) struct RunGate {
     inner: Arc<(Mutex<RunGateState>, Condvar)>,
     timeout: Duration,
 }
@@ -533,14 +533,14 @@ struct RunGateState {
 }
 
 impl RunGate {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new((Mutex::new(RunGateState::default()), Condvar::new())),
             timeout: TEST_GATE_TIMEOUT,
         }
     }
 
-    pub(super) fn wait_until_entered(&self, timeout: Duration) -> bool {
+    pub(crate) fn wait_until_entered(&self, timeout: Duration) -> bool {
         let (state, signal) = &*self.inner;
         let deadline = Instant::now() + timeout;
         let mut state = lock_unpoisoned(state);
@@ -560,7 +560,7 @@ impl RunGate {
         true
     }
 
-    pub(super) fn release(&self) {
+    pub(crate) fn release(&self) {
         let (state, signal) = &*self.inner;
         let mut state = lock_unpoisoned(state);
         state.released = true;
@@ -603,13 +603,13 @@ struct ScriptedRuntimeState {
 }
 
 #[derive(Clone)]
-pub(super) struct ScriptedRuntimeControl {
+pub(crate) struct ScriptedRuntimeControl {
     state: Arc<Mutex<ScriptedRuntimeState>>,
     journal: EventJournal,
 }
 
 impl ScriptedRuntimeControl {
-    pub(super) fn new(sections: impl IntoIterator<Item = ReadinessSection>) -> Self {
+    pub(crate) fn new(sections: impl IntoIterator<Item = ReadinessSection>) -> Self {
         Self::with_journal(sections, Arc::new(Mutex::new(Vec::new())))
     }
 
@@ -627,31 +627,31 @@ impl ScriptedRuntimeControl {
         }
     }
 
-    pub(super) fn set_sections(&self, sections: impl IntoIterator<Item = ReadinessSection>) {
+    pub(crate) fn set_sections(&self, sections: impl IntoIterator<Item = ReadinessSection>) {
         lock_unpoisoned(&self.state).sections = sections.into_iter().collect();
     }
 
-    pub(super) fn queue_readiness(&self, section: ReadinessSection) {
+    pub(crate) fn queue_readiness(&self, section: ReadinessSection) {
         lock_unpoisoned(&self.state).sections.push_back(section);
     }
 
-    pub(super) fn queue_shutdown_receipt(&self, receipt: ShutdownReceipt) {
+    pub(crate) fn queue_shutdown_receipt(&self, receipt: ShutdownReceipt) {
         lock_unpoisoned(&self.state)
             .shutdown_receipts
             .push_back(receipt);
     }
 
-    pub(super) fn fail_next_shutdown(&self, detail: impl Into<String>) {
+    pub(crate) fn fail_next_shutdown(&self, detail: impl Into<String>) {
         self.queue_shutdown_receipt(ShutdownReceipt::Failed {
             detail: detail.into(),
         });
     }
 
-    pub(super) fn release_instance_on_shutdown(&self, lease: Option<LeaseHolder>) {
+    pub(crate) fn release_instance_on_shutdown(&self, lease: Option<LeaseHolder>) {
         lock_unpoisoned(&self.state).release_on_shutdown = lease;
     }
 
-    pub(super) fn runtime_events(&self) -> Vec<RuntimeEvent> {
+    pub(crate) fn runtime_events(&self) -> Vec<RuntimeEvent> {
         lock_unpoisoned(&self.journal)
             .iter()
             .filter_map(|event| match event {
@@ -661,7 +661,7 @@ impl ScriptedRuntimeControl {
             .collect()
     }
 
-    pub(super) fn shutdown_targets(&self) -> Vec<Uuid> {
+    pub(crate) fn shutdown_targets(&self) -> Vec<Uuid> {
         self.runtime_events()
             .into_iter()
             .filter_map(|event| match event {
@@ -725,15 +725,15 @@ impl RuntimeControl for ScriptedRuntimeControl {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ScenarioIds {
-    pub(super) service_id: Uuid,
-    pub(super) configuration_id: Uuid,
-    pub(super) replacement_configuration_id: Uuid,
-    pub(super) old_instance_id: Uuid,
-    pub(super) new_instance_id: Uuid,
-    pub(super) scheduler_instance_id: Uuid,
-    pub(super) old_pid: u32,
-    pub(super) new_pid: u32,
+pub(crate) struct ScenarioIds {
+    pub(crate) service_id: Uuid,
+    pub(crate) configuration_id: Uuid,
+    pub(crate) replacement_configuration_id: Uuid,
+    pub(crate) old_instance_id: Uuid,
+    pub(crate) new_instance_id: Uuid,
+    pub(crate) scheduler_instance_id: Uuid,
+    pub(crate) old_pid: u32,
+    pub(crate) new_pid: u32,
 }
 
 impl Default for ScenarioIds {
@@ -752,11 +752,11 @@ impl Default for ScenarioIds {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DurableBytes {
-    pub(super) current: Option<Vec<u8>>,
-    pub(super) definitions: Vec<(PathBuf, Vec<u8>)>,
-    pub(super) runtime: Option<Vec<u8>>,
-    pub(super) lifecycle: Option<Vec<u8>>,
+pub(crate) struct DurableBytes {
+    pub(crate) current: Option<Vec<u8>>,
+    pub(crate) definitions: Vec<(PathBuf, Vec<u8>)>,
+    pub(crate) runtime: Option<Vec<u8>>,
+    pub(crate) lifecycle: Option<Vec<u8>>,
 }
 
 fn read_optional(path: &Path) -> Option<Vec<u8>> {
@@ -767,17 +767,17 @@ fn read_optional(path: &Path) -> Option<Vec<u8>> {
     }
 }
 
-pub(super) struct LifecycleHarness {
+pub(crate) struct LifecycleHarness {
     _temp: TempDir,
-    pub(super) paths: ServicePaths,
-    pub(super) scheduler: ScriptedScheduler,
-    pub(super) runtime: ScriptedRuntimeControl,
-    pub(super) service: Arc<LifecycleService<ScriptedScheduler, ScriptedRuntimeControl>>,
-    pub(super) ids: ScenarioIds,
+    pub(crate) paths: ServicePaths,
+    pub(crate) scheduler: ScriptedScheduler,
+    pub(crate) runtime: ScriptedRuntimeControl,
+    pub(crate) service: Arc<LifecycleService<ScriptedScheduler, ScriptedRuntimeControl>>,
+    pub(crate) ids: ScenarioIds,
 }
 
 impl LifecycleHarness {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let temp = TempDir::new().unwrap();
         let paths = ServicePaths::from_base(temp.path().join("managed")).unwrap();
         let journal = Arc::new(Mutex::new(Vec::new()));
@@ -798,29 +798,29 @@ impl LifecycleHarness {
         }
     }
 
-    pub(super) fn store(&self) -> &ServiceStore {
+    pub(crate) fn store(&self) -> &ServiceStore {
         &self.service.store
     }
 
-    pub(super) fn install_no_start(&self) -> MutationOutput {
+    pub(crate) fn install_no_start(&self) -> MutationOutput {
         self.service.install(&install_options(true)).unwrap()
     }
 
-    pub(super) fn install_and_ready(&self, instance_id: Uuid, pid: u32) -> MutationOutput {
+    pub(crate) fn install_and_ready(&self, instance_id: Uuid, pid: u32) -> MutationOutput {
         self.runtime
             .set_sections([not_ready_section(), ready_section(instance_id, pid)]);
         self.service.install(&install_options(false)).unwrap()
     }
 
-    pub(super) fn installed_definition(&self) -> (CurrentPointer, ServiceDefinition) {
+    pub(crate) fn installed_definition(&self) -> (CurrentPointer, ServiceDefinition) {
         installed_definition(&self.service)
     }
 
-    pub(super) fn set_runtime(&self, runtime: &RuntimeState) {
+    pub(crate) fn set_runtime(&self, runtime: &RuntimeState) {
         self.store().write_runtime(runtime).unwrap();
     }
 
-    pub(super) fn write_ready_runtime(
+    pub(crate) fn write_ready_runtime(
         &self,
         definition: &ServiceDefinition,
         instance_id: Uuid,
@@ -829,47 +829,47 @@ impl LifecycleHarness {
         write_ready_runtime(&self.service, definition, instance_id, pid);
     }
 
-    pub(super) fn set_owned_task(&self, observed: ObservedTask) {
+    pub(crate) fn set_owned_task(&self, observed: ObservedTask) {
         self.scheduler
             .set_observation(TaskObservation::Owned(Box::new(observed)));
     }
 
-    pub(super) fn queue_readiness(&self, section: ReadinessSection) {
+    pub(crate) fn queue_readiness(&self, section: ReadinessSection) {
         self.runtime.queue_readiness(section);
     }
 
-    pub(super) fn hold_instance_lease(&self) -> LeaseHolder {
+    pub(crate) fn hold_instance_lease(&self) -> LeaseHolder {
         self.store().ensure_directories().unwrap();
         LeaseHolder::acquire(&self.paths.instance_lock)
     }
 
-    pub(super) fn release_instance_on_shutdown(&self, lease: LeaseHolder) {
+    pub(crate) fn release_instance_on_shutdown(&self, lease: LeaseHolder) {
         self.runtime.release_instance_on_shutdown(Some(lease));
     }
 
-    pub(super) fn release_instance_on_forced_stop(&self, lease: LeaseHolder) {
+    pub(crate) fn release_instance_on_forced_stop(&self, lease: LeaseHolder) {
         self.scheduler.release_instance_on_stop(lease);
     }
 
-    pub(super) fn fail_next_scheduler_operation(&self, point: SchedulerFaultPoint) {
+    pub(crate) fn fail_next_scheduler_operation(&self, point: SchedulerFaultPoint) {
         self.scheduler.fail_next(point);
     }
 
-    pub(super) fn block_next_run(&self) -> RunGate {
+    pub(crate) fn block_next_run(&self) -> RunGate {
         let gate = RunGate::new();
         self.scheduler.block_next_run(gate.clone());
         gate
     }
 
-    pub(super) fn adapter_events(&self) -> Vec<AdapterEvent> {
+    pub(crate) fn adapter_events(&self) -> Vec<AdapterEvent> {
         lock_unpoisoned(&self.scheduler.journal).clone()
     }
 
-    pub(super) fn clear_adapter_events(&self) {
+    pub(crate) fn clear_adapter_events(&self) {
         lock_unpoisoned(&self.scheduler.journal).clear();
     }
 
-    pub(super) fn assert_no_destructive_events(&self) {
+    pub(crate) fn assert_no_destructive_events(&self) {
         let mutations = self.scheduler.mutation_events();
         assert!(
             mutations.is_empty(),
@@ -881,7 +881,7 @@ impl LifecycleHarness {
         );
     }
 
-    pub(super) fn durable_bytes(&self) -> DurableBytes {
+    pub(crate) fn durable_bytes(&self) -> DurableBytes {
         let definitions = self
             .store()
             .definition_files()
@@ -898,11 +898,11 @@ impl LifecycleHarness {
     }
 }
 
-pub(super) fn not_ready() -> ScriptedRuntimeControl {
+pub(crate) fn not_ready() -> ScriptedRuntimeControl {
     ScriptedRuntimeControl::new([not_ready_section()])
 }
 
-pub(super) fn not_ready_section() -> ReadinessSection {
+pub(crate) fn not_ready_section() -> ReadinessSection {
     ReadinessSection {
         status: ReadinessStatus::NotReady,
         http_status: None,
@@ -913,7 +913,7 @@ pub(super) fn not_ready_section() -> ReadinessSection {
     }
 }
 
-pub(super) fn ready_section(instance_id: Uuid, pid: u32) -> ReadinessSection {
+pub(crate) fn ready_section(instance_id: Uuid, pid: u32) -> ReadinessSection {
     ReadinessSection {
         status: ReadinessStatus::Ready,
         http_status: Some(200),
@@ -924,7 +924,7 @@ pub(super) fn ready_section(instance_id: Uuid, pid: u32) -> ReadinessSection {
     }
 }
 
-pub(super) fn install_options(no_start: bool) -> InstallSettings {
+pub(crate) fn install_options(no_start: bool) -> InstallSettings {
     InstallSettings {
         no_start,
         port: 8787,
@@ -934,7 +934,7 @@ pub(super) fn install_options(no_start: bool) -> InstallSettings {
     }
 }
 
-pub(super) fn installed_definition(
+pub(crate) fn installed_definition(
     service: &LifecycleService<ScriptedScheduler, ScriptedRuntimeControl>,
 ) -> (CurrentPointer, ServiceDefinition) {
     let Document::Valid(pointer) = service.store.read_current() else {
@@ -947,7 +947,7 @@ pub(super) fn installed_definition(
     (pointer, definition)
 }
 
-pub(super) fn write_ready_runtime(
+pub(crate) fn write_ready_runtime(
     service: &LifecycleService<ScriptedScheduler, ScriptedRuntimeControl>,
     definition: &ServiceDefinition,
     instance_id: Uuid,
@@ -959,7 +959,7 @@ pub(super) fn write_ready_runtime(
     service.store.write_runtime(&runtime).unwrap();
 }
 
-pub(super) fn set_scheduler_state(
+pub(crate) fn set_scheduler_state(
     service: &LifecycleService<ScriptedScheduler, ScriptedRuntimeControl>,
     state: SchedulerState,
     instances: Vec<SchedulerInstance>,
@@ -967,7 +967,7 @@ pub(super) fn set_scheduler_state(
     service.scheduler.set_scheduler_state(state, instances);
 }
 
-pub(super) fn identity_mismatch_section(instance_id: Uuid, pid: u32) -> ReadinessSection {
+pub(crate) fn identity_mismatch_section(instance_id: Uuid, pid: u32) -> ReadinessSection {
     ReadinessSection {
         status: ReadinessStatus::IdentityMismatch,
         http_status: Some(200),

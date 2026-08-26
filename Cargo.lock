@@ -270,6 +270,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-service"
+version = "1.4.0"
+dependencies = [
+ "ah-config",
+ "ah-error",
+ "ah-persist",
+ "ah-platform",
+ "ah-updater",
+ "ah-updater-core",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+ "windows",
+]
+
+[[package]]
 name = "ah-setup-ui"
 version = "1.4.0"
 dependencies = [
@@ -375,12 +394,12 @@ dependencies = [
  "ah-release-manifest",
  "ah-runtime",
  "ah-secrets",
+ "ah-service",
  "ah-update-helper",
  "ah-updater",
  "ah-updater-core",
  "assert_cmd",
  "base64",
- "chrono",
  "clap",
  "command-group",
  "console",

@@ -4,7 +4,7 @@
 use super::*;
 
 impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
-    pub(super) fn uninstall_locked(&self) -> Result<UninstallOutput, AppError> {
+    pub(crate) fn uninstall_locked(&self) -> Result<UninstallOutput, AppError> {
         let user_sid = current_user_sid()?;
         let expected_task_path = task_path(&user_sid);
         let observation = self.scheduler.inspect(&expected_task_path)?;
@@ -152,7 +152,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn context_from_owned_task(
+    pub(crate) fn context_from_owned_task(
         &self,
         task_path: String,
         observed: ObservedTask,
@@ -202,7 +202,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn prove_inactive_owned_task(
+    pub(crate) fn prove_inactive_owned_task(
         &self,
         task_path: &str,
         observed: ObservedTask,
@@ -246,7 +246,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn verified_definition_deletion_set(
+    pub(crate) fn verified_definition_deletion_set(
         &self,
         user_sid: &str,
         trusted_service_id: Option<Uuid>,
@@ -303,7 +303,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         Ok(paths)
     }
 
-    pub(super) fn insert_definition_candidate(
+    pub(crate) fn insert_definition_candidate(
         &self,
         paths: &mut BTreeSet<PathBuf>,
         configuration_id: Uuid,

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 use super::{super::*, harness::*};
-use crate::mcp_service::model::LastExit;
+use crate::model::LastExit;
 
 #[cfg(windows)]
 #[test]

@@ -22,7 +22,7 @@ use windows::{
     core::{BSTR, Interface},
 };
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::{
     model::{TaskMarker, hresult_hex, validate_uuid_json_fields},
@@ -757,7 +757,7 @@ fn scheduler_error(operation: &str, error: windows::core::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_service::{
+    use crate::{
         paths::{current_user_sid, task_path},
         scheduler::{MANAGED_RESTART_COUNT, MANAGED_RESTART_INTERVAL},
     };

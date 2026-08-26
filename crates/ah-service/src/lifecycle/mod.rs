@@ -27,7 +27,8 @@ use std::{
 
 use uuid::Uuid;
 
-use crate::{config::ConfigContext, error::AppError};
+use ah_config::ConfigContext;
+use ah_error::AppError;
 
 use super::{
     lock::{self, FileLease},
@@ -61,7 +62,7 @@ mod status;
 mod stop;
 mod uninstall;
 
-pub(crate) use guard::ManagedMcpGuard;
+pub use guard::ManagedMcpGuard;
 
 use status::{
     SchedulerRuntimeEvidence, configuration_matches, reduce_runtime, require_no_drift,
@@ -135,18 +136,18 @@ pub fn run(operation: Operation) -> Result<Report, AppError> {
 /// Non-printing lifecycle access for callers that render their own output,
 /// such as `ah ai install --transport managed`.
 #[cfg(windows)]
-pub(crate) fn snapshot_status() -> Result<StatusOutput, AppError> {
+pub fn snapshot_status() -> Result<StatusOutput, AppError> {
     Ok(update_service()?.status())
 }
 
 #[cfg(windows)]
-pub(crate) fn install_quietly(settings: &InstallSettings) -> Result<MutationOutput, AppError> {
+pub fn install_quietly(settings: &InstallSettings) -> Result<MutationOutput, AppError> {
     require_managed_service_executable(&current_executable_path()?)?;
     update_service()?.install(settings)
 }
 
 #[cfg(windows)]
-pub(crate) fn start_quietly() -> Result<MutationOutput, AppError> {
+pub fn start_quietly() -> Result<MutationOutput, AppError> {
     update_service()?.start()
 }
 
@@ -180,25 +181,25 @@ pub struct LifecycleService<S, R> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OperationSuccess {
+pub(crate) enum OperationSuccess {
     PersistCompleted,
     RemoveLifecycle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StopPolicy {
+pub(crate) enum StopPolicy {
     RequireRegistration,
     AllowExactOrphan,
 }
 
-struct InstalledContext {
+pub(crate) struct InstalledContext {
     current: CurrentPointer,
     definition: ServiceDefinition,
     observed: ObservedTask,
     desired: DesiredTaskSpec,
 }
 
-struct StopResult {
+pub(crate) struct StopResult {
     ownership: Option<ExpectedTaskOwnership>,
     context: Option<InstalledContext>,
     changed: bool,
@@ -207,7 +208,7 @@ struct StopResult {
     proof_guard: FileLease,
 }
 
-struct StartResult {
+pub(crate) struct StartResult {
     changed: bool,
     action: String,
     runtime: RuntimeStatus,

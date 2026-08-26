@@ -3,7 +3,7 @@
 use super::*;
 
 impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
-    pub(super) fn start_locked(&self) -> Result<MutationOutput, AppError> {
+    pub(crate) fn start_locked(&self) -> Result<MutationOutput, AppError> {
         let context = self.require_installed_context()?;
         require_no_drift(&context.desired, &context.observed)?;
         let result = self.start_definition(&context.definition, &context.desired)?;
@@ -21,7 +21,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(super) fn start_definition(
+    pub(crate) fn start_definition(
         &self,
         definition: &ServiceDefinition,
         desired_task: &DesiredTaskSpec,

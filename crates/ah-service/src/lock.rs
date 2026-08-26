@@ -8,9 +8,9 @@
 
 use std::{path::Path, time::Duration};
 
-use crate::error::AppError;
+use ah_error::AppError;
 
-pub(crate) use ah_platform::lease::FileLease;
+pub use ah_platform::lease::FileLease;
 
 /// Take the lease if it is free, reporting `Ok(None)` if the service holds it.
 ///
@@ -18,7 +18,7 @@ pub(crate) use ah_platform::lease::FileLease;
 ///
 /// [`AppError`] with `MCP_SERVICE_UNSUPPORTED_PLATFORM` off Windows, or
 /// `MCP_SERVICE_STATE_INVALID` when the OS refuses to name the lease.
-pub(crate) fn try_acquire(path: &Path) -> Result<Option<FileLease>, AppError> {
+pub fn try_acquire(path: &Path) -> Result<Option<FileLease>, AppError> {
     FileLease::try_acquire(path, &ah_updater_core::lifecycle_mutex_name(path))
         .map_err(|error| describe(path, error))
 }
@@ -29,7 +29,7 @@ pub(crate) fn try_acquire(path: &Path) -> Result<Option<FileLease>, AppError> {
 ///
 /// [`AppError`] with `MCP_SERVICE_BUSY` when it is still held at the deadline;
 /// otherwise as [`try_acquire`].
-pub(crate) fn acquire(path: &Path, timeout: Duration) -> Result<FileLease, AppError> {
+pub fn acquire(path: &Path, timeout: Duration) -> Result<FileLease, AppError> {
     FileLease::acquire(path, &ah_updater_core::lifecycle_mutex_name(path), timeout)
         .map_err(|error| describe(path, error))
 }

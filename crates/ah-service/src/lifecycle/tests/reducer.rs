@@ -2,7 +2,7 @@ use super::{
     super::*,
     harness::{not_ready_section, ready_section},
 };
-use crate::mcp_service::model::LastExit;
+use crate::model::LastExit;
 
 fn failed_runtime(exit_code: i32) -> RuntimeState {
     let timestamp = now_timestamp();

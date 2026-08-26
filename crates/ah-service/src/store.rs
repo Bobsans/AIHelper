@@ -7,7 +7,8 @@ use std::{
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::{error::AppError, persistence::atomic_write_json};
+use ah_error::AppError;
+use ah_persist::atomic_write_json;
 
 use super::{
     model::{
@@ -274,9 +275,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_service::model::{
-        SCHEMA_VERSION, ServerDefinition, ServiceEndpoint, TASK_SPEC_VERSION,
-    };
+    use crate::model::{SCHEMA_VERSION, ServerDefinition, ServiceEndpoint, TASK_SPEC_VERSION};
     use tempfile::TempDir;
     use uuid::Uuid;
 

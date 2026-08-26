@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::{
     model::{DriftEntry, TaskMarker},
@@ -11,8 +11,8 @@ use super::{
 };
 
 pub const TASK_SOURCE: &str = "AIHelper.ManagedMcp";
-pub(crate) const MANAGED_RESTART_COUNT: i32 = 0;
-pub(crate) const MANAGED_RESTART_INTERVAL: &str = "";
+pub const MANAGED_RESTART_COUNT: i32 = 0;
+pub const MANAGED_RESTART_INTERVAL: &str = "";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesiredTaskSpec {
@@ -95,7 +95,7 @@ impl DesiredTaskSpec {
     }
 }
 
-pub(crate) fn has_canonical_restart_policy(spec: &DesiredTaskSpec) -> bool {
+pub fn has_canonical_restart_policy(spec: &DesiredTaskSpec) -> bool {
     spec.restart_count == MANAGED_RESTART_COUNT && spec.restart_interval == MANAGED_RESTART_INTERVAL
 }
 

@@ -2,7 +2,7 @@ use std::{ffi::OsStr, path::Path, sync::Mutex};
 
 use uuid::Uuid;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::{
     lock,
@@ -219,9 +219,7 @@ fn parse_managed_supervisor_pid(value: &OsStr) -> Result<u32, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_service::model::{
-        SCHEMA_VERSION, ServerDefinition, ServiceEndpoint, TASK_SPEC_VERSION,
-    };
+    use crate::model::{SCHEMA_VERSION, ServerDefinition, ServiceEndpoint, TASK_SPEC_VERSION};
     use tempfile::TempDir;
 
     fn install_definition(temp: &TempDir) -> (ServiceStore, std::path::PathBuf) {
