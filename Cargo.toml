@@ -15,6 +15,7 @@ publish = false
 members = [
     "crates/ah-mcp",
     "crates/ah-paths",
+    "crates/ah-persist",
     "crates/ah-error",
     "crates/ah-platform",
     "crates/ah-plugin-api",
@@ -98,6 +99,7 @@ sha2.workspace = true
 tempfile.workspace = true
 zip.workspace = true
 ah-paths = { path = "crates/ah-paths" }
+ah-persist = { path = "crates/ah-persist" }
 ah-error = { path = "crates/ah-error" }
 ah-platform = { path = "crates/ah-platform" }
 ah-plugin-api = { path = "crates/ah-plugin-api" }

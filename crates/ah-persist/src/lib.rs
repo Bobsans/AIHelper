@@ -1,3 +1,14 @@
+//! Writing AIHelper's JSON state files atomically, one writer at a time.
+//!
+//! Nine subsystems keep state in JSON files, and a half-written one is a broken
+//! installation rather than a lost edit: the managed service's definition, the
+//! plugin settings, the secret vault and the updater's installation identity
+//! are all read by a *different* process than wrote them.
+//!
+//! So every write goes to a temporary beside the destination and is replaced
+//! atomically, under a lock that is both in-process (a per-path mutex) and
+//! cross-process (a sidecar lock file with a staleness bound).
+
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
@@ -13,7 +24,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
@@ -21,7 +32,7 @@ const STALE_LOCK_AGE: Duration = Duration::from_secs(300);
 #[cfg(windows)]
 const REPLACE_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
 
-pub(crate) fn transaction<T>(
+pub fn transaction<T>(
     path: &Path,
     operation: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
@@ -33,13 +44,13 @@ pub(crate) fn transaction<T>(
     operation()
 }
 
-pub(crate) fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
+pub fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
     let mut payload = serde_json::to_vec_pretty(value)?;
     payload.push(b'\n');
     atomic_write(path, &payload)
 }
 
-pub(crate) fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), AppError> {
+pub fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), AppError> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());

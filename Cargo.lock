@@ -77,6 +77,17 @@ name = "ah-paths"
 version = "1.4.0"
 
 [[package]]
+name = "ah-persist"
+version = "1.4.0"
+dependencies = [
+ "ah-error",
+ "ah-platform",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ah-platform"
 version = "1.4.0"
 dependencies = [
@@ -286,6 +297,7 @@ dependencies = [
  "ah-error",
  "ah-mcp",
  "ah-paths",
+ "ah-persist",
  "ah-platform",
  "ah-plugin-api",
  "ah-redact",

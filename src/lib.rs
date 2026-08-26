@@ -9,7 +9,7 @@ pub(crate) mod git_status;
 pub(crate) mod host_commands;
 pub mod mcp_service;
 pub mod output;
-mod persistence;
+pub(crate) use ah_persist as persistence;
 pub mod plugin_settings;
 pub mod plugins;
 #[cfg(test)]
