@@ -62,27 +62,44 @@ drift reduction (`reduce_runtime:1929`), and status projection
 (`apply_scheduler_section:1895`). The update-integration helpers are the coupling
 described in group 07 and should move behind a trait.
 
-### 5.5 `src/commands/ctx_symbols.rs` — 889 lines of hardcoded language support
+### 5.5 `src/commands/ctx_symbols.rs` — 889 lines of hardcoded language support *(done)*
 
-31 per-language extractor functions (`extract_rust_symbols:73` …
-`extract_taskfile_symbols:505`) plus ~60 `OnceLock<Regex>` accessors, one function
-per regex. Adding a language means editing a dispatch match, writing an extractor,
-and adding two to four regex functions.
+31 per-language extractor functions plus 61 `OnceLock<Regex>` accessors, one
+function per regex. Adding a language meant editing a dispatch match, writing an
+extractor, and adding two to four regex functions.
 
-**Target:** a static table.
+**Status:** `LANGUAGES` is now a static table of 28 specs and 62 patterns, and
+one generic extractor walks lines against it. Adding a language is one entry.
 
-```rust
-struct LanguageSpec {
-    extensions: &'static [&'static str],
-    filenames: &'static [&'static str],
-    patterns: &'static [(&'static str, &'static str)], // (regex, symbol kind)
-}
-static LANGUAGES: &[LanguageSpec] = &[ /* … */ ];
-```
+The shape needed two things the sketch did not have. A pattern's *kind* is
+sometimes a fixed label and sometimes a capture — one row covers
+`struct`/`enum`/`trait` rather than three — so it is `Kind::Fixed` or
+`Kind::Captured`. A pattern's *name* is usually one group but is assembled from
+optional groups for Terraform (`resource "aws_s3_bucket" "logs"` is one name)
+and Dockerfile (a stage is named by its `AS` alias or else its image), so it is
+`Name::Capture`, `Name::Dotted` or `Name::Preferred`. Both enums exist because
+current behavior requires them, not in anticipation.
 
-One generic extractor walks lines against the specs. Adding a language becomes one
-table entry. The natural next step — swapping the regex engine for tree-sitter
-grammars — then touches one function instead of thirty-one.
+Two extractors stay functions: Markdown counts heading depth rather than
+capturing it, and the fallback for an unrecognised file has no regex at all.
+
+Pattern order is user-visible and the table states it explicitly; the generic
+extractor keeps first-match-wins per line.
+
+Regexes are compiled once into a `LazyLock`, preserving the caching the
+per-regex `OnceLock` accessors used to provide.
+
+891 lines to 788 - a smaller cut than it looks, because the regexes themselves
+are most of the file and did not go anywhere. The win is that they are now data
+in one place instead of 61 accessor functions and 31 dispatch bodies. The
+natural next step, swapping the regex engine for tree-sitter grammars, touches
+one function.
+
+**The safety net came first.** The module had no unit tests, so the conversion
+is backed by a golden snapshot of 92 symbols across a corpus with one fixture
+per dispatch arm, taken before any edit. Coverage of that corpus was checked
+mechanically: every one of the 61 regexes matches at least one fixture line, and
+a unit test now fails if a table row is added that no fixture reaches.
 
 ### 5.6 `src/commands/project/rules.rs` — a 550-line `match` that is really a table
 
@@ -137,7 +154,11 @@ or everything uses flat files; delete the alias shims; bring `secrets` and
 
 Ordering is chosen so that each split is mechanical and low-risk:
 
-1. `ctx_symbols` → table-driven (self-contained, well covered by existing tests).
+1. ~~`ctx_symbols` → table-driven (self-contained, well covered by existing tests).~~
+   **(done)** — and it was *not* covered: the module had no unit tests, and the
+   integration tests assert only that a few expected symbols are present for
+   seven of the twenty-eight languages. A characterization snapshot was taken
+   first.
 2. `project/rules` → table-driven (same).
 3. ~~`event_log` → extract `ah-redact`~~ **(done)**; still to do: split sink/rotation.
 4. `http/domain` → extract `curl`, `jsonpath`, `assert`, `spec` as sibling modules;
@@ -155,8 +176,9 @@ Ordering is chosen so that each split is mechanical and low-risk:
   golden snapshots from group 01/04.
 - **The setup UI has security properties** (nonce, CSP, `no-store`, referrer policy).
   Move the tests with it and keep them passing at every commit.
-- **`ctx_symbols` output ordering is user-visible.** The generic extractor must
-  preserve the current per-language pattern order, which the table encodes explicitly.
+- ~~**`ctx_symbols` output ordering is user-visible.**~~ **(held)** — the table
+  encodes pattern order explicitly and the extractor keeps first-match-wins; the
+  golden snapshot is byte-identical across the conversion.
 
 ## Acceptance criteria
 
