@@ -99,6 +99,16 @@ Mostly moves, made safe by phases 0–1.
 **Exit criterion:** no file over ~800 production lines; one parse of argv; no
 process-global working directory.
 
+**Measured, with two rows still open.** No process-global working directory:
+met, `set_current_dir` is gone from the workspace. One parse of argv: **not**
+met - the row above is open, and argv is still read by `entry::detect`, the
+upgrade route, the managed-service route and the full parse. Files over ~800
+production lines: **not** met, twenty of them. The largest are
+`ah-update-helper/src/apply.rs` (2195) and `mcp_service/lifecycle.rs` (2027);
+several others are data rather than logic (`project/rules.rs`, the three
+plugins' `typed.rs`) and splitting those buys nothing. The criterion was
+stated as a single number and should have distinguished the two.
+
 ## Phase 3 — Decompose the crate
 
 Now that boundaries are clean and the SDK exists, extraction is mechanical.
