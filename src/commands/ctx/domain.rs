@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use ah_runtime::core;
 
-use crate::commands::ctx_symbols::{Symbol, extract_symbols};
+use crate::commands::ctx::symbols::{Symbol, extract_symbols};
 use crate::error::AppError;
 use crate::git_status::{StatusEntry, parse_porcelain_v1_z};
 use crate::safety::{TextFileDecision, TextFilePolicy, TextFileSkipReason};

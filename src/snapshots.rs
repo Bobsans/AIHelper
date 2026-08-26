@@ -199,7 +199,7 @@ fn render_help_tree(command: &mut clap::Command, path: &str, out: &mut String) {
     }
 }
 
-/// One fixture per dispatch arm of `ctx_symbols::extract_symbols`, covering
+/// One fixture per dispatch arm of `symbols::extract_symbols`, covering
 /// every extraction pattern the module defines.
 ///
 /// The corpus was checked mechanically: each of the 61 regexes in that module
@@ -312,7 +312,7 @@ fn symbol_extraction_is_stable() {
     let payload = SYMBOL_FIXTURES
         .iter()
         .map(|(name, content)| {
-            let symbols = crate::commands::ctx_symbols::extract_symbols(Path::new(name), content);
+            let symbols = crate::commands::ctx::symbols::extract_symbols(Path::new(name), content);
             json!({
                 "file": name,
                 "symbols": serde_json::to_value(&symbols)

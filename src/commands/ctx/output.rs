@@ -1,8 +1,8 @@
-use crate::commands::{
-    ctx::domain::{
+use crate::commands::ctx::{
+    domain::{
         ChangedEntry, CtxChangedOutput, CtxPackOutput, CtxResult, CtxSymbolsOutput, PackItem,
     },
-    ctx_symbols::Symbol,
+    symbols::Symbol,
 };
 use crate::{
     error::AppError,
@@ -170,9 +170,9 @@ fn render_changed_entry(entry: &ChangedEntry, formatter: TextFormatter) -> Strin
 mod tests {
     use super::{render_changed_entry, render_pack_item, render_skipped_counts, render_symbol};
     use crate::{
-        commands::{
-            ctx::domain::{ChangedEntry, PackItem},
-            ctx_symbols::Symbol,
+        commands::ctx::{
+            domain::{ChangedEntry, PackItem},
+            symbols::Symbol,
         },
         output::TextFormatter,
     };

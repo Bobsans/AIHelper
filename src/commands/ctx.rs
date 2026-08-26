@@ -142,6 +142,7 @@ pub(crate) mod io;
 pub(crate) mod output;
 
 mod domain;
+pub(crate) mod symbols;
 
 pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {

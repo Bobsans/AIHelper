@@ -193,29 +193,34 @@ still calling `println!` directly; they now go through `Emitter`, which closes
 the last thirteen print sites outside finding 4.2's live frames and 4.3's error
 rendering.
 
-### 5.8 Inconsistent and ceremonial layering in `src/commands/`
+### 5.8 Inconsistent and ceremonial layering in `src/commands/` *(done)*
 
 The intended pattern is `domain.rs` (pure) + `io.rs` (effects) + `output.rs`
-(rendering). Actual state:
+(rendering). Two domains put those under an `adapters/` subdirectory, two
+modules ignored the pattern entirely, and eight carried a no-op alias module
+that made the two layouts *look* identical instead of making them identical.
 
-- `ctx`, `file`, `git`, `run`, `search`, `task` use flat `io.rs`/`output.rs`.
-- `http`, `project` use an `adapters/` subdirectory for the same thing.
-- `secrets.rs` (489 lines) and `ctx_symbols.rs` (889) do not follow the pattern at all.
-- Eight modules contain a no-op alias module:
-  ```rust
-  mod adapters {
-      pub(crate) use super::io;
-      pub(crate) use super::output;
-  }
-  ```
-  (`ctx.rs:109`, `file.rs:104`, `git.rs:95`, `http.rs:18`, `project.rs:15`,
-  `run.rs:54`, `search.rs:74`, `task.rs:66`) — pure ceremony that makes two layouts
-  look identical instead of making them identical.
+**Status:** one layout, and `src/commands/layout.rs` fails the build when it
+drifts. All nine command modules are `<domain>.rs` beside `<domain>/` holding
+exactly `domain.rs`, `io.rs` and `output.rs`.
 
-**Target:** one layout, enforced. Either everything uses `adapters/{io,output}.rs`
-or everything uses flat files; delete the alias shims; bring `secrets` and
-`ctx_symbols` into the pattern. Document the chosen layout in
-`docs/developers/architecture.md` and add a directory-shape test if it keeps drifting.
+- The eight alias modules are gone.
+- `http` and `project` are flat like the other six. `http` had since grown a
+  `domain/` directory of its own, and carrying both `domain/` and `adapters/`
+  was the worst of the two options.
+- `secrets` is split: browser setup, passphrase prompting and the capability
+  request are effects; the four renderers are output.
+- `ctx_symbols` was never a command. It is symbol extraction used only by `ctx`,
+  so it is `ctx/symbols.rs` now.
+
+Three files remain outside the trio, each named in the guard so adding a fourth
+is a deliberate edit: `ctx/symbols.rs`, `project/rules.rs` (the classification
+table) and `run/windows_job.rs` (one platform only). A directory inside a
+command directory is still allowed - `http/domain/` splits one layer further,
+which is the pattern working rather than bending.
+
+The layout is documented in `docs/developers/architecture.md`, but the test is
+what holds the line; the prose did not.
 
 ## Why it hurts
 

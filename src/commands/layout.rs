@@ -18,11 +18,14 @@ mod tests {
 
     /// Modules that are a single file on purpose: they have no adapters to
     /// separate, because they do no I/O and render nothing themselves.
-    const FLAT_MODULES: &[&str] = &["ctx_symbols", "layout", "mod", "secrets"];
+    const FLAT_MODULES: &[&str] = &["symbols", "layout", "mod", "secrets"];
 
     /// Files a command directory may hold beyond the three required ones, each
     /// because it is a genuine third concern rather than a layering variant.
     const EXTRA_FILES: &[(&str, &str)] = &[
+        // Symbol extraction: a pure library with no effects of its own, used
+        // only by this domain.
+        ("ctx", "symbols.rs"),
         // The classification table, which is data rather than logic.
         ("project", "rules.rs"),
         // Windows job objects, which only one platform compiles.
