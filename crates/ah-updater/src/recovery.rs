@@ -15,21 +15,21 @@ use ah_updater_core::{InstallationIdentityV1, ReleaseTrust, TransactionStateV1, 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 const MAX_IDENTITY_BYTES: usize = 16 * 1024;
 const MAX_TRANSACTION_DIRECTORIES: usize = 8;
 const RECOVERY_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EarlyRecoveryOutcome {
+pub enum EarlyRecoveryOutcome {
     Continue,
     RecoveryLaunched,
 }
 
-pub(crate) fn recover_before_startup(
+pub fn recover_before_startup(
     allow_safe_managed_serve: bool,
-    guard: &dyn crate::updater::service::ServiceGuard,
+    guard: &dyn crate::service::ServiceGuard,
 ) -> Result<EarlyRecoveryOutcome, AppError> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
@@ -38,7 +38,7 @@ pub(crate) fn recover_before_startup(
                 .map_err(|_| recovery_error("failed to resolve the running executable"))?,
         )
         .map_err(|_| recovery_error("failed to canonicalize the running executable"))?;
-        let Some(updater_root) = crate::updater::installation::updater_root() else {
+        let Some(updater_root) = crate::installation::updater_root() else {
             return Ok(EarlyRecoveryOutcome::Continue);
         };
         let Some(initial_paths) = discover_pending(&executable, &updater_root)? else {
@@ -98,12 +98,12 @@ enum HelperRun {
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-struct ProcessRecoveryRunner<'a>(&'a crate::updater::service::ServiceHold);
+struct ProcessRecoveryRunner<'a>(&'a crate::service::ServiceHold);
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {
     fn launch(&self, helper: &Path, paths: &TransactionPaths) -> Result<HelperRun, AppError> {
-        crate::updater::handoff::launch_recovery(
+        crate::handoff::launch_recovery(
             helper,
             &[
                 OsStr::new("recover"),
@@ -116,7 +116,7 @@ impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {
             ],
             self.0,
         )
-        .map_err(crate::updater::handoff::LaunchFailure::into_error)?;
+        .map_err(crate::handoff::LaunchFailure::into_error)?;
         Ok(HelperRun::Launched)
     }
 }

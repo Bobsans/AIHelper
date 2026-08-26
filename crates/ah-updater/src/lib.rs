@@ -1,21 +1,32 @@
-pub(crate) mod activate;
-pub(crate) mod candidate;
-pub(crate) mod check;
-pub(crate) mod github;
+//! AIHelper's self-update: check, download, verify, activate, roll back and
+//! recover.
+//!
+//! Everything here is mechanism. It renders nothing and reads no command line -
+//! `ah`'s `upgrade` module does both, and supplies the two ports [`Host`]
+//! names.
+//!
+//! The order of the steps is the safety argument: nothing is trusted until it
+//! is verified, nothing is replaced until a backup exists, and every state a
+//! crash can leave is one the recovery path can name.
+
+pub mod activate;
+pub mod candidate;
+pub mod check;
+pub mod github;
 #[cfg(windows)]
 mod handoff;
 mod installation;
-pub(crate) mod recovery;
-pub(crate) mod request;
-pub(crate) mod service;
-pub(crate) mod smoke;
+pub mod recovery;
+pub mod request;
+pub mod service;
+pub mod smoke;
 mod trust;
 
-pub(crate) use check::execute;
+pub use check::execute;
 
 use ah_updater_core::UpdaterError;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 /// What the updater needs from the process it runs inside.
 ///
@@ -24,9 +35,9 @@ use crate::error::AppError;
 /// it has to run the candidate binary before trusting it. The implementations
 /// are the CLI's - `mcp_service::lifecycle::guard` and `upgrade`'s bounded
 /// runner - which is exactly what an extracted crate must not know.
-pub(crate) struct Host<'a> {
-    pub(crate) service: &'a dyn service::ServiceGuard,
-    pub(crate) smoke: &'a dyn smoke::SmokeRunner,
+pub struct Host<'a> {
+    pub service: &'a dyn service::ServiceGuard,
+    pub smoke: &'a dyn smoke::SmokeRunner,
 }
 
 /// The updater's errors, reported under the code the core assigned them.

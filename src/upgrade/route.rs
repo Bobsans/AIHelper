@@ -8,7 +8,9 @@ use std::ffi::OsString;
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind};
 use semver::Version;
 
-use crate::{cli::GlobalOptions, error::AppError, updater::request::UpgradeRequest};
+use ah_updater::request::UpgradeRequest;
+
+use crate::{cli::GlobalOptions, error::AppError};
 
 #[derive(Debug)]
 pub enum EarlyUpgradeRoute {

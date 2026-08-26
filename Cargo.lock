@@ -251,6 +251,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-updater"
+version = "1.4.0"
+dependencies = [
+ "ah-error",
+ "ah-paths",
+ "ah-persist",
+ "ah-platform",
+ "ah-plugin-api",
+ "ah-release-manifest",
+ "ah-update-helper",
+ "ah-updater-core",
+ "base64",
+ "ed25519-dalek",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+ "windows",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
 name = "ah-updater-core"
 version = "1.4.0"
 dependencies = [
@@ -304,6 +330,7 @@ dependencies = [
  "ah-release-manifest",
  "ah-runtime",
  "ah-update-helper",
+ "ah-updater",
  "ah-updater-core",
  "assert_cmd",
  "base64",
@@ -312,7 +339,6 @@ dependencies = [
  "command-group",
  "console",
  "dialoguer",
- "ed25519-dalek",
  "fs2",
  "globset",
  "ignore",
@@ -327,7 +353,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "shell-words",
  "tempfile",
  "thiserror",
@@ -336,7 +361,6 @@ dependencies = [
  "walkdir",
  "windows",
  "windows-sys 0.61.2",
- "zip",
 ]
 
 [[package]]

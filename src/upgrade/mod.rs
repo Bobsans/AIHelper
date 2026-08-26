@@ -10,15 +10,16 @@ use std::{ffi::OsStr, time::Duration};
 
 use ah_updater_core::{UpdaterError, UpdaterErrorCode};
 
+use ah_updater::{
+    Host,
+    smoke::{SmokeProcessOutput, SmokeRequest, SmokeRunner},
+};
+
 use crate::{
     cli::GlobalOptions,
     commands::run::io::{EnvironmentOverride, RunCommandOptions, run_program},
     error::AppError,
     mcp_service::lifecycle::ManagedMcpGuard,
-    updater::{
-        Host,
-        smoke::{SmokeProcessOutput, SmokeRequest, SmokeRunner},
-    },
 };
 
 mod render;
@@ -30,14 +31,14 @@ pub(crate) mod route;
 ///
 /// [`AppError`] from the update itself, or when the report cannot be written.
 pub(crate) fn execute(
-    request: crate::updater::request::UpgradeRequest,
+    request: ah_updater::request::UpgradeRequest,
     options: GlobalOptions,
 ) -> Result<(), AppError> {
     let host = Host {
         service: &ManagedMcpGuard,
         smoke: &BoundedSmokeRunner,
     };
-    let outcome = crate::updater::execute(request, &host)?;
+    let outcome = ah_updater::execute(request, &host)?;
     render::outcome(&outcome, options)
 }
 

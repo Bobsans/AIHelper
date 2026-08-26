@@ -20,7 +20,6 @@ pub mod safety;
 pub mod secrets;
 #[cfg(test)]
 mod snapshots;
-pub(crate) mod updater;
 
 use std::{path::PathBuf, sync::Arc};
 

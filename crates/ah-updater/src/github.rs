@@ -43,14 +43,14 @@ impl DiscoveryLimits {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct GitHubReleaseClient {
+pub struct GitHubReleaseClient {
     client: Client,
     api_root: String,
     limits: DiscoveryLimits,
 }
 
 impl GitHubReleaseClient {
-    pub(crate) fn new() -> Result<Self, UpdaterError> {
+    pub fn new() -> Result<Self, UpdaterError> {
         Self::with_config(
             GITHUB_RELEASES_API_ROOT.to_owned(),
             DiscoveryLimits::production(),
@@ -71,26 +71,23 @@ impl GitHubReleaseClient {
         })
     }
 
-    pub(crate) fn discover(&self) -> Result<DiscoveredReleaseV1, UpdaterError> {
+    pub fn discover(&self) -> Result<DiscoveredReleaseV1, UpdaterError> {
         let releases = self.list_releases()?;
         select_highest_stable_release(&releases, WINDOWS_X64_TARGET)
     }
 
-    pub(crate) fn discover_version(
-        &self,
-        version: &Version,
-    ) -> Result<DiscoveredReleaseV1, UpdaterError> {
+    pub fn discover_version(&self, version: &Version) -> Result<DiscoveredReleaseV1, UpdaterError> {
         let releases = self.list_releases()?;
         select_stable_release_by_version(&releases, WINDOWS_X64_TARGET, version)
     }
 
-    pub(crate) fn download_asset(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError> {
+    pub fn download_asset(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError> {
         let mut bytes = Vec::with_capacity(usize::try_from(asset.size).unwrap_or(0));
         self.download_asset_to(asset, &mut bytes)?;
         Ok(bytes)
     }
 
-    pub(crate) fn download_asset_to(
+    pub fn download_asset_to(
         &self,
         asset: &ReleaseAssetV1,
         output: &mut dyn Write,

@@ -94,11 +94,11 @@ fn answer_before_startup(entry: &crate::entry::Startup) -> Result<Step<()>, AppE
     }
     if entry.handoff.is_none()
         && matches!(
-            crate::updater::recovery::recover_before_startup(
+            ah_updater::recovery::recover_before_startup(
                 matches!(entry.route, crate::entry::Route::ManagedServe),
                 &ManagedMcpGuard,
             )?,
-            crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched
+            ah_updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched
         )
     {
         emit_warning("update recovery started; rerun the command after recovery completes");

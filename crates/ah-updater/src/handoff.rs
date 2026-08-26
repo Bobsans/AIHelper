@@ -20,11 +20,13 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::{error::AppError, updater::service::ServiceHold};
+use ah_error::AppError;
+
+use crate::service::ServiceHold;
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(super) fn launch_recovery(
+pub(crate) fn launch_recovery(
     helper: &Path,
     arguments: &[&OsStr],
     hold: &ServiceHold,
@@ -32,7 +34,7 @@ pub(super) fn launch_recovery(
     launch_helper(helper, arguments, hold, "UPDATER_RECOVERY", "recovery")
 }
 
-pub(super) fn launch_activation(
+pub(crate) fn launch_activation(
     helper: &Path,
     arguments: &[&OsStr],
     hold: &ServiceHold,
@@ -40,7 +42,7 @@ pub(super) fn launch_activation(
     launch_helper(helper, arguments, hold, "UPDATER_ACTIVATION", "activation")
 }
 
-pub(super) fn launch_rollback(
+pub(crate) fn launch_rollback(
     helper: &Path,
     arguments: &[&OsStr],
     hold: &ServiceHold,
@@ -289,7 +291,7 @@ fn handoff_for(code: &'static str, detail: impl Into<String>) -> AppError {
     AppError::external(code, detail)
 }
 
-pub(super) struct LaunchFailure {
+pub(crate) struct LaunchFailure {
     error: AppError,
     cleanup_safe: bool,
 }
@@ -309,11 +311,11 @@ impl LaunchFailure {
         }
     }
 
-    pub(super) fn cleanup_safe(&self) -> bool {
+    pub(crate) fn cleanup_safe(&self) -> bool {
         self.cleanup_safe
     }
 
-    pub(super) fn into_error(self) -> AppError {
+    pub(crate) fn into_error(self) -> AppError {
         self.error
     }
 }

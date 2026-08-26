@@ -3,12 +3,12 @@
 //! Three functions used to sit in the lifecycle root as `pub(crate)` exports
 //! named `*_while_locked`, and the updater called them by name. They are the
 //! same three operations; what changed is that the updater now asks for them
-//! through `updater::service::ServiceGuard`, so it no longer knows this module
+//! through `ah_updater::service::ServiceGuard`, so it no longer knows this module
 //! exists.
 
 use super::*;
 
-use crate::updater::service::{ServiceGuard, ServiceHold, ServiceState};
+use ah_updater::service::{ServiceGuard, ServiceHold, ServiceState};
 
 /// The real managed MCP service.
 pub(crate) struct ManagedMcpGuard;

@@ -14,7 +14,7 @@ use semver::Version;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 const MAX_IDENTITY_BYTES: usize = 16 * 1024;
 const MAX_MANAGED_FILE_BYTES: u64 = 256 * 1024 * 1024;
@@ -24,23 +24,23 @@ const INSTALLED_SIGNATURE_FILE: &str = "installed.manifest.sig";
 const IDENTITY_FILE: &str = "identity.json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PortableInstallation {
+pub struct PortableInstallation {
     executable: PathBuf,
     root: PathBuf,
 }
 
 impl PortableInstallation {
-    pub(crate) fn executable(&self) -> &Path {
+    pub fn executable(&self) -> &Path {
         &self.executable
     }
 
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         &self.root
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct ManagedInstallation {
+pub struct ManagedInstallation {
     portable: PortableInstallation,
     state_root: PathBuf,
     identity: InstallationIdentityV1,
@@ -48,24 +48,24 @@ pub(crate) struct ManagedInstallation {
 }
 
 impl ManagedInstallation {
-    pub(crate) fn portable(&self) -> &PortableInstallation {
+    pub fn portable(&self) -> &PortableInstallation {
         &self.portable
     }
 
-    pub(crate) fn identity(&self) -> &InstallationIdentityV1 {
+    pub fn identity(&self) -> &InstallationIdentityV1 {
         &self.identity
     }
 
-    pub(crate) fn state_root(&self) -> &Path {
+    pub fn state_root(&self) -> &Path {
         &self.state_root
     }
 
-    pub(crate) fn manifest(&self) -> &ReleaseManifest {
+    pub fn manifest(&self) -> &ReleaseManifest {
         &self.manifest
     }
 }
 
-pub(crate) trait LegacyReleaseSource {
+pub trait LegacyReleaseSource {
     fn discover_version(&self, version: &Version) -> Result<DiscoveredReleaseV1, UpdaterError>;
     fn download(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError>;
 }
@@ -75,7 +75,7 @@ pub(crate) trait LegacyReleaseSource {
 /// Resolved from the platform location and *not* from `AH_CONFIG_DIR`: a helper
 /// from one release hands off to an `ah` from another, and an override set for
 /// one command must not move the transaction the other is finishing.
-pub(crate) fn updater_root() -> Option<PathBuf> {
+pub fn updater_root() -> Option<PathBuf> {
     ah_paths::platform_config_dir(ah_paths::Layout::host(), &ah_paths::ProcessEnvironment)
         .ok()
         .map(|root| root.join("updater"))
@@ -130,14 +130,13 @@ impl InstallationStatePaths {
     }
 }
 
-pub(crate) fn inspect_current_portable_installation() -> Result<PortableInstallation, UpdaterError>
-{
+pub fn inspect_current_portable_installation() -> Result<PortableInstallation, UpdaterError> {
     let executable = std::env::current_exe()
         .map_err(|_| installation("failed to resolve the running AIHelper executable"))?;
     inspect_portable_installation(&executable)
 }
 
-pub(crate) fn resolve_current_managed_installation() -> Result<ManagedInstallation, UpdaterError> {
+pub fn resolve_current_managed_installation() -> Result<ManagedInstallation, UpdaterError> {
     ah_updater_core::UpdateTarget::current()?;
     let portable = inspect_current_portable_installation()?;
     let state = InstallationStatePaths::discover()?;
@@ -152,7 +151,7 @@ pub(crate) fn resolve_current_managed_installation() -> Result<ManagedInstallati
     resolve_managed_installation(&portable, &state, &source, &trust, &current_version)
 }
 
-pub(crate) fn load_current_managed_installation(
+pub fn load_current_managed_installation(
     trust: &ReleaseTrust,
 ) -> Result<ManagedInstallation, UpdaterError> {
     ah_updater_core::UpdateTarget::current()?;
@@ -510,7 +509,7 @@ fn read_bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, UpdaterErro
     }
 }
 
-pub(super) fn read_at_most(reader: impl Read, maximum: usize) -> io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_at_most(reader: impl Read, maximum: usize) -> io::Result<Option<Vec<u8>>> {
     let mut bytes = Vec::with_capacity(maximum.min(8 * 1024));
     reader
         .take(maximum.saturating_add(1) as u64)

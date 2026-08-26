@@ -4,32 +4,28 @@ use ah_updater_core::{
 };
 use semver::Version;
 
+use ah_error::AppError;
+
 use crate::{
-    error::AppError,
-    updater::{
-        Host, activate::UpgradeLaunchResult, github::GitHubReleaseClient, map_updater_error,
-        request::UpgradeRequest, trust::production_release_trust,
-    },
+    Host, activate::UpgradeLaunchResult, github::GitHubReleaseClient, map_updater_error,
+    request::UpgradeRequest, trust::production_release_trust,
 };
 
 /// What one `ah upgrade` invocation produced, for the CLI to render.
 #[derive(Debug)]
-pub(crate) enum UpgradeOutcome {
+pub enum UpgradeOutcome {
     /// `--check`: what is available, with nothing changed.
     Checked(UpgradeCheckResultV1),
     /// An upgrade, a pinned version, or a rollback.
     Launched(UpgradeLaunchResult),
 }
 
-pub(crate) trait ReleaseCheckSource {
+pub trait ReleaseCheckSource {
     fn discover(&self) -> Result<DiscoveredReleaseV1, UpdaterError>;
     fn download(&self, asset: &ReleaseAssetV1) -> Result<Vec<u8>, UpdaterError>;
 }
 
-pub(crate) fn execute(
-    request: UpgradeRequest,
-    host: &Host<'_>,
-) -> Result<UpgradeOutcome, AppError> {
+pub fn execute(request: UpgradeRequest, host: &Host<'_>) -> Result<UpgradeOutcome, AppError> {
     match request {
         // A check mutates nothing, so it needs neither port.
         UpgradeRequest::Check => execute_check().map(UpgradeOutcome::Checked),
@@ -54,7 +50,7 @@ fn execute_check() -> Result<UpgradeCheckResultV1, AppError> {
     perform_check(&source, &trust, &current_version).map_err(map_updater_error)
 }
 
-pub(crate) fn perform_check(
+pub fn perform_check(
     source: &impl ReleaseCheckSource,
     trust: &ReleaseTrust,
     current_version: &Version,

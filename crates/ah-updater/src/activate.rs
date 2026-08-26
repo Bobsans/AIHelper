@@ -19,7 +19,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{error::AppError, updater::Host};
+use ah_error::AppError;
+
+use crate::Host;
 
 use super::{
     candidate::prepare_candidate,
@@ -39,20 +41,20 @@ const MAX_ACTIVATION_HELPER_COPIES: usize = 32;
 /// Owned rather than borrowed because it crosses out of here: the mechanism
 /// returns it and the CLI renders it. That is one allocation per upgrade.
 #[derive(Debug, Serialize)]
-pub(crate) struct UpgradeLaunchResult {
-    pub(crate) schema_version: u32,
-    pub(crate) operation: UpdateOperation,
-    pub(crate) status: &'static str,
-    pub(crate) current_version: String,
-    pub(crate) selected_version: String,
-    pub(crate) target: String,
-    pub(crate) source: &'static str,
-    pub(crate) activation: &'static str,
-    pub(crate) managed_mcp_restoration: &'static str,
-    pub(crate) rollback: &'static str,
+pub struct UpgradeLaunchResult {
+    pub schema_version: u32,
+    pub operation: UpdateOperation,
+    pub status: &'static str,
+    pub current_version: String,
+    pub selected_version: String,
+    pub target: String,
+    pub source: &'static str,
+    pub activation: &'static str,
+    pub managed_mcp_restoration: &'static str,
+    pub rollback: &'static str,
 }
 
-pub(super) fn execute(
+pub(crate) fn execute(
     request: UpgradeRequest,
     host: &Host<'_>,
 ) -> Result<UpgradeLaunchResult, AppError> {
@@ -322,7 +324,7 @@ fn launch_transaction(
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub(crate) fn copy_activation_helper(
+pub fn copy_activation_helper(
     candidate_root: &Path,
     candidate_manifest: &ReleaseManifest,
     state_root: &Path,
@@ -380,7 +382,7 @@ pub(crate) fn copy_activation_helper(
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub(crate) fn cleanup_activation_helpers(state_root: &Path) -> Result<(), UpdaterError> {
+pub fn cleanup_activation_helpers(state_root: &Path) -> Result<(), UpdaterError> {
     let entries = fs::read_dir(state_root)
         .map_err(|_| candidate_error("failed to enumerate activation helper copies"))?;
     let mut count = 0_usize;

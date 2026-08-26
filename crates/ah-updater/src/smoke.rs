@@ -21,21 +21,21 @@ const REQUIRED_BUILTINS: [(&str, &str); 8] = [
 ];
 
 #[derive(Debug)]
-pub(crate) struct SmokeCheckedCandidate {
+pub struct SmokeCheckedCandidate {
     prepared: PreparedCandidate,
 }
 
 impl SmokeCheckedCandidate {
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         self.prepared.root()
     }
 
-    pub(crate) fn verified_release(&self) -> &VerifiedReleaseV1 {
+    pub fn verified_release(&self) -> &VerifiedReleaseV1 {
         self.prepared.verified_release()
     }
 }
 
-pub(crate) fn run_offline_smoke(
+pub fn run_offline_smoke(
     prepared: PreparedCandidate,
     runner: &dyn SmokeRunner,
 ) -> Result<SmokeCheckedCandidate, UpdaterError> {
@@ -267,23 +267,23 @@ struct PluginCatalogEntry {
 }
 
 /// One command the smoke check wants run against the candidate.
-pub(crate) struct SmokeRequest<'a> {
-    pub(crate) program: &'a Path,
-    pub(crate) arguments: &'a [&'a str],
-    pub(crate) cwd: &'a Path,
+pub struct SmokeRequest<'a> {
+    pub program: &'a Path,
+    pub arguments: &'a [&'a str],
+    pub cwd: &'a Path,
     /// An empty directory, so the candidate answers from a clean configuration
     /// rather than the running installation's.
-    pub(crate) config_dir: &'a Path,
+    pub config_dir: &'a Path,
 }
 
 #[derive(Debug)]
-pub(crate) struct SmokeProcessOutput {
-    pub(crate) exit_code: Option<i32>,
-    pub(crate) timed_out: bool,
-    pub(crate) stdout: Vec<u8>,
-    pub(crate) stderr: Vec<u8>,
-    pub(crate) stdout_truncated: bool,
-    pub(crate) stderr_truncated: bool,
+pub struct SmokeProcessOutput {
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
 }
 
 /// Running a bounded, cancellable child process.
@@ -292,7 +292,7 @@ pub(crate) struct SmokeProcessOutput {
 /// runner and the smoke check must not know that. The truncation flags are part
 /// of the contract: a candidate that floods stdout has to fail the check rather
 /// than be believed.
-pub(crate) trait SmokeRunner {
+pub trait SmokeRunner {
     /// # Errors
     ///
     /// [`UpdaterError`] when the process cannot be launched or waited on. A

@@ -7,12 +7,9 @@
 
 use ah_updater_core::{CheckStatus, UpdateOperation, UpdateSource, UpgradeCheckResultV1};
 
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::Emitter,
-    updater::{activate::UpgradeLaunchResult, check::UpgradeOutcome},
-};
+use ah_updater::{activate::UpgradeLaunchResult, check::UpgradeOutcome};
+
+use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
 /// # Errors
 ///

@@ -15,7 +15,7 @@ const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MANAGED_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 1024 * 1024 * 1024;
 
-pub(crate) trait CandidateArchiveSource {
+pub trait CandidateArchiveSource {
     fn download_archive(
         &self,
         asset: &ReleaseAssetV1,
@@ -24,27 +24,27 @@ pub(crate) trait CandidateArchiveSource {
 }
 
 #[derive(Debug)]
-pub(crate) struct PreparedCandidate {
+pub struct PreparedCandidate {
     _staging: TempDir,
     root: PathBuf,
     verified_release: VerifiedReleaseV1,
 }
 
 impl PreparedCandidate {
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         &self.root
     }
 
-    pub(super) fn staging_root(&self) -> &Path {
+    pub(crate) fn staging_root(&self) -> &Path {
         self._staging.path()
     }
 
-    pub(crate) fn verified_release(&self) -> &VerifiedReleaseV1 {
+    pub fn verified_release(&self) -> &VerifiedReleaseV1 {
         &self.verified_release
     }
 }
 
-pub(crate) fn prepare_candidate(
+pub fn prepare_candidate(
     source: &impl CandidateArchiveSource,
     verified_release: VerifiedReleaseV1,
     staging_parent: &Path,

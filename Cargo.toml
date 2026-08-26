@@ -26,6 +26,7 @@ members = [
     "crates/ah-release-tool",
     "crates/ah-runtime",
     "crates/ah-update-helper",
+    "crates/ah-updater",
     "crates/ah-updater-core",
     "plugins/ah-plugin-github",
     "plugins/ah-plugin-gitlab",
@@ -95,9 +96,7 @@ shell-words.workspace = true
 thiserror.workspace = true
 walkdir = "2.5.0"
 reqwest = { workspace = true, features = ["json"] }
-sha2.workspace = true
 tempfile.workspace = true
-zip.workspace = true
 ah-paths = { path = "crates/ah-paths" }
 ah-persist = { path = "crates/ah-persist" }
 ah-error = { path = "crates/ah-error" }
@@ -107,6 +106,7 @@ ah-redact = { path = "crates/ah-redact" }
 ah-runtime = { path = "crates/ah-runtime" }
 ah-mcp = { path = "crates/ah-mcp" }
 ah-update-helper = { path = "crates/ah-update-helper" }
+ah-updater = { path = "crates/ah-updater" }
 ah-updater-core = { path = "crates/ah-updater-core" }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "time"] }
 uuid.workspace = true
@@ -144,7 +144,6 @@ ah-release-manifest = { path = "crates/ah-release-manifest" }
 assert_cmd.workspace = true
 base64.workspace = true
 command-group.workspace = true
-ed25519-dalek.workspace = true
 predicates = "3.1.3"
 
 [[bin]]

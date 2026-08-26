@@ -1,0 +1,42 @@
+[package]
+name = "ah-updater"
+version = "1.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AIHelper's self-update mechanism: check, verify, activate, roll back, recover"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
+
+[dependencies]
+ah-error = { path = "../ah-error" }
+ah-paths = { path = "../ah-paths" }
+ah-persist = { path = "../ah-persist" }
+ah-platform = { path = "../ah-platform" }
+ah-plugin-api = { path = "../ah-plugin-api" }
+ah-release-manifest = { path = "../ah-release-manifest" }
+ah-update-helper = { path = "../ah-update-helper" }
+ah-updater-core = { path = "../ah-updater-core" }
+reqwest = { workspace = true, features = ["blocking", "json", "rustls-tls"] }
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+uuid = { workspace = true, features = ["v4", "serde"] }
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Globalization"] }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
+tempfile.workspace = true

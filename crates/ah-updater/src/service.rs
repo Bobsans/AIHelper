@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 /// The lifecycle lease, held for as long as the update needs the service to
 /// stay where it was put.
@@ -25,20 +25,20 @@ use crate::error::AppError;
 /// and needs the real thing. It is `ah_platform`'s rather than
 /// `mcp_service`'s - the updater must not know which subsystem the lease
 /// belongs to, only that it holds one.
-pub(crate) type ServiceHold = ah_platform::lease::FileLease;
+pub type ServiceHold = ah_platform::lease::FileLease;
 
 /// What the service was, so it can be put back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct ServiceState {
-    pub(crate) was_running: bool,
+pub struct ServiceState {
+    pub was_running: bool,
     /// The instance that was serving, so a restore can prove it came back as a
     /// *different* one rather than never having stopped.
-    pub(crate) previous_instance_id: Option<Uuid>,
+    pub previous_instance_id: Option<Uuid>,
 }
 
 /// A managed service the updater has to hold still while it swaps the binary
 /// under it.
-pub(crate) trait ServiceGuard {
+pub trait ServiceGuard {
     /// Take the lifecycle lease: until the returned hold is dropped, nothing
     /// else may change the service's lifecycle.
     ///
