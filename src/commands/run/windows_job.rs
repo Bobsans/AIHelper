@@ -12,7 +12,6 @@ use std::{
     path::Path,
     process::ExitStatus,
     ptr::{null, null_mut},
-    sync::Mutex,
     thread,
     time::Duration,
 };
@@ -43,8 +42,6 @@ use windows_sys::Win32::{
 };
 
 use super::io::EnvironmentOverride;
-
-pub(crate) static CREATE_PROCESS_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) struct Child {
     process: OwnedHandle,
@@ -206,9 +203,7 @@ fn spawn_prepared(
     // Windows requires HANDLE_LIST entries to be inheritable. Keep that global
     // state enabled only across CreateProcessW and serialize this backend's
     // spawns to avoid cross-request handle inheritance.
-    let spawn_guard = CREATE_PROCESS_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let spawn_guard = ah_platform::exec::hold_create_process_lock();
     let inherit_guard = InheritGuard::new(&inherited_handles)?;
     let created = unsafe {
         CreateProcessW(

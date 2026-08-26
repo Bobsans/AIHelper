@@ -1,6 +1,33 @@
-//! Finding an executable, which Windows does differently from everywhere else.
+//! Finding an executable, which Windows does differently from everywhere else,
+//! and the lock every spawn that inherits a handle has to take.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard},
+};
+
+/// Serialises spawns that pass an explicit inherited-handle list.
+///
+/// `SetHandleInformation(HANDLE_FLAG_INHERIT)` is per-handle but the
+/// inheritance it enables is read by whichever `CreateProcessW` runs next, so
+/// two concurrent spawns can leak each other's handles into the wrong child. On
+/// the update path that handle is the lifecycle lease, and a child that
+/// inherits the wrong one is a child that thinks it holds a lock it does not.
+///
+/// One lock, so callers that spawn for unrelated reasons still serialise
+/// against each other. Three copies of this static existed, each with its own
+/// copy of the poison handling below.
+static CREATE_PROCESS_LOCK: Mutex<()> = Mutex::new(());
+
+/// Hold the spawn lock for as long as the returned guard lives.
+///
+/// A poisoned lock is taken anyway: it guards process-global state, not data,
+/// so a panic elsewhere makes the guarded state no less in need of a lock.
+pub fn hold_create_process_lock() -> MutexGuard<'static, ()> {
+    CREATE_PROCESS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// The extensions an executable may carry, in the order the platform tries
 /// them.

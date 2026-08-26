@@ -14,7 +14,6 @@ use std::{
     path::Path,
     process::ExitStatus,
     ptr::{null, null_mut},
-    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -44,8 +43,6 @@ use windows_sys::Win32::{
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
-static CREATE_PROCESS_LOCK: Mutex<()> = Mutex::new(());
-
 pub(crate) struct EnvironmentOverride<'a> {
     pub(crate) name: &'a OsStr,
     pub(crate) value: Option<&'a OsStr>,
@@ -260,9 +257,7 @@ fn spawn(
     let environment = environment_block(environment_overrides)?;
     let mut command_line = command_line(program.as_os_str(), arguments)?;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-    let spawn_guard = CREATE_PROCESS_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let spawn_guard = ah_platform::exec::hold_create_process_lock();
     let inherit_guard = InheritGuard::new(&inherited_handles)?;
     let created = unsafe {
         CreateProcessW(

@@ -20,9 +20,7 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::{
-    commands::run::windows_job::CREATE_PROCESS_LOCK, error::AppError, updater::service::ServiceHold,
-};
+use crate::{error::AppError, updater::service::ServiceHold};
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -101,9 +99,7 @@ fn launch_helper(
     )
     .map_err(LaunchFailure::safe)?;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-    let spawn_guard = CREATE_PROCESS_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let spawn_guard = ah_platform::exec::hold_create_process_lock();
     let inherit_guard = InheritGuard::new(raw_lease, error_code).map_err(LaunchFailure::safe)?;
     let created = unsafe {
         CreateProcessW(
