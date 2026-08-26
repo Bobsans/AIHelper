@@ -128,7 +128,7 @@ pub(super) fn execution(
             crate::commands::secrets::execute(&config, request, options).map(|_| None)
         }
         RuntimeCommand::Upgrade { request, options } => {
-            crate::updater::execute(request, options, &super::updater_host()).map(|_| None)
+            crate::upgrade::execute(request, options).map(|_| None)
         }
         RuntimeCommand::Invoke {
             domain,

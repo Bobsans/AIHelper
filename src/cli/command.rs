@@ -25,7 +25,7 @@ pub(crate) fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
     .subcommand(build_mcp_command())
     .subcommand(build_plugins_command())
     .subcommand(build_secrets_command())
-    .subcommand(crate::updater::command::build_help_command())
+    .subcommand(crate::upgrade::route::build_help_command())
     .allow_external_subcommands(true);
 
     for (domain, description) in plugin_domains_for_help(plugins) {

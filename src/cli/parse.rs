@@ -216,7 +216,7 @@ pub fn parse_runtime_command(
             RuntimeCommand::Secrets { request, options }
         }
         Some((HOST_COMMAND_UPGRADE, upgrade_matches)) => RuntimeCommand::Upgrade {
-            request: crate::updater::command::request_from_matches(upgrade_matches)?,
+            request: crate::upgrade::route::request_from_matches(upgrade_matches)?,
             options,
         },
         Some((domain, domain_matches)) => {

@@ -96,7 +96,7 @@ pub enum RuntimeCommand {
         options: GlobalOptions,
     },
     Upgrade {
-        request: crate::updater::command::UpgradeRequest,
+        request: crate::updater::request::UpgradeRequest,
         options: GlobalOptions,
     },
     Invoke {

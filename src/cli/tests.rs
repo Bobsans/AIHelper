@@ -219,7 +219,7 @@ fn parser_routes_upgrade_check_as_a_host_command() {
     let CliParseResult::Command(RuntimeCommand::Upgrade { request, .. }) = parsed else {
         panic!("unexpected parse result")
     };
-    assert_eq!(request, crate::updater::command::UpgradeRequest::Check);
+    assert_eq!(request, crate::updater::request::UpgradeRequest::Check);
 }
 
 #[test]

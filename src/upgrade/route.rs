@@ -1,17 +1,14 @@
+//! Reading `ah upgrade` off the command line, before the plugin catalog exists.
+//!
+//! Declaration and parsing only; what the request then does is the mechanism's,
+//! and `mod.rs` connects the two.
+
 use std::ffi::OsString;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind};
 use semver::Version;
 
-use crate::{cli::GlobalOptions, error::AppError};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpgradeRequest {
-    Check,
-    Upgrade,
-    Version(Version),
-    Rollback,
-}
+use crate::{cli::GlobalOptions, error::AppError, updater::request::UpgradeRequest};
 
 #[derive(Debug)]
 pub enum EarlyUpgradeRoute {

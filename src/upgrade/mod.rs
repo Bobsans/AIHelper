@@ -1,18 +1,45 @@
-//! Wiring the updater into this process.
+//! `ah upgrade`: wiring the updater into this process, and rendering what it
+//! returned.
 //!
-//! `ah-updater`'s mechanism asks for two things it must not reach for itself:
-//! a managed service to hold still, and a way to run a bounded child process.
-//! This module supplies the second; `mcp_service::lifecycle::guard` supplies
-//! the first.
+//! The mechanism asks for two things it must not reach for itself: a managed
+//! service to hold still, and a way to run a bounded child process. This module
+//! supplies the second and `mcp_service::lifecycle::guard` the first, calls the
+//! mechanism, and hands the result to `render`.
 
 use std::{ffi::OsStr, time::Duration};
 
 use ah_updater_core::{UpdaterError, UpdaterErrorCode};
 
 use crate::{
+    cli::GlobalOptions,
     commands::run::io::{EnvironmentOverride, RunCommandOptions, run_program},
-    updater::smoke::{SmokeProcessOutput, SmokeRequest, SmokeRunner},
+    error::AppError,
+    mcp_service::lifecycle::ManagedMcpGuard,
+    updater::{
+        Host,
+        smoke::{SmokeProcessOutput, SmokeRequest, SmokeRunner},
+    },
 };
+
+mod render;
+pub(crate) mod route;
+
+/// Run one `ah upgrade` and report it.
+///
+/// # Errors
+///
+/// [`AppError`] from the update itself, or when the report cannot be written.
+pub(crate) fn execute(
+    request: crate::updater::request::UpgradeRequest,
+    options: GlobalOptions,
+) -> Result<(), AppError> {
+    let host = Host {
+        service: &ManagedMcpGuard,
+        smoke: &BoundedSmokeRunner,
+    };
+    let outcome = crate::updater::execute(request, &host)?;
+    render::outcome(&outcome, options)
+}
 
 /// How long the candidate gets to answer one smoke command.
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(15);

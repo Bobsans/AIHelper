@@ -1,18 +1,25 @@
 use ah_updater_core::{
-    CheckStatus, DiscoveredReleaseV1, ReleaseAssetV1, ReleaseTrust, UpdateSource, UpdaterError,
-    UpgradeCheckResultV1, verify_discovered_release_for_check,
+    DiscoveredReleaseV1, ReleaseAssetV1, ReleaseTrust, UpdaterError, UpgradeCheckResultV1,
+    verify_discovered_release_for_check,
 };
 use semver::Version;
 
 use crate::{
-    cli::GlobalOptions,
     error::AppError,
-    output::Emitter,
     updater::{
-        Host, command::UpgradeRequest, github::GitHubReleaseClient, map_updater_error,
-        trust::production_release_trust,
+        Host, activate::UpgradeLaunchResult, github::GitHubReleaseClient, map_updater_error,
+        request::UpgradeRequest, trust::production_release_trust,
     },
 };
+
+/// What one `ah upgrade` invocation produced, for the CLI to render.
+#[derive(Debug)]
+pub(crate) enum UpgradeOutcome {
+    /// `--check`: what is available, with nothing changed.
+    Checked(UpgradeCheckResultV1),
+    /// An upgrade, a pinned version, or a rollback.
+    Launched(UpgradeLaunchResult),
+}
 
 pub(crate) trait ReleaseCheckSource {
     fn discover(&self) -> Result<DiscoveredReleaseV1, UpdaterError>;
@@ -21,19 +28,20 @@ pub(crate) trait ReleaseCheckSource {
 
 pub(crate) fn execute(
     request: UpgradeRequest,
-    options: GlobalOptions,
     host: &Host<'_>,
-) -> Result<(), AppError> {
+) -> Result<UpgradeOutcome, AppError> {
     match request {
         // A check mutates nothing, so it needs neither port.
-        UpgradeRequest::Check => execute_check(options),
+        UpgradeRequest::Check => execute_check().map(UpgradeOutcome::Checked),
         request @ (UpgradeRequest::Upgrade
         | UpgradeRequest::Version(_)
-        | UpgradeRequest::Rollback) => super::activate::execute(request, options, host),
+        | UpgradeRequest::Rollback) => {
+            super::activate::execute(request, host).map(UpgradeOutcome::Launched)
+        }
     }
 }
 
-fn execute_check(options: GlobalOptions) -> Result<(), AppError> {
+fn execute_check() -> Result<UpgradeCheckResultV1, AppError> {
     ah_updater_core::UpdateTarget::current().map_err(map_updater_error)?;
     let trust = production_release_trust().map_err(map_updater_error)?;
     let source = GitHubReleaseClient::new().map_err(map_updater_error)?;
@@ -43,8 +51,7 @@ fn execute_check(options: GlobalOptions) -> Result<(), AppError> {
             "running AIHelper version is not canonical SemVer",
         )
     })?;
-    let result = perform_check(&source, &trust, &current_version).map_err(map_updater_error)?;
-    render_result(&result, options)
+    perform_check(&source, &trust, &current_version).map_err(map_updater_error)
 }
 
 pub(crate) fn perform_check(
@@ -64,37 +71,11 @@ pub(crate) fn perform_check(
     )
 }
 
-fn render_result(result: &UpgradeCheckResultV1, options: GlobalOptions) -> Result<(), AppError> {
-    Emitter::stdio(&options).value(result, |_| {
-        format!(
-            "status={} current_version={} selected_version={} target={} source={}",
-            check_status(result.status),
-            result.current_version,
-            result.selected_version.as_deref().unwrap_or("none"),
-            result.target.as_deref().unwrap_or("none"),
-            update_source(result.source),
-        )
-    })
-}
-
-fn check_status(status: CheckStatus) -> &'static str {
-    match status {
-        CheckStatus::UpToDate => "up_to_date",
-        CheckStatus::UpdateAvailable => "update_available",
-        CheckStatus::CurrentNewer => "current_newer",
-    }
-}
-
-fn update_source(source: Option<UpdateSource>) -> &'static str {
-    match source {
-        Some(UpdateSource::GitHubRelease) => "github_release",
-        None => "none",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, fs};
+
+    use ah_updater_core::CheckStatus;
 
     use ah_release_manifest::{
         ArchiveMetadata, FilePurpose, ManagedFile, ReleaseManifest, ReleaseMetadata, RequiredFiles,

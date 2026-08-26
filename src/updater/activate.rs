@@ -19,14 +19,14 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{cli::GlobalOptions, error::AppError, output::Emitter, updater::Host};
+use crate::{error::AppError, updater::Host};
 
 use super::{
     candidate::prepare_candidate,
-    command::UpgradeRequest,
     github::GitHubReleaseClient,
     installation::{load_current_managed_installation, resolve_current_managed_installation},
     map_updater_error,
+    request::UpgradeRequest,
     smoke::run_offline_smoke,
     trust::production_release_trust,
 };
@@ -34,32 +34,35 @@ use super::{
 const LIFECYCLE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_ACTIVATION_HELPER_COPIES: usize = 32;
 
+/// What an upgrade attempt did, in the shape it is reported in.
+///
+/// Owned rather than borrowed because it crosses out of here: the mechanism
+/// returns it and the CLI renders it. That is one allocation per upgrade.
 #[derive(Debug, Serialize)]
-struct UpgradeLaunchResult<'a> {
-    schema_version: u32,
-    operation: UpdateOperation,
-    status: &'a str,
-    current_version: &'a str,
-    selected_version: &'a str,
-    target: &'a str,
-    source: &'a str,
-    activation: &'a str,
-    managed_mcp_restoration: &'a str,
-    rollback: &'a str,
+pub(crate) struct UpgradeLaunchResult {
+    pub(crate) schema_version: u32,
+    pub(crate) operation: UpdateOperation,
+    pub(crate) status: &'static str,
+    pub(crate) current_version: String,
+    pub(crate) selected_version: String,
+    pub(crate) target: String,
+    pub(crate) source: &'static str,
+    pub(crate) activation: &'static str,
+    pub(crate) managed_mcp_restoration: &'static str,
+    pub(crate) rollback: &'static str,
 }
 
 pub(super) fn execute(
     request: UpgradeRequest,
-    options: GlobalOptions,
     host: &Host<'_>,
-) -> Result<(), AppError> {
+) -> Result<UpgradeLaunchResult, AppError> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        execute_windows(request, options, host)
+        execute_windows(request, host)
     }
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     {
-        let _ = (request, options, host);
+        let _ = (request, host);
         Err(map_updater_error(UpdaterError::new(
             UpdaterErrorCode::UnsupportedPlatform,
             "self-update requires Windows x86_64",
@@ -70,11 +73,10 @@ pub(super) fn execute(
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn execute_windows(
     request: UpgradeRequest,
-    options: GlobalOptions,
     host: &Host<'_>,
-) -> Result<(), AppError> {
+) -> Result<UpgradeLaunchResult, AppError> {
     if request == UpgradeRequest::Rollback {
-        return execute_rollback(options, host);
+        return execute_rollback(host);
     }
     let operation = match request {
         UpgradeRequest::Upgrade => UpdateOperation::Upgrade,
@@ -120,25 +122,22 @@ fn execute_windows(
                 "requested release would downgrade the installed version",
             )));
         }
-        return render(
-            &UpgradeLaunchResult {
-                schema_version: 1,
-                operation,
-                status: match status {
-                    CheckStatus::UpToDate => "up_to_date",
-                    CheckStatus::CurrentNewer => "current_newer",
-                    CheckStatus::UpdateAvailable => unreachable!(),
-                },
-                current_version: env!("CARGO_PKG_VERSION"),
-                selected_version: &selected_version_text,
-                target: verified.discovered().target.rust_target,
-                source: "github_release",
-                activation: "not_required",
-                managed_mcp_restoration: "not_required",
-                rollback: "not_required",
+        return Ok(UpgradeLaunchResult {
+            schema_version: 1,
+            operation,
+            status: match status {
+                CheckStatus::UpToDate => "up_to_date",
+                CheckStatus::CurrentNewer => "current_newer",
+                CheckStatus::UpdateAvailable => unreachable!(),
             },
-            options,
-        );
+            current_version: env!("CARGO_PKG_VERSION").to_owned(),
+            selected_version: selected_version_text,
+            target: verified.discovered().target.rust_target.to_owned(),
+            source: "github_release",
+            activation: "not_required",
+            managed_mcp_restoration: "not_required",
+            rollback: "not_required",
+        });
     }
 
     let prepared = prepare_candidate(&source, verified, installation.state_root())
@@ -146,7 +145,6 @@ fn execute_windows(
         .map_err(map_updater_error)?;
     launch_transaction(
         operation,
-        options,
         &installation,
         prepared.root(),
         prepared.verified_release().manifest(),
@@ -160,7 +158,7 @@ fn execute_windows(
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn execute_rollback(options: GlobalOptions, host: &Host<'_>) -> Result<(), AppError> {
+fn execute_rollback(host: &Host<'_>) -> Result<UpgradeLaunchResult, AppError> {
     let trust = production_release_trust().map_err(map_updater_error)?;
     let installation = load_current_managed_installation(&trust).map_err(map_updater_error)?;
     let backup = load_permanent_backup(
@@ -178,7 +176,6 @@ fn execute_rollback(options: GlobalOptions, host: &Host<'_>) -> Result<(), AppEr
     let selected_version = backup.manifest().release.version.clone();
     launch_transaction(
         UpdateOperation::Rollback,
-        options,
         &installation,
         &backup.files_root(),
         backup.manifest(),
@@ -195,17 +192,16 @@ fn execute_rollback(options: GlobalOptions, host: &Host<'_>) -> Result<(), AppEr
 #[allow(clippy::too_many_arguments)]
 fn launch_transaction(
     operation: UpdateOperation,
-    options: GlobalOptions,
     installation: &super::installation::ManagedInstallation,
     candidate_root: &Path,
     candidate_manifest: &ReleaseManifest,
     candidate_manifest_bytes: &[u8],
     candidate_signature_bytes: &[u8],
     selected_version: &str,
-    source: &str,
+    source: &'static str,
     trust: &ah_updater_core::ReleaseTrust,
     host: &Host<'_>,
-) -> Result<(), AppError> {
+) -> Result<UpgradeLaunchResult, AppError> {
     let transaction_id = Uuid::new_v4();
     let transactions = installation.state_root().join("transactions");
     ensure_directory(&transactions).map_err(map_updater_error)?;
@@ -303,29 +299,26 @@ fn launch_transaction(
         return Err(failure.into_error());
     }
 
-    render(
-        &UpgradeLaunchResult {
-            schema_version: 1,
-            operation,
-            status: "activation_launched",
-            current_version: &installation.manifest().release.version,
-            selected_version,
-            target: &candidate_manifest.release.target,
-            source,
-            activation: "launched",
-            managed_mcp_restoration: if mcp_state.was_running {
-                "pending"
-            } else {
-                "not_required"
-            },
-            rollback: if operation == UpdateOperation::Rollback {
-                "launched"
-            } else {
-                "not_required"
-            },
+    Ok(UpgradeLaunchResult {
+        schema_version: 1,
+        operation,
+        status: "activation_launched",
+        current_version: installation.manifest().release.version.clone(),
+        selected_version: selected_version.to_owned(),
+        target: candidate_manifest.release.target.clone(),
+        source,
+        activation: "launched",
+        managed_mcp_restoration: if mcp_state.was_running {
+            "pending"
+        } else {
+            "not_required"
         },
-        options,
-    )
+        rollback: if operation == UpdateOperation::Rollback {
+            "launched"
+        } else {
+            "not_required"
+        },
+    })
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -450,34 +443,6 @@ fn ensure_directory(path: &Path) -> Result<(), UpdaterError> {
             UpdaterErrorCode::Installation,
             "failed to inspect update transaction parent",
         )),
-    }
-}
-
-fn render(result: &UpgradeLaunchResult<'_>, options: GlobalOptions) -> Result<(), AppError> {
-    Emitter::stdio(&options).value(result, |_| {
-        format!(
-            "operation={} status={} current_version={} selected_version={} target={} source={} activation={} managed_mcp_restoration={} rollback={}",
-            operation_name(result.operation),
-            result.status,
-            result.current_version,
-            result.selected_version,
-            result.target,
-            result.source,
-            result.activation,
-            result.managed_mcp_restoration,
-            result.rollback,
-        )
-    })
-}
-
-fn operation_name(operation: UpdateOperation) -> &'static str {
-    match operation {
-        UpdateOperation::Upgrade => "upgrade",
-        UpdateOperation::Version => "version",
-        UpdateOperation::Rollback => "rollback",
-        UpdateOperation::Check | UpdateOperation::Recovery => {
-            unreachable!("activation result contains only update operations")
-        }
     }
 }
 

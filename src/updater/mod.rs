@@ -1,12 +1,12 @@
-mod activate;
+pub(crate) mod activate;
 pub(crate) mod candidate;
 pub(crate) mod check;
-pub(crate) mod command;
 pub(crate) mod github;
 #[cfg(windows)]
 mod handoff;
 mod installation;
 pub(crate) mod recovery;
+pub(crate) mod request;
 pub(crate) mod service;
 pub(crate) mod smoke;
 mod trust;
