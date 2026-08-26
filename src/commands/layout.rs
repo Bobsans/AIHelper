@@ -30,6 +30,12 @@ mod tests {
         ("project", "rules.rs"),
         // Windows job objects, which only one platform compiles.
         ("run", "windows_job.rs"),
+        // Every argument `http` accepts, in both the clap and the wire shape.
+        // `http` has the widest flag surface of any domain, and the
+        // declarations outweighed the behaviour in the module root.
+        ("http", "args.rs"),
+        // The `http` command descriptors published to the plugin catalog.
+        ("http", "catalog.rs"),
     ];
 
     const REQUIRED: &[&str] = &["domain.rs", "io.rs", "output.rs"];
