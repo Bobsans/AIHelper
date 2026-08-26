@@ -3,7 +3,7 @@ use crate::{
     output::{Emitter, TextFormatter, TextStyle},
 };
 
-use super::super::domain::{
+use super::domain::{
     DetectedFile, ProjectCommandsOutput, ProjectDetectOutput, ProjectVersionEntry,
     ProjectVersionOutput, SuggestedCommand,
 };

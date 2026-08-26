@@ -70,11 +70,6 @@ pub(crate) mod output;
 #[cfg(windows)]
 pub(crate) mod windows_job;
 
-mod adapters {
-    pub(crate) use super::io;
-    pub(crate) use super::output;
-}
-
 mod domain;
 
 pub fn execute(args: RunArgs, options: &GlobalOptions) -> Result<(), AppError> {
@@ -93,7 +88,7 @@ pub(crate) fn execute_observed(
                 timed_out: result.timed_out,
                 exit_code: result.exit_code,
             };
-            adapters::output::emit_check_result(result, &mut Emitter::stdio(options))?;
+            output::emit_check_result(result, &mut Emitter::stdio(options))?;
             Ok(outcome)
         }
     }

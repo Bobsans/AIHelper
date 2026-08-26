@@ -572,7 +572,7 @@ fn join_base_and_path(base: &str, path: &str) -> String {
 }
 
 pub(super) fn read_spec_file(path: &Path) -> Result<HttpSpec, AppError> {
-    let raw = crate::commands::http::adapters::io::read_to_string(path)?;
+    let raw = crate::commands::http::io::read_to_string(path)?;
     let extension = path
         .extension()
         .and_then(|value| value.to_str())

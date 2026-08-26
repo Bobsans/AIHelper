@@ -9,7 +9,12 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
   - `src/lib.rs`: runtime bootstrap and command dispatch
   - `src/cli.rs`: global option parsing and domain routing
   - `src/plugins.rs`: built-in plugin adapters for core domains
-  - `src/commands/*`: domain implementations reused by built-in plugins
+  - `src/commands/*`: domain implementations reused by built-in plugins.
+    One layout, and `src/commands/layout.rs` fails the build if it drifts:
+    `<domain>.rs` declares the CLI surface, `<domain>/domain.rs` is pure logic,
+    `<domain>/io.rs` performs effects, `<domain>/output.rs` renders. A further
+    split of one layer is a directory of its own (`http/domain/`); re-nesting
+    the same two layers under `adapters/` is not the layout.
 - `crates/ah-plugin-api`:
   - stable request/response payload contracts
   - C ABI structures (`AhPluginApiV1`) and symbol constants

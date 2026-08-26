@@ -3,6 +3,7 @@ pub mod ctx_symbols;
 pub mod file;
 pub mod git;
 pub mod http;
+mod layout;
 pub mod project;
 pub mod run;
 pub mod search;

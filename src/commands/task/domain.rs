@@ -1,3 +1,4 @@
+use super::io;
 use std::{path::Path, time::Duration};
 
 use schemars::JsonSchema;
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use ah_runtime::core::{apply_limit, normalize_path, truncate_lines};
 
-use super::{TaskArgs, TaskCommand, adapters};
+use super::{TaskArgs, TaskCommand};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -83,8 +84,8 @@ fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
     validation::validate_task_name(&args.name)?;
     let store_path = task_store_path(args.cwd.as_deref());
     let updated_unix_seconds = crate::persistence::transaction(&store_path, || {
-        let mut store = adapters::io::load_store(&store_path)?;
-        let updated_unix_seconds = adapters::io::now_unix_seconds();
+        let mut store = io::load_store(&store_path)?;
+        let updated_unix_seconds = io::now_unix_seconds();
 
         if let Some(existing) = store.tasks.iter_mut().find(|task| task.name == args.name) {
             existing.command = args.command.clone();
@@ -100,7 +101,7 @@ fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
         store
             .tasks
             .sort_by(|left, right| left.name.cmp(&right.name));
-        adapters::io::save_store(&store_path, &store)?;
+        io::save_store(&store_path, &store)?;
         Ok(updated_unix_seconds)
     })?;
 
@@ -115,7 +116,7 @@ fn run_save(args: super::SaveArgs) -> Result<TaskSaveOutput, AppError> {
 
 fn run_list(_args: super::ListArgs, limit: Option<usize>) -> Result<TaskListOutput, AppError> {
     let store_path = task_store_path(_args.cwd.as_deref());
-    let mut store = adapters::io::load_store(&store_path)?;
+    let mut store = io::load_store(&store_path)?;
     store
         .tasks
         .sort_by(|left, right| left.name.cmp(&right.name));
@@ -142,14 +143,14 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
         ));
     }
 
-    let store = adapters::io::load_store(&task_store_path(args.cwd.as_deref()))?;
+    let store = io::load_store(&task_store_path(args.cwd.as_deref()))?;
     let task = store
         .tasks
         .into_iter()
         .find(|entry| entry.name == args.name)
         .ok_or_else(|| AppError::invalid_argument(format!("task not found: {}", args.name)))?;
 
-    let (program, command_args) = adapters::io::shell_command(&task.command);
+    let (program, command_args) = io::shell_command(&task.command);
     let output = crate::commands::run::io::run_command(
         &program,
         &command_args,
@@ -213,8 +214,8 @@ fn run_run(args: super::RunArgs, limit: Option<usize>) -> Result<TaskRunOutput, 
 
 fn task_store_path(cwd: Option<&Path>) -> std::path::PathBuf {
     match cwd {
-        Some(cwd) => adapters::io::task_store_path_at(cwd),
-        None => adapters::io::task_store_path(),
+        Some(cwd) => io::task_store_path_at(cwd),
+        None => io::task_store_path(),
     }
 }
 
@@ -265,7 +266,7 @@ mod tests {
             handle.join().unwrap();
         }
 
-        let store = adapters::io::load_store(&task_store_path(Some(directory.path()))).unwrap();
+        let store = io::load_store(&task_store_path(Some(directory.path()))).unwrap();
         assert_eq!(store.tasks.len(), 2);
         assert_eq!(store.tasks[0].name, "first");
         assert_eq!(store.tasks[1].name, "second");

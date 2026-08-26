@@ -1,3 +1,4 @@
+use super::io;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -5,7 +6,7 @@ use crate::error::AppError;
 use crate::safety::{TextFileDecision, TextFilePolicy};
 use ah_runtime::core::apply_limit;
 
-use super::{FileArgs, FileCommand, HeadArgs, ReadArgs, StatArgs, TailArgs, TreeArgs, adapters};
+use super::{FileArgs, FileCommand, HeadArgs, ReadArgs, StatArgs, TailArgs, TreeArgs};
 
 // Was a `&'static str` whose four legal values lived only in the hand-written
 // schema; as an enum the type and the published schema cannot disagree.
@@ -103,12 +104,12 @@ fn execute_read(args: ReadArgs, limit: Option<usize>) -> Result<FileResult, AppE
         max_bytes: args.max_bytes,
         follow_symlinks: args.follow_symlinks,
     };
-    let decision = adapters::io::inspect_text_file(&args.path, &policy)?;
+    let decision = io::inspect_text_file(&args.path, &policy)?;
     if let TextFileDecision::Skip(reason) = decision {
         return Err(crate::safety::skip_reason_to_error(&args.path, reason));
     }
 
-    let (raw_lines, truncated) = adapters::io::read_lines_in_range(&args.path, from, to, limit)?;
+    let (raw_lines, truncated) = io::read_lines_in_range(&args.path, from, to, limit)?;
     Ok(FileResult::Read(FileLinesOutput {
         command: "file.read",
         path: args.path.to_string_lossy().into_owned(),
@@ -126,13 +127,12 @@ fn execute_head(args: HeadArgs, limit: Option<usize>) -> Result<FileResult, AppE
         max_bytes: args.max_bytes,
         follow_symlinks: args.follow_symlinks,
     };
-    let decision = adapters::io::inspect_text_file(&args.path, &policy)?;
+    let decision = io::inspect_text_file(&args.path, &policy)?;
     if let TextFileDecision::Skip(reason) = decision {
         return Err(crate::safety::skip_reason_to_error(&args.path, reason));
     }
 
-    let (raw_lines, truncated) =
-        adapters::io::read_lines_in_range(&args.path, 1, args.lines, limit)?;
+    let (raw_lines, truncated) = io::read_lines_in_range(&args.path, 1, args.lines, limit)?;
     Ok(FileResult::Head(FileLinesOutput {
         command: "file.head",
         path: args.path.to_string_lossy().into_owned(),
@@ -150,12 +150,12 @@ fn execute_tail(args: TailArgs, limit: Option<usize>) -> Result<FileResult, AppE
         max_bytes: args.max_bytes,
         follow_symlinks: args.follow_symlinks,
     };
-    let decision = adapters::io::inspect_text_file(&args.path, &policy)?;
+    let decision = io::inspect_text_file(&args.path, &policy)?;
     if let TextFileDecision::Skip(reason) = decision {
         return Err(crate::safety::skip_reason_to_error(&args.path, reason));
     }
 
-    let (raw_lines, truncated) = adapters::io::read_tail_lines(&args.path, args.lines, limit)?;
+    let (raw_lines, truncated) = io::read_tail_lines(&args.path, args.lines, limit)?;
     Ok(FileResult::Tail(FileLinesOutput {
         command: "file.tail",
         path: args.path.to_string_lossy().into_owned(),
@@ -169,8 +169,8 @@ fn execute_tail(args: TailArgs, limit: Option<usize>) -> Result<FileResult, AppE
 }
 
 fn execute_stat(args: StatArgs) -> Result<FileResult, AppError> {
-    let metadata = adapters::io::metadata(&args.path)?;
-    let kind = adapters::io::metadata_kind(&metadata);
+    let metadata = io::metadata(&args.path)?;
+    let kind = io::metadata_kind(&metadata);
     Ok(FileResult::Stat(FileStatOutput {
         command: "file.stat",
         path: args.path.to_string_lossy().into_owned(),
@@ -180,17 +180,17 @@ fn execute_stat(args: StatArgs) -> Result<FileResult, AppError> {
         modified_unix_seconds: metadata
             .modified()
             .ok()
-            .and_then(adapters::io::system_time_to_unix_seconds),
+            .and_then(io::system_time_to_unix_seconds),
         created_unix_seconds: metadata
             .created()
             .ok()
-            .and_then(adapters::io::system_time_to_unix_seconds),
+            .and_then(io::system_time_to_unix_seconds),
     }))
 }
 
 fn execute_tree(args: TreeArgs, limit: Option<usize>) -> Result<FileResult, AppError> {
     let path = args.path.unwrap_or_else(|| std::path::PathBuf::from("."));
-    let entries = adapters::io::collect_tree_entries(
+    let entries = io::collect_tree_entries(
         &path,
         0,
         args.depth,

@@ -1,3 +1,4 @@
+use super::io;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -11,7 +12,7 @@ use ah_runtime::core::apply_limit;
 
 use super::{
     BlameArgs, ChangedArgs, CommitInfoArgs, DiffArgs, RemotesArgs, StatusArgs, TagArgs, TagCommand,
-    TagCreateArgs, TagsArgs, adapters,
+    TagCreateArgs, TagsArgs,
 };
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -205,8 +206,8 @@ pub(crate) fn execute(
     cwd: Option<&Path>,
 ) -> Result<GitResult, AppError> {
     let io = match cwd {
-        Some(cwd) => adapters::io::GitIo::at(cwd),
-        None => adapters::io::GitIo::current()?,
+        Some(cwd) => io::GitIo::at(cwd),
+        None => io::GitIo::current()?,
     };
     match args.command {
         super::GitCommand::Status(args) => execute_status(args, &io),
@@ -220,7 +221,7 @@ pub(crate) fn execute(
     }
 }
 
-fn execute_status(_args: StatusArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
+fn execute_status(_args: StatusArgs, io: &io::GitIo) -> Result<GitResult, AppError> {
     let Some(raw_status) = io.read_status_snapshot()? else {
         return Ok(empty_status_result());
     };
@@ -284,7 +285,7 @@ fn empty_status_result() -> GitResult {
 fn execute_tags(
     args: TagsArgs,
     limit: Option<usize>,
-    io: &adapters::io::GitIo,
+    io: &io::GitIo,
 ) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     let mut tags = if in_repo {
@@ -312,7 +313,7 @@ fn execute_tags(
     }))
 }
 
-fn execute_remotes(_args: RemotesArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
+fn execute_remotes(_args: RemotesArgs, io: &io::GitIo) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     let remotes = if in_repo {
         parse_remotes(&io.read_output(["remote".to_owned(), "-v".to_owned()])?)
@@ -331,7 +332,7 @@ fn execute_remotes(_args: RemotesArgs, io: &adapters::io::GitIo) -> Result<GitRe
 fn execute_changed(
     _args: ChangedArgs,
     limit: Option<usize>,
-    io: &adapters::io::GitIo,
+    io: &io::GitIo,
 ) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     let mut entries = if in_repo {
@@ -361,7 +362,7 @@ fn execute_changed(
 fn execute_diff(
     args: DiffArgs,
     limit: Option<usize>,
-    io: &adapters::io::GitIo,
+    io: &io::GitIo,
 ) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     let path_filter = args
@@ -397,7 +398,7 @@ fn execute_diff(
 fn execute_blame(
     args: BlameArgs,
     limit: Option<usize>,
-    io: &adapters::io::GitIo,
+    io: &io::GitIo,
 ) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     if !in_repo {
@@ -470,7 +471,7 @@ fn execute_blame(
 fn execute_commit_info(
     args: CommitInfoArgs,
     limit: Option<usize>,
-    io: &adapters::io::GitIo,
+    io: &io::GitIo,
 ) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     let commit = if in_repo {
@@ -487,16 +488,13 @@ fn execute_commit_info(
     }))
 }
 
-fn execute_tag(args: TagArgs, io: &adapters::io::GitIo) -> Result<GitResult, AppError> {
+fn execute_tag(args: TagArgs, io: &io::GitIo) -> Result<GitResult, AppError> {
     match args.command {
         TagCommand::Create(create_args) => execute_tag_create(create_args, io),
     }
 }
 
-fn execute_tag_create(
-    args: TagCreateArgs,
-    io: &adapters::io::GitIo,
-) -> Result<GitResult, AppError> {
+fn execute_tag_create(args: TagCreateArgs, io: &io::GitIo) -> Result<GitResult, AppError> {
     let in_repo = io.is_inside_repo()?;
     if !in_repo {
         return Ok(GitResult::TagCreate(GitTagCreateOutput {
@@ -545,7 +543,7 @@ fn execute_tag_create(
 }
 
 fn read_commit_info(
-    io: &adapters::io::GitIo,
+    io: &io::GitIo,
     reference: &str,
     limit: Option<usize>,
 ) -> Result<CommitInfo, AppError> {
@@ -596,10 +594,7 @@ fn read_commit_info(
     })
 }
 
-fn read_commit_files(
-    io: &adapters::io::GitIo,
-    reference: &str,
-) -> Result<Vec<CommitFile>, AppError> {
+fn read_commit_files(io: &io::GitIo, reference: &str) -> Result<Vec<CommitFile>, AppError> {
     let status_raw = io.read_output([
         "diff-tree".to_owned(),
         "--no-commit-id".to_owned(),

@@ -1,3 +1,4 @@
+use super::io;
 use std::{
     collections::BTreeMap,
     fmt,
@@ -12,9 +13,7 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
-use super::{
-    BasicCredential, MethodShortcutArgs, ReplayArgs, RequestArgs, RequestOptionsArgs, adapters,
-};
+use super::{BasicCredential, MethodShortcutArgs, ReplayArgs, RequestArgs, RequestOptionsArgs};
 
 mod assert;
 mod curl;
@@ -200,7 +199,7 @@ fn send_with_retry(
             attempt.timeout = attempt.timeout.min(remaining);
         }
 
-        match adapters::io::send_request(&attempt) {
+        match io::send_request(&attempt) {
             Ok(response) if response.status_code >= 500 && retries_remaining > 0 => {}
             Ok(response) => return Ok(response),
             Err(error) if is_retryable_request_error(&error) && retries_remaining > 0 => {}
@@ -387,7 +386,7 @@ pub(super) fn parse_payload(
 
     if let Some(json_path) = args.json_file.as_ref() {
         let resolved = resolve_file_path(base_dir, json_path);
-        let raw = adapters::io::read_to_string(&resolved)?;
+        let raw = io::read_to_string(&resolved)?;
         let value: Value = serde_json::from_str(&raw).map_err(|error| {
             AppError::invalid_argument(format!(
                 "failed to parse JSON file '{}': {error}",
@@ -403,7 +402,7 @@ pub(super) fn parse_payload(
 
     if let Some(body_path) = args.body_file.as_ref() {
         let resolved = resolve_file_path(base_dir, body_path);
-        let raw = adapters::io::read_to_string(&resolved)?;
+        let raw = io::read_to_string(&resolved)?;
         return Ok(Some(RequestBody::Text(raw)));
     }
 

@@ -141,26 +141,21 @@ impl CtxPreset {
 pub(crate) mod io;
 pub(crate) mod output;
 
-mod adapters {
-    pub(crate) use super::io;
-    pub(crate) use super::output;
-}
-
 mod domain;
 
 pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
     match args.command {
         CtxCommand::Pack(pack_args) => {
             let result = domain::execute_pack(pack_args, options.limit)?;
-            adapters::output::emit(result, &mut Emitter::stdio(options))
+            output::emit(result, &mut Emitter::stdio(options))
         }
         CtxCommand::Symbols(symbols_args) => {
             let result = domain::execute_symbols(symbols_args, options.limit)?;
-            adapters::output::emit(result, &mut Emitter::stdio(options))
+            output::emit(result, &mut Emitter::stdio(options))
         }
         CtxCommand::Changed(changed_args) => {
             let result = domain::execute_changed(changed_args)?;
-            adapters::output::emit(result, &mut Emitter::stdio(options))
+            output::emit(result, &mut Emitter::stdio(options))
         }
     }
 }

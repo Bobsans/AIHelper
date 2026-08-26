@@ -168,16 +168,11 @@ pub struct TreeArgs {
 pub(crate) mod io;
 pub(crate) mod output;
 
-mod adapters {
-    pub(crate) use super::io;
-    pub(crate) use super::output;
-}
-
 mod domain;
 
 pub fn execute(args: FileArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let result = domain::execute(args, options.limit)?;
-    adapters::output::emit(result, &mut Emitter::stdio(options))
+    output::emit(result, &mut Emitter::stdio(options))
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {

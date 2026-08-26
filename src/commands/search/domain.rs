@@ -1,3 +1,4 @@
+use super::io;
 use std::collections::BTreeSet;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -7,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::AppError;
 
-use super::{FilesArgs, TextArgs, adapters};
+use super::{FilesArgs, TextArgs};
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -88,20 +89,16 @@ pub(crate) enum SearchResult {
 
 pub(crate) fn execute_text(args: TextArgs, limit: Option<usize>) -> Result<SearchResult, AppError> {
     crate::safety::validate_max_bytes(args.max_bytes)?;
-    let scope =
-        adapters::io::resolve_scope_at(&args.paths, args.follow_symlinks, args.cwd.as_deref())?;
+    let scope = io::resolve_scope_at(&args.paths, args.follow_symlinks, args.cwd.as_deref())?;
     let context_lines = args.context.unwrap_or(0);
     let matcher = build_matcher(&args.pattern, args.regex, args.ignore_case)?;
     let globset = build_globset(&args.globs)?;
 
-    let candidate_files = adapters::io::collect_files_from_roots(
-        &scope.roots,
-        globset.as_ref(),
-        args.follow_symlinks,
-    )?;
+    let candidate_files =
+        io::collect_files_from_roots(&scope.roots, globset.as_ref(), args.follow_symlinks)?;
     let backend = "ignore+rust".to_owned();
 
-    let (matches, stats, truncated) = adapters::io::collect_text_matches(
+    let (matches, stats, truncated) = io::collect_text_matches(
         candidate_files,
         &scope.display_root,
         &matcher,
@@ -139,11 +136,9 @@ pub(crate) fn execute_files(
     args: FilesArgs,
     limit: Option<usize>,
 ) -> Result<SearchResult, AppError> {
-    let scope =
-        adapters::io::resolve_scope_at(&args.paths, args.follow_symlinks, args.cwd.as_deref())?;
+    let scope = io::resolve_scope_at(&args.paths, args.follow_symlinks, args.cwd.as_deref())?;
 
-    let all_files =
-        adapters::io::collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?;
+    let all_files = io::collect_files_from_roots(&scope.roots, None, args.follow_symlinks)?;
     let backend = "ignore+rust".to_owned();
 
     let mut matched = Vec::new();
@@ -151,7 +146,7 @@ pub(crate) fn execute_files(
     let max_count = limit.unwrap_or(usize::MAX);
 
     for file_path in all_files {
-        let normalized_relative = adapters::io::display_path(&file_path, &scope.display_root);
+        let normalized_relative = io::display_path(&file_path, &scope.display_root);
         if normalized_relative.contains(&args.query) {
             if matched.len() < max_count {
                 matched.push(normalized_relative);

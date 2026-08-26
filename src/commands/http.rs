@@ -18,10 +18,8 @@ use serde_json::Value;
 
 use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
-mod adapters {
-    pub mod io;
-    pub mod output;
-}
+mod io;
+mod output;
 
 mod domain;
 
@@ -780,7 +778,7 @@ fn execute_request(
 ) -> Result<(), AppError> {
     let payload = request?;
     let failed = !payload.ok;
-    adapters::output::emit_request(payload, options.limit, &mut Emitter::stdio(options))?;
+    output::emit_request(payload, options.limit, &mut Emitter::stdio(options))?;
     if failed {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
@@ -797,7 +795,7 @@ fn execute_assert(
 ) -> Result<(), AppError> {
     let (output, report_format) = domain::run_assert(args, options.output, command_name)?;
     let failed = output.summary.failed > 0;
-    adapters::output::emit_assert(&output, report_format, &mut Emitter::stdio(options))?;
+    output::emit_assert(&output, report_format, &mut Emitter::stdio(options))?;
     if failed {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",

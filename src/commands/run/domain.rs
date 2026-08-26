@@ -1,3 +1,4 @@
+use super::io;
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -5,7 +6,7 @@ use serde::Serialize;
 
 use crate::error::AppError;
 
-use super::{CheckArgs, adapters};
+use super::CheckArgs;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -37,10 +38,10 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
     let command_args = args.command.iter().skip(1).cloned().collect::<Vec<_>>();
     let command_label = args.command.join(" ");
 
-    let execution = adapters::io::run_command(
+    let execution = io::run_command(
         &program,
         &command_args,
-        adapters::io::RunCommandOptions {
+        io::RunCommandOptions {
             timeout: args
                 .timeout_ms
                 .map(Duration::from_millis)
@@ -54,8 +55,8 @@ pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
         },
     )?;
 
-    let stdout = adapters::io::render_output(&execution.stdout, args.tail_lines);
-    let stderr = adapters::io::render_output(&execution.stderr, args.tail_lines);
+    let stdout = io::render_output(&execution.stdout, args.tail_lines);
+    let stderr = io::render_output(&execution.stderr, args.tail_lines);
 
     Ok(RunCheckOutput {
         command: "run.check",

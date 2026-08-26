@@ -1,3 +1,4 @@
+use super::io;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -13,7 +14,7 @@ use ah_runtime::core;
 use crate::error::AppError;
 
 use super::{
-    ProjectPathArgs, adapters,
+    ProjectPathArgs,
     rules::{FileGroup, classify_file},
 };
 
@@ -169,14 +170,14 @@ pub(crate) fn run_version(
 }
 
 fn detect_project(path: &Path) -> Result<ProjectSnapshot, AppError> {
-    let root = adapters::io::canonical_project_root(path)?;
+    let root = io::canonical_project_root(path)?;
 
     let mut ecosystems = BTreeSet::new();
     let mut tools = BTreeSet::new();
     let mut roles = BTreeSet::new();
     let mut files = ProjectFileGroups::default();
 
-    let candidates = adapters::io::collect_project_files(&root);
+    let candidates = io::collect_project_files(&root);
     for file in &candidates {
         let rel = normalize_relative(&root, file);
         let Some(name) = file.file_name().and_then(|value| value.to_str()) else {
@@ -282,7 +283,7 @@ fn enrich_package_json_roles(
     roles: &mut BTreeSet<String>,
 ) -> Result<(), AppError> {
     let path = root.join(rel);
-    let raw = adapters::io::read_to_string(&path)?;
+    let raw = io::read_to_string(&path)?;
     let value = serde_json::from_str::<Value>(&raw)
         .map_err(|source| AppError::json_deserialization(path, source))?;
     for dep in package_json_dependency_names(&value) {
@@ -346,7 +347,7 @@ fn package_json_dependency_names(value: &Value) -> BTreeSet<String> {
 
 fn pubspec_looks_like_flutter(root: &Path, rel: &str) -> Result<bool, AppError> {
     let path = root.join(rel);
-    let raw = adapters::io::read_to_string(&path)?;
+    let raw = io::read_to_string(&path)?;
     Ok(raw.lines().any(|line| {
         let trimmed = line.trim();
         trimmed == "flutter:" || trimmed.contains("sdk: flutter")
@@ -421,7 +422,7 @@ fn add_node_script_commands(
 
 fn read_package_json_scripts(root: &Path, rel: &str) -> Result<BTreeMap<String, String>, AppError> {
     let path = root.join(rel);
-    let raw = adapters::io::read_to_string(&path)?;
+    let raw = io::read_to_string(&path)?;
     let value = serde_json::from_str::<Value>(&raw)
         .map_err(|source| AppError::json_deserialization(path, source))?;
     let mut scripts = BTreeMap::new();
@@ -954,7 +955,7 @@ fn detect_versions(
 }
 
 fn parse_cargo_version(path: &Path, rel: &str) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let values = parse_toml_section_values(&raw, "package", &["name", "version"]);
     Ok(values.get("version").map(|version| ProjectVersionEntry {
         kind: "cargo".to_owned(),
@@ -969,7 +970,7 @@ fn parse_pyproject_version(
     path: &Path,
     rel: &str,
 ) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let values = parse_toml_section_values(&raw, "project", &["name", "version"]);
     Ok(values.get("version").map(|version| ProjectVersionEntry {
         kind: "python".to_owned(),
@@ -984,7 +985,7 @@ fn parse_package_json_version(
     path: &Path,
     rel: &str,
 ) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let value = serde_json::from_str::<Value>(&raw)
         .map_err(|source| AppError::json_deserialization(path.into(), source))?;
     let version = value
@@ -1005,7 +1006,7 @@ fn parse_package_json_like_version(
     rel: &str,
     kind: &str,
 ) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let value = serde_json::from_str::<Value>(&raw)
         .map_err(|source| AppError::json_deserialization(path.into(), source))?;
     let version = value
@@ -1022,7 +1023,7 @@ fn parse_package_json_like_version(
 }
 
 fn parse_pubspec_version(path: &Path, rel: &str) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let mut name = None;
     let mut version = None;
     for line in raw.lines() {
@@ -1048,7 +1049,7 @@ fn parse_assignment_version(
     kind: &str,
     confidence: &str,
 ) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let version_re = Regex::new(r#"(?m)\bversion\s*[:=]\s*['"]([^'"]+)['"]"#)
         .map_err(|error| AppError::invalid_argument(format!("internal regex error: {error}")))?;
     let name_re = Regex::new(r#"(?m)\bname\s*[:=]\s*['"]([^'"]+)['"]"#)
@@ -1075,7 +1076,7 @@ fn parse_xml_version(
     kind: &str,
     confidence: &str,
 ) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let version = capture_xml_tag(&raw, "Version").or_else(|| capture_xml_tag(&raw, "version"));
     let name =
         capture_xml_tag(&raw, "AssemblyName").or_else(|| capture_xml_tag(&raw, "artifactId"));
@@ -1089,7 +1090,7 @@ fn parse_xml_version(
 }
 
 fn parse_gradle_version(path: &Path, rel: &str) -> Result<Option<ProjectVersionEntry>, AppError> {
-    let raw = adapters::io::read_to_string(path)?;
+    let raw = io::read_to_string(path)?;
     let version_re = Regex::new(r#"(?m)^\s*version\s*(?:=|\s)\s*['"]([^'"]+)['"]"#)
         .map_err(|error| AppError::invalid_argument(format!("internal regex error: {error}")))?;
     let name_re = Regex::new(r#"(?m)^\s*rootProject\.name\s*=\s*['"]([^'"]+)['"]"#)

@@ -5,9 +5,7 @@ use crate::{
     output::{Emitter, TextFormatter, TextStyle},
 };
 
-use super::super::domain::{
-    AssertReportFormat, HttpAssertOutput, HttpRequestOutput, render_assert_junit,
-};
+use super::domain::{AssertReportFormat, HttpAssertOutput, HttpRequestOutput, render_assert_junit};
 
 pub(crate) fn emit_request(
     payload: HttpRequestOutput,

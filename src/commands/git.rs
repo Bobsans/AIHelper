@@ -124,16 +124,11 @@ pub struct TagCreateArgs {
 pub(crate) mod io;
 pub(crate) mod output;
 
-mod adapters {
-    pub(crate) use super::io;
-    pub(crate) use super::output;
-}
-
 mod domain;
 
 pub fn execute(args: GitArgs, options: &GlobalOptions) -> Result<(), AppError> {
     let result = domain::execute(args, options.limit, None)?;
-    adapters::output::emit(result, &mut Emitter::stdio(options))
+    output::emit(result, &mut Emitter::stdio(options))
 }
 
 pub(crate) fn command_catalog() -> CommandCatalog {

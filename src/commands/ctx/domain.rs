@@ -1,3 +1,4 @@
+use super::io;
 use std::path::Path;
 
 use schemars::JsonSchema;
@@ -10,7 +11,7 @@ use crate::error::AppError;
 use crate::git_status::{StatusEntry, parse_porcelain_v1_z};
 use crate::safety::{TextFileDecision, TextFilePolicy, TextFileSkipReason};
 
-use super::{ChangedArgs, PackArgs, SymbolsArgs, adapters};
+use super::{ChangedArgs, PackArgs, SymbolsArgs};
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -138,7 +139,7 @@ pub(crate) fn execute_pack(args: PackArgs, limit: Option<usize>) -> Result<CtxRe
             continue;
         }
 
-        for entry in adapters::io::walk_entries(root, args.follow_symlinks)? {
+        for entry in io::walk_entries(root, args.follow_symlinks)? {
             process_pack_entry(
                 entry.path.as_path(),
                 &preset_settings,
@@ -188,7 +189,7 @@ fn process_pack_entry(
     symbol_total: &mut usize,
     skip_stats: &mut SkipStats,
 ) -> Result<(), AppError> {
-    let metadata = adapters::io::symlink_metadata(path)?;
+    let metadata = io::symlink_metadata(path)?;
     let kind = if metadata.file_type().is_symlink() {
         "symlink".to_owned()
     } else if metadata.is_dir() {
@@ -201,7 +202,7 @@ fn process_pack_entry(
         "other".to_owned()
     };
 
-    let (line_count, symbols) = match adapters::io::inspect_text_file(
+    let (line_count, symbols) = match io::inspect_text_file(
         path,
         &TextFilePolicy {
             max_bytes,
@@ -212,13 +213,13 @@ fn process_pack_entry(
             if !is_text_candidate(path, file_info.size_bytes) {
                 (0usize, Vec::new())
             } else {
-                match adapters::io::read_text(path)? {
-                    adapters::io::TextRead::Text(content) => {
+                match io::read_text(path)? {
+                    io::TextRead::Text(content) => {
                         let line_count = content.lines().count();
                         let symbols = extract_symbols(path, &content);
                         (line_count, symbols)
                     }
-                    adapters::io::TextRead::Binary => {
+                    io::TextRead::Binary => {
                         register_skip_reason(skip_stats, TextFileSkipReason::Binary);
                         (0usize, Vec::new())
                     }
@@ -284,7 +285,7 @@ pub(crate) fn execute_symbols(
             &mut skip_stats,
         )?;
     } else {
-        for entry in adapters::io::walk_entries(args.path.as_path(), args.follow_symlinks)? {
+        for entry in io::walk_entries(args.path.as_path(), args.follow_symlinks)? {
             if !entry.is_file {
                 continue;
             }
@@ -328,7 +329,7 @@ fn collect_symbols_for_file(
     symbol_total: &mut usize,
     skip_stats: &mut SkipStats,
 ) -> Result<(), AppError> {
-    let inspect = adapters::io::inspect_text_file(
+    let inspect = io::inspect_text_file(
         path,
         &TextFilePolicy {
             max_bytes,
@@ -346,9 +347,9 @@ fn collect_symbols_for_file(
         return Ok(());
     }
 
-    let content = match adapters::io::read_text(path)? {
-        adapters::io::TextRead::Text(content) => content,
-        adapters::io::TextRead::Binary => {
+    let content = match io::read_text(path)? {
+        io::TextRead::Text(content) => content,
+        io::TextRead::Binary => {
             register_skip_reason(skip_stats, TextFileSkipReason::Binary);
             return Ok(());
         }
@@ -372,9 +373,9 @@ fn collect_symbols_for_file(
 }
 
 pub(crate) fn execute_changed(_args: ChangedArgs) -> Result<CtxResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo()?;
+    let in_repo = io::is_inside_git_repo()?;
     let entries = if in_repo {
-        parse_porcelain_v1_z(&adapters::io::read_git_status_bytes()?)?
+        parse_porcelain_v1_z(&io::read_git_status_bytes()?)?
             .into_iter()
             .map(changed_entry)
             .collect()
@@ -391,9 +392,9 @@ pub(crate) fn execute_changed(_args: ChangedArgs) -> Result<CtxResult, AppError>
 }
 
 pub(crate) fn execute_changed_at(_args: ChangedArgs, cwd: &Path) -> Result<CtxResult, AppError> {
-    let in_repo = adapters::io::is_inside_git_repo_at(cwd)?;
+    let in_repo = io::is_inside_git_repo_at(cwd)?;
     let entries = if in_repo {
-        parse_porcelain_v1_z(&adapters::io::read_git_status_bytes_at(cwd)?)?
+        parse_porcelain_v1_z(&io::read_git_status_bytes_at(cwd)?)?
             .into_iter()
             .map(changed_entry)
             .collect()
@@ -433,9 +434,7 @@ fn register_skip_reason(skip_stats: &mut SkipStats, reason: TextFileSkipReason) 
 }
 
 fn is_symlink_path(path: &Path) -> Result<bool, AppError> {
-    Ok(adapters::io::symlink_metadata(path)?
-        .file_type()
-        .is_symlink())
+    Ok(io::symlink_metadata(path)?.file_type().is_symlink())
 }
 
 fn normalize_path(value: &str) -> String {

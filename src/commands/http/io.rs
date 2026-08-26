@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
-use super::super::domain::{AuthConfig, RequestBody, RequestConfig, ResponseSnapshot};
+use super::domain::{AuthConfig, RequestBody, RequestConfig, ResponseSnapshot};
 
 pub(crate) fn read_to_string(path: impl AsRef<Path>) -> Result<String, AppError> {
     let path = path.as_ref();
