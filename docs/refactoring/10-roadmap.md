@@ -173,10 +173,13 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 | ~~Extract `ah-updater` from `src/updater/`~~ **(done)**      | 07, 09 |
 | ~~Extract `ah-secrets`, `ah-observability`, `ah-service`~~ **(done, plus `ah-config`)** | 09 |
 | ~~One `fsverify` module for updater hardening primitives~~ **(done)** | 07 |
-| Extract domain crates last                                  | 09     |
+| ~~Extract domain crates last~~ **(done as one `ah-domains`, plus `ah-output`)** | 09 |
 
 **Exit criterion:** the root crate is CLI wiring; every subsystem builds and tests
-independently.
+independently. **Phase 3 is complete.** Nineteen crates; `src/*.rs` is 3 296
+lines and holds the CLI, the plugin registration, the host commands and the
+snapshots. Every crate builds and its tests pass with `aihelper` absent from its
+graph.
 
 **`ServiceGuard` landed, with two notes.** The trait is `hold`/`capture`/`stop`/
 `restore`, and every method after `hold` takes the hold as a parameter, so what
@@ -263,6 +266,33 @@ running executable may legitimately be hard-linked into place by whoever
 unpacked a portable install, and the cargo-marker probe is detection rather than
 verification. Naming them is the point - the next reader "deduplicating" either
 would change what an installation is allowed to look like.
+
+**The domains went last, as one `ah-domains`,** with `ah-output` extracted first
+because they all render and so all reached into the CLI for `Emitter`,
+`OutputMode` and `GlobalOptions`. `GlobalOptions` left the clap layer with them:
+it is what a request reports under, not how a flag was spelled.
+
+One crate rather than eight, which group 09 offers as an alternative. The only
+cross-domain edge is `task` → `run::io`, so per-domain crates would enforce a
+separation nothing is currently violating, at the cost of nine manifests. The
+boundary worth drawing was the CLI/domain one. If compile times ever justify
+splitting further, the `safety` (file, search, ctx) and `git_status` (git, ctx)
+clusters are where the seams already are.
+
+Three things this row taught that the earlier ones had not:
+
+- **The `pub(crate)` caution is real, and the compiler is the auditor.** Group 09
+  warns against blanket-`pub`. Driving it from the errors instead produced a
+  named surface - `execute`, `command_catalog`, `invoke_typed`,
+  `bind_resolved_credentials`, `run::io`, two corpora - rather than a module
+  opened wholesale. The earlier extractions did widen in bulk; that is a debt
+  worth revisiting if any of those crates ever grows a second consumer.
+- **One crate's `cfg(test)` is invisible to another's.** Two snapshot corpora had
+  to move to the domains (a domain test cannot reach up into the CLI), and then
+  the CLI's snapshots could not see them. They are behind a `fixtures` feature
+  the root enables as a dev-dependency, so a release build compiles neither.
+- **`commands/layout.rs` moved with the modules it checks.** An invariant that
+  reads `CARGO_MANIFEST_DIR` belongs to the crate whose layout it is.
 
 The three lifecycle helpers that remain (`snapshot_status`, `install_quietly`,
 `start_quietly`) serve `ai install --transport managed`. Group 07 counted them
