@@ -34,6 +34,12 @@ AIHelper now uses a plugin-oriented architecture with in-process runtime dispatc
   - built-in + dynamic plugin registry
   - dynamic loader for `.dll/.so/.dylib` plugins
   - typed schema validation and bounded execution abstraction
+- `crates/ah-setup-ui`:
+  - the browser-facing secret entry and confirmation pages
+  - their Content-Security-Policy, per-page nonce, `no-store` and referrer
+    headers, HTML escaping, and `Accept` negotiation
+  - a web application rather than an MCP concern, so its security properties are
+    reviewed on their own rather than inside protocol changes
 - `crates/ah-mcp`:
   - dynamic `rmcp` server adapter
   - stdio and local stateful Streamable HTTP transports

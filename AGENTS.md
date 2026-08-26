@@ -28,6 +28,8 @@ AIHelper is a Rust workspace that provides the `ah <domain> <command>` CLI. It u
 - `crates/ah-plugin-api/`: stable plugin request/response and C ABI contracts.
 - `crates/ah-plugin-sdk/`: shared implementation support for plugins - credential
   policy, the JSON API client, and text-output primitives.
+- `crates/ah-setup-ui/`: the browser pages for entering a secret, and the
+  response headers that harden them.
 - `crates/ah-runtime/`: plugin registry, manager, and dynamic loader.
 - `plugins/`: dynamic plugin crates.
 - `tests/`: integration tests.

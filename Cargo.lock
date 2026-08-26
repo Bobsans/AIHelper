@@ -50,6 +50,7 @@ dependencies = [
  "ah-plugin-api",
  "ah-redact",
  "ah-runtime",
+ "ah-setup-ui",
  "axum",
  "rmcp",
  "serde",
@@ -188,6 +189,15 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "ah-setup-ui"
+version = "1.4.0"
+dependencies = [
+ "axum",
+ "serde",
+ "uuid",
 ]
 
 [[package]]

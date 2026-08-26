@@ -14,18 +14,24 @@ whole file in their head.
 | Streamable HTTP transport + lifecycle | `HttpLifecycleState:914`, `HttpLifecycleController:955` |
 | Shutdown protocol and tracker | `ShutdownTracker:907`, `ShutdownReader:1056` |
 | Local-request authentication | `validate_local_headers:1680` |
-| **A full HTML/CSS web UI for secret setup** | `SETUP_PAGE_STYLE` (~30 lines of CSS), `setup_page:1519`, `render_secret_setup_form:1530`, `render_secret_setup_success:1569`, `html_escape:1611` |
+| ~~**A full HTML/CSS web UI for secret setup**~~ | *moved to `ah-setup-ui`* |
 | Plaintext-credential detection and redaction | `validate_mcp_plaintext_auth:1834`, `redact_curl_user_options:1743` |
 | Job registry glue, catalog snapshots, error mapping | `job_tools:1726`, `build_catalog_snapshot:2610`, `runtime_command_error:2453` |
 
 A browser-facing HTML form living inside the MCP protocol adapter is the clearest
 boundary violation in the codebase. It also means the CSP/nonce/`no-store` security
-work (`no_store:1443`, `page_nonce:1467`) is reviewed as part of protocol changes.
+work is reviewed as part of protocol changes.
 
-**Split into:** `mcp::protocol`, `mcp::transport::{stdio,http}`, `mcp::shutdown`,
-`mcp::jobs`, `mcp::mapping` — and move the setup UI out entirely, into
-`ah-setup-ui` (or serve it from a dedicated small crate), since it is a web
-application, not an MCP concern.
+**Status: the UI is out.** `ah-setup-ui` owns the pages, the CSP and nonce, the
+`no-store`/referrer headers, the HTML escaping, the `Accept` negotiation, and the
+contract types the vault implements — with the four tests that cover them. The
+adapter keeps routing and the local-request policy, which is transport, and
+re-exports the contract types so callers still see one surface.
+
+`axum` moved to `[workspace.dependencies]`, since two members need it now.
+
+**Still to split:** `mcp::protocol`, `mcp::transport::{stdio,http}`,
+`mcp::shutdown`, `mcp::mapping`. `server.rs` is 3 541 lines.
 
 ### 5.2 `src/commands/http/domain.rs` — 1 983 lines, a test framework in disguise *(done)*
 

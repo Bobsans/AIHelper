@@ -17,6 +17,7 @@ members = [
     "crates/ah-plugin-api",
     "crates/ah-plugin-sdk",
     "crates/ah-redact",
+    "crates/ah-setup-ui",
     "crates/ah-release-manifest",
     "crates/ah-release-tool",
     "crates/ah-runtime",
@@ -46,6 +47,7 @@ repository = "https://github.com/Bobsans/AIHelper"
 # override the version.
 [workspace.dependencies]
 assert_cmd = "2.0.17"
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 base64 = "0.22"
 clap = { version = "4.5.39", features = ["derive"] }
 command-group = "5.0.1"
