@@ -1,0 +1,2254 @@
+[
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "drone",
+        "role": "ci",
+        "tool": "drone"
+      }
+    ],
+    "path": ".drone.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "drone",
+        "role": "ci",
+        "tool": "drone"
+      }
+    ],
+    "path": ".drone.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "eslint",
+        "role": "quality",
+        "tool": "eslint"
+      }
+    ],
+    "path": ".eslintrc"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "gitlab-ci",
+        "role": "ci",
+        "tool": "gitlab-ci"
+      }
+    ],
+    "path": ".gitlab-ci.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "gitlab-ci",
+        "role": "ci",
+        "tool": "gitlab-ci"
+      }
+    ],
+    "path": ".gitlab-ci.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "pre-commit",
+        "role": "quality",
+        "tool": "pre-commit"
+      }
+    ],
+    "path": ".pre-commit-config.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "pre-commit",
+        "role": "quality",
+        "tool": "pre-commit"
+      }
+    ],
+    "path": ".pre-commit-config.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "prettier",
+        "role": "quality",
+        "tool": "prettier"
+      }
+    ],
+    "path": ".prettierrc"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "renovate",
+        "role": "quality",
+        "tool": "renovate"
+      }
+    ],
+    "path": ".renovaterc"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "renovate",
+        "role": "quality",
+        "tool": "renovate"
+      }
+    ],
+    "path": ".renovaterc.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "static-analysis",
+        "role": "quality",
+        "tool": null
+      }
+    ],
+    "path": ".rubocop.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Quality",
+        "kind": "ruff",
+        "role": "quality",
+        "tool": "ruff"
+      }
+    ],
+    "path": ".ruff.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "semgrep",
+        "role": "security",
+        "tool": "semgrep"
+      }
+    ],
+    "path": ".semgrep.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "semgrep",
+        "role": "security",
+        "tool": "semgrep"
+      }
+    ],
+    "path": ".semgrep.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "trivy",
+        "role": "security",
+        "tool": "trivy"
+      }
+    ],
+    "path": ".trivyignore"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "woodpecker",
+        "role": "ci",
+        "tool": "woodpecker"
+      }
+    ],
+    "path": ".woodpecker.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "woodpecker",
+        "role": "ci",
+        "tool": "woodpecker"
+      }
+    ],
+    "path": ".woodpecker.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "android",
+        "group": "Config",
+        "kind": "android-manifest",
+        "role": "mobile",
+        "tool": "android"
+      }
+    ],
+    "path": "androidmanifest.xml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "mobile",
+        "group": "Config",
+        "kind": "fastlane",
+        "role": "mobile",
+        "tool": "fastlane"
+      }
+    ],
+    "path": "appfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java",
+        "group": "Config",
+        "kind": "spring-boot",
+        "role": "backend",
+        "tool": "spring-boot"
+      }
+    ],
+    "path": "application.properties"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java",
+        "group": "Config",
+        "kind": "spring-boot",
+        "role": "backend",
+        "tool": "spring-boot"
+      }
+    ],
+    "path": "application.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java",
+        "group": "Config",
+        "kind": "spring-boot",
+        "role": "backend",
+        "tool": "spring-boot"
+      }
+    ],
+    "path": "application.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "php",
+        "group": "Config",
+        "kind": "laravel",
+        "role": "backend",
+        "tool": "laravel"
+      }
+    ],
+    "path": "artisan"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "astro",
+        "role": "web",
+        "tool": "astro"
+      }
+    ],
+    "path": "astro.config.js"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "astro",
+        "role": "web",
+        "tool": "astro"
+      }
+    ],
+    "path": "astro.config.mjs"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "astro",
+        "role": "web",
+        "tool": "astro"
+      }
+    ],
+    "path": "astro.config.ts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "azure-pipelines",
+        "role": "ci",
+        "tool": "azure-pipelines"
+      }
+    ],
+    "path": "azure-pipelines.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "azure-pipelines",
+        "role": "ci",
+        "tool": "azure-pipelines"
+      }
+    ],
+    "path": "azure-pipelines.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java-gradle",
+        "group": "Package",
+        "kind": "gradle",
+        "role": "source",
+        "tool": "gradle"
+      }
+    ],
+    "path": "build.gradle"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java-gradle",
+        "group": "Package",
+        "kind": "gradle",
+        "role": "source",
+        "tool": "gradle"
+      }
+    ],
+    "path": "build.gradle.kts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "scala",
+        "group": "Package",
+        "kind": "sbt",
+        "role": "backend",
+        "tool": "sbt"
+      }
+    ],
+    "path": "build.sbt"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "zig",
+        "group": "Package",
+        "kind": "zig",
+        "role": "source",
+        "tool": "zig"
+      }
+    ],
+    "path": "build.zig"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Lock",
+        "kind": "bun-lock",
+        "role": "source",
+        "tool": "bun"
+      }
+    ],
+    "path": "bun.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Lock",
+        "kind": "bun-lock",
+        "role": "source",
+        "tool": "bun"
+      }
+    ],
+    "path": "bun.lockb"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "haskell",
+        "group": "Package",
+        "kind": "cabal-project",
+        "role": "source",
+        "tool": "cabal"
+      }
+    ],
+    "path": "cabal.project"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "rust",
+        "group": "Lock",
+        "kind": "cargo-lock",
+        "role": "source",
+        "tool": "cargo"
+      }
+    ],
+    "path": "cargo.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "rust",
+        "group": "Package",
+        "kind": "cargo",
+        "role": "source",
+        "tool": "cargo"
+      }
+    ],
+    "path": "cargo.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ios",
+        "group": "Package",
+        "kind": "carthage",
+        "role": "mobile",
+        "tool": "carthage"
+      }
+    ],
+    "path": "cartfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "aws-cdk",
+        "group": "Infra",
+        "kind": "aws-cdk",
+        "role": "cloud",
+        "tool": "cdk"
+      }
+    ],
+    "path": "cdk.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Changelog",
+        "kind": "changelog",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "changelog.md"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Changelog",
+        "kind": "changelog",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "changes.md"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "helm",
+        "group": "Deploy",
+        "kind": "helm-chart",
+        "role": "deploy",
+        "tool": "helm"
+      }
+    ],
+    "path": "chart.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "cpp",
+        "group": "Package",
+        "kind": "cmake",
+        "role": "source",
+        "tool": "cmake"
+      }
+    ],
+    "path": "cmakelists.txt"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "compose",
+        "role": "container",
+        "tool": "docker-compose"
+      }
+    ],
+    "path": "compose.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "compose",
+        "role": "container",
+        "tool": "docker-compose"
+      }
+    ],
+    "path": "compose.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "php",
+        "group": "Package",
+        "kind": "composer",
+        "role": "source",
+        "tool": "composer"
+      }
+    ],
+    "path": "composer.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "php",
+        "group": "Lock",
+        "kind": "composer-lock",
+        "role": "source",
+        "tool": "composer"
+      }
+    ],
+    "path": "composer.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "cpp",
+        "group": "Package",
+        "kind": "conan",
+        "role": "source",
+        "tool": "conan"
+      }
+    ],
+    "path": "conanfile.py"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "cpp",
+        "group": "Package",
+        "kind": "conan",
+        "role": "source",
+        "tool": "conan"
+      }
+    ],
+    "path": "conanfile.txt"
+  },
+  {
+    "detections": [],
+    "path": "conf.py"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Docs",
+        "kind": "static-site-config",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "config.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Docs",
+        "kind": "static-site-config",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "config.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "perl",
+        "group": "Package",
+        "kind": "cpanfile",
+        "role": "source",
+        "tool": "cpanm"
+      }
+    ],
+    "path": "cpanfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "dependabot",
+        "role": "quality",
+        "tool": "dependabot"
+      }
+    ],
+    "path": "dependabot.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "dependabot",
+        "role": "quality",
+        "tool": "dependabot"
+      }
+    ],
+    "path": "dependabot.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "clojure",
+        "group": "Package",
+        "kind": "clojure-deps",
+        "role": "backend",
+        "tool": "clojure"
+      }
+    ],
+    "path": "deps.edn"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "r",
+        "group": "Package",
+        "kind": "r-package",
+        "role": "data-science",
+        "tool": "r"
+      }
+    ],
+    "path": "description"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "compose",
+        "role": "container",
+        "tool": "docker-compose"
+      }
+    ],
+    "path": "docker-compose.override.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "compose",
+        "role": "container",
+        "tool": "docker-compose"
+      }
+    ],
+    "path": "docker-compose.override.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "compose",
+        "role": "container",
+        "tool": "docker-compose"
+      }
+    ],
+    "path": "docker-compose.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "dockerfile",
+        "role": "container",
+        "tool": "docker"
+      }
+    ],
+    "path": "dockerfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Docs",
+        "kind": "docusaurus",
+        "role": "docs",
+        "tool": "docusaurus"
+      }
+    ],
+    "path": "docusaurus.config.js"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Docs",
+        "kind": "docusaurus",
+        "role": "docs",
+        "tool": "docusaurus"
+      }
+    ],
+    "path": "docusaurus.config.ts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ocaml",
+        "group": "Package",
+        "kind": "dune",
+        "role": "source",
+        "tool": "dune"
+      }
+    ],
+    "path": "dune-project"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "eslint",
+        "role": "quality",
+        "tool": "eslint"
+      }
+    ],
+    "path": "eslint.config.mjs"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "eslint",
+        "role": "quality",
+        "tool": "eslint"
+      }
+    ],
+    "path": "eslint.config.ts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "mobile",
+        "group": "Config",
+        "kind": "fastlane",
+        "role": "mobile",
+        "tool": "fastlane"
+      }
+    ],
+    "path": "fastfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "nix",
+        "group": "Package",
+        "kind": "nix-flake",
+        "role": "source",
+        "tool": "nix"
+      }
+    ],
+    "path": "flake.nix"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ruby",
+        "group": "Package",
+        "kind": "bundler",
+        "role": "source",
+        "tool": "bundler"
+      }
+    ],
+    "path": "gemfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ruby",
+        "group": "Lock",
+        "kind": "gemfile-lock",
+        "role": "source",
+        "tool": "bundler"
+      }
+    ],
+    "path": "gemfile.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "go",
+        "group": "Package",
+        "kind": "go",
+        "role": "source",
+        "tool": "go"
+      }
+    ],
+    "path": "go.mod"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "go",
+        "group": "Lock",
+        "kind": "go-sum",
+        "role": "source",
+        "tool": "go"
+      }
+    ],
+    "path": "go.sum"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Changelog",
+        "kind": "changelog",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "history.md"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Docs",
+        "kind": "static-site-config",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "hugo.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "jenkins",
+        "role": "ci",
+        "tool": "jenkins"
+      }
+    ],
+    "path": "jenkinsfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "kustomize",
+        "role": "deploy",
+        "tool": "kustomize"
+      }
+    ],
+    "path": "kustomization.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "kustomize",
+        "role": "deploy",
+        "tool": "kustomize"
+      }
+    ],
+    "path": "kustomization.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "lefthook",
+        "role": "quality",
+        "tool": "lefthook"
+      }
+    ],
+    "path": "lefthook.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "lefthook",
+        "role": "quality",
+        "tool": "lefthook"
+      }
+    ],
+    "path": "lefthook.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "make",
+        "group": "Package",
+        "kind": "make",
+        "role": "source",
+        "tool": "make"
+      }
+    ],
+    "path": "makefile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Config",
+        "kind": "django",
+        "role": "backend",
+        "tool": "django"
+      }
+    ],
+    "path": "manage.py"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "julia",
+        "group": "Lock",
+        "kind": "julia-manifest",
+        "role": "source",
+        "tool": "julia"
+      }
+    ],
+    "path": "manifest.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "cpp",
+        "group": "Package",
+        "kind": "meson",
+        "role": "source",
+        "tool": "meson"
+      }
+    ],
+    "path": "meson.build"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "elixir",
+        "group": "Package",
+        "kind": "mix",
+        "role": "source",
+        "tool": "mix"
+      }
+    ],
+    "path": "mix.exs"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "elixir",
+        "group": "Lock",
+        "kind": "mix-lock",
+        "role": "source",
+        "tool": "mix"
+      }
+    ],
+    "path": "mix.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Docs",
+        "kind": "mkdocs",
+        "role": "docs",
+        "tool": "mkdocs"
+      }
+    ],
+    "path": "mkdocs.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Docs",
+        "kind": "mkdocs",
+        "role": "docs",
+        "tool": "mkdocs"
+      }
+    ],
+    "path": "mkdocs.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "bazel",
+        "group": "Package",
+        "kind": "bazel",
+        "role": "source",
+        "tool": "bazel"
+      }
+    ],
+    "path": "module.bazel"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "next",
+        "role": "web",
+        "tool": "next"
+      }
+    ],
+    "path": "next.config.js"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "next",
+        "role": "web",
+        "tool": "next"
+      }
+    ],
+    "path": "next.config.mjs"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "next",
+        "role": "web",
+        "tool": "next"
+      }
+    ],
+    "path": "next.config.ts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Lock",
+        "kind": "package-lock",
+        "role": "source",
+        "tool": "npm"
+      }
+    ],
+    "path": "package-lock.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Package",
+        "kind": "npm",
+        "role": "source",
+        "tool": "npm"
+      }
+    ],
+    "path": "package.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "swift",
+        "group": "Package",
+        "kind": "swiftpm",
+        "role": "source",
+        "tool": "swift"
+      }
+    ],
+    "path": "package.swift"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "dotnet",
+        "group": "Lock",
+        "kind": "dotnet-lock",
+        "role": "source",
+        "tool": "dotnet"
+      }
+    ],
+    "path": "packages.lock.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "elixir",
+        "group": "Config",
+        "kind": "phoenix",
+        "role": "backend",
+        "tool": "phoenix"
+      }
+    ],
+    "path": "phoenix"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "static-analysis",
+        "role": "quality",
+        "tool": null
+      }
+    ],
+    "path": "phpstan.neon"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "embedded",
+        "group": "Package",
+        "kind": "platformio",
+        "role": "embedded",
+        "tool": "platformio"
+      }
+    ],
+    "path": "platformio.ini"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Lock",
+        "kind": "pnpm-lock",
+        "role": "source",
+        "tool": "pnpm"
+      }
+    ],
+    "path": "pnpm-lock.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ios",
+        "group": "Package",
+        "kind": "cocoapods",
+        "role": "mobile",
+        "tool": "cocoapods"
+      }
+    ],
+    "path": "podfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Lock",
+        "kind": "poetry-lock",
+        "role": "source",
+        "tool": "poetry"
+      }
+    ],
+    "path": "poetry.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java-maven",
+        "group": "Package",
+        "kind": "maven",
+        "role": "source",
+        "tool": "maven"
+      }
+    ],
+    "path": "pom.xml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "prettier",
+        "role": "quality",
+        "tool": "prettier"
+      }
+    ],
+    "path": "prettier.config.js"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Quality",
+        "kind": "prettier",
+        "role": "quality",
+        "tool": "prettier"
+      }
+    ],
+    "path": "prettier.config.mjs"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "clojure",
+        "group": "Package",
+        "kind": "leiningen",
+        "role": "backend",
+        "tool": "leiningen"
+      }
+    ],
+    "path": "project.clj"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "julia",
+        "group": "Package",
+        "kind": "julia-project",
+        "role": "data-science",
+        "tool": "julia"
+      }
+    ],
+    "path": "project.toml"
+  },
+  {
+    "detections": [],
+    "path": "projectversion.txt"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "dart",
+        "group": "Lock",
+        "kind": "pubspec-lock",
+        "role": "source",
+        "tool": "pub"
+      }
+    ],
+    "path": "pubspec.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "dart",
+        "group": "Package",
+        "kind": "pub",
+        "role": "source",
+        "tool": "pub"
+      }
+    ],
+    "path": "pubspec.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "pulumi",
+        "group": "Infra",
+        "kind": "pulumi",
+        "role": "cloud",
+        "tool": "pulumi"
+      }
+    ],
+    "path": "pulumi.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Package",
+        "kind": "python",
+        "role": "source",
+        "tool": "python"
+      }
+    ],
+    "path": "pyproject.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Docs",
+        "kind": "readme",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "readme"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Docs",
+        "kind": "readme",
+        "role": "docs",
+        "tool": null
+      }
+    ],
+    "path": "readme.md"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "erlang",
+        "group": "Package",
+        "kind": "rebar",
+        "role": "backend",
+        "tool": "rebar3"
+      }
+    ],
+    "path": "rebar.config"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "renovate",
+        "role": "quality",
+        "tool": "renovate"
+      }
+    ],
+    "path": "renovate.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "r",
+        "group": "Lock",
+        "kind": "renv-lock",
+        "role": "source",
+        "tool": "renv"
+      }
+    ],
+    "path": "renv.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "lua",
+        "group": "Package",
+        "kind": "luarocks",
+        "role": "source",
+        "tool": "luarocks"
+      }
+    ],
+    "path": "rockspec"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Quality",
+        "kind": "static-analysis",
+        "role": "quality",
+        "tool": null
+      }
+    ],
+    "path": "rubocop.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Quality",
+        "kind": "ruff",
+        "role": "quality",
+        "tool": "ruff"
+      }
+    ],
+    "path": "ruff.toml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "semgrep",
+        "role": "security",
+        "tool": "semgrep"
+      }
+    ],
+    "path": "semgrep.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "serverless",
+        "group": "Deploy",
+        "kind": "serverless",
+        "role": "cloud",
+        "tool": "serverless"
+      }
+    ],
+    "path": "serverless.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "serverless",
+        "group": "Deploy",
+        "kind": "serverless",
+        "role": "cloud",
+        "tool": "serverless"
+      }
+    ],
+    "path": "serverless.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "salesforce",
+        "group": "Package",
+        "kind": "salesforce",
+        "role": "backend",
+        "tool": "sfdx"
+      }
+    ],
+    "path": "sfdx-project.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "crystal",
+        "group": "Lock",
+        "kind": "shard-lock",
+        "role": "source",
+        "tool": "shards"
+      }
+    ],
+    "path": "shard.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "crystal",
+        "group": "Package",
+        "kind": "shards",
+        "role": "backend",
+        "tool": "shards"
+      }
+    ],
+    "path": "shard.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "nix",
+        "group": "Package",
+        "kind": "nix-shell",
+        "role": "source",
+        "tool": "nix"
+      }
+    ],
+    "path": "shell.nix"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "skaffold",
+        "role": "deploy",
+        "tool": "skaffold"
+      }
+    ],
+    "path": "skaffold.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "skaffold",
+        "role": "deploy",
+        "tool": "skaffold"
+      }
+    ],
+    "path": "skaffold.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "embedded",
+        "group": "Config",
+        "kind": "arduino-sketch",
+        "role": "embedded",
+        "tool": "arduino"
+      }
+    ],
+    "path": "sketch.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "haskell",
+        "group": "Package",
+        "kind": "stack",
+        "role": "source",
+        "tool": "stack"
+      }
+    ],
+    "path": "stack.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "aws-sam",
+        "group": "Deploy",
+        "kind": "aws-sam",
+        "role": "cloud",
+        "tool": "sam"
+      }
+    ],
+    "path": "template.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "aws-sam",
+        "group": "Deploy",
+        "kind": "aws-sam",
+        "role": "cloud",
+        "tool": "sam"
+      }
+    ],
+    "path": "template.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "tilt",
+        "role": "deploy",
+        "tool": "tilt"
+      }
+    ],
+    "path": "tiltfile"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "trivy",
+        "role": "security",
+        "tool": "trivy"
+      }
+    ],
+    "path": "trivy.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "trivy",
+        "role": "security",
+        "tool": "trivy"
+      }
+    ],
+    "path": "trivy.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "tsconfig",
+        "role": "source",
+        "tool": "typescript"
+      }
+    ],
+    "path": "tsconfig.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Lock",
+        "kind": "uv-lock",
+        "role": "source",
+        "tool": "uv"
+      }
+    ],
+    "path": "uv.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "cpp",
+        "group": "Package",
+        "kind": "vcpkg",
+        "role": "source",
+        "tool": "vcpkg"
+      }
+    ],
+    "path": "vcpkg.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "vite",
+        "role": "web",
+        "tool": "vite"
+      }
+    ],
+    "path": "vite.config.js"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "vite",
+        "role": "web",
+        "tool": "vite"
+      }
+    ],
+    "path": "vite.config.mjs"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Config",
+        "kind": "vite",
+        "role": "web",
+        "tool": "vite"
+      }
+    ],
+    "path": "vite.config.ts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "bazel",
+        "group": "Package",
+        "kind": "bazel",
+        "role": "source",
+        "tool": "bazel"
+      }
+    ],
+    "path": "workspace"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "bazel",
+        "group": "Package",
+        "kind": "bazel",
+        "role": "source",
+        "tool": "bazel"
+      }
+    ],
+    "path": "workspace.bazel"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "node",
+        "group": "Lock",
+        "kind": "yarn-lock",
+        "role": "source",
+        "tool": "yarn"
+      }
+    ],
+    "path": "yarn.lock"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "haskell",
+        "group": "Package",
+        "kind": "cabal",
+        "role": "source",
+        "tool": "cabal"
+      }
+    ],
+    "path": "sample.cabal"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "dotnet",
+        "group": "Package",
+        "kind": "dotnet",
+        "role": "source",
+        "tool": "dotnet"
+      }
+    ],
+    "path": "sample.csproj"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ruby",
+        "group": "Package",
+        "kind": "gemspec",
+        "role": "source",
+        "tool": "rubygems"
+      }
+    ],
+    "path": "sample.gemspec"
+  },
+  {
+    "detections": [],
+    "path": "sample.gradle"
+  },
+  {
+    "detections": [],
+    "path": "sample.gradle.kts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "jupyter",
+        "group": "Package",
+        "kind": "jupyter-notebook",
+        "role": "data-science",
+        "tool": "jupyter"
+      }
+    ],
+    "path": "sample.ipynb"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "nomad",
+        "group": "Infra",
+        "kind": "nomad",
+        "role": "infra",
+        "tool": "nomad"
+      }
+    ],
+    "path": "sample.nomad"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ocaml",
+        "group": "Package",
+        "kind": "opam",
+        "role": "source",
+        "tool": "opam"
+      }
+    ],
+    "path": "sample.opam"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "lua",
+        "group": "Package",
+        "kind": "luarocks",
+        "role": "source",
+        "tool": "luarocks"
+      }
+    ],
+    "path": "sample.rockspec"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "terraform",
+        "group": "Infra",
+        "kind": "terraform",
+        "role": "infra",
+        "tool": "terraform"
+      }
+    ],
+    "path": "sample.tf"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "terraform",
+        "group": "Infra",
+        "kind": "terraform-vars",
+        "role": "infra",
+        "tool": "terraform"
+      }
+    ],
+    "path": "sample.tfvars"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "opentofu",
+        "group": "Infra",
+        "kind": "opentofu",
+        "role": "infra",
+        "tool": "tofu"
+      }
+    ],
+    "path": "sample.tofu"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "unreal",
+        "group": "Config",
+        "kind": "unreal",
+        "role": "game",
+        "tool": "unreal"
+      }
+    ],
+    "path": "sample.uplugin"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "unreal",
+        "group": "Config",
+        "kind": "unreal",
+        "role": "game",
+        "tool": "unreal"
+      }
+    ],
+    "path": "sample.uproject"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ios",
+        "group": "Config",
+        "kind": "xcode",
+        "role": "mobile",
+        "tool": "xcodebuild"
+      }
+    ],
+    "path": "sample.xcodeproj"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ios",
+        "group": "Config",
+        "kind": "xcode",
+        "role": "mobile",
+        "tool": "xcodebuild"
+      }
+    ],
+    "path": "sample.xcworkspace"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "docker",
+        "group": "Deploy",
+        "kind": "dockerfile",
+        "role": "container",
+        "tool": "docker"
+      }
+    ],
+    "path": "dockerfile.dev"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "buildkite",
+        "role": "ci",
+        "tool": "buildkite"
+      }
+    ],
+    "path": ".buildkite/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "flux",
+        "role": "deploy",
+        "tool": "flux"
+      }
+    ],
+    "path": ".fluxcd/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "github-actions",
+        "role": "ci",
+        "tool": "github-actions"
+      }
+    ],
+    "path": ".github/workflows/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "mobile",
+        "group": "Config",
+        "kind": "mobile-project",
+        "role": "mobile",
+        "tool": null
+      }
+    ],
+    "path": "android/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "mobile",
+        "group": "Config",
+        "kind": "mobile-project",
+        "role": "mobile",
+        "tool": null
+      }
+    ],
+    "path": "ios/entry.yml"
+  },
+  {
+    "detections": [],
+    "path": "projectsettings/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-role",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "roles/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "tauri",
+        "group": "Config",
+        "kind": "tauri",
+        "role": "desktop",
+        "tool": "tauri"
+      }
+    ],
+    "path": "src-tauri/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-role",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "nested/roles/entry.yml"
+  },
+  {
+    "detections": [],
+    "path": "nested/android/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "argo-cd",
+        "role": "deploy",
+        "tool": "argocd"
+      }
+    ],
+    "path": "nested/argo-cd/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "argo-cd",
+        "role": "deploy",
+        "tool": "argocd"
+      }
+    ],
+    "path": "nested/argocd/entry.yml"
+  },
+  {
+    "detections": [],
+    "path": "nested/codeql/entry.yml"
+  },
+  {
+    "detections": [],
+    "path": "nested/doc/entry.yml"
+  },
+  {
+    "detections": [],
+    "path": "nested/docs/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "kubernetes",
+        "group": "Deploy",
+        "kind": "flux",
+        "role": "deploy",
+        "tool": "flux"
+      }
+    ],
+    "path": "nested/gotk-components/entry.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Docs",
+        "kind": "static-site-config",
+        "role": "docs",
+        "tool": null
+      },
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "circleci",
+        "role": "ci",
+        "tool": "circleci"
+      }
+    ],
+    "path": ".circleci/config.yaml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "circleci",
+        "role": "ci",
+        "tool": "circleci"
+      }
+    ],
+    "path": ".circleci/config.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "android",
+        "group": "Config",
+        "kind": "android-gradle",
+        "role": "mobile",
+        "tool": "gradle"
+      }
+    ],
+    "path": "settings.gradle"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "android",
+        "group": "Config",
+        "kind": "android-gradle",
+        "role": "mobile",
+        "tool": "gradle"
+      }
+    ],
+    "path": "settings.gradle.kts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Docs",
+        "kind": "sphinx",
+        "role": "docs",
+        "tool": "sphinx"
+      }
+    ],
+    "path": "docs/conf.py"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "python",
+        "group": "Docs",
+        "kind": "sphinx",
+        "role": "docs",
+        "tool": "sphinx"
+      }
+    ],
+    "path": "doc/conf.py"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": null,
+        "group": "Ci",
+        "kind": "github-actions",
+        "role": "ci",
+        "tool": "github-actions"
+      },
+      {
+        "ecosystem": null,
+        "group": "Security",
+        "kind": "codeql",
+        "role": "security",
+        "tool": "codeql"
+      }
+    ],
+    "path": ".github/workflows/codeql.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java-gradle",
+        "group": "Package",
+        "kind": "gradle",
+        "role": "source",
+        "tool": "gradle"
+      },
+      {
+        "ecosystem": "android",
+        "group": "Config",
+        "kind": "android-gradle",
+        "role": "mobile",
+        "tool": "gradle"
+      },
+      {
+        "ecosystem": "mobile",
+        "group": "Config",
+        "kind": "mobile-project",
+        "role": "mobile",
+        "tool": null
+      }
+    ],
+    "path": "android/app/build.gradle"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "java-gradle",
+        "group": "Package",
+        "kind": "gradle",
+        "role": "source",
+        "tool": "gradle"
+      }
+    ],
+    "path": "app/build.gradle.kts"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "unity",
+        "group": "Config",
+        "kind": "unity-project",
+        "role": "game",
+        "tool": "unity"
+      }
+    ],
+    "path": "projectsettings/projectversion.txt"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "tauri",
+        "group": "Config",
+        "kind": "tauri",
+        "role": "desktop",
+        "tool": "tauri"
+      }
+    ],
+    "path": "src-tauri/tauri.conf.json"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "mobile",
+        "group": "Config",
+        "kind": "mobile-project",
+        "role": "mobile",
+        "tool": null
+      }
+    ],
+    "path": "ios/Runner/Info.plist"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-role",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "roles/web/tasks/main.yml"
+  },
+  {
+    "detections": [
+      {
+        "ecosystem": "ansible",
+        "group": "Infra",
+        "kind": "ansible-role",
+        "role": "infra",
+        "tool": "ansible"
+      }
+    ],
+    "path": "nested/roles/web/tasks/main.yml"
+  },
+  {
+    "detections": [],
+    "path": "unclassified/random.txt"
+  }
+]

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{cli::GlobalOptions, error::AppError, output::Emitter};
 
-mod rules;
+pub(crate) mod rules;
 
 mod adapters {
     pub mod io;
