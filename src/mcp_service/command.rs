@@ -34,14 +34,16 @@ pub struct InstallOptions {
 }
 
 pub fn route(raw_args: &[OsString]) -> Result<EarlyRoute, AppError> {
-    let Some((domain, operation)) = command_tokens(raw_args)? else {
+    let tokens = crate::entry::leading_positionals(raw_args, 2)?;
+    let Some(domain) = tokens.first().map(String::as_str) else {
         return Ok(EarlyRoute::NotManaged);
     };
+    let operation = tokens.get(1).map(String::as_str);
     if domain != "mcp" {
         return Ok(EarlyRoute::NotManaged);
     }
-    let is_service = operation.as_deref() == Some("service");
-    let is_managed_serve = operation.as_deref() == Some("serve")
+    let is_service = operation == Some("service");
+    let is_managed_serve = operation == Some("serve")
         && raw_args.iter().any(|arg| {
             arg == "--managed-config"
                 || arg
@@ -140,54 +142,21 @@ pub fn managed_config_arg() -> Arg {
 }
 
 fn build_early_command() -> Command {
-    Command::new("ah")
-        .disable_version_flag(true)
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .action(ArgAction::SetTrue)
-                .global(true)
-                .help("Return machine-readable JSON output"),
-        )
-        .arg(
-            Arg::new("quiet")
-                .long("quiet")
-                .action(ArgAction::SetTrue)
-                .global(true)
-                .help("Suppress command output"),
-        )
-        .arg(
-            Arg::new("cwd")
-                .long("cwd")
-                .value_name("PATH")
-                .value_parser(value_parser!(PathBuf))
-                .global(true)
-                .help("Set working directory"),
-        )
-        .arg(
-            Arg::new("limit")
-                .long("limit")
-                .value_name("N")
-                .value_parser(value_parser!(usize))
-                .global(true)
-                .help("Cap output lines/items when supported"),
-        )
-        .subcommand(
-            Command::new("mcp")
-                .subcommand(service_command())
-                .subcommand(
-                    Command::new("serve")
-                        .arg(
-                            Arg::new("transport")
-                                .long("transport")
-                                .value_parser(["stdio", "http"])
-                                .default_value("stdio"),
-                        )
-                        .arg(managed_config_arg()),
-                ),
-        )
+    crate::entry::early_command().subcommand(
+        Command::new("mcp")
+            .subcommand(service_command())
+            .subcommand(
+                Command::new("serve")
+                    .arg(
+                        Arg::new("transport")
+                            .long("transport")
+                            .value_parser(["stdio", "http"])
+                            .default_value("stdio"),
+                    )
+                    .arg(managed_config_arg()),
+            ),
+    )
 }
-
 fn service_command() -> Command {
     Command::new("service")
         .about("Manage the per-user Windows MCP service")
@@ -227,46 +196,6 @@ fn service_command() -> Command {
         .subcommand(Command::new("restart").about("Restart the managed MCP service"))
         .subcommand(Command::new("status").about("Inspect managed MCP service state"))
         .subcommand(Command::new("uninstall").about("Uninstall the managed MCP service"))
-}
-
-fn command_tokens(raw_args: &[OsString]) -> Result<Option<(String, Option<String>)>, AppError> {
-    let mut tokens = Vec::new();
-    let mut index = 1;
-    while index < raw_args.len() {
-        let value = raw_args[index]
-            .to_str()
-            .ok_or_else(|| AppError::invalid_argument("command arguments must be valid Unicode"))?;
-        if matches!(value, "--json" | "--quiet") {
-            index += 1;
-            continue;
-        }
-        if matches!(value, "--cwd" | "--limit") {
-            if index + 1 >= raw_args.len() {
-                return Err(AppError::invalid_argument(format!(
-                    "missing value for trailing {value}"
-                )));
-            }
-            index += 2;
-            continue;
-        }
-        if value.starts_with("--cwd=") || value.starts_with("--limit=") {
-            index += 1;
-            continue;
-        }
-        if value.starts_with('-') {
-            index += 1;
-            continue;
-        }
-        tokens.push(value.to_owned());
-        if tokens.len() == 2 {
-            break;
-        }
-        index += 1;
-    }
-    Ok(tokens
-        .first()
-        .cloned()
-        .map(|domain| (domain, tokens.get(1).cloned())))
 }
 
 #[cfg(test)]

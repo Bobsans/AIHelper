@@ -2,6 +2,7 @@ pub mod ai;
 pub mod cli;
 pub mod commands;
 pub mod config;
+mod entry;
 pub mod error;
 pub(crate) mod event_log;
 pub(crate) mod git_status;

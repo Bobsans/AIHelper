@@ -6,6 +6,24 @@ hardest to test.
 
 ## Findings
 
+### 3.1 Seven parsers run before the real parser *(the duplication is gone; the count is not)*
+
+**Status:** the argv knowledge those parsers shared is now declared once, in
+`src/entry.rs`. There were three copies of the four global flags - the main CLI,
+the updater route, the managed-service route - and two copies of a hand-rolled
+walker that skips those flags to find the leading positional.
+
+They had already drifted, with a user-visible consequence: the updater's copy
+declared `--json`, `--quiet`, `--cwd` and `--limit` with no help text, so
+`ah upgrade --help` printed four blank descriptions. The golden CLI snapshot
+showed them filled in, because it renders the *main* command tree - which is not
+what answers that command. The snapshot was guarding help output no user sees.
+Sharing the declaration fixes the output and makes the snapshot true.
+
+Still open: the four raw-argv sniffers in `run()`, and folding the two routes
+into one `Entry`. What changed is that they no longer each carry their own idea
+of what a global flag is.
+
 ### 3.1 Seven parsers run before the real parser
 
 [`src/runtime_flow.rs:33`](../../src/runtime_flow.rs) `run()` inspects raw

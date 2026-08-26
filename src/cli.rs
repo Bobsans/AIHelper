@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use ah_plugin_api::{GlobalOptionsWire, PluginMetadata, normalize_invocation_argv};
 use clap::{
-    Arg, ArgAction, ArgGroup, ArgMatches, Command, ValueHint, error::ErrorKind,
-    parser::ValueSource, value_parser,
+    Arg, ArgAction, ArgGroup, ArgMatches, Command, error::ErrorKind, parser::ValueSource,
+    value_parser,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -581,46 +581,17 @@ fn edit_distance(left: &str, right: &str) -> usize {
 }
 
 pub(crate) fn build_cli_command(plugins: &[PluginMetadata]) -> Command {
-    let mut command = Command::new("ah")
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("AIHelper CLI toolbox for AI agents and developers")
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .action(ArgAction::SetTrue)
-                .global(true)
-                .help("Return machine-readable JSON output"),
-        )
-        .arg(
-            Arg::new("quiet")
-                .long("quiet")
-                .action(ArgAction::SetTrue)
-                .global(true)
-                .help("Suppress command output"),
-        )
-        .arg(
-            Arg::new("cwd")
-                .long("cwd")
-                .value_name("PATH")
-                .value_hint(ValueHint::DirPath)
-                .value_parser(value_parser!(PathBuf))
-                .global(true)
-                .help("Set working directory"),
-        )
-        .arg(
-            Arg::new("limit")
-                .long("limit")
-                .value_name("N")
-                .value_parser(value_parser!(usize))
-                .global(true)
-                .help("Cap output lines/items when supported"),
-        )
-        .subcommand(build_ai_command())
-        .subcommand(build_mcp_command())
-        .subcommand(build_plugins_command())
-        .subcommand(build_secrets_command())
-        .subcommand(crate::updater::command::build_help_command())
-        .allow_external_subcommands(true);
+    let mut command = crate::entry::with_global_flags(
+        Command::new("ah")
+            .version(env!("CARGO_PKG_VERSION"))
+            .about("AIHelper CLI toolbox for AI agents and developers"),
+    )
+    .subcommand(build_ai_command())
+    .subcommand(build_mcp_command())
+    .subcommand(build_plugins_command())
+    .subcommand(build_secrets_command())
+    .subcommand(crate::updater::command::build_help_command())
+    .allow_external_subcommands(true);
 
     for (domain, description) in plugin_domains_for_help(plugins) {
         if domain == HOST_COMMAND_AI

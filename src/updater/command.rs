@@ -1,9 +1,9 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::ffi::OsString;
 
-use clap::{Arg, ArgAction, ArgMatches, Command, ValueHint, error::ErrorKind, value_parser};
+use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind};
 use semver::Version;
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
+use crate::{cli::GlobalOptions, error::AppError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpgradeRequest {
@@ -24,10 +24,17 @@ pub enum EarlyUpgradeRoute {
 }
 
 pub fn route(raw_args: &[OsString]) -> Result<EarlyUpgradeRoute, AppError> {
-    if command_name(raw_args)?.as_deref() != Some("upgrade") {
+    if crate::entry::leading_positionals(raw_args, 1)?
+        .first()
+        .map(String::as_str)
+        != Some("upgrade")
+    {
         return Ok(EarlyUpgradeRoute::NotUpgrade);
     }
-    let matches = match build_early_command().try_get_matches_from(raw_args.iter().cloned()) {
+    let matches = match crate::entry::early_command()
+        .subcommand(build_help_command())
+        .try_get_matches_from(raw_args.iter().cloned())
+    {
         Ok(matches) => matches,
         Err(error) => match error.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
@@ -39,7 +46,7 @@ pub fn route(raw_args: &[OsString]) -> Result<EarlyUpgradeRoute, AppError> {
             _ => return Err(AppError::invalid_argument(error.to_string())),
         },
     };
-    let options = global_options(&matches)?;
+    let options = crate::entry::global_options(&matches)?;
     let Some(("upgrade", upgrade)) = matches.subcommand() else {
         return Ok(EarlyUpgradeRoute::NotUpgrade);
     };
@@ -95,90 +102,10 @@ fn parse_stable_version(value: &str) -> Result<Version, String> {
     Ok(version)
 }
 
-fn build_early_command() -> Command {
-    Command::new("ah")
-        .disable_version_flag(true)
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .action(ArgAction::SetTrue)
-                .global(true),
-        )
-        .arg(
-            Arg::new("quiet")
-                .long("quiet")
-                .action(ArgAction::SetTrue)
-                .global(true),
-        )
-        .arg(
-            Arg::new("cwd")
-                .long("cwd")
-                .value_name("PATH")
-                .value_hint(ValueHint::DirPath)
-                .value_parser(value_parser!(PathBuf))
-                .global(true),
-        )
-        .arg(
-            Arg::new("limit")
-                .long("limit")
-                .value_name("N")
-                .value_parser(value_parser!(usize))
-                .global(true),
-        )
-        .subcommand(build_help_command())
-}
-
-fn global_options(matches: &ArgMatches) -> Result<GlobalOptions, AppError> {
-    let options = GlobalOptions {
-        output: if matches.get_flag("json") {
-            OutputMode::Json
-        } else {
-            OutputMode::Text
-        },
-        quiet: matches.get_flag("quiet"),
-        limit: matches.get_one::<usize>("limit").copied(),
-    };
-    if options.limit == Some(0) {
-        return Err(AppError::invalid_argument("--limit must be >= 1"));
-    }
-    Ok(options)
-}
-
-fn command_name(raw_args: &[OsString]) -> Result<Option<String>, AppError> {
-    let mut index = 1;
-    while index < raw_args.len() {
-        let value = raw_args[index]
-            .to_str()
-            .ok_or_else(|| AppError::invalid_argument("command arguments must be valid Unicode"))?;
-        if matches!(value, "--json" | "--quiet") {
-            index += 1;
-            continue;
-        }
-        if matches!(value, "--cwd" | "--limit") {
-            if index + 1 >= raw_args.len() {
-                return Err(AppError::invalid_argument(format!(
-                    "missing value for trailing {value}"
-                )));
-            }
-            index += 2;
-            continue;
-        }
-        if value.starts_with("--cwd=") || value.starts_with("--limit=") {
-            index += 1;
-            continue;
-        }
-        if value.starts_with('-') {
-            index += 1;
-            continue;
-        }
-        return Ok(Some(value.to_owned()));
-    }
-    Ok(None)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::OutputMode;
 
     #[test]
     fn routes_check_with_globals_in_any_supported_position() {
