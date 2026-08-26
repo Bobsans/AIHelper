@@ -1,11 +1,10 @@
 pub mod ai;
 pub mod cli;
-pub mod commands;
 pub(crate) use ah_config as config;
+pub use ah_domains as commands;
 mod entry;
 pub(crate) use ah_error as error;
 pub(crate) use ah_observability as event_log;
-pub(crate) mod git_status;
 pub(crate) mod host_commands;
 pub use ah_output as output;
 pub use ah_service as mcp_service;
@@ -17,7 +16,6 @@ pub mod plugins;
 #[cfg(test)]
 mod reference_docs;
 mod runtime_flow;
-pub mod safety;
 pub use ah_secrets as secrets;
 #[cfg(test)]
 mod snapshots;

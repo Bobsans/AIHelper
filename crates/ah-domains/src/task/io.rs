@@ -1,0 +1,62 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use serde_json;
+
+use crate::task::domain::TaskStore;
+use ah_error::AppError;
+
+const TASKS_DIR: &str = ".ah";
+const TASKS_FILE: &str = "tasks.json";
+
+pub(crate) fn task_store_path() -> PathBuf {
+    PathBuf::from(TASKS_DIR).join(TASKS_FILE)
+}
+
+pub(crate) fn task_store_path_at(cwd: &Path) -> PathBuf {
+    cwd.join(TASKS_DIR).join(TASKS_FILE)
+}
+
+pub(crate) fn load_store(path: &Path) -> Result<TaskStore, AppError> {
+    if !path.exists() {
+        return Ok(TaskStore::default());
+    }
+
+    let raw = fs::read_to_string(path)
+        .map_err(|source| AppError::file_read(path.to_path_buf(), source))?;
+    if raw.trim().is_empty() {
+        return Ok(TaskStore::default());
+    }
+    let store: TaskStore = serde_json::from_str(&raw)
+        .map_err(|source| AppError::json_deserialization(path.to_path_buf(), source))?;
+    Ok(store)
+}
+
+pub(crate) fn save_store(path: &Path, store: &TaskStore) -> Result<(), AppError> {
+    ah_persist::atomic_write_json(path, store)
+}
+
+pub(crate) fn shell_command(command: &str) -> (String, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        (
+            "powershell".to_owned(),
+            vec![
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                command.to_owned(),
+            ],
+        )
+    } else {
+        ("sh".to_owned(), vec!["-lc".to_owned(), command.to_owned()])
+    }
+}
+
+pub(crate) fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
+}

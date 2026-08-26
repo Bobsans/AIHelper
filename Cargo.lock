@@ -52,6 +52,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-domains"
+version = "1.4.0"
+dependencies = [
+ "ah-config",
+ "ah-error",
+ "ah-mcp",
+ "ah-output",
+ "ah-persist",
+ "ah-platform",
+ "ah-plugin-api",
+ "ah-runtime",
+ "ah-secrets",
+ "clap",
+ "command-group",
+ "dialoguer",
+ "globset",
+ "ignore",
+ "regex",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "shell-words",
+ "tempfile",
+ "walkdir",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ah-error"
 version = "1.4.0"
 dependencies = [
@@ -393,6 +423,7 @@ name = "aihelper"
 version = "1.4.0"
 dependencies = [
  "ah-config",
+ "ah-domains",
  "ah-error",
  "ah-mcp",
  "ah-observability",
@@ -416,25 +447,18 @@ dependencies = [
  "console",
  "dialoguer",
  "fs2",
- "globset",
- "ignore",
  "jsonc-parser",
  "libc",
  "predicates",
- "regex",
  "reqwest",
  "schemars",
  "semver",
  "serde",
  "serde_json",
- "serde_yaml",
- "shell-words",
  "tempfile",
  "thiserror",
  "tokio",
  "uuid",
- "walkdir",
- "windows",
  "windows-sys 0.61.2",
 ]
 

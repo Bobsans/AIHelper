@@ -1,0 +1,73 @@
+use super::io;
+use std::time::Duration;
+
+use schemars::JsonSchema;
+use serde::Serialize;
+
+use ah_error::AppError;
+
+use super::CheckArgs;
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RunCheckOutput {
+    pub command: &'static str,
+    pub argv: Vec<String>,
+    pub success: bool,
+    pub timed_out: bool,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u128,
+    pub stdout: String,
+    pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+pub(crate) fn run_check(args: CheckArgs) -> Result<RunCheckOutput, AppError> {
+    if args.max_output_bytes == 0 {
+        return Err(AppError::invalid_argument(
+            "--max-output-bytes must be >= 1",
+        ));
+    }
+
+    let program = args
+        .command
+        .first()
+        .ok_or_else(|| AppError::invalid_argument("missing command"))?
+        .to_owned();
+    let command_args = args.command.iter().skip(1).cloned().collect::<Vec<_>>();
+    let command_label = args.command.join(" ");
+
+    let execution = io::run_command(
+        &program,
+        &command_args,
+        io::RunCommandOptions {
+            timeout: args
+                .timeout_ms
+                .map(Duration::from_millis)
+                .unwrap_or_else(|| Duration::from_secs(args.timeout_secs.max(1))),
+            command_label: &command_label,
+            max_output_bytes: args.max_output_bytes,
+            tail_lines: args.tail_lines,
+            cwd: args.cwd.as_deref(),
+            environment: &[],
+            cancelled: ah_plugin_api::cancellation::is_cancelled,
+        },
+    )?;
+
+    let stdout = io::render_output(&execution.stdout, args.tail_lines);
+    let stderr = io::render_output(&execution.stderr, args.tail_lines);
+
+    Ok(RunCheckOutput {
+        command: "run.check",
+        argv: args.command,
+        success: execution.exit_code == Some(0) && !execution.timed_out,
+        timed_out: execution.timed_out,
+        exit_code: execution.exit_code,
+        duration_ms: execution.duration_ms,
+        stdout,
+        stderr,
+        stdout_truncated: execution.stdout.truncated,
+        stderr_truncated: execution.stderr.truncated,
+    })
+}

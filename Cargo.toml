@@ -19,6 +19,7 @@ members = [
     "crates/ah-paths",
     "crates/ah-persist",
     "crates/ah-config",
+    "crates/ah-domains",
     "crates/ah-error",
     "crates/ah-platform",
     "crates/ah-plugin-api",
@@ -87,19 +88,13 @@ zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 clap = { workspace = true, features = ["string"] }
 console = "0.16.4"
 dialoguer = "0.12.0"
-globset = "0.4.16"
-ignore = "0.4.27"
 jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
 libc = "0.2.185"
-regex = "1.12.2"
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
-shell-words.workspace = true
 thiserror.workspace = true
-walkdir = "2.5.0"
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 ah-observability = { path = "crates/ah-observability" }
@@ -107,6 +102,7 @@ ah-output = { path = "crates/ah-output" }
 ah-paths = { path = "crates/ah-paths" }
 ah-persist = { path = "crates/ah-persist" }
 ah-config = { path = "crates/ah-config" }
+ah-domains = { path = "crates/ah-domains" }
 ah-error = { path = "crates/ah-error" }
 ah-platform = { path = "crates/ah-platform" }
 ah-plugin-api = { path = "crates/ah-plugin-api" }
@@ -121,29 +117,19 @@ ah-updater-core = { path = "crates/ah-updater-core" }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "time"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = [
-    "Win32_Foundation",
-    "Win32_Globalization",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_System_Memory",
-    "Win32_System_Threading",
-] }
+# Only `ah-mcp-service.rs` reaches for these now: it spawns the served process
+# into a job object so a killed service takes its children with it.
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
-    "Win32_Storage_FileSystem",
     "Win32_System_JobObjects",
-    "Win32_System_Pipes",
-    "Win32_System_SystemInformation",
     "Win32_System_Threading",
 ] }
 
-[target.'cfg(not(windows))'.dependencies]
-command-group.workspace = true
-
 [dev-dependencies]
+# The golden snapshots render the domains' own test corpora, which are behind a
+# feature so a release build compiles neither of them.
+ah-domains = { path = "crates/ah-domains", features = ["fixtures"] }
 ah-release-manifest = { path = "crates/ah-release-manifest" }
 assert_cmd.workspace = true
 base64.workspace = true
