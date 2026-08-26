@@ -15,7 +15,7 @@
 
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
-use ah_plugin_api::{GlobalOptionsWire, PluginMetadata, normalize_invocation_argv};
+use ah_plugin_api::{PluginMetadata, normalize_invocation_argv};
 use clap::{
     Arg, ArgAction, ArgGroup, ArgMatches, Command, error::ErrorKind, parser::ValueSource,
     value_parser,
@@ -124,49 +124,12 @@ pub enum PluginStateFilter {
     Disabled,
 }
 
-#[derive(Debug, Clone)]
-pub struct GlobalOptions {
-    pub output: OutputMode,
-    pub quiet: bool,
-    pub limit: Option<usize>,
-    /// The directory this request resolves relative paths against.
-    ///
-    /// `None` means the process directory, which is what the shell handed us
-    /// and is the right answer when `--cwd` was not given. It is read, never
-    /// written: the previous mechanism was a process-wide `chdir` at startup,
-    /// which made the answer global to a process that serves requests in
-    /// parallel.
-    pub cwd: Option<PathBuf>,
-}
-
-impl GlobalOptions {
-    pub fn to_wire(&self) -> GlobalOptionsWire {
-        GlobalOptionsWire {
-            json: self.output == OutputMode::Json,
-            quiet: self.quiet,
-            limit: self.limit,
-            cwd: self
-                .cwd
-                .as_ref()
-                .map(|cwd| cwd.to_string_lossy().into_owned()),
-        }
-    }
-}
-
-impl From<GlobalOptionsWire> for GlobalOptions {
-    fn from(value: GlobalOptionsWire) -> Self {
-        Self {
-            output: if value.json {
-                OutputMode::Json
-            } else {
-                OutputMode::Text
-            },
-            quiet: value.quiet,
-            limit: value.limit,
-            cwd: value.cwd.map(PathBuf::from),
-        }
-    }
-}
+/// How a request reports, wherever it came from.
+///
+/// Defined in `ah-output` beside the emitter that consumes it, and re-exported
+/// here because the CLI is what fills it in. Every command module reads it, so
+/// it cannot live in the clap layer.
+pub use ah_output::GlobalOptions;
 
 #[cfg(test)]
 mod tests;

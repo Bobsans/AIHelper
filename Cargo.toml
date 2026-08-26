@@ -15,6 +15,7 @@ publish = false
 members = [
     "crates/ah-mcp",
     "crates/ah-observability",
+    "crates/ah-output",
     "crates/ah-paths",
     "crates/ah-persist",
     "crates/ah-config",
@@ -102,6 +103,7 @@ walkdir = "2.5.0"
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 ah-observability = { path = "crates/ah-observability" }
+ah-output = { path = "crates/ah-output" }
 ah-paths = { path = "crates/ah-paths" }
 ah-persist = { path = "crates/ah-persist" }
 ah-config = { path = "crates/ah-config" }

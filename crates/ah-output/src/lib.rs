@@ -1,13 +1,68 @@
+//! How a command reports: the options it was asked to report under, and the
+//! emitter that writes text or JSON accordingly.
+//!
+//! Its own crate because every command module needs this vocabulary, and the
+//! alternative was for each of them to reach into the CLI for it. `Emitter` is
+//! the only thing that writes to stdout, which is what makes rendering testable
+//! in-process.
+
 use std::{
     fmt::Display,
     io::{self, Write},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
+use ah_error::AppError;
+use ah_plugin_api::GlobalOptionsWire;
 pub use ah_plugin_api::{TextFormatter, TextStyle};
 use serde::Serialize;
 
-use crate::{cli::GlobalOptions, error::AppError};
+/// What a request was asked to report, and where relative paths resolve.
+#[derive(Debug, Clone)]
+pub struct GlobalOptions {
+    pub output: OutputMode,
+    pub quiet: bool,
+    pub limit: Option<usize>,
+    /// The directory this request resolves relative paths against.
+    ///
+    /// `None` means the process directory, which is what the shell handed us
+    /// and is the right answer when `--cwd` was not given. It is read, never
+    /// written: the previous mechanism was a process-wide `chdir` at startup,
+    /// which made the answer global to a process that serves requests in
+    /// parallel.
+    pub cwd: Option<PathBuf>,
+}
+
+impl GlobalOptions {
+    #[must_use]
+    pub fn to_wire(&self) -> GlobalOptionsWire {
+        GlobalOptionsWire {
+            json: self.output == OutputMode::Json,
+            quiet: self.quiet,
+            limit: self.limit,
+            cwd: self
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+impl From<GlobalOptionsWire> for GlobalOptions {
+    fn from(value: GlobalOptionsWire) -> Self {
+        Self {
+            output: if value.json {
+                OutputMode::Json
+            } else {
+                OutputMode::Text
+            },
+            quiet: value.quiet,
+            limit: value.limit,
+            cwd: value.cwd.map(PathBuf::from),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OutputMode {
@@ -15,7 +70,7 @@ pub enum OutputMode {
     Json,
 }
 
-pub(crate) fn render_semantic_count(
+pub fn render_semantic_count(
     label: &str,
     value: usize,
     non_zero_style: TextStyle,
@@ -31,7 +86,7 @@ pub(crate) fn render_semantic_count(
     )
 }
 
-pub(crate) fn git_status_style(status: &str) -> TextStyle {
+pub fn git_status_style(status: &str) -> TextStyle {
     let normalized = status.trim();
     if normalized.contains('U') || normalized.contains('D') || normalized == "AA" {
         TextStyle::Error

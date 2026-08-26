@@ -97,6 +97,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-output"
+version = "1.4.0"
+dependencies = [
+ "ah-error",
+ "ah-plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ah-paths"
 version = "1.4.0"
 
@@ -386,6 +396,7 @@ dependencies = [
  "ah-error",
  "ah-mcp",
  "ah-observability",
+ "ah-output",
  "ah-paths",
  "ah-persist",
  "ah-platform",
