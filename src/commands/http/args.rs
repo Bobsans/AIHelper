@@ -165,7 +165,7 @@ pub struct RequestExpectArgs {
 /// [`RequestOptionsArgs`] because the two genuinely differ: a caller sends a JSON
 /// value, the CLI type holds it already serialized; a caller names a credential
 /// slot, the CLI type holds the credential the host resolved; and the deadline is
-/// supplied by the execution context, not by anyone. [`Self::split`] converts one
+/// supplied by the execution context, not by anyone. `Self::split` converts one
 /// into the other with what only the execution context knows.
 ///
 /// `credentials` is not part of the published input schema - the runtime augments

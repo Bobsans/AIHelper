@@ -99,7 +99,7 @@ Mostly moves, made safe by phases 0–1.
 **Exit criterion:** no file over ~800 production lines; one parse of argv; no
 process-global working directory.
 
-**Measured, with one row still open.**
+**Measured. Phase 2 is complete.**
 
 *No process-global working directory:* met. `set_current_dir` is gone from the
 workspace.
@@ -122,11 +122,46 @@ two of our own binaries, and a flag keeps it in the parser. The two legacy
 variables stay on the read side only, because invariant 4 requires a helper from
 one release to be able to drive the `ah` of another.
 
-*Files over ~800 production lines:* **not** met, twenty of them. The largest are
-`ah-update-helper/src/apply.rs` (2195) and `mcp_service/lifecycle.rs` (2027);
-several others are data rather than logic (`project/rules.rs`, the three
-plugins' `typed.rs`) and splitting those buys nothing. The criterion was
-stated as a single number and should have distinguished the two.
+*Files over ~800 production lines:* met for every file of production logic, and
+the criterion needed the distinction it did not draw. Twenty files were over;
+fourteen were split, each as a pure move verified by sorting every line of code
+before and after:
+
+| Was                                | Lines | Now                                                 | Largest |
+|------------------------------------|-------|-----------------------------------------------------|---------|
+| `ah-update-helper/src/apply.rs`    |  2195 | 7 modules: layout, fsverify, journal, record, managed, backup | 704 |
+| `mcp_service/lifecycle.rs`         |  2027 | one module per operation + the lease and lookups     |     545 |
+| `ah-runtime/src/lib.rs`            |  1826 | error, ports, outcome, manager, invoke, dynamic      |     521 |
+| `commands/project/domain.rs`       |  1181 | output, detect, suggest, version                     |     589 |
+| `cli.rs`                           |  1177 | command, parse, passthrough, redact, suggest          |     341 |
+| `ai/install.rs`                    |  1304 | report, spec, apply, inspect, paths                  |     500 |
+| `ah-plugin-api/src/lib.rs`         |  1259 | abi, invocation, typed, catalog, metadata, text, sdk  |     430 |
+| `error.rs`                         |  1047 | render, message                                      |     670 |
+| `plugins.rs`                       |   921 | one module per builtin                                |     143 |
+| `runtime_flow.rs`                  |   884 | invoke, mcp_serve, record                            |     494 |
+| `commands/git/domain.rs`           |   848 | output, parse                                        |     461 |
+| `commands/http.rs`                 |   846 | args, catalog                                        |     577 |
+| `ah-mcp/src/server.rs`             |   833 | config, state, catalog                               |     602 |
+| `commands/http/domain/spec.rs`     |   803 | format, interpolate, extract, junit                  |     495 |
+| the three plugins' `typed.rs`      | 901/848/847 | each gets `typed/catalog.rs`                    |     791 |
+
+What is still over 800, and why it stays:
+
+- **`commands/project/rules.rs` (1040).** Lines 79-953 are one
+  `static RULES: &[FileRule]` literal. Splitting it moves rows between files and
+  buys nothing; `commands/layout.rs` already registers it as data rather than
+  logic.
+- **Eight test files**, the largest `tests/integration/mcp.rs` at 2280. The
+  criterion says *production* lines, so these are outside it by its own wording,
+  and phase 4 owns them: "convert the integration suite to a deliberate thin
+  contract layer".
+
+Two things the splits turned up that the criterion did not ask for. Sixteen
+functions were reachable from outside their file with nothing outside using
+them; moving them one level deeper made the compiler reject the re-export, so
+they narrowed. And `commands/layout.rs` caught two attempts that would have
+grown a command module a fourth layer - it exists for exactly that, and the two
+files it made me justify are registered in it with a reason.
 
 ## Phase 3 — Decompose the crate
 
@@ -138,6 +173,7 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 | Extract `ah-updater` from `src/updater/`                    | 07, 09 |
 | Extract `ah-secrets`, `ah-observability`, `ah-service`      | 09     |
 | One `fsverify` module for updater hardening primitives      | 07     |
+| ↳ partly landed: `ah-update-helper::apply::fsverify` now names them in that crate; the row's "one" still wants them shared with `src/updater/` | |
 | Extract domain crates last                                  | 09     |
 
 **Exit criterion:** the root crate is CLI wiring; every subsystem builds and tests
