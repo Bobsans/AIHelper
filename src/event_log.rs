@@ -1,36 +1,35 @@
 use std::{
     env,
     ffi::OsStr,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use ah_mcp::{EventSink, McpCommandEvent, McpCommandStatus};
 use ah_redact::{
     REDACTED, ensure_object, sanitize_cli_argv, sanitize_string, sanitize_system_context,
-    sanitize_value, truncate_with_marker,
+    sanitize_value,
 };
 use ah_runtime::{
     InvocationOutcome,
     executor::{ExecutionTelemetry, ExecutionTimeoutPhase},
 };
-use chrono::{DateTime, Days, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
 
 use crate::{config, error::AppError};
 
-const SCHEMA_VERSION: u64 = 1;
-const FILE_PREFIX: &str = "aihelper-";
-const FILE_SUFFIX: &str = ".jsonl";
-const COMPACT_DIAGNOSTIC_BYTES: usize = 1024;
-const MAX_LINE_BYTES: usize = 65_536;
-const LOCK_TIMEOUT: Duration = Duration::from_millis(50);
-const LOCK_RETRY_DELAY: Duration = Duration::from_millis(2);
+mod record;
+mod rotation;
+
+use record::{RecordKind, bounded_line};
+use rotation::{acquire_lock, cleanup_old_logs, log_filename};
+
+pub(crate) const SCHEMA_VERSION: u64 = 1;
 
 trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
@@ -419,12 +418,6 @@ impl EventSink for EventLogger {
     }
 }
 
-#[derive(Clone, Copy)]
-enum RecordKind {
-    Command,
-    System,
-}
-
 fn timestamp(now: &DateTime<Utc>) -> String {
     now.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -435,195 +428,6 @@ fn duration_ms(duration: Duration) -> u64 {
 
 fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
-}
-
-fn bounded_line(record: &mut Value, kind: RecordKind) -> Option<Vec<u8>> {
-    let first = serde_json::to_vec(record).ok()?;
-    if first.len() < MAX_LINE_BYTES {
-        return Some(first);
-    }
-    let original_bounded_bytes = first.len().saturating_add(1) as u64;
-    compact_record(record, kind, original_bounded_bytes);
-    let second = serde_json::to_vec(record).ok()?;
-    if second.len() < MAX_LINE_BYTES {
-        return Some(second);
-    }
-    let minimal = minimal_record(record, kind, original_bounded_bytes);
-    let line = serde_json::to_vec(&minimal).ok()?;
-    (line.len() < MAX_LINE_BYTES).then_some(line)
-}
-
-fn compact_record(record: &mut Value, kind: RecordKind, original_bounded_bytes: u64) {
-    let payload = match kind {
-        RecordKind::Command => "parameters",
-        RecordKind::System => "context",
-    };
-    record[payload] = json!({
-        "_truncated": true,
-        "original_bounded_bytes": original_bounded_bytes,
-    });
-    record["record_truncated"] = Value::Bool(true);
-    if let Some(diagnostic) = record.get_mut("diagnostic").and_then(Value::as_object_mut) {
-        for field in ["message", "cause"] {
-            if let Some(value) = diagnostic
-                .get(field)
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-            {
-                diagnostic[field] =
-                    Value::String(truncate_with_marker(&value, COMPACT_DIAGNOSTIC_BYTES));
-            }
-        }
-    }
-}
-
-fn minimal_record(record: &Value, kind: RecordKind, original_bounded_bytes: u64) -> Value {
-    let compact_payload = json!({
-        "_truncated": true,
-        "original_bounded_bytes": original_bounded_bytes,
-    });
-    match kind {
-        RecordKind::Command => {
-            let mut minimal = json!({
-                "schema_version": value_or(record, "schema_version", json!(SCHEMA_VERSION)),
-                "timestamp": value_or(record, "timestamp", Value::String(String::new())),
-                "event": "command.completed",
-                "transport": value_or(record, "transport", Value::String("cli".to_owned())),
-                "pid": value_or(record, "pid", json!(std::process::id())),
-                "command": value_or(record, "command", Value::String(String::new())),
-                "parameters": compact_payload,
-                "status": value_or(record, "status", Value::String("error".to_owned())),
-                "duration_ms": value_or(record, "duration_ms", json!(0)),
-                "record_truncated": true,
-            });
-            if minimal["status"] == "error" {
-                minimal["diagnostic"] = minimal_diagnostic(record.get("diagnostic"));
-            }
-            for field in [
-                "request_id",
-                "tool",
-                "queue_wait_ms",
-                "execution_ms",
-                "timeout_phase",
-            ] {
-                if let Some(value) = record.get(field) {
-                    minimal[field] = value.clone();
-                }
-            }
-            minimal
-        }
-        RecordKind::System => json!({
-            "schema_version": value_or(record, "schema_version", json!(SCHEMA_VERSION)),
-            "timestamp": value_or(record, "timestamp", Value::String(String::new())),
-            "event": "system",
-            "pid": value_or(record, "pid", json!(std::process::id())),
-            "component": value_or(record, "component", Value::String("startup".to_owned())),
-            "severity": value_or(record, "severity", Value::String("error".to_owned())),
-            "diagnostic": minimal_diagnostic(record.get("diagnostic")),
-            "context": compact_payload,
-            "record_truncated": true,
-        }),
-    }
-}
-
-fn value_or(record: &Value, field: &str, default: Value) -> Value {
-    record.get(field).cloned().unwrap_or(default)
-}
-
-fn minimal_diagnostic(diagnostic: Option<&Value>) -> Value {
-    let code = diagnostic
-        .and_then(|value| value.get("code"))
-        .cloned()
-        .unwrap_or_else(|| Value::String("DIAGNOSTIC_TRUNCATED".to_owned()));
-    let exit_code_hint = diagnostic
-        .and_then(|value| value.get("exit_code_hint"))
-        .cloned()
-        .unwrap_or_else(|| json!(1));
-    let mut minimal = json!({
-        "code": code,
-        "message": "diagnostic truncated",
-        "exit_code_hint": exit_code_hint,
-    });
-    for field in ["domain", "operation"] {
-        if let Some(value) = diagnostic.and_then(|value| value.get(field)) {
-            minimal[field] = value.clone();
-        }
-    }
-    minimal
-}
-
-fn acquire_lock(file: &File) -> io::Result<()> {
-    let started = Instant::now();
-    loop {
-        match file.try_lock_exclusive() {
-            Ok(()) => return Ok(()),
-            Err(error) if retryable_lock_error(&error) => {
-                if started.elapsed() >= LOCK_TIMEOUT {
-                    return Err(error);
-                }
-                thread::sleep(LOCK_RETRY_DELAY.min(LOCK_TIMEOUT.saturating_sub(started.elapsed())));
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn retryable_lock_error(error: &io::Error) -> bool {
-    if error.kind() == io::ErrorKind::WouldBlock {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        const ERROR_ACCESS_DENIED: i32 = 5;
-        const ERROR_SHARING_VIOLATION: i32 = 32;
-        const ERROR_LOCK_VIOLATION: i32 = 33;
-        matches!(
-            error.raw_os_error(),
-            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
-}
-
-fn log_filename(date: NaiveDate) -> String {
-    format!("{FILE_PREFIX}{}{FILE_SUFFIX}", date.format("%Y-%m-%d"))
-}
-
-fn cleanup_old_logs(log_dir: &Path, current_date: NaiveDate) -> io::Result<()> {
-    let oldest_retained = current_date
-        .checked_sub_days(Days::new(9))
-        .unwrap_or(NaiveDate::MIN);
-    for entry in fs::read_dir(log_dir)? {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if !file_type.is_file() || file_type.is_symlink() {
-            continue;
-        }
-        let Some(date) = entry.file_name().to_str().and_then(parse_log_filename) else {
-            continue;
-        };
-        if date < oldest_retained {
-            let _ = fs::remove_file(entry.path());
-        }
-    }
-    Ok(())
-}
-
-fn parse_log_filename(name: &str) -> Option<NaiveDate> {
-    if name.len() != FILE_PREFIX.len() + 10 + FILE_SUFFIX.len()
-        || !name.starts_with(FILE_PREFIX)
-        || !name.ends_with(FILE_SUFFIX)
-    {
-        return None;
-    }
-    NaiveDate::parse_from_str(&name[FILE_PREFIX.len()..FILE_PREFIX.len() + 10], "%Y-%m-%d").ok()
 }
 
 #[cfg(test)]
@@ -641,8 +445,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        Clock, EventDiagnostic, EventLogger, MAX_LINE_BYTES, RecordKind, SystemEventSeverity,
-        log_filename, minimal_record,
+        Clock, EventDiagnostic, EventLogger, SystemEventSeverity, log_filename,
+        record::MAX_LINE_BYTES,
     };
     use crate::error::AppError;
 
@@ -1032,37 +836,6 @@ mod tests {
         assert_eq!(record["timeout_phase"], "queue");
         let line = serde_json::to_vec(record).unwrap();
         assert!(line.len() < MAX_LINE_BYTES);
-    }
-
-    #[test]
-    fn minimal_record_preserves_mcp_identity_and_telemetry() {
-        let record = json!({
-            "schema_version": 1,
-            "timestamp": "2026-07-20T00:00:00.000Z",
-            "event": "command.completed",
-            "transport": "mcp",
-            "pid": 1,
-            "command": "file.stat",
-            "parameters": {},
-            "status": "error",
-            "duration_ms": 201,
-            "request_id": "mcp:n:1:e:1",
-            "tool": "ah.file.stat",
-            "queue_wait_ms": 200,
-            "execution_ms": 0,
-            "timeout_phase": "queue",
-            "diagnostic": {
-                "code": "TIMEOUT",
-                "message": "timed out",
-                "exit_code_hint": 1
-            }
-        });
-        let minimal = minimal_record(&record, RecordKind::Command, 70_000);
-        assert_eq!(minimal["request_id"], "mcp:n:1:e:1");
-        assert_eq!(minimal["tool"], "ah.file.stat");
-        assert_eq!(minimal["queue_wait_ms"], 200);
-        assert_eq!(minimal["execution_ms"], 0);
-        assert_eq!(minimal["timeout_phase"], "queue");
     }
 
     #[test]

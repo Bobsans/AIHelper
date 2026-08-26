@@ -86,13 +86,25 @@ obvious next split.
 
 Consider whether `jsonpath` should be a dependency rather than an implementation.
 
-### 5.3 `src/event_log.rs` — logging plus a redaction engine *(engine extracted)*
+### 5.3 `src/event_log.rs` — logging plus a redaction engine *(done)*
 
-The redaction engine (URL/userinfo/header/curl/JSON/percent-decode heuristics) has
-moved to `crates/ah-redact`, taking the file from 1 845 to 1 195 lines. What is
-left still mixes three concerns — the logger, record bounding/compaction, and
-rotation with file locking — and splits cleanly into `event_log::sink` and
-`event_log::rotation`.
+The redaction engine (URL/userinfo/header/curl/JSON/percent-decode heuristics)
+moved to `crates/ah-redact` first, taking the file from 1 845 to 1 195 lines. The
+three concerns that were left are now three modules:
+
+| Module | Production lines | Owns |
+|---|---|---|
+| `event_log` | 430 | the logger, the record shape, the `EventSink` impl |
+| `event_log::record` | 130 | bounding a record to its line budget, compaction, the minimal fallback |
+| `event_log::rotation` | 97 | the day's file name, the advisory lock with bounded retry, cleanup |
+
+The proposed name was `event_log::sink`; `record` says what it actually does,
+since the sink is the logger and what moved is record shaping.
+
+Most of the test module stays with the logger: it is dominated by redaction and
+end-to-end cases that go through `EventLogger`, including the two cleanup tests,
+which build a real log directory through it. Only the one test that touches
+nothing but `minimal_record` moved.
 
 ### 5.4 `src/mcp_service/lifecycle.rs` — 2 029 lines
 
