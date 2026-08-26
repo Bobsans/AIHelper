@@ -4,6 +4,8 @@ mod ai;
 mod common;
 #[path = "integration/ctx.rs"]
 mod ctx;
+#[path = "integration/cwd.rs"]
+mod cwd;
 #[path = "integration/file.rs"]
 mod file;
 #[path = "integration/git.rs"]
