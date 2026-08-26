@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+ah-platform = { path = "../ah-platform" }
 ah-updater-core = { path = "../ah-updater-core" }
 serde_json.workspace = true
 sha2.workspace = true

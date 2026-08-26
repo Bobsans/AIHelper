@@ -199,70 +199,19 @@ fn temporary_path(path: &Path) -> PathBuf {
     ))
 }
 
-#[cfg(windows)]
 fn replace_file(source: &Path, destination: &Path) -> Result<(), AppError> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const ERROR_ACCESS_DENIED: i32 = 5;
-    const ERROR_SHARING_VIOLATION: i32 = 32;
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn MoveFileExW(existing: *const u16, replacement: *const u16, flags: u32) -> i32;
-    }
-    let source_wide = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination_wide = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let deadline = Instant::now() + REPLACE_RETRY_TIMEOUT;
-    loop {
-        // SAFETY: both buffers are NUL-terminated and remain alive for the call.
-        let replaced = unsafe {
-            MoveFileExW(
-                source_wide.as_ptr(),
-                destination_wide.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if replaced != 0 {
-            return Ok(());
-        }
-
-        let error = std::io::Error::last_os_error();
-        let retryable = matches!(
-            error.raw_os_error(),
-            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
-        );
-        if !retryable || Instant::now() >= deadline {
-            return Err(AppError::file_write(destination.to_path_buf(), error));
-        }
-        thread::sleep(LOCK_RETRY_INTERVAL);
-    }
+    ah_platform::fs::replace_waiting_for_readers(
+        source,
+        destination,
+        REPLACE_RETRY_TIMEOUT,
+        LOCK_RETRY_INTERVAL,
+    )
+    .map_err(|error| AppError::file_write(destination.to_path_buf(), error))
 }
 
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), AppError> {
-    fs::rename(source, destination)
-        .map_err(|source| AppError::file_write(destination.to_path_buf(), source))
-}
-
-#[cfg(unix)]
 fn sync_parent_directory(parent: Option<&Path>) {
-    let parent = parent.unwrap_or_else(|| Path::new("."));
-    let _ = File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| ());
+    let _ = ah_platform::fs::sync_directory(parent.unwrap_or_else(|| Path::new(".")));
 }
-
-#[cfg(not(unix))]
-fn sync_parent_directory(_parent: Option<&Path>) {}
 
 #[cfg(test)]
 mod tests {

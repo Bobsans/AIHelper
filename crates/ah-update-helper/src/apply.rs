@@ -2106,100 +2106,29 @@ fn ensure_direct_file(path: &Path) -> Result<(), UpdaterError> {
     Ok(())
 }
 
-#[cfg(windows)]
-fn has_single_hard_link(path: &Path, _metadata: &fs::Metadata) -> Result<bool, UpdaterError> {
-    use std::{mem::MaybeUninit, os::windows::io::AsRawHandle as _};
-    use windows_sys::Win32::{
-        Foundation::HANDLE,
-        Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle},
-    };
-
-    let file = File::open(path)
-        .map_err(|_| transaction("failed to open transaction file for link inspection"))?;
-    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-    let succeeded = unsafe {
-        GetFileInformationByHandle(file.as_raw_handle() as HANDLE, information.as_mut_ptr())
-    };
-    if succeeded == 0 {
-        return Err(transaction("failed to inspect transaction file links"));
-    }
-    let information = unsafe { information.assume_init() };
-    Ok(information.nNumberOfLinks == 1)
+fn has_single_hard_link(path: &Path, metadata: &fs::Metadata) -> Result<bool, UpdaterError> {
+    ah_platform::fs::has_single_hard_link(path, metadata)
+        .map_err(|_| transaction("failed to inspect transaction file links"))
 }
 
-#[cfg(unix)]
-fn has_single_hard_link(_path: &Path, metadata: &fs::Metadata) -> Result<bool, UpdaterError> {
-    use std::os::unix::fs::MetadataExt as _;
-
-    Ok(metadata.nlink() == 1)
-}
-
-#[cfg(not(any(windows, unix)))]
-fn has_single_hard_link(_path: &Path, _metadata: &fs::Metadata) -> Result<bool, UpdaterError> {
-    Ok(true)
-}
-
-#[cfg(windows)]
 fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt as _;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    ah_platform::fs::is_reparse_point(metadata)
 }
 
-#[cfg(not(windows))]
-fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
-    false
-}
-
-#[cfg(windows)]
 fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt as _;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
-
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)?;
+    ah_platform::fs::replace(source, destination)?;
     sync_parent(destination)
 }
 
-#[cfg(windows)]
-fn sync_parent(_path: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(not(windows))]
+/// Flush the directory `path` sits in.
+///
+/// A no-op on Windows, where the move writes the entry through; the port
+/// answers for both.
 fn sync_parent(path: &Path) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
-    File::open(parent)?.sync_all()
+    ah_platform::fs::sync_directory(parent)
 }
 
 fn read_bounded(

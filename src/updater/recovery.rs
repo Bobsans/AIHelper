@@ -352,7 +352,10 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
 fn ensure_direct_file(path: &Path) -> Result<(), AppError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| recovery_error("failed to inspect updater state file"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || is_reparse_point(&metadata) {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || ah_platform::fs::is_reparse_point(&metadata)
+    {
         return Err(recovery_error(
             "updater state file is not a direct regular file",
         ));
@@ -361,25 +364,15 @@ fn ensure_direct_file(path: &Path) -> Result<(), AppError> {
 }
 
 fn ensure_direct_directory_metadata(metadata: &fs::Metadata) -> Result<(), AppError> {
-    if metadata.file_type().is_symlink() || !metadata.is_dir() || is_reparse_point(metadata) {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || ah_platform::fs::is_reparse_point(metadata)
+    {
         return Err(recovery_error(
             "updater state contains a redirected directory",
         ));
     }
     Ok(())
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt as _;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
-    false
 }
 
 fn map_updater_error(error: UpdaterError) -> AppError {

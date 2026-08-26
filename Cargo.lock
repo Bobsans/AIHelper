@@ -68,6 +68,14 @@ name = "ah-paths"
 version = "1.4.0"
 
 [[package]]
+name = "ah-platform"
+version = "1.4.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ah-plugin-api"
 version = "1.4.0"
 dependencies = [
@@ -209,6 +217,7 @@ dependencies = [
 name = "ah-update-helper"
 version = "1.4.0"
 dependencies = [
+ "ah-platform",
  "ah-release-manifest",
  "ah-updater-core",
  "base64",
@@ -266,6 +275,7 @@ dependencies = [
  "aes-gcm",
  "ah-mcp",
  "ah-paths",
+ "ah-platform",
  "ah-plugin-api",
  "ah-redact",
  "ah-release-manifest",

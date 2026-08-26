@@ -408,7 +408,10 @@ fn direct_managed_file(root: &Path, relative: &str) -> Result<PathBuf, UpdaterEr
 fn ensure_direct_directory(path: &Path) -> Result<(), UpdaterError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| installation("installed managed directory is missing"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() || is_reparse_point(&metadata) {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || ah_platform::fs::is_reparse_point(&metadata)
+    {
         return Err(installation(
             "installed managed directory is not a direct directory",
         ));
@@ -419,67 +422,22 @@ fn ensure_direct_directory(path: &Path) -> Result<(), UpdaterError> {
 fn ensure_direct_file(path: &Path) -> Result<(), UpdaterError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| installation("installed managed file is missing"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || is_reparse_point(&metadata) {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || ah_platform::fs::is_reparse_point(&metadata)
+    {
         return Err(installation(
             "installed managed file is not a direct regular file",
         ));
     }
-    #[cfg(windows)]
+    if !ah_platform::fs::has_single_hard_link(path, &metadata)
+        .map_err(|_| installation("failed to inspect installed managed file links"))?
     {
-        if !has_single_hard_link(path)? {
-            return Err(installation(
-                "installed managed file must not be a hard link",
-            ));
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        if metadata.nlink() != 1 {
-            return Err(installation(
-                "installed managed file must not be a hard link",
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn has_single_hard_link(path: &Path) -> Result<bool, UpdaterError> {
-    use std::{mem::MaybeUninit, os::windows::io::AsRawHandle};
-    use windows_sys::Win32::{
-        Foundation::HANDLE,
-        Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle},
-    };
-
-    let file =
-        File::open(path).map_err(|_| installation("failed to open an installed managed file"))?;
-    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-    let succeeded = unsafe {
-        GetFileInformationByHandle(file.as_raw_handle() as HANDLE, information.as_mut_ptr())
-    };
-    if succeeded == 0 {
         return Err(installation(
-            "failed to inspect installed managed file links",
+            "installed managed file must not be a hard link",
         ));
     }
-    let information = unsafe { information.assume_init() };
-    Ok(information.nNumberOfLinks == 1)
-}
-
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
+    Ok(())
 }
 
 fn hash_file(path: &Path, expected_size: u64) -> Result<String, UpdaterError> {
@@ -649,16 +607,10 @@ fn ensure_direct_executable(path: &Path) -> Result<(), UpdaterError> {
             "the running AIHelper executable is not a direct regular file",
         ));
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(installation(
-                "the running AIHelper executable is a reparse point",
-            ));
-        }
+    if ah_platform::fs::is_reparse_point(&metadata) {
+        return Err(installation(
+            "the running AIHelper executable is a reparse point",
+        ));
     }
     Ok(())
 }
@@ -694,19 +646,9 @@ fn cargo_install_root(installation_root: &Path) -> Option<PathBuf> {
 
 fn is_direct_regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| {
-        !metadata.file_type().is_symlink() && metadata.is_file() && {
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-
-                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-                metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
-            }
-            #[cfg(not(windows))]
-            {
-                true
-            }
-        }
+        !metadata.file_type().is_symlink()
+            && metadata.is_file()
+            && !ah_platform::fs::is_reparse_point(&metadata)
     })
 }
 

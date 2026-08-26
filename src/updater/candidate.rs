@@ -400,7 +400,10 @@ fn ensure_real_directory(path: &Path) -> Result<(), UpdaterError> {
 }
 
 fn ensure_real_directory_metadata(metadata: &fs::Metadata) -> Result<(), UpdaterError> {
-    if metadata.file_type().is_symlink() || !metadata.is_dir() || is_reparse_point(metadata) {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || ah_platform::fs::is_reparse_point(metadata)
+    {
         return Err(candidate(
             "candidate staging path must be a real directory without reparse points",
         ));
@@ -411,25 +414,15 @@ fn ensure_real_directory_metadata(metadata: &fs::Metadata) -> Result<(), Updater
 fn ensure_regular_file(path: &Path) -> Result<(), UpdaterError> {
     let metadata =
         fs::symlink_metadata(path).map_err(|_| candidate("failed to inspect candidate file"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || is_reparse_point(&metadata) {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || ah_platform::fs::is_reparse_point(&metadata)
+    {
         return Err(candidate(
             "candidate staging file must be a regular file without reparse points",
         ));
     }
     Ok(())
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt as _;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
-    false
 }
 
 fn copy_and_hash(
