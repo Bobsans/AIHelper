@@ -169,7 +169,7 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 
 | Work                                                        | Group  |
 |-------------------------------------------------------------|--------|
-| `ServiceGuard` trait; invert the updater↔service dependency | 07     |
+| ~~`ServiceGuard` trait; invert the updater↔service dependency~~ **(done)** | 07 |
 | Extract `ah-updater` from `src/updater/`                    | 07, 09 |
 | Extract `ah-secrets`, `ah-observability`, `ah-service`      | 09     |
 | One `fsverify` module for updater hardening primitives      | 07     |
@@ -178,6 +178,28 @@ Now that boundaries are clean and the SDK exists, extraction is mechanical.
 
 **Exit criterion:** the root crate is CLI wiring; every subsystem builds and tests
 independently.
+
+**`ServiceGuard` landed, with two notes.** The trait is `hold`/`capture`/`stop`/
+`restore`, and every method after `hold` takes the hold as a parameter, so what
+the three replaced functions said in their names (`*_while_locked`) is now
+checked by the signature. `src/updater/` no longer names anything in
+`mcp_service::lifecycle`.
+
+- **`NoServiceGuard` was not written.** The row proposed it to replace the
+  `cfg(windows)` gates, but those gates are on the updater as a whole - a
+  non-Windows `upgrade` returns `UnsupportedPlatform` before any guard is
+  consulted - so a second implementation would be dead code today. It becomes
+  real when a second platform gets a managed service (phase 4).
+- **`FileLease` is still `mcp_service`'s**, named once behind a `ServiceHold`
+  alias, because the update helper inherits its handle. Giving it a neutral home
+  is part of extracting `ah-updater`, and so is the larger question that row has
+  to answer: `AppError` is the root crate's type, and every updater signature
+  returns it.
+
+The three lifecycle helpers that remain (`snapshot_status`, `install_quietly`,
+`start_quietly`) serve `ai install --transport managed`. Group 07 counted them
+among "six update-specific helpers"; they are a different consumer, and the
+inversion does not touch them.
 
 ## Phase 4 — New capability
 
