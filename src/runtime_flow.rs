@@ -29,68 +29,149 @@ use crate::{
 
 const MCP_RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
+/// What a phase decides: either the process is done, or it may continue.
+enum Step<T> {
+    Done(Result<(), AppError>),
+    Continue(T),
+}
+
 pub(crate) fn run() -> Result<(), AppError> {
     let started = Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
-    // One reading of argv, before anything is built. Recovery still runs before
-    // the plugin-aware parse, because it must not depend on a command being
-    // valid; what it no longer depends on is four separate scans of raw argv.
     let entry = crate::entry::detect(&raw_args)?;
+
+    match answer_before_startup(&entry)? {
+        Step::Done(outcome) => return outcome,
+        Step::Continue(()) => {}
+    }
+
+    let session = Session::open(&raw_args)?;
+    let managed_runner = match route_without_plugins(&raw_args)? {
+        Step::Done(outcome) => return outcome,
+        Step::Continue(runner) => runner,
+    };
+
+    dispatch(raw_args, session, managed_runner, started)
+}
+
+/// The answers that need nothing built: the updater's smoke handoff, crash
+/// recovery, and a bare `--version`.
+///
+/// Recovery runs here, before the plugin-aware parse, because it must not
+/// depend on the command being valid. A handoff skips it: the updater is
+/// already mid-transaction and a second recovery would fight it.
+fn answer_before_startup(entry: &crate::entry::Startup) -> Result<Step<()>, AppError> {
     if entry.handoff == Some(crate::entry::Handoff::InstalledSmoke) {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+        return Ok(Step::Done(Ok(())));
     }
-    if entry.handoff.is_none() {
-        match crate::updater::recovery::recover_before_startup(entry.managed_serve)? {
-            crate::updater::recovery::EarlyRecoveryOutcome::Continue => {}
-            crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched => {
-                emit_warning("update recovery started; rerun the command after recovery completes");
-                return Ok(());
-            }
-        }
+    if entry.handoff.is_none()
+        && matches!(
+            crate::updater::recovery::recover_before_startup(entry.managed_serve)?,
+            crate::updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched
+        )
+    {
+        emit_warning("update recovery started; rerun the command after recovery completes");
+        return Ok(Step::Done(Ok(())));
     }
     if entry.version_only {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+        return Ok(Step::Done(Ok(())));
     }
-    let logged_raw_args = cli::redact_secret_command_argv(&raw_args);
-    let logged_argv = logged_raw_args
-        .iter()
-        .skip(1)
-        .map(|value| value.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    if let Err(error) = cli::apply_initial_cwd_from_raw_args(&raw_args) {
-        let logger = EventLogger::new();
+    Ok(Step::Continue(()))
+}
+
+/// The redacted argv and the logger, established once so every later failure
+/// reports the same way.
+struct Session {
+    logged_argv: Vec<String>,
+    logger: Option<Arc<EventLogger>>,
+}
+
+impl Session {
+    /// # Errors
+    ///
+    /// [`AppError`] when `--cwd` names a directory the process cannot enter.
+    /// The failure is recorded before it is returned, because nothing later in
+    /// the run will get the chance.
+    fn open(raw_args: &[OsString]) -> Result<Self, AppError> {
+        let logged_raw_args = cli::redact_secret_command_argv(raw_args);
+        let logged_argv = logged_raw_args
+            .iter()
+            .skip(1)
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        if let Err(error) = cli::apply_initial_cwd_from_raw_args(raw_args) {
+            let logger = EventLogger::new();
+            record_app_system_error(
+                logger.as_ref(),
+                "startup",
+                &error,
+                serde_json::json!({"argv": logged_argv}),
+            );
+            return Err(error);
+        }
+        Ok(Self {
+            logged_argv,
+            logger: EventLogger::new().map(Arc::new),
+        })
+    }
+
+    fn logger(&self) -> Option<&EventLogger> {
+        self.logger.as_deref()
+    }
+
+    fn fail(&self, stage: &str, error: &AppError) {
         record_app_system_error(
-            logger.as_ref(),
-            "startup",
-            &error,
-            serde_json::json!({"argv": logged_argv}),
+            self.logger(),
+            stage,
+            error,
+            serde_json::json!({"argv": self.logged_argv}),
         );
-        return Err(error);
     }
-    match crate::updater::command::route(&raw_args)? {
+}
+
+/// The entry points answered before plugin discovery: `upgrade`, the managed
+/// service commands, and the preflight for a managed `mcp serve`.
+///
+/// They are separate parses because the full CLI cannot be the first one - its
+/// shape depends on which plugins loaded, and discovery is what these avoid.
+fn route_without_plugins(
+    raw_args: &[OsString],
+) -> Result<Step<Option<Arc<ManagedRunner>>>, AppError> {
+    match crate::updater::command::route(raw_args)? {
         crate::updater::command::EarlyUpgradeRoute::NotUpgrade => {}
-        crate::updater::command::EarlyUpgradeRoute::ExitSuccess => return Ok(()),
+        crate::updater::command::EarlyUpgradeRoute::ExitSuccess => {
+            return Ok(Step::Done(Ok(())));
+        }
         crate::updater::command::EarlyUpgradeRoute::Execute { request, options } => {
-            return crate::updater::execute(request, options);
+            return Ok(Step::Done(crate::updater::execute(request, options)));
         }
     }
-    let managed_runner = match crate::mcp_service::command::route(&raw_args)? {
-        EarlyRoute::NotManaged => None,
-        EarlyRoute::ExitSuccess => return Ok(()),
+    match crate::mcp_service::command::route(raw_args)? {
+        EarlyRoute::NotManaged => Ok(Step::Continue(None)),
+        EarlyRoute::ExitSuccess => Ok(Step::Done(Ok(()))),
         EarlyRoute::Service(command) => {
-            return crate::mcp_service::lifecycle::execute(command);
+            Ok(Step::Done(crate::mcp_service::lifecycle::execute(command)))
         }
         EarlyRoute::ManagedServe { definition_path } => {
             match ManagedRunner::preflight(&definition_path)? {
-                ManagedPreflight::AlreadyRunning => return Ok(()),
-                ManagedPreflight::Ready(runner) => Some(Arc::new(*runner)),
+                ManagedPreflight::AlreadyRunning => Ok(Step::Done(Ok(()))),
+                ManagedPreflight::Ready(runner) => Ok(Step::Continue(Some(Arc::new(*runner)))),
             }
         }
-    };
-    let logger = EventLogger::new().map(Arc::new);
-    let mut runtime = match startup(raw_args, logger.as_deref(), &logged_argv) {
+    }
+}
+
+/// Build what the command needs, parse it against the loaded catalog, run it,
+/// and record the outcome.
+fn dispatch(
+    raw_args: Vec<OsString>,
+    session: Session,
+    managed_runner: Option<Arc<ManagedRunner>>,
+    started: Instant,
+) -> Result<(), AppError> {
+    let mut runtime = match startup(raw_args, session.logger(), &session.logged_argv) {
         Ok(runtime) => runtime,
         Err(error) => {
             mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
@@ -98,13 +179,14 @@ pub(crate) fn run() -> Result<(), AppError> {
         }
     };
     let mut load_report = discovery(&runtime.config, &mut runtime.manager, &runtime.settings);
-    record_discovery_events(logger.as_deref(), &load_report);
+    record_discovery_events(session.logger(), &load_report);
+
     let command = match routing(runtime.raw_args, &runtime.manager) {
         Ok(RoutingOutcome::ExitSuccess) => {
-            if let Some(logger) = &logger {
+            if let Some(logger) = &session.logger {
                 logger.record_cli_command(
-                    successful_exit_command_name(&logged_argv),
-                    logged_argv,
+                    successful_exit_command_name(&session.logged_argv),
+                    session.logged_argv.clone(),
                     started.elapsed(),
                     None,
                 );
@@ -113,16 +195,12 @@ pub(crate) fn run() -> Result<(), AppError> {
         }
         Ok(RoutingOutcome::Command(command)) => command,
         Err(error) => {
-            record_app_system_error(
-                logger.as_deref(),
-                "cli_parse",
-                &error,
-                serde_json::json!({"argv": logged_argv}),
-            );
+            session.fail("cli_parse", &error);
             mark_managed_failure(&managed_runner, ExitKind::StartupFailure, &error);
             return Err(error);
         }
     };
+
     render_discovery_diagnostics(&mut load_report, &command);
     let command_name = command_log_name(&command, &runtime.manager);
     let result = execution(
@@ -131,13 +209,13 @@ pub(crate) fn run() -> Result<(), AppError> {
         runtime.manager,
         runtime.vault,
         runtime.settings,
-        logger.clone(),
+        session.logger.clone(),
         managed_runner,
     );
-    if let Some(logger) = &logger {
+    if let Some(logger) = &session.logger {
         logger.record_cli_command_with_outcome(
             &command_name,
-            logged_argv,
+            session.logged_argv.clone(),
             started.elapsed(),
             result.as_ref().ok().and_then(|outcome| outcome.as_ref()),
             result.as_ref().err(),
@@ -787,9 +865,44 @@ mod tests {
     use ah_runtime::PluginManager;
 
     use super::{
-        extract_credential_args, map_mcp_transport_error, resolve_invocation_command,
-        shutdown_runtime,
+        Step, answer_before_startup, extract_credential_args, map_mcp_transport_error,
+        resolve_invocation_command, shutdown_runtime,
     };
+
+    /// The updater's smoke handoff answers before crash recovery is even
+    /// consulted, because the updater is mid-transaction and a second recovery
+    /// would fight it.
+    ///
+    /// The ordering was previously stated only by the position of two `if`
+    /// blocks inside a hundred-line function, where nothing could assert it.
+    /// Splitting `run()` into phases made it something a test can call.
+    #[test]
+    fn the_smoke_handoff_answers_before_recovery_is_consulted() {
+        let entry = crate::entry::Startup {
+            version_only: true,
+            handoff: Some(crate::entry::Handoff::InstalledSmoke),
+            managed_serve: false,
+        };
+
+        let step = answer_before_startup(&entry).expect("the handoff answers");
+
+        assert!(matches!(step, Step::Done(Ok(()))));
+    }
+
+    /// A handoff that is not the smoke one still skips recovery, and still has
+    /// to let the command it names run.
+    #[test]
+    fn the_restore_handoff_continues_without_recovery() {
+        let entry = crate::entry::Startup {
+            version_only: false,
+            handoff: Some(crate::entry::Handoff::ManagedRestore),
+            managed_serve: false,
+        };
+
+        let step = answer_before_startup(&entry).expect("the handoff continues");
+
+        assert!(matches!(step, Step::Continue(())));
+    }
 
     #[test]
     fn credential_extraction_stops_at_the_positional_separator() {
