@@ -687,9 +687,13 @@ fn ai_status_waits_for_a_slow_agent_probe() {
         use std::os::unix::fs::PermissionsExt;
 
         let shim = project.path().join("codex");
+        // The test replaces PATH with the project directory so that only this
+        // shim can be found, which also means the shim cannot rely on PATH for
+        // `sleep`. It sets its own; the Windows arm names `ping.exe` absolutely
+        // for the same reason.
         fs::write(
             &shim,
-            "#!/bin/sh\nprintf 'called\\n' >> \"$0.calls\"\nsleep 6\nprintf '[]\\n'\n",
+            "#!/bin/sh\nPATH=/usr/bin:/bin\nprintf 'called\\n' >> \"$0.calls\"\nsleep 6\nprintf '[]\\n'\n",
         )
         .expect("write codex shim");
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))

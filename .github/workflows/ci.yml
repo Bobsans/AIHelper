@@ -41,6 +41,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # The process-level suite loads plugins as dynamic libraries from the
+      # profile directory, and `cargo test` has no reason to link a
+      # `cdylib`-only member: nothing depends on it at compile time, so it
+      # produces only that member's metadata. Building first is what puts the
+      # four plugin libraries where the suite looks for them.
+      - name: Build
+        run: cargo build --workspace --locked
+
       - name: Test
         run: cargo test --workspace --all-targets --locked
 

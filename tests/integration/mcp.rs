@@ -23,7 +23,7 @@ use aihelper::mcp_service::{
         ExitKind, RuntimePhase, SCHEMA_VERSION, ServerDefinition, ServiceDefinition,
         ServiceEndpoint, TASK_SPEC_VERSION,
     },
-    paths::{ServicePaths, current_user_sid},
+    paths::{ServicePaths, current_account},
     store::{Document, ServiceStore},
 };
 
@@ -214,7 +214,7 @@ fn install_managed_definition(
         task_spec_version: TASK_SPEC_VERSION,
         service_id: uuid::Uuid::new_v4(),
         configuration_id,
-        user_sid: current_user_sid().expect("current SID should resolve"),
+        user_sid: current_account().expect("the current account should resolve"),
         executable_path: assert_cmd::cargo::cargo_bin("ah"),
         working_directory: temp.path().to_path_buf(),
         config_directory: temp.path().join("config"),
@@ -1968,14 +1968,32 @@ fn http_transport_rejects_hostile_host_origin_and_oversized_body() {
             .is_none()
     );
 
+    // An oversized body is refused, and the two ways a server can refuse one
+    // are both correct. It can read the whole thing and answer 413, or it can
+    // stop reading and close, which the client sees as a failed write - and
+    // which is the better behaviour, because draining an attacker's body is
+    // the denial of service. Which one happens depends on whether the socket
+    // buffers swallow the body before the close arrives, so it differs by
+    // platform. What must not happen is acceptance, and what proves the close
+    // was a refusal rather than a crash is that the server still answers.
     let oversized = client
         .post(&process.url)
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body("x".repeat(1024 * 1024 + 1))
+        .send();
+    match oversized {
+        Ok(response) => assert_eq!(response.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE),
+        Err(error) => assert!(
+            error.is_request(),
+            "an oversized body must be refused, not mishandled: {error}"
+        ),
+    }
+    let after_oversized = client
+        .get(&process.readiness_url)
         .send()
-        .expect("oversized request should receive a response");
-    assert_eq!(oversized.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+        .expect("the server should survive refusing an oversized body");
+    assert_eq!(after_oversized.status(), reqwest::StatusCode::OK);
     process.stop();
 }
 
