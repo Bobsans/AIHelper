@@ -25,27 +25,37 @@ use windows::{
 use ah_error::AppError;
 
 use super::{
-    model::{TaskMarker, hresult_hex, validate_uuid_json_fields},
+    model::{DriftEntry, TaskMarker, hresult_hex, validate_uuid_json_fields},
     output::SchedulerState,
-    paths::account_sid,
+    paths::{account_sid, current_account},
     scheduler::{
-        DesiredTaskSpec, ExpectedTaskOwnership, MultipleInstancesPolicy, ObservedTask,
-        SchedulerAdapter, SchedulerDeleteReceipt, SchedulerInstance, SchedulerRunReceipt,
-        SchedulerStopReceipt, SchedulerStopTarget, TASK_SOURCE, TaskObservation, semantic_drift,
+        ObservedService, SchedulerDeleteReceipt, SchedulerInstance, SchedulerRunReceipt,
+        SchedulerStopReceipt, SchedulerStopTarget, ServiceObservation, ServiceScheduler,
+    },
+    spec::{ServiceId, ServiceOwnership, ServiceSpec},
+    windows_task::{
+        MultipleInstancesPolicy, TASK_SOURCE, TaskSpec, has_canonical_restart_policy,
+        semantic_drift, service_id,
     },
 };
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WindowsTaskScheduler;
 
-impl SchedulerAdapter for WindowsTaskScheduler {
-    fn inspect(&self, task_path: &str) -> Result<TaskObservation, AppError> {
+impl ServiceScheduler for WindowsTaskScheduler {
+    type Native = TaskSpec;
+
+    fn identity(&self) -> Result<ServiceId, AppError> {
+        Ok(service_id(current_account()?))
+    }
+
+    fn inspect(&self, id: &ServiceId) -> Result<ServiceObservation<TaskSpec>, AppError> {
         with_root_folder("inspect", |folder| {
-            let name = task_path.trim_start_matches('\\');
+            let name = id.path.trim_start_matches('\\');
             let registered = match unsafe { folder.GetTask(&BSTR::from(name)) } {
                 Ok(task) => task,
                 Err(error) if is_task_missing(error.code().0) => {
-                    return Ok(TaskObservation::Missing);
+                    return Ok(ServiceObservation::Missing);
                 }
                 Err(error) => return Err(scheduler_error("get task", error)),
             };
@@ -53,7 +63,8 @@ impl SchedulerAdapter for WindowsTaskScheduler {
         })
     }
 
-    fn register(&self, desired: &DesiredTaskSpec) -> Result<ObservedTask, AppError> {
+    fn register(&self, desired: &ServiceSpec) -> Result<ObservedService<TaskSpec>, AppError> {
+        let desired = &TaskSpec::from(desired);
         with_root_folder("register", |folder| {
             let service = connected_service()?;
             let definition = unsafe { service.NewTask(0) }
@@ -74,12 +85,12 @@ impl SchedulerAdapter for WindowsTaskScheduler {
             }
             .map_err(|error| scheduler_error("register task definition", error))?;
             match observe_registered(&registered)? {
-                TaskObservation::Owned(observed) => Ok(*observed),
-                TaskObservation::Missing => Err(AppError::external(
+                ServiceObservation::Owned(observed) => Ok(*observed),
+                ServiceObservation::Missing => Err(AppError::external(
                     "MCP_SERVICE_SCHEDULER_FAILED",
                     "registered task disappeared during readback",
                 )),
-                TaskObservation::Foreign { .. } => Err(AppError::external(
+                ServiceObservation::Foreign => Err(AppError::external(
                     "MCP_SERVICE_TASK_CONFLICT",
                     "registered task does not retain AIHelper ownership markers",
                 )),
@@ -87,9 +98,9 @@ impl SchedulerAdapter for WindowsTaskScheduler {
         })
     }
 
-    fn run(&self, task_path: &str) -> Result<SchedulerRunReceipt, AppError> {
+    fn run(&self, id: &ServiceId) -> Result<SchedulerRunReceipt, AppError> {
         with_root_folder("run", |folder| {
-            let name = task_path.trim_start_matches('\\');
+            let name = id.path.trim_start_matches('\\');
             let registered = unsafe { folder.GetTask(&BSTR::from(name)) }
                 .map_err(|error| scheduler_error("get task for run", error))?;
             let empty = VARIANT::default();
@@ -99,19 +110,20 @@ impl SchedulerAdapter for WindowsTaskScheduler {
         })
     }
 
-    fn instances(&self, expected: &DesiredTaskSpec) -> Result<Vec<SchedulerInstance>, AppError> {
+    fn instances(&self, expected: &ServiceOwnership) -> Result<Vec<SchedulerInstance>, AppError> {
         with_root_folder("enumerate instances", |folder| {
-            let registered = get_task(folder, &expected.task_path, "get task for instances")?;
-            require_owned_registration(&registered, &ExpectedTaskOwnership::from(expected))?;
+            let registered = get_task(folder, &expected.id.path, "get task for instances")?;
+            require_owned_registration(&registered, expected)?;
             enumerate_instances(&registered)
         })
     }
 
     fn stop_instance(
         &self,
-        expected: &DesiredTaskSpec,
+        expected: &ServiceSpec,
         target: &SchedulerStopTarget,
     ) -> Result<SchedulerStopReceipt, AppError> {
+        let expected = &TaskSpec::from(expected);
         with_root_folder("stop instance", |folder| {
             let registered = get_task(folder, &expected.task_path, "get task for stop")?;
             require_safe_task(&registered, expected)?;
@@ -144,10 +156,10 @@ impl SchedulerAdapter for WindowsTaskScheduler {
 
     fn delete_owned(
         &self,
-        expected: &ExpectedTaskOwnership,
+        expected: &ServiceOwnership,
     ) -> Result<SchedulerDeleteReceipt, AppError> {
         with_root_folder("delete owned task", |folder| {
-            let name = expected.task_path.trim_start_matches('\\');
+            let name = expected.id.path.trim_start_matches('\\');
             let registered = match unsafe { folder.GetTask(&BSTR::from(name)) } {
                 Ok(task) => task,
                 Err(error) if is_task_missing(error.code().0) => {
@@ -173,6 +185,14 @@ impl SchedulerAdapter for WindowsTaskScheduler {
             }
         })
     }
+
+    fn drift(
+        &self,
+        desired: &ServiceSpec,
+        observed: &ObservedService<TaskSpec>,
+    ) -> Vec<DriftEntry> {
+        semantic_drift(&TaskSpec::from(desired), &observed.native)
+    }
 }
 
 fn get_task(
@@ -184,22 +204,23 @@ fn get_task(
     unsafe { folder.GetTask(&BSTR::from(name)) }.map_err(|error| scheduler_error(operation, error))
 }
 
+/// The registration is still the one this installation wrote.
+///
+/// `observe_registered` has already refused anything whose registration source
+/// is not AIHelper's or whose URI is not its own path, so what is left to prove
+/// here is the path and the ownership marker.
 fn require_owned_registration(
     registered: &IRegisteredTask,
-    expected: &ExpectedTaskOwnership,
-) -> Result<ObservedTask, AppError> {
+    expected: &ServiceOwnership,
+) -> Result<ObservedService<TaskSpec>, AppError> {
     let observation = observe_registered(registered)?;
-    let TaskObservation::Owned(observed) = observation else {
+    let ServiceObservation::Owned(observed) = observation else {
         return Err(AppError::external(
             "MCP_SERVICE_TASK_CHANGED",
             "Task Scheduler registration ownership changed before mutation",
         ));
     };
-    if observed.spec.task_path != expected.task_path
-        || observed.spec.source != expected.source
-        || observed.spec.uri != expected.uri
-        || observed.spec.marker != expected.marker
-    {
+    if observed.id.path != expected.id.path || observed.marker != expected.marker {
         return Err(AppError::external(
             "MCP_SERVICE_TASK_CHANGED",
             "Task Scheduler ownership marker changed before mutation",
@@ -210,10 +231,19 @@ fn require_owned_registration(
 
 fn require_safe_task(
     registered: &IRegisteredTask,
-    expected: &DesiredTaskSpec,
-) -> Result<ObservedTask, AppError> {
-    let observed = require_owned_registration(registered, &ExpectedTaskOwnership::from(expected))?;
-    let drift = semantic_drift(expected, &observed.spec);
+    expected: &TaskSpec,
+) -> Result<ObservedService<TaskSpec>, AppError> {
+    let observed = require_owned_registration(
+        registered,
+        &ServiceOwnership {
+            id: ServiceId {
+                owner: expected.user_sid.clone(),
+                path: expected.task_path.clone(),
+            },
+            marker: expected.marker.clone(),
+        },
+    )?;
+    let drift = semantic_drift(expected, &observed.native);
     if !drift.is_empty() {
         return Err(AppError::external(
             "MCP_SERVICE_TASK_CHANGED",
@@ -369,10 +399,7 @@ fn connected_service() -> Result<ITaskService, AppError> {
     }
 }
 
-fn populate_definition(
-    definition: &ITaskDefinition,
-    desired: &DesiredTaskSpec,
-) -> Result<(), AppError> {
+fn populate_definition(definition: &ITaskDefinition, desired: &TaskSpec) -> Result<(), AppError> {
     // SAFETY: every interface originates from the typed Task Scheduler object
     // model and all BSTR/VARIANT values remain alive for each setter call.
     unsafe {
@@ -486,7 +513,9 @@ fn populate_definition(
     }
 }
 
-fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, AppError> {
+fn observe_registered(
+    registered: &IRegisteredTask,
+) -> Result<ServiceObservation<TaskSpec>, AppError> {
     // SAFETY: getters populate initialized typed out parameters owned by this
     // stack frame. Casts are restricted to the advertised action/trigger type.
     unsafe {
@@ -509,16 +538,10 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
             .and_then(|value| serde_json::from_value::<TaskMarker>(value).ok())
             .filter(|marker| marker.validate().is_ok());
         let Some(marker) = marker else {
-            return Ok(TaskObservation::Foreign {
-                source: Some(source),
-                uri: Some(uri),
-            });
+            return Ok(ServiceObservation::Foreign);
         };
         if source != TASK_SOURCE || uri != task_path {
-            return Ok(TaskObservation::Foreign {
-                source: Some(source),
-                uri: Some(uri),
-            });
+            return Ok(ServiceObservation::Foreign);
         }
 
         let principal = definition
@@ -645,13 +668,13 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
             .State()
             .map_err(|error| scheduler_error("read task state", error))?;
         let last_result = registered.LastTaskResult().ok();
-        let spec = DesiredTaskSpec {
-            task_path,
+        let spec = TaskSpec {
+            task_path: task_path.clone(),
             task_name,
-            user_sid,
+            user_sid: user_sid.clone(),
             source,
             uri,
-            marker,
+            marker: marker.clone(),
             executable_path,
             arguments,
             working_directory,
@@ -695,11 +718,17 @@ fn observe_registered(registered: &IRegisteredTask) -> Result<TaskObservation, A
             restart_interval,
             enabled,
         };
-        Ok(TaskObservation::Owned(Box::new(ObservedTask {
-            spec,
-            scheduler_state: scheduler_state(state),
+        Ok(ServiceObservation::Owned(Box::new(ObservedService {
+            id: ServiceId {
+                owner: user_sid,
+                path: task_path,
+            },
+            marker,
+            state: scheduler_state(state),
             last_result,
             last_run_at: None,
+            canonical_restart_policy: has_canonical_restart_policy(&spec),
+            native: spec,
         })))
     }
 }
@@ -757,10 +786,7 @@ fn scheduler_error(operation: &str, error: windows::core::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        paths::{current_user_sid, task_path},
-        scheduler::{MANAGED_RESTART_COUNT, MANAGED_RESTART_INTERVAL},
-    };
+    use crate::windows_task::{MANAGED_RESTART_COUNT, MANAGED_RESTART_INTERVAL};
     use tempfile::TempDir;
     use uuid::Uuid;
 
@@ -825,7 +851,7 @@ mod tests {
     #[test]
     fn task_service_can_create_typed_definition_without_registration() {
         let temp = TempDir::new().unwrap();
-        let user_sid = current_user_sid().unwrap();
+        let user_sid = current_account().unwrap();
         let marker = TaskMarker {
             schema_version: 1,
             owner: "AIHelper".to_owned(),
@@ -834,13 +860,12 @@ mod tests {
             configuration_id: Uuid::new_v4(),
             definition_path: temp.path().join("definition.json"),
         };
-        let desired = DesiredTaskSpec::canonical(
-            task_path(&user_sid),
-            user_sid,
+        let desired = TaskSpec::from(&ServiceSpec::managed_mcp(
+            service_id(user_sid),
             marker,
             std::env::current_exe().unwrap(),
             temp.path().to_path_buf(),
-        );
+        ));
         let result = with_com_session("smoke test", || {
             let service = connected_service()?;
             let definition = unsafe { service.NewTask(0) }

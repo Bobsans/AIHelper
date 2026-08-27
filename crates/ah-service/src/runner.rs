@@ -8,7 +8,7 @@ use super::{
     lock,
     lock::FileLease,
     model::{ExitKind, LastExit, RuntimePhase, RuntimeState, ServiceDefinition, now_timestamp},
-    paths::{ServicePaths, current_user_sid, paths_equal},
+    paths::{ServicePaths, current_account, paths_equal},
     store::{Document, ServiceStore},
 };
 
@@ -32,7 +32,8 @@ pub struct ManagedRunner {
 // - ServiceDefinition: all fields are Send + Sync
 // - ServiceStore: contains only PathBufs
 // - Mutex<RuntimeState>: Mutex is Send + Sync when inner is Send
-// - FileLease: contains Mutex<HANDLE> where HANDLE = *mut c_void (Send + Sync)
+// - FileLease: Mutex<HANDLE> on Windows, where HANDLE = *mut c_void; a locked
+//   File on Unix. Both are Send + Sync.
 unsafe impl Send for ManagedRunner {}
 unsafe impl Sync for ManagedRunner {}
 
@@ -90,10 +91,10 @@ impl ManagedRunner {
                 "managed definition paths do not match the per-user service layout",
             ));
         }
-        if definition.user_sid != current_user_sid()? {
+        if definition.user_sid != current_account()? {
             return Err(AppError::external(
                 "MCP_SERVICE_STATE_INVALID",
-                "managed MCP definition belongs to a different Windows user",
+                "managed MCP definition belongs to a different user account",
             ));
         }
         let Some(instance_lease) = lock::try_acquire(&paths.instance_lock)? else {
@@ -231,7 +232,7 @@ mod tests {
             task_spec_version: TASK_SPEC_VERSION,
             service_id: Uuid::new_v4(),
             configuration_id,
-            user_sid: current_user_sid().unwrap(),
+            user_sid: current_account().unwrap(),
             executable_path: std::env::current_exe().unwrap(),
             working_directory: std::env::current_dir().unwrap(),
             config_directory: paths.base_dir.join("config"),
@@ -252,7 +253,6 @@ mod tests {
         (store, path)
     }
 
-    #[cfg(windows)]
     #[test]
     fn preflight_holds_single_instance_lease_and_writes_starting() {
         let temp = TempDir::new().unwrap();

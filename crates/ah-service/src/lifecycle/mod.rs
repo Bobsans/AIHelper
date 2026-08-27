@@ -44,14 +44,15 @@ use super::{
         RegistrationStatus, SchedulerSection, SchedulerState, StatusOutput,
     },
     paths::{
-        ServicePaths, current_executable_path, current_user_sid, normalize_absolute_path,
-        paths_equal, require_managed_service_executable, task_path,
+        ServicePaths, current_executable_path, normalize_absolute_path, paths_equal,
+        require_managed_service_executable,
     },
     readiness::{HttpReadinessProbe, RuntimeControl, ShutdownReceipt},
     scheduler::{
-        DesiredTaskSpec, ExpectedTaskOwnership, ObservedTask, SchedulerAdapter, SchedulerInstance,
-        SchedulerStopTarget, TaskObservation, has_canonical_restart_policy, semantic_drift,
+        ObservedService, PlatformScheduler, SchedulerInstance, SchedulerStopTarget,
+        ServiceObservation, ServiceScheduler, platform_scheduler,
     },
+    spec::{ServiceId, ServiceOwnership, ServiceSpec},
     store::{Document, ServiceStore},
 };
 
@@ -65,8 +66,7 @@ mod uninstall;
 pub use guard::ManagedMcpGuard;
 
 use status::{
-    SchedulerRuntimeEvidence, configuration_matches, reduce_runtime, require_no_drift,
-    require_ready_instance_id,
+    SchedulerRuntimeEvidence, configuration_matches, reduce_runtime, require_ready_instance_id,
 };
 // Reached only from `tests`, which globs this module rather than its children.
 #[cfg(test)]
@@ -86,76 +86,51 @@ const STOP_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// # Errors
 ///
-/// [`AppError`] when the operation fails, or off Windows, where there is no
-/// managed service to operate.
+/// [`AppError`] when the operation fails, or on a platform where there is no
+/// managed service to operate - which arrives as a refusal from that
+/// platform's scheduler rather than as a branch of this function.
 pub fn run(operation: Operation) -> Result<Report, AppError> {
-    #[cfg(windows)]
-    {
-        if matches!(&operation, Operation::Install(_)) {
-            require_managed_service_executable(&current_executable_path()?)?;
-        }
-        let paths = ServicePaths::discover()?;
-        let scheduler = super::windows_scheduler::WindowsTaskScheduler;
-        let readiness = HttpReadinessProbe::new().map_err(|error| {
-            AppError::external(
-                "MCP_SERVICE_STATE_INVALID",
-                format!("failed to create readiness client: {error}"),
-            )
-        })?;
-        let service = LifecycleService::new(paths, scheduler, readiness);
-        match operation {
-            Operation::Install(settings) => service
-                .install(&settings)
-                .map(|output| Report::Mutation(Box::new(output))),
-            Operation::Start => service
-                .start()
-                .map(|output| Report::Mutation(Box::new(output))),
-            Operation::Stop => service
-                .stop()
-                .map(|output| Report::Mutation(Box::new(output))),
-            Operation::Restart => service
-                .restart()
-                .map(|output| Report::Mutation(Box::new(output))),
-            Operation::Status => Ok(Report::Status(Box::new(service.status()))),
-            Operation::Uninstall => service
-                .uninstall()
-                .map(|output| Report::Uninstall(Box::new(output))),
-        }
+    if matches!(&operation, Operation::Install(_)) {
+        require_managed_service_executable(&current_executable_path()?)?;
     }
-
-    #[cfg(not(windows))]
-    {
-        let _ = operation;
-        Err(AppError::external(
-            "MCP_SERVICE_UNSUPPORTED_PLATFORM",
-            "managed MCP service lifecycle is supported only on Windows",
-        ))
+    let service = platform_service()?;
+    match operation {
+        Operation::Install(settings) => service
+            .install(&settings)
+            .map(|output| Report::Mutation(Box::new(output))),
+        Operation::Start => service
+            .start()
+            .map(|output| Report::Mutation(Box::new(output))),
+        Operation::Stop => service
+            .stop()
+            .map(|output| Report::Mutation(Box::new(output))),
+        Operation::Restart => service
+            .restart()
+            .map(|output| Report::Mutation(Box::new(output))),
+        Operation::Status => Ok(Report::Status(Box::new(service.status()))),
+        Operation::Uninstall => service
+            .uninstall()
+            .map(|output| Report::Uninstall(Box::new(output))),
     }
 }
 
 /// Non-printing lifecycle access for callers that render their own output,
 /// such as `ah ai install --transport managed`.
-#[cfg(windows)]
 pub fn snapshot_status() -> Result<StatusOutput, AppError> {
-    Ok(update_service()?.status())
+    Ok(platform_service()?.status())
 }
 
-#[cfg(windows)]
 pub fn install_quietly(settings: &InstallSettings) -> Result<MutationOutput, AppError> {
     require_managed_service_executable(&current_executable_path()?)?;
-    update_service()?.install(settings)
+    platform_service()?.install(settings)
 }
 
-#[cfg(windows)]
 pub fn start_quietly() -> Result<MutationOutput, AppError> {
-    update_service()?.start()
+    platform_service()?.start()
 }
 
-#[cfg(windows)]
-fn update_service() -> Result<
-    LifecycleService<super::windows_scheduler::WindowsTaskScheduler, HttpReadinessProbe>,
-    AppError,
-> {
+/// The managed service as this platform holds it.
+fn platform_service() -> Result<LifecycleService<PlatformScheduler, HttpReadinessProbe>, AppError> {
     let paths = ServicePaths::discover()?;
     let readiness = HttpReadinessProbe::new().map_err(|error| {
         AppError::external(
@@ -165,7 +140,7 @@ fn update_service() -> Result<
     })?;
     Ok(LifecycleService::new(
         paths,
-        super::windows_scheduler::WindowsTaskScheduler,
+        platform_scheduler(),
         readiness,
     ))
 }
@@ -192,16 +167,16 @@ pub(crate) enum StopPolicy {
     AllowExactOrphan,
 }
 
-pub(crate) struct InstalledContext {
+pub(crate) struct InstalledContext<N> {
     current: CurrentPointer,
     definition: ServiceDefinition,
-    observed: ObservedTask,
-    desired: DesiredTaskSpec,
+    observed: ObservedService<N>,
+    desired: ServiceSpec,
 }
 
-pub(crate) struct StopResult {
-    ownership: Option<ExpectedTaskOwnership>,
-    context: Option<InstalledContext>,
+pub(crate) struct StopResult<N> {
+    ownership: Option<ServiceOwnership>,
+    context: Option<InstalledContext<N>>,
     changed: bool,
     action: String,
     old_instance_id: Option<Uuid>,
@@ -218,7 +193,7 @@ pub(crate) struct StartResult {
 #[cfg(test)]
 mod tests;
 
-impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
+impl<S: ServiceScheduler, R: RuntimeControl> LifecycleService<S, R> {
     pub fn new(paths: ServicePaths, scheduler: S, readiness: R) -> Self {
         Self {
             store: ServiceStore::new(paths),
@@ -262,51 +237,48 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         self.status_snapshot()
     }
 
-    fn require_installed_context(&self) -> Result<InstalledContext, AppError> {
+    fn require_installed_context(&self) -> Result<InstalledContext<S::Native>, AppError> {
         let current = self.require_current()?;
         let definition = self.require_pointer_definition(&current)?;
-        if definition.user_sid != current_user_sid()? {
+        let identity = self.scheduler.identity()?;
+        if definition.user_sid != identity.owner {
             return Err(AppError::external(
                 "MCP_SERVICE_STATE_INVALID",
-                "managed MCP definition belongs to a different Windows user",
+                "managed MCP definition belongs to a different user account",
             ));
         }
-        if current.task_path != task_path(&definition.user_sid) {
+        if current.task_path != identity.path {
             return Err(AppError::external(
                 "MCP_SERVICE_STATE_INVALID",
                 "current pointer task path does not match the service user SID",
             ));
         }
-        let observation = self.scheduler.inspect(&current.task_path)?;
-        let TaskObservation::Owned(observed) = observation else {
+        let observation = self.scheduler.inspect(&identity)?;
+        let ServiceObservation::Owned(observed) = observation else {
             return Err(match observation {
-                TaskObservation::Missing => AppError::external(
+                ServiceObservation::Missing => AppError::external(
                     "MCP_SERVICE_NOT_INSTALLED",
                     "managed MCP Task Scheduler registration is missing",
                 ),
-                TaskObservation::Foreign { .. } => AppError::external(
+                ServiceObservation::Foreign => AppError::external(
                     "MCP_SERVICE_TASK_CONFLICT",
                     "managed MCP task path is occupied by a foreign task",
                 ),
-                TaskObservation::Owned(_) => unreachable!(),
+                ServiceObservation::Owned(_) => unreachable!(),
             });
         };
-        if observed.spec.marker.service_id != definition.service_id
-            || observed.spec.marker.configuration_id != definition.configuration_id
-            || !paths_equal(
-                &observed.spec.marker.definition_path,
-                &current.definition_path,
-            )
+        if observed.marker.service_id != definition.service_id
+            || observed.marker.configuration_id != definition.configuration_id
+            || !paths_equal(&observed.marker.definition_path, &current.definition_path)
         {
             return Err(AppError::external(
                 "MCP_SERVICE_CONFIGURATION_DRIFT",
                 "registered task does not reference the current definition",
             ));
         }
-        let desired = DesiredTaskSpec::canonical(
-            current.task_path.clone(),
-            definition.user_sid.clone(),
-            observed.spec.marker.clone(),
+        let desired = ServiceSpec::managed_mcp(
+            identity,
+            observed.marker.clone(),
             definition.executable_path.clone(),
             definition.working_directory.clone(),
         );
@@ -417,14 +389,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     fn instance_lease_is_occupied(&self) -> bool {
-        match lock::try_acquire(&self.store.paths().instance_lock) {
-            Ok(Some(lease)) => {
-                drop(lease);
-                false
-            }
-            Ok(None) => true,
-            Err(_) => false,
-        }
+        !lock::is_free(&self.store.paths().instance_lock).unwrap_or(true)
     }
 
     fn cleanup_definitions(&self, pointer: &CurrentPointer) -> Result<(), AppError> {

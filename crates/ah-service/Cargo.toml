@@ -23,6 +23,11 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 uuid = { workspace = true, features = ["serde", "v4"] }
 
+# The account's identity and home directory come from the password database,
+# not from the environment - see `paths::account_home`.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",

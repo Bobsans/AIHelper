@@ -12,6 +12,11 @@ publish = false
 
 [dependencies]
 
+# flock, for the lease. The Windows half of the same primitive is a named
+# mutex, which windows-sys below provides.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

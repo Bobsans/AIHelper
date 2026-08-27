@@ -40,27 +40,9 @@ pub(crate) fn configuration_matches(
         && &existing.server == server
 }
 
-pub(crate) fn require_no_drift(
-    desired: &DesiredTaskSpec,
-    observed: &ObservedTask,
-) -> Result<(), AppError> {
-    let drift = semantic_drift(desired, &observed.spec);
-    if drift.is_empty() {
-        Ok(())
-    } else {
-        Err(AppError::external(
-            "MCP_SERVICE_CONFIGURATION_DRIFT",
-            format!(
-                "Task Scheduler readback has {} drifted properties",
-                drift.len()
-            ),
-        ))
-    }
-}
-
-pub(crate) fn apply_scheduler_section(output: &mut StatusOutput, observed: &ObservedTask) {
+pub(crate) fn apply_scheduler_section<N>(output: &mut StatusOutput, observed: &ObservedService<N>) {
     output.scheduler = SchedulerSection {
-        state: observed.scheduler_state,
+        state: observed.state,
         last_result: observed.last_result,
         last_result_hex: observed.last_result.map(crate::model::hresult_hex),
         last_run_at: observed.last_run_at.clone(),
@@ -77,10 +59,10 @@ pub(crate) struct SchedulerRuntimeEvidence {
 }
 
 impl SchedulerRuntimeEvidence {
-    pub(crate) fn from_observed(observed: &ObservedTask) -> Self {
+    pub(crate) fn from_observed<N>(observed: &ObservedService<N>) -> Self {
         Self {
-            state: observed.scheduler_state,
-            canonical_restart_policy: has_canonical_restart_policy(&observed.spec),
+            state: observed.state,
+            canonical_restart_policy: observed.canonical_restart_policy,
         }
     }
 
@@ -154,21 +136,19 @@ pub(crate) fn invalid_drift(field: &str) -> DriftEntry {
     }
 }
 
+/// Whether a drift entry means the registration disagrees with the definition,
+/// as opposed to one of AIHelper's own documents being unreadable.
+///
+/// This was a list of the ten field prefixes the *Windows* comparison
+/// produces, which made every property a second adapter names - `service.*`,
+/// `unit_file.*` - silently not registration drift: status reported `installed`
+/// for a unit somebody had edited. Naming the two exceptions instead says the
+/// same thing about Windows and cannot go stale when an adapter compares a new
+/// property.
 pub(crate) fn is_registration_drift(entry: &DriftEntry) -> bool {
-    [
-        "task.",
-        "current.",
-        "definition.",
-        "registration.",
-        "principal.",
-        "trigger.",
-        "triggers.",
-        "action.",
-        "actions.",
-        "settings.",
-    ]
-    .iter()
-    .any(|prefix| entry.field.starts_with(prefix))
+    !["lifecycle.", "runtime."]
+        .iter()
+        .any(|prefix| entry.field.starts_with(prefix))
 }
 
 pub(crate) fn scheduler_error_values(error: &AppError) -> (Option<i32>, Option<String>) {
@@ -191,9 +171,32 @@ pub(crate) fn scheduler_error_values(error: &AppError) -> (Option<i32>, Option<S
     (value, hex)
 }
 
-impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
+impl<S: ServiceScheduler, R: RuntimeControl> LifecycleService<S, R> {
+    /// Refuse to act on a registration that is no longer the one we wrote.
+    ///
+    /// The comparison is the adapter's, because only it can see every property
+    /// its own scheduler keeps.
+    pub(crate) fn require_no_drift(
+        &self,
+        desired: &ServiceSpec,
+        observed: &ObservedService<S::Native>,
+    ) -> Result<(), AppError> {
+        let drift = self.scheduler.drift(desired, observed);
+        if drift.is_empty() {
+            Ok(())
+        } else {
+            Err(AppError::external(
+                "MCP_SERVICE_CONFIGURATION_DRIFT",
+                format!(
+                    "Task Scheduler readback has {} drifted properties",
+                    drift.len()
+                ),
+            ))
+        }
+    }
+
     pub(crate) fn status_snapshot(&self) -> StatusOutput {
-        let user_sid = match current_user_sid() {
+        let identity = match self.scheduler.identity() {
             Ok(value) => value,
             Err(error) => {
                 let mut output = StatusOutput::not_installed("\\AIHelper Managed MCP".to_owned());
@@ -204,8 +207,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 return output;
             }
         };
-        let expected_task_path = task_path(&user_sid);
-        let mut output = StatusOutput::not_installed(expected_task_path.clone());
+        let mut output = StatusOutput::not_installed(identity.path.clone());
         self.observe_lifecycle(&mut output);
         let current = match self.store.read_current() {
             Document::Missing => None,
@@ -224,7 +226,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 Some(current.definition_path.to_string_lossy().into_owned());
         }
 
-        let observation = match self.scheduler.inspect(&expected_task_path) {
+        let observation = match self.scheduler.inspect(&identity) {
             Ok(observation) => observation,
             Err(error) => {
                 let (hresult, hresult_hex) = scheduler_error_values(&error);
@@ -237,8 +239,8 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 if let Some(current) = current.as_ref() {
                     match self.require_pointer_definition(current) {
                         Ok(definition)
-                            if definition.user_sid == user_sid
-                                && current.task_path == expected_task_path =>
+                            if definition.user_sid == identity.owner
+                                && current.task_path == identity.path =>
                         {
                             self.observe_runtime(
                                 &mut output,
@@ -256,17 +258,16 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             }
         };
         let observed = match observation {
-            TaskObservation::Missing => {
+            ServiceObservation::Missing => {
                 if current.is_some() {
-                    output.drift.push(DriftEntry::missing(
-                        "task.missing",
-                        Some(expected_task_path),
-                    ));
+                    output
+                        .drift
+                        .push(DriftEntry::missing("task.missing", Some(identity.path)));
                 }
                 output.sort_drift();
                 return output;
             }
-            TaskObservation::Foreign { .. } => {
+            ServiceObservation::Foreign => {
                 output.registration.status = RegistrationStatus::ConfigurationDrift;
                 output.registration.diagnostic_code = Some("MCP_SERVICE_TASK_CONFLICT".to_owned());
                 output.drift.push(invalid_drift("task.ownership"));
@@ -274,14 +275,13 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 output.sort_drift();
                 return output;
             }
-            TaskObservation::Owned(observed) => observed,
+            ServiceObservation::Owned(observed) => observed,
         };
         apply_scheduler_section(&mut output, &observed);
-        output.registration.service_id = Some(observed.spec.marker.service_id);
-        output.registration.configuration_id = Some(observed.spec.marker.configuration_id);
+        output.registration.service_id = Some(observed.marker.service_id);
+        output.registration.configuration_id = Some(observed.marker.configuration_id);
         output.registration.definition_path = Some(
             observed
-                .spec
                 .marker
                 .definition_path
                 .to_string_lossy()
@@ -290,35 +290,30 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         let expected_definition_path = self
             .store
             .paths()
-            .definition(observed.spec.marker.configuration_id);
-        let definition = if !paths_equal(
-            &observed.spec.marker.definition_path,
-            &expected_definition_path,
-        ) {
-            output.registration.status = RegistrationStatus::ConfigurationDrift;
-            output.registration.diagnostic_code = Some("MCP_SERVICE_STATE_INVALID".to_owned());
-            output.drift.push(invalid_drift("definition.path"));
-            None
-        } else {
-            match self
-                .store
-                .read_definition(&observed.spec.marker.definition_path)
-            {
-                Document::Valid(definition) => Some(definition),
-                Document::Missing | Document::Invalid(_) | Document::UnsupportedVersion(_) => {
-                    output.registration.status = RegistrationStatus::ConfigurationDrift;
-                    output.registration.diagnostic_code =
-                        Some("MCP_SERVICE_STATE_INVALID".to_owned());
-                    output.drift.push(invalid_drift("definition.invalid"));
-                    None
+            .definition(observed.marker.configuration_id);
+        let definition =
+            if !paths_equal(&observed.marker.definition_path, &expected_definition_path) {
+                output.registration.status = RegistrationStatus::ConfigurationDrift;
+                output.registration.diagnostic_code = Some("MCP_SERVICE_STATE_INVALID".to_owned());
+                output.drift.push(invalid_drift("definition.path"));
+                None
+            } else {
+                match self.store.read_definition(&observed.marker.definition_path) {
+                    Document::Valid(definition) => Some(definition),
+                    Document::Missing | Document::Invalid(_) | Document::UnsupportedVersion(_) => {
+                        output.registration.status = RegistrationStatus::ConfigurationDrift;
+                        output.registration.diagnostic_code =
+                            Some("MCP_SERVICE_STATE_INVALID".to_owned());
+                        output.drift.push(invalid_drift("definition.invalid"));
+                        None
+                    }
                 }
-            }
-        };
+            };
         if let Some(definition) = &definition {
-            if definition.user_sid != user_sid {
+            if definition.user_sid != identity.owner {
                 output.drift.push(DriftEntry::mismatch(
                     "definition.user_sid",
-                    &user_sid,
+                    &identity.owner,
                     &definition.user_sid,
                 ));
             }
@@ -339,16 +334,15 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                     definition.instance_lock_path.to_string_lossy(),
                 ));
             }
-            let desired = DesiredTaskSpec::canonical(
-                expected_task_path,
-                user_sid.clone(),
-                observed.spec.marker.clone(),
+            let desired = ServiceSpec::managed_mcp(
+                identity,
+                observed.marker.clone(),
                 definition.executable_path.clone(),
                 definition.working_directory.clone(),
             );
             output
                 .drift
-                .extend(semantic_drift(&desired, &observed.spec));
+                .extend(self.scheduler.drift(&desired, &observed));
             match current.as_ref() {
                 None => output.drift.push(DriftEntry::missing(
                     "current.missing",
@@ -364,22 +358,19 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                         current.configuration_id.to_string(),
                     ));
                 }
-                Some(current) if current.task_path != observed.spec.task_path => {
+                Some(current) if current.task_path != observed.id.path => {
                     output.drift.push(DriftEntry::mismatch(
                         "current.task_path",
-                        &observed.spec.task_path,
+                        &observed.id.path,
                         &current.task_path,
                     ));
                 }
                 Some(current)
-                    if !paths_equal(
-                        &current.definition_path,
-                        &observed.spec.marker.definition_path,
-                    ) =>
+                    if !paths_equal(&current.definition_path, &observed.marker.definition_path) =>
                 {
                     output.drift.push(DriftEntry::mismatch(
                         "current.definition_path",
-                        observed.spec.marker.definition_path.to_string_lossy(),
+                        observed.marker.definition_path.to_string_lossy(),
                         current.definition_path.to_string_lossy(),
                     ));
                 }
@@ -448,9 +439,8 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     }
 
     pub(crate) fn observe_lifecycle(&self, output: &mut StatusOutput) {
-        match lock::try_acquire(&self.store.paths().lifecycle_lock) {
-            Ok(Some(lease)) => {
-                drop(lease);
+        match lock::is_free(&self.store.paths().lifecycle_lock) {
+            Ok(true) => {
                 if matches!(
                     self.store.read_lifecycle(),
                     Document::Invalid(_) | Document::UnsupportedVersion(_)
@@ -458,7 +448,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                     output.drift.push(invalid_drift("lifecycle.invalid"));
                 }
             }
-            Ok(None) => {
+            Ok(false) => {
                 output.lifecycle.status = LifecycleStatus::Busy;
                 match self.store.read_lifecycle() {
                     Document::Valid(state) if state.state == LifecycleStateKind::Active => {

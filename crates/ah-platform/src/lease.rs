@@ -7,8 +7,11 @@
 //! verifies the inherited handle names the lease it expected before touching
 //! anything.
 //!
-//! The lease is a named mutex rather than an open file, because a file lease
-//! outlives a crashed holder on Windows and a mutex does not.
+//! On Windows the lease is a named mutex rather than an open file, because a
+//! file lease outlives a crashed holder there and a mutex does not. On Unix it
+//! is `flock` on a file, which the kernel releases when the descriptor closes -
+//! the same "owned by the holder, gone when it dies" property, reached the
+//! other way round.
 //!
 //! Two things identify one lease, and the split is deliberate. `path` is what
 //! every process calls it and what a parent tells a child. `mutex_name` is the
@@ -17,14 +20,19 @@
 //! (`ah_updater_core::lifecycle_mutex_name`) and this module is told the answer
 //! rather than deciding it.
 //!
+//! Which of the two is the identity differs by platform, and callers must not
+//! rely on the difference: on Windows the name is (two paths naming one mutex
+//! are one lease), on Unix the path is. Every caller derives the name from the
+//! path, so the two agree in practice.
+//!
 //! Like the rest of this crate, the errors are [`std::io::Error`] and say
 //! nothing about what the caller was doing:
 //!
-//! | Kind          | Means                                          |
-//! |---------------|------------------------------------------------|
-//! | `Unsupported` | this platform has no implementation            |
-//! | `TimedOut`    | someone else held it for the whole timeout      |
-//! | anything else | the OS refused to create the object            |
+//! | Kind          | Means                                                   |
+//! |---------------|---------------------------------------------------------|
+//! | `Unsupported` | neither Windows nor Unix, so there is no implementation |
+//! | `TimedOut`    | someone else held it for the whole timeout               |
+//! | anything else | the OS refused to create the object                     |
 
 use std::{
     io,
@@ -46,6 +54,10 @@ pub struct FileLease {
     path: PathBuf,
     #[cfg(windows)]
     mutex_handle: Mutex<HANDLE>,
+    /// The descriptor holding the `flock`. Closing it is the release, so this
+    /// field is the lease even though nothing reads it.
+    #[cfg(unix)]
+    _file: std::fs::File,
 }
 
 impl FileLease {
@@ -61,12 +73,18 @@ impl FileLease {
             try_acquire_windows(path, mutex_name)
         }
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            let _ = mutex_name;
+            try_acquire_unix(path)
+        }
+
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = (path, mutex_name);
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "process leases are implemented for Windows only",
+                "process leases are implemented for Windows and Unix only",
             ))
         }
     }
@@ -144,17 +162,66 @@ fn try_acquire_windows(path: &Path, mutex_name: &str) -> io::Result<Option<FileL
     }))
 }
 
-#[cfg(all(test, windows))]
+/// The lease as an advisory exclusive lock on its own file.
+///
+/// `flock` is per open descriptor, so a second attempt from this same process
+/// is refused exactly as another process's would be - which is what the
+/// lifecycle's own tests rely on. The directory is created because the lease
+/// can be asked for before anything else has written to the service's state
+/// directory, and on Windows the mutex namespace needs no such preparation.
+#[cfg(unix)]
+fn try_acquire_unix(path: &Path) -> io::Result<Option<FileLease>> {
+    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        // The file is only a name for the lock. Truncating it would race a
+        // holder that is writing nothing anyway.
+        .truncate(false)
+        .mode(0o600)
+        .open(path)?;
+    // SAFETY: the descriptor is owned by `file`, which outlives the call and,
+    // when it is stored below, outlives the lease itself.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(Some(FileLease {
+            path: path.to_path_buf(),
+            _file: file,
+        }));
+    }
+    let error = io::Error::last_os_error();
+    if error.kind() == io::ErrorKind::WouldBlock {
+        return Ok(None);
+    }
+    Err(error)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A named mutex, unlike a lock file, is owned by the open handle: it does
-    /// not survive its holder and cannot be inherited by age.
+    #[cfg(windows)]
+    fn lease_name(label: &str) -> String {
+        format!("Local\\ah-platform-{label}-{}", std::process::id())
+    }
+
+    /// Unix identifies the lease by its path, so the name is unused there.
+    #[cfg(unix)]
+    fn lease_name(_label: &str) -> String {
+        String::new()
+    }
+
+    /// The lease is owned by whatever the holder keeps open - a mutex handle on
+    /// Windows, a locked descriptor on Unix. Either way it does not survive its
+    /// holder and cannot be inherited by age.
     #[test]
     fn the_lease_is_owned_by_the_open_handle() {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("lifecycle.lock");
-        let name = format!("Local\\ah-platform-test-{}", std::process::id());
+        let name = lease_name("owned");
 
         let first = FileLease::try_acquire(&path, &name).unwrap().unwrap();
         assert!(FileLease::try_acquire(&path, &name).unwrap().is_none());
@@ -169,7 +236,7 @@ mod tests {
     fn a_held_lease_times_out_rather_than_waiting_forever() {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("lifecycle.lock");
-        let name = format!("Local\\ah-platform-timeout-{}", std::process::id());
+        let name = lease_name("timeout");
         let _held = FileLease::try_acquire(&path, &name).unwrap().unwrap();
 
         let error = FileLease::acquire(&path, &name, Duration::from_millis(1)).unwrap_err();
@@ -177,12 +244,14 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
-    /// The name is the identity, not the path: two paths naming the same mutex
-    /// are the same lease.
+    /// On Windows the name is the identity, not the path: two paths naming the
+    /// same mutex are the same lease. Unix has no equivalent - see the module
+    /// documentation.
+    #[cfg(windows)]
     #[test]
     fn the_name_decides_which_lease_is_held() {
         let temp = tempfile::TempDir::new().unwrap();
-        let name = format!("Local\\ah-platform-shared-{}", std::process::id());
+        let name = lease_name("shared");
         let _held = FileLease::try_acquire(&temp.path().join("one.lock"), &name)
             .unwrap()
             .unwrap();

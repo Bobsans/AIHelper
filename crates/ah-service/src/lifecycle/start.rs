@@ -2,10 +2,10 @@
 
 use super::*;
 
-impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
+impl<S: ServiceScheduler, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn start_locked(&self) -> Result<MutationOutput, AppError> {
         let context = self.require_installed_context()?;
-        require_no_drift(&context.desired, &context.observed)?;
+        self.require_no_drift(&context.desired, &context.observed)?;
         let result = self.start_definition(&context.definition, &context.desired)?;
         Ok(MutationOutput {
             command: "mcp.service.start".to_owned(),
@@ -24,7 +24,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn start_definition(
         &self,
         definition: &ServiceDefinition,
-        desired_task: &DesiredTaskSpec,
+        desired: &ServiceSpec,
     ) -> Result<StartResult, AppError> {
         let runtime = self.store.read_runtime().valid()?;
         let readiness = self.readiness.inspect(definition, runtime.as_ref(), false);
@@ -43,9 +43,9 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             ));
         }
         let scheduler_starting = matches!(
-            self.scheduler.inspect(&desired_task.task_path)?,
-            TaskObservation::Owned(observed) if matches!(
-                observed.scheduler_state,
+            self.scheduler.inspect(&desired.id)?,
+            ServiceObservation::Owned(observed) if matches!(
+                observed.state,
                 SchedulerState::Running | SchedulerState::Queued
             )
         );
@@ -58,7 +58,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         let changed = if already_starting {
             false
         } else {
-            self.scheduler.run(&desired_task.task_path)?;
+            self.scheduler.run(&desired.id)?;
             true
         };
         let deadline = Instant::now() + self.start_timeout;

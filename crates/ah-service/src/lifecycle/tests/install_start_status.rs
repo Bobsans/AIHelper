@@ -5,7 +5,6 @@ use tempfile::TempDir;
 use super::{super::*, harness::*};
 use crate::model::LastExit;
 
-#[cfg(windows)]
 #[test]
 fn default_install_waits_for_exact_readiness_and_ready_reinstall_is_idempotent() {
     let harness = LifecycleHarness::new();
@@ -25,14 +24,11 @@ fn default_install_waits_for_exact_readiness_and_ready_reinstall_is_idempotent()
     assert_eq!(pointer.service_id, first.service_id);
     assert_eq!(pointer.configuration_id, first.configuration_id);
     assert_eq!(definition.configuration_id, pointer.configuration_id);
-    let TaskObservation::Owned(observed) = harness.scheduler.observation() else {
+    let ServiceObservation::Owned(observed) = harness.scheduler.observation() else {
         panic!("registered task should be owned")
     };
-    assert_eq!(observed.spec.marker.service_id, pointer.service_id);
-    assert_eq!(
-        observed.spec.marker.configuration_id,
-        pointer.configuration_id
-    );
+    assert_eq!(observed.marker.service_id, pointer.service_id);
+    assert_eq!(observed.marker.configuration_id, pointer.configuration_id);
 
     let second = harness.service.install(&install_options(false)).unwrap();
 
@@ -43,7 +39,6 @@ fn default_install_waits_for_exact_readiness_and_ready_reinstall_is_idempotent()
     assert_eq!(harness.scheduler.run_count(), 1);
 }
 
-#[cfg(windows)]
 #[test]
 fn configuration_update_stops_exact_old_instance_before_activation() {
     let harness = LifecycleHarness::new();
@@ -99,7 +94,6 @@ fn configuration_update_stops_exact_old_instance_before_activation() {
     assert_eq!(new_pointer.configuration_id, output.configuration_id);
 }
 
-#[cfg(windows)]
 #[test]
 fn no_start_configuration_update_preserves_live_old_instance() {
     let harness = LifecycleHarness::new();
@@ -139,7 +133,6 @@ fn no_start_configuration_update_preserves_live_old_instance() {
     drop(lease);
 }
 
-#[cfg(windows)]
 #[test]
 fn register_failure_keeps_current_unpublished_and_retry_converges() {
     let harness = LifecycleHarness::new();
@@ -151,7 +144,7 @@ fn register_failure_keeps_current_unpublished_and_retry_converges() {
     assert!(matches!(harness.store().read_current(), Document::Missing));
     assert!(matches!(
         harness.scheduler.observation(),
-        TaskObservation::Missing
+        ServiceObservation::Missing
     ));
     assert_eq!(harness.scheduler.run_count(), 0);
     assert_eq!(harness.scheduler.stop_count(), 0);
@@ -175,14 +168,13 @@ fn register_failure_keeps_current_unpublished_and_retry_converges() {
     assert_eq!(harness.scheduler.run_count(), 0);
 }
 
-#[cfg(windows)]
 #[test]
 fn drifted_register_readback_keeps_old_pointer_and_retry_converges() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
     let (old_pointer, _) = harness.installed_definition();
     let old_observed = match harness.scheduler.observation() {
-        TaskObservation::Owned(observed) => observed,
+        ServiceObservation::Owned(observed) => observed,
         _ => panic!("installed task should be owned"),
     };
     let old_current = std::fs::read(&harness.paths.current).unwrap();
@@ -218,7 +210,6 @@ fn drifted_register_readback_keeps_old_pointer_and_retry_converges() {
     assert_eq!(current.configuration_id, retry.configuration_id);
 }
 
-#[cfg(windows)]
 #[test]
 fn exact_ready_start_is_idempotent() {
     let harness = LifecycleHarness::new();
@@ -243,7 +234,6 @@ fn exact_ready_start_is_idempotent() {
     assert_eq!(harness.scheduler.run_count(), 0);
 }
 
-#[cfg(windows)]
 #[test]
 fn run_failure_preserves_registration_and_retry_converges() {
     let harness = LifecycleHarness::new();
@@ -288,17 +278,15 @@ fn run_failure_preserves_registration_and_retry_converges() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn foreign_and_drifted_tasks_never_run() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
     let exact = harness.scheduler.observation();
     let current_before = std::fs::read(&harness.paths.current).unwrap();
-    harness.scheduler.set_observation(TaskObservation::Foreign {
-        source: Some("Other".to_owned()),
-        uri: None,
-    });
+    harness
+        .scheduler
+        .set_observation(ServiceObservation::Foreign);
     harness.clear_adapter_events();
 
     let foreign_error = harness.service.start().unwrap_err();
@@ -310,9 +298,7 @@ fn foreign_and_drifted_tasks_never_run() {
         current_before
     );
     harness.scheduler.set_observation(exact);
-    harness
-        .scheduler
-        .update_observed(|observed| observed.spec.enabled = false);
+    harness.scheduler.introduce_drift();
     harness.clear_adapter_events();
 
     let drift_error = harness.service.start().unwrap_err();
@@ -328,7 +314,6 @@ fn foreign_and_drifted_tasks_never_run() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn malformed_current_blocks_install_without_overwrite() {
     let temp = TempDir::new().unwrap();
@@ -341,7 +326,6 @@ fn malformed_current_blocks_install_without_overwrite() {
     assert_eq!(std::fs::read(&paths.current).unwrap(), b"malformed");
 }
 
-#[cfg(windows)]
 #[test]
 fn status_is_read_only_for_absent_service_and_reports_foreign_task() {
     let temp = TempDir::new().unwrap();
@@ -363,7 +347,6 @@ fn status_is_read_only_for_absent_service_and_reports_foreign_task() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn status_reduces_stopped_ready_running_failed_and_identity_mismatch() {
     let harness = LifecycleHarness::new();
@@ -422,7 +405,6 @@ fn status_reduces_stopped_ready_running_failed_and_identity_mismatch() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn status_preserves_launcher_and_runtime_evidence_during_inferred_backoff() {
     let harness = LifecycleHarness::new();
@@ -437,7 +419,7 @@ fn status_preserves_launcher_and_runtime_evidence_during_inferred_backoff() {
     });
     harness.set_runtime(&runtime);
     harness.scheduler.update_observed(|observed| {
-        observed.scheduler_state = SchedulerState::Running;
+        observed.state = SchedulerState::Running;
         observed.last_result = Some(1);
     });
 
@@ -451,15 +433,11 @@ fn status_preserves_launcher_and_runtime_evidence_during_inferred_backoff() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn status_reports_sorted_configuration_drift() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
-    harness.scheduler.update_observed(|observed| {
-        observed.spec.enabled = false;
-        observed.spec.trigger_enabled = false;
-    });
+    let drifted = harness.scheduler.introduce_drift();
 
     let status = harness.service.status();
 
@@ -479,8 +457,9 @@ fn status_reports_sorted_configuration_drift() {
     let mut sorted = fields.clone();
     sorted.sort_unstable();
     assert_eq!(fields, sorted);
-    assert!(fields.contains(&"settings.enabled"));
-    assert!(fields.contains(&"trigger.enabled"));
+    for field in drifted {
+        assert!(fields.contains(&field), "{field} should be reported");
+    }
     assert!(
         status
             .drift
@@ -489,7 +468,6 @@ fn status_reports_sorted_configuration_drift() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn status_scheduler_error_does_not_change_durable_state() {
     let harness = LifecycleHarness::new();
@@ -523,7 +501,6 @@ fn status_scheduler_error_does_not_change_durable_state() {
     assert_eq!(harness.durable_bytes(), before);
 }
 
-#[cfg(windows)]
 #[test]
 fn status_scheduler_error_does_not_probe_invalid_definition() {
     let harness = LifecycleHarness::new();
@@ -546,7 +523,6 @@ fn status_scheduler_error_does_not_probe_invalid_definition() {
     assert_eq!(harness.durable_bytes(), before);
 }
 
-#[cfg(windows)]
 #[test]
 fn status_reports_invalid_documents_without_rewriting_them() {
     let harness = LifecycleHarness::new();
@@ -589,7 +565,6 @@ fn status_reports_invalid_documents_without_rewriting_them() {
     assert_eq!(installed.durable_bytes(), runtime_before);
 }
 
-#[cfg(windows)]
 #[test]
 fn status_reports_busy_lifecycle_without_waiting_or_writing() {
     let harness = LifecycleHarness::new();
@@ -620,7 +595,6 @@ fn status_reports_busy_lifecycle_without_waiting_or_writing() {
     drop(lifecycle_lease);
 }
 
-#[cfg(windows)]
 #[test]
 fn start_does_not_treat_scheduler_submission_as_readiness() {
     let temp = TempDir::new().unwrap();

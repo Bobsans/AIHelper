@@ -20,51 +20,30 @@ impl ServiceGuard for ManagedMcpGuard {
     }
 
     fn capture(&self, _hold: &ServiceHold) -> Result<ServiceState, AppError> {
-        #[cfg(windows)]
-        {
-            Ok(state_from_status(&update_service()?.status()))
-        }
-        #[cfg(not(windows))]
-        {
-            Err(unsupported_platform())
-        }
+        Ok(state_from_status(&platform_service()?.status()))
     }
 
     fn stop(&self, _hold: &ServiceHold) -> Result<bool, AppError> {
-        #[cfg(windows)]
-        {
-            let service = update_service()?;
-            Ok(service.stop_locked(StopPolicy::AllowExactOrphan)?.changed)
-        }
-        #[cfg(not(windows))]
-        {
-            Err(unsupported_platform())
-        }
+        let service = platform_service()?;
+        Ok(service.stop_locked(StopPolicy::AllowExactOrphan)?.changed)
     }
 
     fn restore(&self, _hold: &ServiceHold, state: ServiceState) -> Result<(), AppError> {
         if !state.was_running {
             return Ok(());
         }
-        #[cfg(windows)]
+        let service = platform_service()?;
+        service.start_locked()?;
+        let status = service.status();
+        if status.readiness.status != ReadinessStatus::Ready
+            || status.readiness.instance_id == state.previous_instance_id
         {
-            let service = update_service()?;
-            service.start_locked()?;
-            let status = service.status();
-            if status.readiness.status != ReadinessStatus::Ready
-                || status.readiness.instance_id == state.previous_instance_id
-            {
-                return Err(AppError::external(
-                    "MCP_SERVICE_RESTART_FAILED",
-                    "managed MCP did not return with a new ready instance identity",
-                ));
-            }
-            Ok(())
+            return Err(AppError::external(
+                "MCP_SERVICE_RESTART_FAILED",
+                "managed MCP did not return with a new ready instance identity",
+            ));
         }
-        #[cfg(not(windows))]
-        {
-            Err(unsupported_platform())
-        }
+        Ok(())
     }
 }
 
@@ -98,14 +77,6 @@ fn state_from_status(status: &StatusOutput) -> ServiceState {
             .or(status.runtime.instance_id)
             .filter(|_| was_running),
     }
-}
-
-#[cfg(not(windows))]
-fn unsupported_platform() -> AppError {
-    AppError::external(
-        "MCP_SERVICE_UNSUPPORTED_PLATFORM",
-        "managed MCP service lifecycle is supported only on Windows",
-    )
 }
 
 #[cfg(test)]

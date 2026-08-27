@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
+impl<S: ServiceScheduler, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn install_locked(
         &self,
         options: &InstallSettings,
@@ -24,8 +24,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         let executable = current_executable_path()?;
         let config = ConfigContext::load()?;
         let config_dir = normalize_absolute_path(&config.paths().config_dir, Some(&cwd))?;
-        let user_sid = current_user_sid()?;
-        let expected_task_path = task_path(&user_sid);
+        let identity = self.scheduler.identity()?;
         let current_document = self.store.read_current();
         let current = match current_document {
             Document::Missing => None,
@@ -43,20 +42,23 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         // Reject corrupt or newer runtime documents before changing the task or
         // current pointer. A valid stale runtime remains diagnostic input.
         let _ = self.store.read_runtime().valid()?;
-        let observation = self.scheduler.inspect(&expected_task_path)?;
-        let was_installed = !matches!(observation, TaskObservation::Missing);
-        if matches!(observation, TaskObservation::Foreign { .. }) {
+        let observation = self.scheduler.inspect(&identity)?;
+        let was_installed = !matches!(observation, ServiceObservation::Missing);
+        if matches!(observation, ServiceObservation::Foreign) {
             return Err(AppError::external(
                 "MCP_SERVICE_TASK_CONFLICT",
-                format!("Task Scheduler path '{expected_task_path}' is not owned by AIHelper"),
+                format!(
+                    "Task Scheduler path '{}' is not owned by AIHelper",
+                    identity.path
+                ),
             ));
         }
 
         let task_definition = match &observation {
-            TaskObservation::Owned(observed) => {
-                Some(self.require_marker_definition(&observed.spec.marker)?)
+            ServiceObservation::Owned(observed) => {
+                Some(self.require_marker_definition(&observed.marker)?)
             }
-            TaskObservation::Missing | TaskObservation::Foreign { .. } => None,
+            ServiceObservation::Missing | ServiceObservation::Foreign => None,
         };
         if let (Some(task), Some(current)) = (&task_definition, &current)
             && task.service_id != current.service_id
@@ -100,7 +102,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             .filter(|existing| {
                 configuration_matches(
                     existing,
-                    &user_sid,
+                    &identity.owner,
                     &executable,
                     &cwd,
                     &config_dir,
@@ -117,7 +119,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             task_spec_version: TASK_SPEC_VERSION,
             service_id,
             configuration_id,
-            user_sid: user_sid.clone(),
+            user_sid: identity.owner.clone(),
             executable_path: executable.clone(),
             working_directory: cwd.clone(),
             config_directory: config_dir,
@@ -133,36 +135,30 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             .store
             .write_immutable_definition(&definition_path, &definition)?;
         let marker = TaskMarker::from_definition(&definition, definition_path.clone());
-        let desired_task = DesiredTaskSpec::canonical(
-            expected_task_path.clone(),
-            user_sid,
-            marker,
-            executable,
-            cwd,
-        );
+        let desired = ServiceSpec::managed_mcp(identity.clone(), marker, executable, cwd);
         let task_changed = match observation {
-            TaskObservation::Missing => {
-                let observed = self.scheduler.register(&desired_task)?;
-                require_no_drift(&desired_task, &observed)?;
+            ServiceObservation::Missing => {
+                let observed = self.scheduler.register(&desired)?;
+                self.require_no_drift(&desired, &observed)?;
                 true
             }
-            TaskObservation::Owned(observed) => {
-                if semantic_drift(&desired_task, &observed.spec).is_empty() {
+            ServiceObservation::Owned(observed) => {
+                if self.scheduler.drift(&desired, &observed).is_empty() {
                     false
                 } else {
-                    let observed = self.scheduler.register(&desired_task)?;
-                    require_no_drift(&desired_task, &observed)?;
+                    let observed = self.scheduler.register(&desired)?;
+                    self.require_no_drift(&desired, &observed)?;
                     true
                 }
             }
-            TaskObservation::Foreign { .. } => unreachable!(),
+            ServiceObservation::Foreign => unreachable!(),
         };
         let pointer = CurrentPointer {
             schema_version: SCHEMA_VERSION,
             service_id,
             configuration_id,
             definition_path: definition_path.clone(),
-            task_path: expected_task_path.clone(),
+            task_path: identity.path.clone(),
         };
         let pointer_changed = current.as_ref() != Some(&pointer);
         if pointer_changed {
@@ -179,7 +175,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             {
                 self.prepare_configuration_replacement(existing)?;
             }
-            let start = self.start_definition(&definition, &desired_task)?;
+            let start = self.start_definition(&definition, &desired)?;
             changed |= start.changed;
             start.runtime
         };
@@ -197,7 +193,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             .to_owned(),
             service_id,
             configuration_id,
-            task_path: expected_task_path,
+            task_path: identity.path,
             endpoint: definition.endpoint.mcp_url,
             registration: "installed".to_owned(),
             runtime,

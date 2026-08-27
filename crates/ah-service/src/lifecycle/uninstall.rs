@@ -3,12 +3,11 @@
 
 use super::*;
 
-impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
+impl<S: ServiceScheduler, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn uninstall_locked(&self) -> Result<UninstallOutput, AppError> {
-        let user_sid = current_user_sid()?;
-        let expected_task_path = task_path(&user_sid);
-        let observation = self.scheduler.inspect(&expected_task_path)?;
-        if matches!(observation, TaskObservation::Foreign { .. }) {
+        let identity = self.scheduler.identity()?;
+        let observation = self.scheduler.inspect(&identity)?;
+        if matches!(observation, ServiceObservation::Foreign) {
             return Err(AppError::external(
                 "MCP_SERVICE_TASK_CONFLICT",
                 "managed MCP task path is occupied by a foreign task",
@@ -39,15 +38,15 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         };
 
         let task_marker = match &observation {
-            TaskObservation::Owned(observed) => Some(observed.spec.marker.clone()),
-            TaskObservation::Missing | TaskObservation::Foreign { .. } => None,
+            ServiceObservation::Owned(observed) => Some(observed.marker.clone()),
+            ServiceObservation::Missing | ServiceObservation::Foreign => None,
         };
         let trusted_service_id = task_marker
             .as_ref()
             .map(|marker| marker.service_id)
             .or_else(|| current.as_ref().map(|pointer| pointer.service_id));
         let definition_paths = self.verified_definition_deletion_set(
-            &user_sid,
+            &identity.owner,
             trusted_service_id,
             task_marker.as_ref(),
             current.as_ref(),
@@ -69,25 +68,23 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
 
         let stopped = match observation {
-            TaskObservation::Owned(observed) => {
+            ServiceObservation::Owned(observed) => {
                 if let Some(definition) = last_definition.clone() {
                     match self.context_from_owned_task(
-                        expected_task_path.clone(),
+                        identity.path.clone(),
                         observed.as_ref().clone(),
                         definition,
                     ) {
                         Ok(context) => self.stop_installed(context)?,
-                        Err(_) => self.prove_inactive_owned_task(
-                            &expected_task_path,
-                            observed.as_ref().clone(),
-                        )?,
+                        Err(_) => self
+                            .prove_inactive_owned_task(&identity.path, observed.as_ref().clone())?,
                     }
                 } else {
-                    self.prove_inactive_owned_task(&expected_task_path, observed.as_ref().clone())?
+                    self.prove_inactive_owned_task(&identity.path, observed.as_ref().clone())?
                 }
             }
-            TaskObservation::Missing => self.stop_orphan()?,
-            TaskObservation::Foreign { .. } => unreachable!(),
+            ServiceObservation::Missing => self.stop_orphan()?,
+            ServiceObservation::Foreign => unreachable!(),
         };
 
         let ownership = stopped.ownership.clone();
@@ -95,8 +92,8 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         if let Some(ownership) = ownership {
             changed |= self.scheduler.delete_owned(&ownership)?.deleted;
             if !matches!(
-                self.scheduler.inspect(&expected_task_path)?,
-                TaskObservation::Missing
+                self.scheduler.inspect(&identity)?,
+                ServiceObservation::Missing
             ) {
                 return Err(AppError::external(
                     "MCP_SERVICE_UNINSTALL_INCOMPLETE",
@@ -145,7 +142,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             .to_owned(),
             service_id,
             configuration_id,
-            task_path: expected_task_path,
+            task_path: identity.path,
             endpoint,
             registration: "not_installed".to_owned(),
             runtime: RuntimeStatus::Stopped,
@@ -155,20 +152,17 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn context_from_owned_task(
         &self,
         task_path: String,
-        observed: ObservedTask,
+        observed: ObservedService<S::Native>,
         definition: ServiceDefinition,
-    ) -> Result<InstalledContext, AppError> {
+    ) -> Result<InstalledContext<S::Native>, AppError> {
         let expected_definition_path = self
             .store
             .paths()
-            .definition(observed.spec.marker.configuration_id);
-        if definition.user_sid != current_user_sid()?
-            || observed.spec.marker.service_id != definition.service_id
-            || observed.spec.marker.configuration_id != definition.configuration_id
-            || !paths_equal(
-                &observed.spec.marker.definition_path,
-                &expected_definition_path,
-            )
+            .definition(observed.marker.configuration_id);
+        if definition.user_sid != self.scheduler.identity()?.owner
+            || observed.marker.service_id != definition.service_id
+            || observed.marker.configuration_id != definition.configuration_id
+            || !paths_equal(&observed.marker.definition_path, &expected_definition_path)
             || !paths_equal(&definition.runtime_state_path, &self.store.paths().runtime)
             || !paths_equal(
                 &definition.instance_lock_path,
@@ -180,10 +174,12 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 "owned task identity does not match its managed definition",
             ));
         }
-        let desired = DesiredTaskSpec::canonical(
-            task_path.clone(),
-            definition.user_sid.clone(),
-            observed.spec.marker.clone(),
+        let desired = ServiceSpec::managed_mcp(
+            ServiceId {
+                owner: definition.user_sid.clone(),
+                path: task_path.clone(),
+            },
+            observed.marker.clone(),
             definition.executable_path.clone(),
             definition.working_directory.clone(),
         );
@@ -191,7 +187,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             schema_version: SCHEMA_VERSION,
             service_id: definition.service_id,
             configuration_id: definition.configuration_id,
-            definition_path: observed.spec.marker.definition_path.clone(),
+            definition_path: observed.marker.definition_path.clone(),
             task_path,
         };
         Ok(InstalledContext {
@@ -205,9 +201,9 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn prove_inactive_owned_task(
         &self,
         task_path: &str,
-        observed: ObservedTask,
-    ) -> Result<StopResult, AppError> {
-        if observed.spec.task_path != task_path {
+        observed: ObservedService<S::Native>,
+    ) -> Result<StopResult<S::Native>, AppError> {
+        if observed.id.path != task_path {
             return Err(AppError::external(
                 "MCP_SERVICE_TASK_CHANGED",
                 "owned task path changed before uninstall",
@@ -220,7 +216,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             )
         })?;
         if matches!(
-            observed.scheduler_state,
+            observed.state,
             SchedulerState::Running | SchedulerState::Queued
         ) {
             return Err(AppError::external(
@@ -228,14 +224,13 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                 "owned task has no valid definition and is still active",
             ));
         }
-        let desired = observed.spec.clone();
-        if !self.scheduler.instances(&desired)?.is_empty() {
+        let ownership = observed.ownership();
+        if !self.scheduler.instances(&ownership)?.is_empty() {
             return Err(AppError::external(
                 "MCP_SERVICE_STOP_UNSAFE",
                 "owned task has active Scheduler instances without a valid definition",
             ));
         }
-        let ownership = ExpectedTaskOwnership::from(&observed.spec);
         Ok(StopResult {
             ownership: Some(ownership),
             context: None,

@@ -16,11 +16,29 @@ pub use ah_platform::lease::FileLease;
 ///
 /// # Errors
 ///
-/// [`AppError`] with `MCP_SERVICE_UNSUPPORTED_PLATFORM` off Windows, or
-/// `MCP_SERVICE_STATE_INVALID` when the OS refuses to name the lease.
+/// [`AppError`] with `MCP_SERVICE_UNSUPPORTED_PLATFORM` where the platform has
+/// no lease implementation, or `MCP_SERVICE_STATE_INVALID` when the OS refuses
+/// to name the lease.
 pub fn try_acquire(path: &Path) -> Result<Option<FileLease>, AppError> {
     FileLease::try_acquire(path, &ah_updater_core::lifecycle_mutex_name(path))
         .map_err(|error| describe(path, error))
+}
+
+/// Whether nobody holds the lease, without taking it for longer than the
+/// question.
+///
+/// A lease whose directory does not exist cannot be held, and asking must not
+/// create one: `status` is read-only, and where the lease is a lock file rather
+/// than a named mutex, taking it writes.
+///
+/// # Errors
+///
+/// As [`try_acquire`].
+pub fn is_free(path: &Path) -> Result<bool, AppError> {
+    if !path.parent().is_some_and(Path::exists) {
+        return Ok(true);
+    }
+    Ok(try_acquire(path)?.is_some())
 }
 
 /// Take the lease, waiting up to `timeout` for whoever holds it.
@@ -37,10 +55,7 @@ pub fn acquire(path: &Path, timeout: Duration) -> Result<FileLease, AppError> {
 /// The three codes this has always reported, kept exactly.
 fn describe(path: &Path, error: std::io::Error) -> AppError {
     match error.kind() {
-        std::io::ErrorKind::Unsupported => AppError::external(
-            "MCP_SERVICE_UNSUPPORTED_PLATFORM",
-            "managed MCP service lifecycle is supported only on Windows",
-        ),
+        std::io::ErrorKind::Unsupported => crate::scheduler::unsupported_platform(),
         std::io::ErrorKind::TimedOut => AppError::external(
             "MCP_SERVICE_BUSY",
             format!(

@@ -2,7 +2,6 @@ use std::{thread, time::Duration};
 
 use super::{super::*, harness::*};
 
-#[cfg(windows)]
 #[test]
 fn lifecycle_lease_serializes_mutators_while_status_remains_observable() {
     let harness = LifecycleHarness::new();

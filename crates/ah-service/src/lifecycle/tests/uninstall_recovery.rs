@@ -2,7 +2,6 @@ use tempfile::TempDir;
 
 use super::{super::*, harness::*};
 
-#[cfg(windows)]
 #[test]
 fn uninstall_is_idempotent_and_removes_only_verified_metadata() {
     let temp = TempDir::new().unwrap();
@@ -29,7 +28,6 @@ fn uninstall_is_idempotent_and_removes_only_verified_metadata() {
     // lifecycle_lock and instance_lock are now named mutexes, not files
 }
 
-#[cfg(windows)]
 #[test]
 fn running_uninstall_stops_deletes_then_cleans_only_semantic_metadata() {
     let harness = LifecycleHarness::new();
@@ -88,7 +86,7 @@ fn running_uninstall_stops_deletes_then_cleans_only_semantic_metadata() {
     assert!(shutdown_index < delete_index);
     assert!(matches!(
         harness.scheduler.observation(),
-        TaskObservation::Missing
+        ServiceObservation::Missing
     ));
     assert!(!harness.paths.current.exists());
     assert!(!harness.paths.runtime.exists());
@@ -104,7 +102,6 @@ fn running_uninstall_stops_deletes_then_cleans_only_semantic_metadata() {
     // lifecycle_lock and instance_lock are now named mutexes, not files
 }
 
-#[cfg(windows)]
 #[test]
 fn delete_failure_starts_no_cleanup_and_retry_converges() {
     let harness = LifecycleHarness::new();
@@ -131,7 +128,7 @@ fn delete_failure_starts_no_cleanup_and_retry_converges() {
     );
     assert!(matches!(
         harness.scheduler.observation(),
-        TaskObservation::Owned(_)
+        ServiceObservation::Owned(_)
     ));
     let Document::Valid(lifecycle) = harness.store().read_lifecycle() else {
         panic!("delete failure should persist lifecycle diagnostics")
@@ -152,17 +149,16 @@ fn delete_failure_starts_no_cleanup_and_retry_converges() {
     assert!(!harness.paths.lifecycle.exists());
     assert!(matches!(
         harness.scheduler.observation(),
-        TaskObservation::Missing
+        ServiceObservation::Missing
     ));
 }
 
-#[cfg(windows)]
 #[test]
 fn missing_task_recovers_stale_and_partially_removed_metadata() {
     let stale = LifecycleHarness::new();
     stale.install_no_start();
     let (stale_pointer, _) = stale.installed_definition();
-    stale.scheduler.set_observation(TaskObservation::Missing);
+    stale.scheduler.set_observation(ServiceObservation::Missing);
     stale.clear_adapter_events();
 
     let stale_output = stale.service.uninstall().unwrap();
@@ -179,7 +175,9 @@ fn missing_task_recovers_stale_and_partially_removed_metadata() {
     partial.install_no_start();
     let (partial_pointer, _) = partial.installed_definition();
     std::fs::remove_file(&partial_pointer.definition_path).unwrap();
-    partial.scheduler.set_observation(TaskObservation::Missing);
+    partial
+        .scheduler
+        .set_observation(ServiceObservation::Missing);
     partial.clear_adapter_events();
 
     let partial_output = partial.service.uninstall().unwrap();
@@ -193,13 +191,14 @@ fn missing_task_recovers_stale_and_partially_removed_metadata() {
     assert!(!partial.paths.lifecycle.exists());
 }
 
-#[cfg(windows)]
 #[test]
 fn occupied_orphan_without_runtime_identity_blocks_cleanup() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
     let (pointer, _) = harness.installed_definition();
-    harness.scheduler.set_observation(TaskObservation::Missing);
+    harness
+        .scheduler
+        .set_observation(ServiceObservation::Missing);
     let occupied = harness.hold_instance_lease();
     let current_before = std::fs::read(&harness.paths.current).unwrap();
     let definition_before = std::fs::read(&pointer.definition_path).unwrap();
@@ -229,7 +228,6 @@ fn occupied_orphan_without_runtime_identity_blocks_cleanup() {
     drop(occupied);
 }
 
-#[cfg(windows)]
 #[test]
 fn already_absent_uninstall_has_nullable_identity_and_no_change() {
     let temp = TempDir::new().unwrap();
@@ -246,16 +244,14 @@ fn already_absent_uninstall_has_nullable_identity_and_no_change() {
     assert!(!paths.lifecycle.exists());
 }
 
-#[cfg(windows)]
 #[test]
 fn foreign_task_and_newer_lifecycle_state_are_preserved() {
     let harness = LifecycleHarness::new();
     harness.install_no_start();
     let before = harness.durable_bytes();
-    harness.scheduler.set_observation(TaskObservation::Foreign {
-        source: Some("Other".to_owned()),
-        uri: None,
-    });
+    harness
+        .scheduler
+        .set_observation(ServiceObservation::Foreign);
     harness.clear_adapter_events();
 
     let error = harness.service.uninstall().unwrap_err();

@@ -5,7 +5,7 @@
 
 use super::*;
 
-impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
+impl<S: ServiceScheduler, R: RuntimeControl> LifecycleService<S, R> {
     pub(crate) fn stop_locked_output(&self) -> Result<MutationOutput, AppError> {
         let result = self.stop_locked(StopPolicy::RequireRegistration)?;
         let context = result.context.as_ref().ok_or_else(|| {
@@ -30,13 +30,13 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
 
     pub(crate) fn restart_locked(&self) -> Result<MutationOutput, AppError> {
         let initial = self.require_installed_context()?;
-        require_no_drift(&initial.desired, &initial.observed)?;
+        self.require_no_drift(&initial.desired, &initial.observed)?;
         let stopped = self.stop_installed(initial)?;
         let old_instance_id = stopped.old_instance_id;
         let was_active = stopped.changed;
 
         let context = self.require_installed_context()?;
-        require_no_drift(&context.desired, &context.observed)?;
+        self.require_no_drift(&context.desired, &context.observed)?;
         drop(stopped.proof_guard);
         let started = self.start_definition(&context.definition, &context.desired)?;
         if old_instance_id.is_some_and(|old| old == started.instance_id) {
@@ -59,7 +59,10 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         })
     }
 
-    pub(crate) fn stop_locked(&self, policy: StopPolicy) -> Result<StopResult, AppError> {
+    pub(crate) fn stop_locked(
+        &self,
+        policy: StopPolicy,
+    ) -> Result<StopResult<S::Native>, AppError> {
         match self.require_installed_context() {
             Ok(context) => self.stop_installed(context),
             Err(error)
@@ -72,7 +75,10 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
     }
 
-    pub(crate) fn stop_installed(&self, context: InstalledContext) -> Result<StopResult, AppError> {
+    pub(crate) fn stop_installed(
+        &self,
+        context: InstalledContext<S::Native>,
+    ) -> Result<StopResult<S::Native>, AppError> {
         let total_deadline = Instant::now() + self.stop_timeout;
         let runtime = self.store.read_runtime().valid()?;
         let readiness = self
@@ -83,15 +89,18 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             .flatten();
         let initial_guard = lock::try_acquire(&self.store.paths().instance_lock)?;
         let scheduler_active = matches!(
-            context.observed.scheduler_state,
+            context.observed.state,
             SchedulerState::Running | SchedulerState::Queued
-        ) || !self.scheduler.instances(&context.desired)?.is_empty();
+        ) || !self
+            .scheduler
+            .instances(&context.desired.ownership())?
+            .is_empty();
         if !scheduler_active
             && readiness.status != ReadinessStatus::Ready
             && let Some(proof_guard) = initial_guard
         {
             return Ok(StopResult {
-                ownership: Some(ExpectedTaskOwnership::from(&context.desired)),
+                ownership: Some(context.desired.ownership()),
                 context: Some(context),
                 changed: false,
                 action: "already_stopped".to_owned(),
@@ -112,7 +121,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
                         self.wait_for_quiescence(&context, old_instance_id, grace_deadline, None)?
                     {
                         return Ok(StopResult {
-                            ownership: Some(ExpectedTaskOwnership::from(&context.desired)),
+                            ownership: Some(context.desired.ownership()),
                             context: Some(context),
                             changed: true,
                             action: "stopped".to_owned(),
@@ -125,16 +134,17 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             }
         }
 
-        require_no_drift(&context.desired, &context.observed).map_err(|_| {
-            AppError::external(
-                "MCP_SERVICE_STOP_UNSAFE",
-                control_detail.unwrap_or_else(|| {
-                    "managed MCP task execution cannot be proven safe for Scheduler fallback"
-                        .to_owned()
-                }),
-            )
-        })?;
-        let instances = self.scheduler.instances(&context.desired)?;
+        self.require_no_drift(&context.desired, &context.observed)
+            .map_err(|_| {
+                AppError::external(
+                    "MCP_SERVICE_STOP_UNSAFE",
+                    control_detail.unwrap_or_else(|| {
+                        "managed MCP task execution cannot be proven safe for Scheduler fallback"
+                            .to_owned()
+                    }),
+                )
+            })?;
+        let instances = self.scheduler.instances(&context.desired.ownership())?;
         let (target, held_guard) =
             self.select_stop_target(&context, runtime.as_ref(), &instances, initial_guard)?;
         self.scheduler.stop_instance(&context.desired, &target)?;
@@ -150,7 +160,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             ));
         };
         Ok(StopResult {
-            ownership: Some(ExpectedTaskOwnership::from(&context.desired)),
+            ownership: Some(context.desired.ownership()),
             context: Some(context),
             changed: true,
             action: "forced_stopped".to_owned(),
@@ -161,7 +171,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
 
     pub(crate) fn select_stop_target(
         &self,
-        context: &InstalledContext,
+        context: &InstalledContext<S::Native>,
         runtime: Option<&RuntimeState>,
         instances: &[SchedulerInstance],
         guard: Option<FileLease>,
@@ -213,7 +223,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
 
     pub(crate) fn wait_for_quiescence(
         &self,
-        context: &InstalledContext,
+        context: &InstalledContext<S::Native>,
         old_instance_id: Option<Uuid>,
         deadline: Instant,
         mut guard: Option<FileLease>,
@@ -222,20 +232,20 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             if guard.is_none() {
                 guard = lock::try_acquire(&self.store.paths().instance_lock)?;
             }
-            let observation = self.scheduler.inspect(&context.current.task_path)?;
-            let TaskObservation::Owned(observed) = observation else {
+            let observation = self.scheduler.inspect(&context.desired.id)?;
+            let ServiceObservation::Owned(observed) = observation else {
                 return Err(AppError::external(
                     "MCP_SERVICE_TASK_CHANGED",
                     "managed MCP task changed while stopping",
                 ));
             };
-            if observed.spec.marker != context.observed.spec.marker {
+            if observed.marker != context.observed.marker {
                 return Err(AppError::external(
                     "MCP_SERVICE_TASK_CHANGED",
                     "managed MCP task marker changed while stopping",
                 ));
             }
-            let instances = self.scheduler.instances(&context.desired)?;
+            let instances = self.scheduler.instances(&context.desired.ownership())?;
             let runtime = self.store.read_runtime().valid()?;
             let readiness = self
                 .readiness
@@ -243,7 +253,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
             let old_still_ready =
                 old_instance_id.is_some_and(|old| readiness.instance_id == Some(old));
             let scheduler_inactive = !matches!(
-                observed.scheduler_state,
+                observed.state,
                 SchedulerState::Running | SchedulerState::Queued
             ) && instances.is_empty();
             if guard.is_some() && scheduler_inactive && !old_still_ready {
@@ -256,7 +266,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         }
     }
 
-    pub(crate) fn stop_orphan(&self) -> Result<StopResult, AppError> {
+    pub(crate) fn stop_orphan(&self) -> Result<StopResult<S::Native>, AppError> {
         if let Some(guard) = lock::try_acquire(&self.store.paths().instance_lock)? {
             return Ok(StopResult {
                 ownership: None,
@@ -306,7 +316,7 @@ impl<S: SchedulerAdapter, R: RuntimeControl> LifecycleService<S, R> {
         };
         if definition.service_id != current.service_id
             || definition.configuration_id != current.configuration_id
-            || definition.user_sid != current_user_sid()?
+            || definition.user_sid != self.scheduler.identity()?.owner
             || !paths_equal(&definition.runtime_state_path, &self.store.paths().runtime)
             || !paths_equal(
                 &definition.instance_lock_path,

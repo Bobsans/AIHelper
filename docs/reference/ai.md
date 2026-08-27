@@ -96,7 +96,7 @@ follows the requested scope.
 - `--transport http` registers a loopback endpoint, `http://127.0.0.1:8787/mcp`
   by default, or `--url` when the server runs on another port. AIHelper probes
   `/health/ready` first and warns, without failing, when nothing answers.
-- `--transport managed` uses the endpoint of the Windows managed service,
+- `--transport managed` uses the endpoint of the managed service,
   installing or starting it when necessary. It is not a third wire format: the
   agent still receives an HTTP entry, and only the ownership of the process
   differs. `--url` cannot be combined with it, because the service owns its
@@ -118,7 +118,8 @@ port, so a service installed on a non-default port produces a correct entry.
 | configuration drift or scheduler error | `AI_MANAGED_NOT_HEALTHY`, naming the underlying `MCP_SERVICE_*` code |
 
 A drifted service is reported rather than repaired; inspect it with
-`ah mcp service status`. Managed lifecycle commands are Windows-only, so
+`ah mcp service status`. Managed lifecycle commands need a platform with a
+service implementation - Windows, or Linux experimentally - so
 `--transport managed` fails with `AI_MANAGED_UNSUPPORTED` elsewhere while
 `--transport http` stays available. `--dry-run` classifies and refuses but never
 installs or starts anything.

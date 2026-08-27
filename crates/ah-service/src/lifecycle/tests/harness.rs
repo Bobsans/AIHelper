@@ -13,9 +13,91 @@ use tempfile::TempDir;
 use super::super::*;
 use crate::{
     lock,
+    model::DriftEntry,
     readiness::ReadinessProbe,
     scheduler::{SchedulerDeleteReceipt, SchedulerRunReceipt, SchedulerStopReceipt},
 };
+
+/// The account the scripted scheduler reports. Real on no machine, which is
+/// the point: the lifecycle asks its adapter who it is, so these tests do not
+/// need the platform that would answer.
+const TEST_OWNER: &str = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+
+/// The scripted scheduler wears the host's own projection, so these tests
+/// exercise the real identity rule, the real registration shape and the real
+/// property comparison of whichever platform they are running on. Only the call
+/// that would have talked to a scheduler is scripted.
+#[cfg(windows)]
+mod projection {
+    use crate::{
+        model::DriftEntry,
+        spec::{ServiceId, ServiceSpec},
+        windows_task::{TaskSpec, semantic_drift, service_id},
+    };
+
+    pub(crate) type Native = TaskSpec;
+
+    pub(crate) fn identity(owner: &str) -> ServiceId {
+        service_id(owner.to_owned())
+    }
+
+    pub(crate) fn native(desired: &ServiceSpec) -> Native {
+        TaskSpec::from(desired)
+    }
+
+    pub(crate) fn drift(desired: &ServiceSpec, observed: &Native) -> Vec<DriftEntry> {
+        semantic_drift(&TaskSpec::from(desired), observed)
+    }
+
+    /// Change two properties the host's comparison checks, and say which.
+    pub(crate) fn introduce_drift(native: &mut Native) -> Vec<&'static str> {
+        native.enabled = false;
+        native.trigger_enabled = false;
+        vec!["settings.enabled", "trigger.enabled"]
+    }
+
+    pub(crate) fn is_drifted(native: &Native) -> bool {
+        !native.enabled
+    }
+}
+
+#[cfg(not(windows))]
+mod projection {
+    use crate::{
+        model::DriftEntry,
+        spec::{ServiceId, ServiceSpec},
+        systemd_unit::{UnitSpec, semantic_drift, service_id},
+    };
+
+    pub(crate) type Native = UnitSpec;
+
+    pub(crate) fn identity(owner: &str) -> ServiceId {
+        service_id(owner.to_owned())
+    }
+
+    pub(crate) fn native(desired: &ServiceSpec) -> Native {
+        UnitSpec::from(desired)
+    }
+
+    pub(crate) fn drift(desired: &ServiceSpec, observed: &Native) -> Vec<DriftEntry> {
+        semantic_drift(&UnitSpec::from(desired), observed)
+    }
+
+    pub(crate) fn introduce_drift(native: &mut Native) -> Vec<&'static str> {
+        native.enabled = false;
+        native.restart = "always".to_owned();
+        vec!["service.restart", "unit_file.enabled"]
+    }
+
+    pub(crate) fn is_drifted(native: &Native) -> bool {
+        !native.enabled
+    }
+}
+
+use projection::Native;
+
+pub(crate) type ScriptedObservation = ServiceObservation<Native>;
+pub(crate) type ScriptedObserved = ObservedService<Native>;
 
 const TEST_START_TIMEOUT: Duration = Duration::from_millis(25);
 const TEST_STOP_TIMEOUT: Duration = Duration::from_millis(25);
@@ -96,11 +178,11 @@ impl Drop for LeaseHolder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SchedulerEvent {
     Inspect { task_path: String },
-    Register { desired: Box<DesiredTaskSpec> },
+    Register { desired: Box<ServiceSpec> },
     Run { task_path: String },
     Instances { task_path: String },
     StopInstance { target: SchedulerStopTarget },
-    DeleteOwned { expected: ExpectedTaskOwnership },
+    DeleteOwned { expected: ServiceOwnership },
 }
 
 impl SchedulerEvent {
@@ -212,11 +294,11 @@ impl SchedulerFaults {
 }
 
 struct ScriptedSchedulerState {
-    observation: TaskObservation,
+    observation: ScriptedObservation,
     instances: Vec<SchedulerInstance>,
     faults: SchedulerFaults,
-    register_readbacks: VecDeque<ObservedTask>,
-    observations_after_stop: VecDeque<TaskObservation>,
+    register_readbacks: VecDeque<ScriptedObserved>,
+    observations_after_stop: VecDeque<ScriptedObservation>,
     run_gates: VecDeque<RunGate>,
     release_on_stop: Option<LeaseHolder>,
 }
@@ -229,20 +311,20 @@ pub(crate) struct ScriptedScheduler {
 
 impl ScriptedScheduler {
     pub(crate) fn missing() -> Self {
-        Self::with_journal(TaskObservation::Missing, Arc::new(Mutex::new(Vec::new())))
-    }
-
-    pub(crate) fn foreign() -> Self {
         Self::with_journal(
-            TaskObservation::Foreign {
-                source: Some("Other".to_owned()),
-                uri: None,
-            },
+            ScriptedObservation::Missing,
             Arc::new(Mutex::new(Vec::new())),
         )
     }
 
-    fn with_journal(observation: TaskObservation, journal: EventJournal) -> Self {
+    pub(crate) fn foreign() -> Self {
+        Self::with_journal(
+            ScriptedObservation::Foreign,
+            Arc::new(Mutex::new(Vec::new())),
+        )
+    }
+
+    fn with_journal(observation: ScriptedObservation, journal: EventJournal) -> Self {
         Self {
             state: Arc::new(Mutex::new(ScriptedSchedulerState {
                 observation,
@@ -257,17 +339,38 @@ impl ScriptedScheduler {
         }
     }
 
-    pub(crate) fn observation(&self) -> TaskObservation {
+    pub(crate) fn observation(&self) -> ScriptedObservation {
         lock_unpoisoned(&self.state).observation.clone()
     }
 
-    pub(crate) fn set_observation(&self, observation: TaskObservation) {
+    pub(crate) fn set_observation(&self, observation: ScriptedObservation) {
         lock_unpoisoned(&self.state).observation = observation;
     }
 
-    pub(crate) fn update_observed(&self, update: impl FnOnce(&mut ObservedTask)) {
+    /// Change two registration properties the host compares, and report which
+    /// ones, so a test can assert that drift is reported without naming any
+    /// platform's field.
+    pub(crate) fn introduce_drift(&self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+        self.update_observed(|observed| {
+            fields = projection::introduce_drift(&mut observed.native);
+        });
+        fields
+    }
+
+    /// The same change, applied to an observation the test holds itself.
+    pub(crate) fn introduce_drift_in(observed: &mut ScriptedObserved) -> Vec<&'static str> {
+        projection::introduce_drift(&mut observed.native)
+    }
+
+    /// Whether an observation still carries the change `introduce_drift` made.
+    pub(crate) fn is_drifted(observed: &ScriptedObserved) -> bool {
+        projection::is_drifted(&observed.native)
+    }
+
+    pub(crate) fn update_observed(&self, update: impl FnOnce(&mut ScriptedObserved)) {
         let mut state = lock_unpoisoned(&self.state);
-        let TaskObservation::Owned(observed) = &mut state.observation else {
+        let ScriptedObservation::Owned(observed) = &mut state.observation else {
             panic!("task should be owned")
         };
         update(observed);
@@ -279,10 +382,10 @@ impl ScriptedScheduler {
         instances: Vec<SchedulerInstance>,
     ) {
         let mut state = lock_unpoisoned(&self.state);
-        let TaskObservation::Owned(observed) = &mut state.observation else {
+        let ScriptedObservation::Owned(observed) = &mut state.observation else {
             panic!("task should be owned")
         };
-        observed.scheduler_state = scheduler_state;
+        observed.state = scheduler_state;
         state.instances = instances;
     }
 
@@ -290,13 +393,13 @@ impl ScriptedScheduler {
         update(&mut lock_unpoisoned(&self.state).instances);
     }
 
-    pub(crate) fn queue_register_readback(&self, observed: ObservedTask) {
+    pub(crate) fn queue_register_readback(&self, observed: ScriptedObserved) {
         lock_unpoisoned(&self.state)
             .register_readbacks
             .push_back(observed);
     }
 
-    pub(crate) fn queue_observation_after_stop(&self, observation: TaskObservation) {
+    pub(crate) fn queue_observation_after_stop(&self, observation: ScriptedObservation) {
         lock_unpoisoned(&self.state)
             .observations_after_stop
             .push_back(observation);
@@ -387,12 +490,18 @@ impl ScriptedScheduler {
     }
 }
 
-impl SchedulerAdapter for ScriptedScheduler {
-    fn inspect(&self, task_path: &str) -> Result<TaskObservation, AppError> {
+impl ServiceScheduler for ScriptedScheduler {
+    type Native = Native;
+
+    fn identity(&self) -> Result<ServiceId, AppError> {
+        Ok(projection::identity(TEST_OWNER))
+    }
+
+    fn inspect(&self, id: &ServiceId) -> Result<ScriptedObservation, AppError> {
         push_event(
             &self.journal,
             AdapterEvent::Scheduler(SchedulerEvent::Inspect {
-                task_path: task_path.to_owned(),
+                task_path: id.path.clone(),
             }),
         );
         let mut state = lock_unpoisoned(&self.state);
@@ -402,7 +511,7 @@ impl SchedulerAdapter for ScriptedScheduler {
         Ok(state.observation.clone())
     }
 
-    fn register(&self, desired: &DesiredTaskSpec) -> Result<ObservedTask, AppError> {
+    fn register(&self, desired: &ServiceSpec) -> Result<ScriptedObserved, AppError> {
         push_event(
             &self.journal,
             AdapterEvent::Scheduler(SchedulerEvent::Register {
@@ -416,21 +525,24 @@ impl SchedulerAdapter for ScriptedScheduler {
         let observed = state
             .register_readbacks
             .pop_front()
-            .unwrap_or_else(|| ObservedTask {
-                spec: desired.clone(),
-                scheduler_state: SchedulerState::Ready,
+            .unwrap_or_else(|| ScriptedObserved {
+                id: desired.id.clone(),
+                marker: desired.marker.clone(),
+                state: SchedulerState::Ready,
                 last_result: Some(0),
                 last_run_at: None,
+                canonical_restart_policy: true,
+                native: projection::native(desired),
             });
-        state.observation = TaskObservation::Owned(Box::new(observed.clone()));
+        state.observation = ScriptedObservation::Owned(Box::new(observed.clone()));
         Ok(observed)
     }
 
-    fn run(&self, task_path: &str) -> Result<SchedulerRunReceipt, AppError> {
+    fn run(&self, id: &ServiceId) -> Result<SchedulerRunReceipt, AppError> {
         push_event(
             &self.journal,
             AdapterEvent::Scheduler(SchedulerEvent::Run {
-                task_path: task_path.to_owned(),
+                task_path: id.path.clone(),
             }),
         );
         let (failure, gate) = {
@@ -449,11 +561,11 @@ impl SchedulerAdapter for ScriptedScheduler {
         Ok(SchedulerRunReceipt { submitted: true })
     }
 
-    fn instances(&self, expected: &DesiredTaskSpec) -> Result<Vec<SchedulerInstance>, AppError> {
+    fn instances(&self, expected: &ServiceOwnership) -> Result<Vec<SchedulerInstance>, AppError> {
         push_event(
             &self.journal,
             AdapterEvent::Scheduler(SchedulerEvent::Instances {
-                task_path: expected.task_path.clone(),
+                task_path: expected.id.path.clone(),
             }),
         );
         let mut state = lock_unpoisoned(&self.state);
@@ -465,7 +577,7 @@ impl SchedulerAdapter for ScriptedScheduler {
 
     fn stop_instance(
         &self,
-        _expected: &DesiredTaskSpec,
+        _expected: &ServiceSpec,
         target: &SchedulerStopTarget,
     ) -> Result<SchedulerStopReceipt, AppError> {
         push_event(
@@ -487,10 +599,10 @@ impl SchedulerAdapter for ScriptedScheduler {
                 .instances
                 .retain(|instance| instance.instance_id != target_id);
             let has_active_instances = !state.instances.is_empty();
-            if let TaskObservation::Owned(observed) = &mut state.observation
+            if let ScriptedObservation::Owned(observed) = &mut state.observation
                 && !has_active_instances
             {
-                observed.scheduler_state = SchedulerState::Ready;
+                observed.state = SchedulerState::Ready;
             }
             if let Some(observation) = state.observations_after_stop.pop_front() {
                 state.observation = observation;
@@ -503,7 +615,7 @@ impl SchedulerAdapter for ScriptedScheduler {
 
     fn delete_owned(
         &self,
-        expected: &ExpectedTaskOwnership,
+        expected: &ServiceOwnership,
     ) -> Result<SchedulerDeleteReceipt, AppError> {
         push_event(
             &self.journal,
@@ -515,8 +627,14 @@ impl SchedulerAdapter for ScriptedScheduler {
         if let Some(failure) = state.faults.take(SchedulerFaultPoint::Delete) {
             return Err(failure.into_error());
         }
-        state.observation = TaskObservation::Missing;
+        state.observation = ScriptedObservation::Missing;
         Ok(SchedulerDeleteReceipt { deleted: true })
+    }
+
+    /// The host's real comparison, over the host's real projection. Only the
+    /// call that would have read the registration back is scripted.
+    fn drift(&self, desired: &ServiceSpec, observed: &ScriptedObserved) -> Vec<DriftEntry> {
+        projection::drift(desired, &observed.native)
     }
 }
 
@@ -781,7 +899,8 @@ impl LifecycleHarness {
         let temp = TempDir::new().unwrap();
         let paths = ServicePaths::from_base(temp.path().join("managed")).unwrap();
         let journal = Arc::new(Mutex::new(Vec::new()));
-        let scheduler = ScriptedScheduler::with_journal(TaskObservation::Missing, journal.clone());
+        let scheduler =
+            ScriptedScheduler::with_journal(ScriptedObservation::Missing, journal.clone());
         let runtime = ScriptedRuntimeControl::with_journal([not_ready_section()], journal);
         let mut service = LifecycleService::new(paths.clone(), scheduler.clone(), runtime.clone());
         service.start_timeout = TEST_START_TIMEOUT;
@@ -829,9 +948,9 @@ impl LifecycleHarness {
         write_ready_runtime(&self.service, definition, instance_id, pid);
     }
 
-    pub(crate) fn set_owned_task(&self, observed: ObservedTask) {
+    pub(crate) fn set_owned_task(&self, observed: ScriptedObserved) {
         self.scheduler
-            .set_observation(TaskObservation::Owned(Box::new(observed)));
+            .set_observation(ScriptedObservation::Owned(Box::new(observed)));
     }
 
     pub(crate) fn queue_readiness(&self, section: ReadinessSection) {

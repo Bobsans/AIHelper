@@ -31,6 +31,16 @@ impl ServicePaths {
         })
     }
 
+    /// Where this machine keeps the managed service's state.
+    ///
+    /// Neither platform reads the environment for it, and that is the point: a
+    /// service must not take its state directory from a variable a caller can
+    /// set, or `ah mcp service status` could be pointed at someone else's
+    /// answer. Windows asks for the known folder, Unix asks the password
+    /// database for the account's home rather than trusting `$HOME`.
+    ///
+    /// This is why group 06 excludes the service from `ah-paths`, which
+    /// deliberately does resolve environment overrides.
     pub fn discover() -> Result<Self, AppError> {
         #[cfg(windows)]
         {
@@ -38,12 +48,20 @@ impl ServicePaths {
             Self::from_base(local_app_data.join("AIHelper").join("managed-mcp"))
         }
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
-            Err(AppError::external(
-                "MCP_SERVICE_UNSUPPORTED_PLATFORM",
-                "managed MCP service lifecycle is supported only on Windows",
-            ))
+            Self::from_base(
+                account_home()?
+                    .join(".local")
+                    .join("state")
+                    .join("aihelper")
+                    .join("managed-mcp"),
+            )
+        }
+
+        #[cfg(not(any(windows, unix)))]
+        {
+            Err(crate::scheduler::unsupported_platform())
         }
     }
 
@@ -82,14 +100,6 @@ pub fn require_managed_service_executable(executable: &Path) -> Result<(), AppEr
         ));
     }
     Ok(())
-}
-
-pub fn task_name(user_sid: &str) -> String {
-    format!("AIHelper Managed MCP - {user_sid}")
-}
-
-pub fn task_path(user_sid: &str) -> String {
-    format!("\\{}", task_name(user_sid))
 }
 
 pub fn normalize_absolute_path(path: &Path, cwd: Option<&Path>) -> Result<PathBuf, AppError> {
@@ -145,18 +155,90 @@ pub fn paths_equal(left: &Path, right: &Path) -> bool {
     }
 }
 
-pub fn current_user_sid() -> Result<String, AppError> {
+/// The account the managed service belongs to, spelled the way this platform
+/// spells accounts: a security identifier on Windows, a numeric user id on
+/// Unix.
+///
+/// The lifecycle does not call this - it asks its scheduler adapter for an
+/// identity, which is what lets it run against a fake on any platform. The
+/// callers left are the adapters themselves and [`crate::runner`], the managed
+/// worker process.
+pub fn current_account() -> Result<String, AppError> {
     #[cfg(windows)]
     {
         windows_current_user_sid()
     }
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        Err(AppError::external(
-            "MCP_SERVICE_UNSUPPORTED_PLATFORM",
-            "managed MCP service lifecycle is supported only on Windows",
-        ))
+        // SAFETY: `getuid` reads the calling process's real user id and cannot
+        // fail.
+        Ok(unsafe { libc::getuid() }.to_string())
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        Err(crate::scheduler::unsupported_platform())
+    }
+}
+
+/// The account's home directory according to the password database.
+///
+/// `$HOME` is not consulted, for the same reason the Windows side asks for the
+/// known folder rather than reading `%LOCALAPPDATA%`: a caller must not be able
+/// to move the service's state directory by setting a variable.
+#[cfg(unix)]
+fn account_home() -> Result<PathBuf, AppError> {
+    use std::{
+        ffi::{CStr, OsStr},
+        os::unix::ffi::OsStrExt,
+    };
+
+    const MAXIMUM_BUFFER: usize = 64 * 1024;
+
+    // SAFETY: `getuid` reads the calling process's real user id and cannot
+    // fail.
+    let uid = unsafe { libc::getuid() };
+    let mut buffer = vec![0u8; 1024];
+    loop {
+        // SAFETY: `libc::passwd` is a plain C struct whose all-zero value is
+        // valid; `getpwuid_r` fills it and writes the strings it points at into
+        // `buffer`, whose real length is the one passed. Both outlive the call.
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let code = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut entry,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut found,
+            )
+        };
+        if code == libc::ERANGE && buffer.len() < MAXIMUM_BUFFER {
+            buffer.resize(buffer.len() * 2, 0);
+            continue;
+        }
+        if code != 0 {
+            return Err(path_invalid(format!(
+                "failed to read the password entry for uid {uid}: {}",
+                std::io::Error::from_raw_os_error(code)
+            )));
+        }
+        if found.is_null() {
+            return Err(path_invalid(format!("uid {uid} has no password entry")));
+        }
+        // SAFETY: a successful call with a non-null result leaves `entry`
+        // initialized, and `pw_dir` NUL-terminated inside `buffer`.
+        let home = unsafe { CStr::from_ptr(entry.pw_dir) };
+        let home = PathBuf::from(OsStr::from_bytes(home.to_bytes()));
+        if !home.is_absolute() {
+            return Err(path_invalid(format!(
+                "the home directory of uid {uid} is '{}', which is not absolute",
+                home.display()
+            )));
+        }
+        return Ok(home);
     }
 }
 
@@ -423,14 +505,6 @@ mod tests {
             paths
                 .definition(Uuid::nil())
                 .ends_with("00000000-0000-0000-0000-000000000000.json")
-        );
-    }
-
-    #[test]
-    fn task_identity_is_rooted_and_sid_scoped() {
-        assert_eq!(
-            task_path("S-1-5-21-1"),
-            r"\AIHelper Managed MCP - S-1-5-21-1"
         );
     }
 

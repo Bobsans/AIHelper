@@ -154,10 +154,7 @@ impl CurrentPointer {
     pub fn validate(&self) -> Result<(), AppError> {
         require_schema(self.schema_version)?;
         validate_persisted_path("definition_path", &self.definition_path)?;
-        if !self.task_path.starts_with('\\') {
-            return Err(state_invalid("task_path must be absolute"));
-        }
-        Ok(())
+        crate::scheduler::validate_registration_identity(&self.task_path)
     }
 }
 

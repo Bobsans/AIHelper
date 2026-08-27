@@ -134,14 +134,32 @@ The server binds only to `127.0.0.1`, validates `Host`, rejects nonlocal
 not an authorization boundary: any local process running as the user can invoke
 all published tools, including destructive tools.
 
-## Managed Windows service
+## Managed service
 
 To register this endpoint in an AI agent instead of configuring the agent by
 hand, see [`ah ai install`](ai.md).
 
-Windows users can register the HTTP server as a per-user Task Scheduler 2.0
-task. Registration uses the current interactive user with least privilege; it
-does not require elevation or store a password.
+The HTTP server can be registered as a per-user service, so that it starts with
+the session rather than being launched by hand. Registration never needs
+elevation and never stores a password.
+
+| Platform | Registered as |
+|----------|---------------|
+| Windows  | a Task Scheduler 2.0 task running as the current interactive user with least privilege |
+| Linux    | a systemd **user** unit, `aihelper-managed-mcp.service`, wanted by `default.target` |
+| macOS    | not yet - the commands below report `MCP_SERVICE_UNSUPPORTED_PLATFORM` |
+
+The Linux support is **experimental**: it has the same lifecycle, the same
+status reduction and the same drift detection, but nowhere near the acceptance
+history of the Windows path. Two systemd specifics are worth knowing:
+
+- `systemctl --user` has to be able to reach the account's manager, which needs
+  `XDG_RUNTIME_DIR` and a running user manager. Where it cannot, every command
+  reports the manager's own message.
+- A unit wanted by `default.target` starts when the account logs in. Running it
+  with nobody logged in needs `loginctl enable-linger`, which AIHelper does not
+  enable for you - it is a privileged change and a different policy from the one
+  the service asks for.
 
 Install the canonical loopback service and wait for exact HTTP readiness:
 
@@ -302,8 +320,10 @@ Important managed-service diagnostics include:
 - `MCP_SERVICE_RESTART_FAILED`
 - `MCP_SERVICE_UNINSTALL_INCOMPLETE`
 
-Managed lifecycle commands are currently Windows-only. Manual stdio and HTTP
-serve remain available on every supported platform.
+Managed lifecycle commands work on Windows and, experimentally, on Linux. On a
+platform without an implementation they report
+`MCP_SERVICE_UNSUPPORTED_PLATFORM`. Manual stdio and HTTP serve remain
+available on every supported platform.
 
 ## Tool names
 

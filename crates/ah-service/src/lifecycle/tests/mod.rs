@@ -1,11 +1,10 @@
-mod harness;
-mod reducer;
+//! The lifecycle's own tests. They drive a scripted scheduler rather than a
+//! real one, so they run on every platform - which is the check that the
+//! lifecycle above the scheduler port really is platform-neutral.
 
-#[cfg(windows)]
 mod concurrency;
-#[cfg(windows)]
+mod harness;
 mod install_start_status;
-#[cfg(windows)]
+mod reducer;
 mod stop_restart;
-#[cfg(windows)]
 mod uninstall_recovery;

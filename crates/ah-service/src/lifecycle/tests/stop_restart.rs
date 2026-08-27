@@ -2,7 +2,6 @@ use tempfile::TempDir;
 
 use super::{super::*, harness::*};
 
-#[cfg(windows)]
 #[test]
 fn stop_reports_already_stopped_only_with_complete_quiescence_proof() {
     let temp = TempDir::new().unwrap();
@@ -19,7 +18,6 @@ fn stop_reports_already_stopped_only_with_complete_quiescence_proof() {
     assert!(service.readiness.shutdown_targets().is_empty());
 }
 
-#[cfg(windows)]
 #[test]
 fn exact_live_stop_uses_control_identity_and_retains_quiescence_guard() {
     let temp = TempDir::new().unwrap();
@@ -44,7 +42,6 @@ fn exact_live_stop_uses_control_identity_and_retains_quiescence_guard() {
     assert_eq!(service.scheduler.stop_count(), 0);
 }
 
-#[cfg(windows)]
 #[test]
 fn control_identity_mismatch_uses_only_exact_scheduler_fallback() {
     let temp = TempDir::new().unwrap();
@@ -81,7 +78,6 @@ fn control_identity_mismatch_uses_only_exact_scheduler_fallback() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn failed_control_request_falls_back_to_exact_revalidated_scheduler_instance() {
     let harness = LifecycleHarness::new();
@@ -128,7 +124,6 @@ fn failed_control_request_falls_back_to_exact_revalidated_scheduler_instance() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn scheduler_stop_failure_preserves_identity_and_retry_converges() {
     let harness = LifecycleHarness::new();
@@ -167,12 +162,12 @@ fn scheduler_stop_failure_preserves_identity_and_retry_converges() {
     assert_eq!(failed.current, before.current);
     assert_eq!(failed.definitions, before.definitions);
     assert_eq!(failed.runtime, before.runtime);
-    let TaskObservation::Owned(observed) = harness.scheduler.observation() else {
+    let ServiceObservation::Owned(observed) = harness.scheduler.observation() else {
         panic!("failed stop should preserve the owned registration")
     };
-    assert_eq!(observed.scheduler_state, SchedulerState::Running);
+    assert_eq!(observed.state, SchedulerState::Running);
     assert_eq!(
-        observed.spec.marker.configuration_id,
+        observed.marker.configuration_id,
         definition.configuration_id
     );
     let Document::Valid(lifecycle) = harness.store().read_lifecycle() else {
@@ -205,7 +200,6 @@ fn scheduler_stop_failure_preserves_identity_and_retry_converges() {
     assert_eq!(harness.durable_bytes().current, before.current);
 }
 
-#[cfg(windows)]
 #[test]
 fn queued_fallback_requires_the_exact_process_free_instance() {
     let temp = TempDir::new().unwrap();
@@ -232,7 +226,6 @@ fn queued_fallback_requires_the_exact_process_free_instance() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn pid_mismatch_and_task_drift_never_reach_scheduler_stop() {
     let temp = TempDir::new().unwrap();
@@ -254,9 +247,7 @@ fn pid_mismatch_and_task_drift_never_reach_scheduler_stop() {
     assert_eq!(error.code(), "MCP_SERVICE_STOP_UNSAFE");
     assert_eq!(service.scheduler.stop_count(), 0);
 
-    service.scheduler.update_observed(|observed| {
-        observed.spec.executable_path = temp.path().join("changed.exe");
-    });
+    service.scheduler.introduce_drift();
     service.scheduler.update_instances(|instances| {
         instances[0].engine_pid = Some(63);
     });
@@ -265,7 +256,6 @@ fn pid_mismatch_and_task_drift_never_reach_scheduler_stop() {
     assert_eq!(service.scheduler.stop_count(), 0);
 }
 
-#[cfg(windows)]
 #[test]
 fn scheduler_stop_without_lease_release_times_out() {
     let temp = TempDir::new().unwrap();
@@ -294,7 +284,6 @@ fn scheduler_stop_without_lease_release_times_out() {
     assert_eq!(service.scheduler.stop_count(), 1);
 }
 
-#[cfg(windows)]
 #[test]
 fn restart_of_stopped_service_runs_start_phase_and_reports_started() {
     let harness = LifecycleHarness::new();
@@ -316,7 +305,6 @@ fn restart_of_stopped_service_runs_start_phase_and_reports_started() {
     assert!(harness.runtime.shutdown_targets().is_empty());
 }
 
-#[cfg(windows)]
 #[test]
 fn restart_stop_failure_prevents_run() {
     let harness = LifecycleHarness::new();
@@ -362,7 +350,6 @@ fn restart_stop_failure_prevents_run() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn restart_start_failure_leaves_stopped_evidence_and_later_start_converges() {
     let harness = LifecycleHarness::new();
@@ -438,7 +425,6 @@ fn restart_start_failure_leaves_stopped_evidence_and_later_start_converges() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn task_drift_after_successful_stop_prevents_restart_run() {
     let harness = LifecycleHarness::new();
@@ -462,14 +448,14 @@ fn task_drift_after_successful_stop_prevents_restart_run() {
         }],
     );
     let mut drifted = match harness.scheduler.observation() {
-        TaskObservation::Owned(observed) => observed,
+        ServiceObservation::Owned(observed) => observed,
         _ => panic!("installed task should be owned"),
     };
-    drifted.spec.enabled = false;
-    drifted.scheduler_state = SchedulerState::Ready;
+    ScriptedScheduler::introduce_drift_in(&mut drifted);
+    drifted.state = SchedulerState::Ready;
     harness
         .scheduler
-        .queue_observation_after_stop(TaskObservation::Owned(drifted));
+        .queue_observation_after_stop(ServiceObservation::Owned(drifted));
     let lease = harness.hold_instance_lease();
     harness.release_instance_on_forced_stop(lease);
     let current_before = std::fs::read(&harness.paths.current).unwrap();
@@ -485,10 +471,10 @@ fn task_drift_after_successful_stop_prevents_restart_run() {
         std::fs::read(&harness.paths.current).unwrap(),
         current_before
     );
-    let TaskObservation::Owned(observed) = harness.scheduler.observation() else {
+    let ServiceObservation::Owned(observed) = harness.scheduler.observation() else {
         panic!("task should remain owned after drift")
     };
-    assert!(!observed.spec.enabled);
+    assert!(ScriptedScheduler::is_drifted(&observed));
     let Document::Valid(lifecycle) = harness.store().read_lifecycle() else {
         panic!("post-stop drift should persist lifecycle diagnostics")
     };
@@ -499,7 +485,6 @@ fn task_drift_after_successful_stop_prevents_restart_run() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn restart_uses_one_stop_start_sequence_and_requires_a_new_instance() {
     let temp = TempDir::new().unwrap();
@@ -528,7 +513,6 @@ fn restart_uses_one_stop_start_sequence_and_requires_a_new_instance() {
     assert_eq!(service.readiness.shutdown_targets(), vec![old_instance]);
 }
 
-#[cfg(windows)]
 #[test]
 fn restart_rejects_readiness_that_reuses_the_old_instance_identity() {
     let temp = TempDir::new().unwrap();

@@ -44,14 +44,19 @@ impl Snapshot {
     }
 }
 
+/// Whether this platform has a managed service to install into.
+///
+/// The answer is the scheduler adapter's, not a `cfg!` of our own: when a
+/// platform gains an adapter, this follows without being edited.
 pub fn is_supported() -> bool {
-    cfg!(windows)
+    <crate::mcp_service::scheduler::PlatformScheduler as
+        crate::mcp_service::scheduler::ServiceScheduler>::SUPPORTED
 }
 
 fn unsupported() -> AppError {
     AppError::external(
         "AI_MANAGED_UNSUPPORTED",
-        "the managed MCP service is available only on Windows; \
+        "the managed MCP service is not available on this platform; \
          use --transport http against a running server, or --transport stdio",
     )
 }
@@ -88,14 +93,11 @@ pub fn classify(status: &StatusOutput) -> Snapshot {
     }
 }
 
-#[cfg(windows)]
 pub fn detect() -> Result<Snapshot, AppError> {
+    if !is_supported() {
+        return Err(unsupported());
+    }
     Ok(classify(&crate::mcp_service::lifecycle::snapshot_status()?))
-}
-
-#[cfg(not(windows))]
-pub fn detect() -> Result<Snapshot, AppError> {
-    Err(unsupported())
 }
 
 /// What `ensure_ready` had to do to reach a usable endpoint.
@@ -157,7 +159,6 @@ pub fn planned_action(snapshot: &Snapshot) -> ManagedAction {
     }
 }
 
-#[cfg(windows)]
 pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppError> {
     use crate::mcp_service::{
         model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS},
@@ -189,15 +190,11 @@ pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppE
     }
 }
 
-#[cfg(not(windows))]
-pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppError> {
-    let _ = snapshot;
-    Err(unsupported())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ManagedAction, ManagedState, classify, planned_action, require_usable};
+    use super::{
+        ManagedAction, ManagedState, classify, is_supported, planned_action, require_usable,
+    };
     use crate::mcp_service::output::{ReadinessStatus, RegistrationStatus, StatusOutput};
 
     fn snapshot_of(
@@ -272,7 +269,7 @@ mod tests {
             assert_eq!(snapshot.state, ManagedState::NeedsRepair);
             assert!(snapshot.diagnostic_code.is_some());
             let error = require_usable(&snapshot).expect_err("a drifted service must be refused");
-            let expected = if cfg!(windows) {
+            let expected = if is_supported() {
                 "AI_MANAGED_NOT_HEALTHY"
             } else {
                 "AI_MANAGED_UNSUPPORTED"
@@ -282,15 +279,22 @@ mod tests {
         }
     }
 
-    #[cfg(not(windows))]
+    /// A healthy snapshot is usable exactly where the platform has a managed
+    /// service, and the answer comes from the scheduler adapter rather than
+    /// from this test knowing which platforms those are.
     #[test]
-    fn a_healthy_snapshot_is_still_refused_off_windows() {
+    fn a_healthy_snapshot_is_usable_only_where_the_service_exists() {
         let snapshot = classify(&snapshot_of(
             RegistrationStatus::Installed,
             ReadinessStatus::Ready,
             Some("http://127.0.0.1:8787/mcp"),
         ));
-        let error = require_usable(&snapshot).expect_err("managed is Windows-only");
-        assert_eq!(error.code(), "AI_MANAGED_UNSUPPORTED");
+        match require_usable(&snapshot) {
+            Ok(()) => assert!(is_supported(), "a refusal was expected on this platform"),
+            Err(error) => {
+                assert!(!is_supported(), "this platform has a managed service");
+                assert_eq!(error.code(), "AI_MANAGED_UNSUPPORTED");
+            }
+        }
     }
 }
