@@ -270,7 +270,11 @@ impl BuiltinPlugin for EchoBuiltinPlugin {
         InvocationResponse::ok(Some("ok".to_owned()))
     }
 
-    fn invoke_observed(&self, request: &InvocationRequest) -> InvocationObservation {
+    fn invoke_observed_into(
+        &self,
+        request: &InvocationRequest,
+        _sink: &OutputSink,
+    ) -> InvocationObservation {
         InvocationObservation::new(
             self.invoke(request),
             InvocationOutcome::RunCheck(RunCheckOutcome {

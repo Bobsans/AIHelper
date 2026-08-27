@@ -12,6 +12,10 @@ publish = false
 
 [dependencies]
 ah-plugin-api = { path = "../ah-plugin-api" }
+# For `OutputSink` alone: a built-in is told where its output goes, because it
+# renders after parsing its own arguments and nothing above it could otherwise
+# reach that decision.
+ah-output = { path = "../ah-output" }
 jsonschema = { version = "0.48.0", default-features = false }
 libloading = "0.8.6"
 serde_json.workspace = true

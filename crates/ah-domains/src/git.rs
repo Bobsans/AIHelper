@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
@@ -127,9 +127,9 @@ pub(crate) mod output;
 
 mod domain;
 
-pub fn execute(args: GitArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(args: GitArgs, options: &GlobalOptions, sink: &OutputSink) -> Result<(), AppError> {
     let result = domain::execute(args, options.limit, options.cwd.as_deref())?;
-    output::emit(result, &mut Emitter::stdio(options))
+    output::emit(result, &mut Emitter::to_sink(options, sink))
 }
 
 pub fn command_catalog() -> CommandCatalog {

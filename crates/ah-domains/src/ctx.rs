@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 
 #[derive(Debug, Args)]
 pub struct CtxArgs {
@@ -145,7 +145,7 @@ pub(crate) mod output;
 mod domain;
 pub mod symbols;
 
-pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(args: CtxArgs, options: &GlobalOptions, sink: &OutputSink) -> Result<(), AppError> {
     let cwd = options.cwd.as_deref();
     match args.command {
         CtxCommand::Pack(mut pack_args) => {
@@ -153,21 +153,21 @@ pub fn execute(args: CtxArgs, options: &GlobalOptions) -> Result<(), AppError> {
                 rebase_pack(&mut pack_args, cwd);
             }
             let result = domain::execute_pack(pack_args, options.limit)?;
-            output::emit(result, &mut Emitter::stdio(options))
+            output::emit(result, &mut Emitter::to_sink(options, sink))
         }
         CtxCommand::Symbols(mut symbols_args) => {
             if let Some(cwd) = cwd {
                 symbols_args.path = resolve_context_path(cwd, &symbols_args.path);
             }
             let result = domain::execute_symbols(symbols_args, options.limit)?;
-            output::emit(result, &mut Emitter::stdio(options))
+            output::emit(result, &mut Emitter::to_sink(options, sink))
         }
         CtxCommand::Changed(changed_args) => {
             let result = match cwd {
                 Some(cwd) => domain::execute_changed_at(changed_args, cwd)?,
                 None => domain::execute_changed(changed_args)?,
             };
-            output::emit(result, &mut Emitter::stdio(options))
+            output::emit(result, &mut Emitter::to_sink(options, sink))
         }
     }
 }

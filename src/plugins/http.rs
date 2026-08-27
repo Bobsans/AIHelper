@@ -106,6 +106,10 @@ impl BuiltinPlugin for HttpBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
+        self.invoke_into(request, &OutputSink::Process)
+    }
+
+    fn invoke_into(&self, request: &InvocationRequest, sink: &OutputSink) -> InvocationResponse {
         let (mut parsed, options) =
             match parse_args::<HttpPluginCli>("http", &request.argv, request.globals.clone()) {
                 ParseOutcome::Parsed(value, options) => (value, options),
@@ -116,7 +120,7 @@ impl BuiltinPlugin for HttpBuiltinPlugin {
         {
             return error;
         }
-        map_execute("http", commands::http::execute(parsed.args, &options))
+        map_execute("http", commands::http::execute(parsed.args, &options, sink))
     }
 
     fn command_catalog(&self) -> Option<CommandCatalog> {

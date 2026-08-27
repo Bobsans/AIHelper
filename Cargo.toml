@@ -127,10 +127,19 @@ windows-sys = { workspace = true, features = [
     "Win32_System_Threading",
 ] }
 
+[features]
+# The in-process command harness. A dev-dependency on this package below turns
+# it on for tests only, so a release build compiles none of it - the same
+# arrangement as `ah-domains/fixtures`.
+harness = []
+
 [dev-dependencies]
 # The golden snapshots render the domains' own test corpora, which are behind a
 # feature so a release build compiles neither of them.
 ah-domains = { path = "crates/ah-domains", features = ["fixtures"] }
+# This package, for its own `harness` feature: `tests/` is a separate crate and
+# cannot see a `cfg(test)` module.
+aihelper = { path = ".", features = ["harness"] }
 ah-release-manifest = { path = "crates/ah-release-manifest" }
 assert_cmd.workspace = true
 base64.workspace = true

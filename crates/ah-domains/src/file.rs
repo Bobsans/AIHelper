@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 use ah_plugin_api::{
     CommandCatalog, CommandDescriptor, CommandEffect, CommandEffects, CommandError, CommandExample,
     Reversibility, RiskLevel, TypedInvocationRequest, TypedInvocationResponse,
@@ -171,12 +171,16 @@ pub(crate) mod output;
 
 mod domain;
 
-pub fn execute(mut args: FileArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(
+    mut args: FileArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     if let Some(cwd) = options.cwd.as_deref() {
         rebase(&mut args.command, cwd);
     }
     let result = domain::execute(args, options.limit)?;
-    output::emit(result, &mut Emitter::stdio(options))
+    output::emit(result, &mut Emitter::to_sink(options, sink))
 }
 
 /// Resolve every path argument against the directory the request named.

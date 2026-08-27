@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
@@ -95,12 +95,16 @@ pub(crate) mod output;
 
 mod domain;
 
-pub fn execute(mut args: TaskArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(
+    mut args: TaskArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     if options.cwd.is_some() {
         set_cwd(&mut args.command, options.cwd.clone());
     }
     let result = domain::execute(args, options.limit)?;
-    output::emit(result, &mut Emitter::stdio(options))
+    output::emit(result, &mut Emitter::to_sink(options, sink))
 }
 
 /// Point every task command at the directory the request named; the task store

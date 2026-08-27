@@ -147,6 +147,27 @@ impl Emitter {
         }
     }
 
+    /// The sink the *host* chose, for a command that renders after it has
+    /// parsed its own arguments.
+    ///
+    /// The mode still comes from the command's own options - only where the
+    /// bytes go is the host's decision. Without this, every built-in domain
+    /// built `stdio` itself, so what one printed could only be observed by
+    /// spawning `ah`.
+    pub fn to_sink(options: &GlobalOptions, sink: &OutputSink) -> Self {
+        match sink {
+            OutputSink::Process => Self::stdio(options),
+            OutputSink::Captured(captured) => Self {
+                out: Box::new(captured.out.clone()),
+                err: Box::new(captured.err.clone()),
+                mode: options.output,
+                quiet: options.quiet,
+                out_color: TextFormatter::with_color(false),
+                err_color: TextFormatter::with_color(false),
+            },
+        }
+    }
+
     /// Buffers instead of the process streams, with colour off so assertions
     /// read as plain text.
     pub fn capture(options: &GlobalOptions) -> (Self, Captured) {
@@ -311,6 +332,28 @@ fn write_failed(error: io::Error) -> AppError {
         "OUTPUT_WRITE_FAILED",
         format!("failed to write output: {error}"),
     )
+}
+
+/// Where a command's output goes, chosen by whoever invoked it.
+///
+/// A command decides *what* to render and in which mode; the host decides
+/// *where*. Production always passes [`Self::Process`]; a caller that wants to
+/// read what a command produced - the in-process test harness - passes
+/// [`Self::Captured`] and keeps the [`Captured`] handle.
+#[derive(Clone, Default)]
+pub enum OutputSink {
+    #[default]
+    Process,
+    Captured(Captured),
+}
+
+impl OutputSink {
+    /// A sink that keeps what was written, and the handle to read it back.
+    #[must_use]
+    pub fn capture() -> (Self, Captured) {
+        let captured = Captured::default();
+        (Self::Captured(captured.clone()), captured)
+    }
 }
 
 /// What an [`Emitter::capture`] emitter wrote.

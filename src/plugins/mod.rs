@@ -17,7 +17,7 @@ use ah_plugin_api::{
     TypedInvocationRequest, TypedInvocationResponse, normalize_invocation_argv,
     plugin_capabilities,
 };
-use ah_runtime::BuiltinPlugin;
+use ah_runtime::{BuiltinPlugin, OutputSink};
 use clap::{CommandFactory, Parser, error::ErrorKind};
 
 use crate::{cli::GlobalOptions, commands, error::AppError};

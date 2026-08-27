@@ -24,7 +24,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 
 mod args;
 mod catalog;
@@ -42,7 +42,11 @@ mod output;
 
 mod domain;
 
-pub fn execute(mut args: HttpArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(
+    mut args: HttpArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     if let Some(cwd) = options.cwd.as_deref() {
         rebase(&mut args.command, cwd);
     }
@@ -50,19 +54,24 @@ pub fn execute(mut args: HttpArgs, options: &GlobalOptions) -> Result<(), AppErr
         HttpCommand::Request(request_args) => execute_request(
             domain::run_request_command(request_args, "request"),
             options,
+            sink,
         ),
-        HttpCommand::Get(method_args) => execute_shortcut("get", "GET", method_args, options),
-        HttpCommand::Post(method_args) => execute_shortcut("post", "POST", method_args, options),
-        HttpCommand::Put(method_args) => execute_shortcut("put", "PUT", method_args, options),
-        HttpCommand::Patch(method_args) => execute_shortcut("patch", "PATCH", method_args, options),
+        HttpCommand::Get(method_args) => execute_shortcut("get", "GET", method_args, options, sink),
+        HttpCommand::Post(method_args) => {
+            execute_shortcut("post", "POST", method_args, options, sink)
+        }
+        HttpCommand::Put(method_args) => execute_shortcut("put", "PUT", method_args, options, sink),
+        HttpCommand::Patch(method_args) => {
+            execute_shortcut("patch", "PATCH", method_args, options, sink)
+        }
         HttpCommand::Delete(method_args) => {
-            execute_shortcut("delete", "DELETE", method_args, options)
+            execute_shortcut("delete", "DELETE", method_args, options, sink)
         }
         HttpCommand::Replay(replay_args) => {
-            execute_request(domain::run_replay(replay_args, "replay"), options)
+            execute_request(domain::run_replay(replay_args, "replay"), options, sink)
         }
-        HttpCommand::Assert(assert_args) => execute_assert(assert_args, options, "assert"),
-        HttpCommand::Run(assert_args) => execute_assert(assert_args, options, "run"),
+        HttpCommand::Assert(assert_args) => execute_assert(assert_args, options, sink, "assert"),
+        HttpCommand::Run(assert_args) => execute_assert(assert_args, options, sink, "run"),
     }
 }
 
@@ -345,20 +354,23 @@ fn execute_shortcut(
     method: &str,
     args: MethodShortcutArgs,
     options: &GlobalOptions,
+    sink: &OutputSink,
 ) -> Result<(), AppError> {
     execute_request(
         domain::run_request_shortcut(command_name, method, args),
         options,
+        sink,
     )
 }
 
 fn execute_request(
     request: Result<domain::HttpRequestOutput, AppError>,
     options: &GlobalOptions,
+    sink: &OutputSink,
 ) -> Result<(), AppError> {
     let payload = request?;
     let failed = !payload.ok;
-    output::emit_request(payload, options.limit, &mut Emitter::stdio(options))?;
+    output::emit_request(payload, options.limit, &mut Emitter::to_sink(options, sink))?;
     if failed {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",
@@ -371,11 +383,12 @@ fn execute_request(
 fn execute_assert(
     args: AssertArgs,
     options: &GlobalOptions,
+    sink: &OutputSink,
     command_name: &'static str,
 ) -> Result<(), AppError> {
     let (output, report_format) = domain::run_assert(args, options.output, command_name)?;
     let failed = output.summary.failed > 0;
-    output::emit_assert(&output, report_format, &mut Emitter::stdio(options))?;
+    output::emit_assert(&output, report_format, &mut Emitter::to_sink(options, sink))?;
     if failed {
         return Err(AppError::external(
             "HTTP_ASSERTION_FAILED",

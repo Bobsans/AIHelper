@@ -290,6 +290,7 @@ dependencies = [
 name = "ah-runtime"
 version = "1.4.0"
 dependencies = [
+ "ah-output",
  "ah-plugin-api",
  "jsonschema",
  "libloading",
@@ -450,6 +451,7 @@ dependencies = [
  "ah-update-helper",
  "ah-updater",
  "ah-updater-core",
+ "aihelper",
  "assert_cmd",
  "base64",
  "clap",

@@ -1,5 +1,7 @@
 pub mod ai;
 pub mod cli;
+#[cfg(any(test, feature = "harness"))]
+pub mod harness;
 pub(crate) use ah_config as config;
 pub use ah_domains as commands;
 mod entry;
@@ -329,17 +331,32 @@ fn handle_response(
     output_mode: OutputMode,
     quiet: bool,
 ) -> Result<(), AppError> {
+    handle_response_into(
+        response,
+        &cli::GlobalOptions {
+            output: output_mode,
+            quiet,
+            limit: None,
+            cwd: None,
+        },
+        &ah_runtime::OutputSink::Process,
+    )
+}
+
+/// The same, rendering into the sink the caller chose.
+///
+/// Only a dynamic plugin's message reaches this: a built-in has already written
+/// into the same sink, and its response carries no text.
+pub(crate) fn handle_response_into(
+    response: InvocationResponse,
+    options: &cli::GlobalOptions,
+    sink: &ah_runtime::OutputSink,
+) -> Result<(), AppError> {
     if response.success {
         if let Some(message) = response.message {
             // A plugin already rendered for the requested mode, so the message
             // is emitted as-is either way.
-            Emitter::stdio(&cli::GlobalOptions {
-                output: output_mode,
-                quiet,
-                limit: None,
-                cwd: None,
-            })
-            .report(|_| Ok(message))?;
+            Emitter::to_sink(options, sink).report(|_| Ok(message))?;
         }
         return Ok(());
     }

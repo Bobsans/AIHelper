@@ -64,6 +64,16 @@ impl BuiltinPlugin for RunBuiltinPlugin {
     }
 
     fn invoke_observed(&self, request: &InvocationRequest) -> ah_runtime::InvocationObservation {
+        self.invoke_observed_into(request, &OutputSink::Process)
+    }
+
+    /// `run` is the one built-in whose invocation reports an outcome as well as
+    /// a response, so it overrides the observed form rather than `invoke_into`.
+    fn invoke_observed_into(
+        &self,
+        request: &InvocationRequest,
+        sink: &OutputSink,
+    ) -> ah_runtime::InvocationObservation {
         let (parsed, options) =
             match parse_args::<RunPluginCli>("run", &request.argv, request.globals.clone()) {
                 ParseOutcome::Parsed(value, options) => (value, options),
@@ -71,7 +81,7 @@ impl BuiltinPlugin for RunBuiltinPlugin {
                     return ah_runtime::InvocationObservation::without_outcome(response);
                 }
             };
-        match commands::run::execute_observed(parsed.args, &options) {
+        match commands::run::execute_observed(parsed.args, &options, sink) {
             Ok(outcome) => ah_runtime::InvocationObservation::new(
                 InvocationResponse::ok(None),
                 ah_runtime::InvocationOutcome::RunCheck(outcome),

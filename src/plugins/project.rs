@@ -77,13 +77,20 @@ impl BuiltinPlugin for ProjectBuiltinPlugin {
     }
 
     fn invoke(&self, request: &InvocationRequest) -> InvocationResponse {
+        self.invoke_into(request, &OutputSink::Process)
+    }
+
+    fn invoke_into(&self, request: &InvocationRequest, sink: &OutputSink) -> InvocationResponse {
         let (parsed, options) =
             match parse_args::<ProjectPluginCli>("project", &request.argv, request.globals.clone())
             {
                 ParseOutcome::Parsed(value, options) => (value, options),
                 ParseOutcome::Response(response) => return response,
             };
-        map_execute("project", commands::project::execute(parsed.args, &options))
+        map_execute(
+            "project",
+            commands::project::execute(parsed.args, &options, sink),
+        )
     }
 
     fn command_catalog(&self) -> Option<CommandCatalog> {

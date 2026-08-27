@@ -1,5 +1,7 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
+use aihelper::harness::Harness;
+
 use super::common::IsolatedAhCommand as Command;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
@@ -41,15 +43,33 @@ fn path_arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// The `file` domain answering in JSON, in this process.
+///
+/// Every assertion here is about what the domain renders for given arguments,
+/// which needs no process of its own now that the host chooses the sink. What
+/// remains process-level in this file is the two things a process is: the exit
+/// code, and which stream the text went to.
 fn file_json(args: &[&str]) -> Value {
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "file"])
-        .args(args)
-        .assert()
-        .success();
+    let mut argv = vec!["--json", "file"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).json()
+}
 
-    serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected")
+/// The same, for a command expected to be refused: the detail message a
+/// `contains` assertion on stderr was reading.
+fn file_error(args: &[&str]) -> String {
+    let mut argv = vec!["file"];
+    argv.extend_from_slice(args);
+    let run = Harness::new().run(&argv);
+    let _ = run.expect_failure();
+    run.detail()
+}
+
+/// And for text output.
+fn file_text(args: &[&str]) -> String {
+    let mut argv = vec!["file"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).expect_success().to_owned()
 }
 
 fn assert_object_fields(value: &Value, expected: &[&str]) {
@@ -72,11 +92,11 @@ fn file_read_rejects_binary_file() {
     fs::write(temp.path(), [0u8, b'a', b'b', b'c']).expect("binary content should be written");
 
     let file_path = temp.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "read", &file_path])
-        .assert()
-        .failure()
-        .stderr(contains("binary or non-UTF8 file is not supported"));
+    assert!(
+        file_error(&["read", &file_path]).contains("binary or non-UTF8 file is not supported"),
+        "{}",
+        file_error(&["read", &file_path])
+    );
 }
 
 #[test]
@@ -87,12 +107,7 @@ fn file_read_accepts_utf8_character_split_at_sniff_boundary() {
     fs::write(temp.path(), content).expect("UTF-8 content should be written");
 
     let file_path = temp.path().to_string_lossy().to_string();
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "read", &file_path])
-        .assert()
-        .success()
-        .stdout(contains("а"));
+    assert!(file_text(&["read", &file_path]).contains("а"));
 }
 
 #[test]
@@ -101,11 +116,7 @@ fn file_read_respects_max_bytes() {
     fs::write(temp.path(), "0123456789\n").expect("content should be written");
 
     let file_path = temp.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "read", &file_path, "--max-bytes", "4"])
-        .assert()
-        .failure()
-        .stderr(contains("file is too large"));
+    assert!(file_error(&["read", &file_path, "--max-bytes", "4"]).contains("file is too large"));
 }
 
 #[test]
@@ -114,11 +125,7 @@ fn file_read_rejects_zero_from() {
     fs::write(temp.path(), "alpha\nbeta\n").expect("content should be written");
 
     let file_path = temp.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "read", &file_path, "--from", "0"])
-        .assert()
-        .failure()
-        .stderr(contains("--from must be >= 1"));
+    assert!(file_error(&["read", &file_path, "--from", "0"]).contains("--from must be >= 1"));
 }
 
 #[test]
@@ -127,11 +134,7 @@ fn file_read_rejects_zero_to() {
     fs::write(temp.path(), "alpha\nbeta\n").expect("content should be written");
 
     let file_path = temp.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "read", &file_path, "--to", "0"])
-        .assert()
-        .failure()
-        .stderr(contains("--to must be >= 1"));
+    assert!(file_error(&["read", &file_path, "--to", "0"]).contains("--to must be >= 1"));
 }
 
 #[test]
@@ -140,11 +143,10 @@ fn file_read_rejects_to_before_from() {
     fs::write(temp.path(), "alpha\nbeta\n").expect("content should be written");
 
     let file_path = temp.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "read", &file_path, "--from", "3", "--to", "2"])
-        .assert()
-        .failure()
-        .stderr(contains("--to must be >= --from"));
+    assert!(
+        file_error(&["read", &file_path, "--from", "3", "--to", "2"])
+            .contains("--to must be >= --from")
+    );
 }
 
 #[test]

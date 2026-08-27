@@ -165,6 +165,41 @@ down from 7.6k.
    dispatch path renders the plugin's own parse error, and that `--json`
    switches the whole thing to a structured payload - which `print` decides from
    a process-global.
+
+   **Then the harness the rest of this row needs.** `src/harness.rs`, behind a
+   `harness` feature the package enables for itself as a dev-dependency, builds
+   the registry the shipped binary builds - the built-in domains, the host
+   commands, a temporary configuration directory and its own vault key - parses
+   an argv with the production parser, dispatches it through the production
+   manager, and returns what the command rendered:
+
+   ```rust
+   let run = Harness::new().in_directory(temp.path()).run(&["--json", "file", "read", "app.txt"]);
+   assert_eq!(run.json()["line_count"], 1);
+   ```
+
+   What made it possible is `OutputSink`. Every built-in domain built its own
+   `Emitter::stdio` *after* parsing its arguments, so nothing above it could
+   reach the decision; the sink is now the host's parameter, threaded through
+   `BuiltinPlugin::invoke_into` and `PluginManager::invoke_credentialed_into`.
+   Production passes `Process` and nothing about it changes.
+
+   Two things worth recording:
+
+   - **The trait now has two pairs of entry points, and only one of each is the
+     one to override.** A test's fake plugin overrode `invoke_observed`, which
+     the runtime stopped calling, and its outcome silently disappeared - caught
+     by that fake's own test. `invoke_observed` now says in its doc that it is
+     the shorthand and `invoke_observed_into` is the override point.
+   - **`file.rs` is the worked example**: its `file_json` helper was the choke
+     point for thirteen tests, so replacing that one function moved all
+     thirteen in process, and six refusal tests followed. Twenty-seven of its
+     thirty-four spawns remain, and the rest of this row is that same work, file
+     by file.
+
+   The harness deliberately refuses what it cannot run: a command that is not a
+   plugin-domain invocation panics naming itself, rather than asserting about
+   something else.
 7. ~~Add cross-version updater fixtures (v1.4 journal → current recovery, and
    back).~~ **(done.)** The on-disk plan, journal and helper self-check are
    frozen as fixtures, and the handoff command line is produced and validated

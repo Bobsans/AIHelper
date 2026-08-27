@@ -9,7 +9,7 @@ use ah_runtime::RunCheckOutcome;
 use serde_json::json;
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 use clap::Args;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -73,13 +73,14 @@ pub(crate) mod windows_job;
 
 mod domain;
 
-pub fn execute(args: RunArgs, options: &GlobalOptions) -> Result<(), AppError> {
-    execute_observed(args, options).map(|_| ())
+pub fn execute(args: RunArgs, options: &GlobalOptions, sink: &OutputSink) -> Result<(), AppError> {
+    execute_observed(args, options, sink).map(|_| ())
 }
 
 pub fn execute_observed(
     args: RunArgs,
     options: &GlobalOptions,
+    sink: &OutputSink,
 ) -> Result<RunCheckOutcome, AppError> {
     match args.command {
         RunCommand::Check(mut check_args) => {
@@ -90,7 +91,7 @@ pub fn execute_observed(
                 timed_out: result.timed_out,
                 exit_code: result.exit_code,
             };
-            output::emit_check_result(result, &mut Emitter::stdio(options))?;
+            output::emit_check_result(result, &mut Emitter::to_sink(options, sink))?;
             Ok(outcome)
         }
     }

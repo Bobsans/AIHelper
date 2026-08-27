@@ -538,6 +538,34 @@ Two findings that will shape the rest of the row:
 show: stderr rather than stdout, a failing exit code, the plugin dispatch path,
 and `--json` switching the form - which `print` decides from a process-global.
 
+**And then the harness the rest of the row needs.** `src/harness.rs`, behind a
+`harness` feature the package enables for itself as a dev-dependency, builds the
+registry the shipped binary builds, parses an argv with the production parser,
+dispatches it through the production manager, and hands back what the command
+rendered. What made it possible is `OutputSink`: every built-in domain built its
+own `Emitter::stdio` *after* parsing its arguments, so nothing above it could
+reach that decision. The sink is now the host's parameter, threaded through
+`BuiltinPlugin::invoke_into` and `PluginManager::invoke_credentialed_into`;
+production passes `Process` and nothing about it changes.
+
+That is the second seam of this kind found in two commits - the first was
+`AppError::print` - and both were left by phase 1's `Emitter` row, which moved
+the *rendering* into one place and left the *sink* as the process. Neither was
+visible from the `Emitter` side; both were only visible from a test that wanted
+to read what a command produced.
+
+`file.rs` is the worked example: one helper, `file_json`, was the choke point
+for thirteen of its tests, so replacing that single function moved all thirteen
+in process, and six refusal tests followed. Twenty-seven of its thirty-four
+spawns remain, and the rest of the row is that same work file by file - which is
+now mechanical rather than blocked.
+
+One hazard the change introduced and a test caught immediately: the plugin trait
+now has two pairs of entry points, and a fake that overrode the old
+`invoke_observed` had its outcome silently dropped once the runtime started
+calling `invoke_observed_into`. The doc on each now says which of the pair is
+the override point.
+
 ## Cross-cutting invariants
 
 Restating, because every phase is constrained by them:

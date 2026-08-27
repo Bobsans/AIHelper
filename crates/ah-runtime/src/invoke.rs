@@ -135,6 +135,22 @@ impl PluginManager {
         globals: GlobalOptionsWire,
         credentials: &BTreeMap<String, String>,
     ) -> Result<InvocationObservation, RuntimeError> {
+        self.invoke_credentialed_into(domain, argv, globals, credentials, &OutputSink::Process)
+    }
+
+    /// The same invocation, with the host choosing where a built-in's output
+    /// goes.
+    ///
+    /// A dynamic plugin ignores the sink: its text comes back in the response
+    /// and the host renders that itself.
+    pub fn invoke_credentialed_into(
+        &self,
+        domain: &str,
+        argv: Vec<String>,
+        globals: GlobalOptionsWire,
+        credentials: &BTreeMap<String, String>,
+        sink: &OutputSink,
+    ) -> Result<InvocationObservation, RuntimeError> {
         let domain = domain_key(domain);
         let request = InvocationRequest {
             domain: domain.clone(),
@@ -157,7 +173,7 @@ impl PluginManager {
             }
             let required_tools = plugin.required_tools(&request);
             preflight_required_tools(&request, &required_tools)?;
-            return Ok(plugin.invoke_observed(&request));
+            return Ok(plugin.invoke_observed_into(&request, sink));
         }
 
         Err(RuntimeError::DomainNotFound(domain))

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 
 pub mod rules;
 
@@ -50,7 +50,11 @@ fn current_directory() -> PathBuf {
     PathBuf::from(".")
 }
 
-pub fn execute(args: ProjectArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(
+    args: ProjectArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     let rebase = |mut path_args: ProjectPathArgs| {
         if let Some(cwd) = options.cwd.as_deref() {
             path_args.path = rebase_path(cwd, &path_args.path);
@@ -58,9 +62,9 @@ pub fn execute(args: ProjectArgs, options: &GlobalOptions) -> Result<(), AppErro
         path_args
     };
     match args.command {
-        ProjectCommand::Detect(path_args) => execute_detect(rebase(path_args), options),
-        ProjectCommand::Commands(path_args) => execute_commands(rebase(path_args), options),
-        ProjectCommand::Version(path_args) => execute_version(rebase(path_args), options),
+        ProjectCommand::Detect(path_args) => execute_detect(rebase(path_args), options, sink),
+        ProjectCommand::Commands(path_args) => execute_commands(rebase(path_args), options, sink),
+        ProjectCommand::Version(path_args) => execute_version(rebase(path_args), options, sink),
     }
 }
 
@@ -219,17 +223,29 @@ fn descriptor(id: &str, title: &str, description: &str, output_schema: Value) ->
     )
 }
 
-fn execute_detect(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
+fn execute_detect(
+    args: ProjectPathArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     let output = domain::run_detect(args)?;
-    output::emit_detect(output, &mut Emitter::stdio(options))
+    output::emit_detect(output, &mut Emitter::to_sink(options, sink))
 }
 
-fn execute_commands(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
+fn execute_commands(
+    args: ProjectPathArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     let output = domain::run_commands(args)?;
-    output::emit_commands(output, &mut Emitter::stdio(options))
+    output::emit_commands(output, &mut Emitter::to_sink(options, sink))
 }
 
-fn execute_version(args: ProjectPathArgs, options: &GlobalOptions) -> Result<(), AppError> {
+fn execute_version(
+    args: ProjectPathArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     let output = domain::run_version(args, options.limit)?;
-    output::emit_version(output, &mut Emitter::stdio(options))
+    output::emit_version(output, &mut Emitter::to_sink(options, sink))
 }

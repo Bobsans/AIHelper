@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use ah_error::AppError;
-use ah_output::{Emitter, GlobalOptions};
+use ah_output::{Emitter, GlobalOptions, OutputSink};
 
 #[derive(Debug, Args)]
 pub struct SearchArgs {
@@ -110,7 +110,11 @@ pub(crate) mod output;
 
 mod domain;
 
-pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError> {
+pub fn execute(
+    args: SearchArgs,
+    options: &GlobalOptions,
+    sink: &OutputSink,
+) -> Result<(), AppError> {
     let cwd = options.cwd.clone();
     let result = match args.command {
         SearchCommand::Text(mut text_args) => {
@@ -122,7 +126,7 @@ pub fn execute(args: SearchArgs, options: &GlobalOptions) -> Result<(), AppError
             domain::execute_files(files_args, options.limit)?
         }
     };
-    output::emit(result, &mut Emitter::stdio(options))
+    output::emit(result, &mut Emitter::to_sink(options, sink))
 }
 
 pub fn command_catalog() -> CommandCatalog {
