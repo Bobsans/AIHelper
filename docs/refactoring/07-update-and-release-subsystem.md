@@ -140,9 +140,44 @@ A user or an agent must be able to tell that an invocation was consumed by recov
   Any change to the handoff protocol or journal format needs a compatibility window
   and explicit tests for both directions. This is the highest-risk item in the whole
   program; treat step 5 as a separate release with its own acceptance run.
-- **The journal is on-disk state that survives across versions.** Renaming Rust
+
+  **Half tested now, and the untested half is named.** The helper validates its
+  arguments *by position*, so the contract is an exact 14-element command line
+  and not a set of flag names.
+  `crates/ah-update-helper/tests/handoff_contract.rs` freezes it: all three
+  operations parse it, a renamed flag at any of the six positions is refused, a
+  swapped pair is refused, and the three values the helper acts on rather than
+  copies - the inherited handle, the event name, the parent pid - are each
+  refused when malformed.
+
+  That covers *an older `ah` driving today's helper*, because today's parser
+  runs. The other direction is not covered: `ah_updater::activate`,
+  `::recovery` and `::handoff` each build the argv from literals, so a change
+  there is caught by review alone. The fix is for the emitters and the parser to
+  take the order from one list; it is small, and it is the remaining work on
+  this row.
+- ~~**The journal is on-disk state that survives across versions.** Renaming Rust
   modules must not change serialized field names or the `TransactionStateV1`
-  discriminants. Add a fixture-based compatibility test before step 1.
+  discriminants. Add a fixture-based compatibility test before step 1.~~
+  **(done, late rather than before step 1.)**
+  `crates/ah-updater-core/tests/wire_compatibility.rs` freezes the v1 wire form
+  of the plan, the journal and the helper self-check as fixtures, and covers the
+  two directions differently because they are not the same kind of claim:
+
+  - *Reading what an older release wrote* is a real test - the fixtures are
+    parsed and validated by today's types.
+  - *Writing what an older release can read* cannot run the old code, so it is a
+    byte comparison. Both types carry `deny_unknown_fields`, so an older reader
+    **rejects** a document with a field it does not know. The rule that follows
+    is strict, and the test states it: a new field has to be
+    `skip_serializing_if` so it is absent when unset. The upgrade fixture proves
+    the three fields added since v1 - `operation`, `managed_mcp_was_running`,
+    `managed_mcp_previous_instance_id` - are all absent from an ordinary plan,
+    which is why v1 readers still accept one.
+
+  Every `TransactionStateV1` discriminant and every `ManagedFileOperationV1` tag
+  has its spelling pinned, because recovery dispatches on them and a rename
+  would strand a transaction rather than fail loudly.
 - **Do not weaken verification while deduplicating it.** The union of all three
   implementations is the required behavior, not the intersection; enumerate the
   checks each site performs before merging them.

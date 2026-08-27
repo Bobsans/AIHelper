@@ -308,7 +308,7 @@ Only now is this cheap.
 | ~~Platform-neutral `ServiceSpec` + `ServiceScheduler`; Windows adapter as a projection~~ **(done)** | 06     |
 | ~~`SystemdUserScheduler`~~ **(done)**, `LaunchdScheduler`                            | 06     |
 | ~~`Forge` abstraction~~; **collapse GitHub/GitLab duplication into a shared core** *(the two duplicated loops done; see below)* | 02     |
-| Cross-version updater compatibility fixtures                                         | 07, 08 |
+| ~~Cross-version updater compatibility fixtures~~ **(on-disk done; the handoff argv half done)** | 07, 08 |
 | Convert the integration suite to a deliberate thin contract layer                    | 08     |
 
 **Exit criterion:** the managed service runs on three platforms with one lifecycle
@@ -421,7 +421,25 @@ Two smaller things worth keeping:
   concurrent process take a second "exclusive" lease. Windows has no such files
   because its lease is a named mutex. Recorded in group 06 rather than fixed.
 
-`LaunchdScheduler` and macOS acceptance are what remain of this row. It is
+**The cross-version fixtures landed, and the two directions turned out to need
+different kinds of test.** Reading what an older release wrote is a real test:
+the frozen v1 plan, journal and helper self-check are parsed and validated by
+today's types. Writing what an older release can read cannot run the old code,
+so it is a byte comparison against the same fixtures - and it is `deny_unknown_
+fields` that makes that the right test. An older reader *rejects* a document
+carrying a field it does not know, so the rule is that every field added since
+v1 must be `skip_serializing_if`. The upgrade fixture proves all three of them
+are absent from an ordinary plan today.
+
+The command-line handoff is the more fragile contract, because the helper
+validates by position: the frozen argv test refuses a renamed flag at any of the
+six positions and a swapped pair. It covers an older `ah` driving today's
+helper. The other direction is not covered and is recorded rather than glossed:
+the three emitters build the argv from literals, so a change there is caught by
+review alone until they and the parser take the order from one list.
+
+`LaunchdScheduler` and macOS acceptance are what remain of the portability row.
+It is
 deliberately not attempted here: there is no macOS to run `launchctl` against,
 and an unverified service manager is worse for a macOS user than the honest
 refusal they get today. What can land without a Mac is the plist projection,

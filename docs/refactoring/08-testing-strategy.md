@@ -130,7 +130,9 @@ down from 7.6k.
 5. Replace env-var test hooks with injected ports as `sdk::process` lands.
 6. Convert integration tests to in-process tests domain by domain, deleting the
    subprocess equivalents only once the in-process version asserts strictly more.
-7. Add cross-version updater fixtures (v1.4 journal → current recovery, and back).
+7. ~~Add cross-version updater fixtures (v1.4 journal → current recovery, and
+   back).~~ **(done for the on-disk formats, half done for the command line;
+   see group 07's risk list for exactly which half.)**
 8. ~~Add a CI job that regenerates `docs/reference` and fails on diff.~~ **(done as a
    drift test; generating it would rewrite prose)**
 
