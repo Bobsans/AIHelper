@@ -21,5 +21,10 @@ chrono.workspace = true
 fs2.workspace = true
 serde_json.workspace = true
 
+# The log file is opened with O_NOFOLLOW, so a symlink planted at its path
+# cannot redirect the write.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

@@ -122,6 +122,7 @@ dependencies = [
  "ah-runtime",
  "chrono",
  "fs2",
+ "libc",
  "serde_json",
  "tempfile",
 ]
@@ -155,6 +156,7 @@ dependencies = [
 name = "ah-platform"
 version = "1.4.0"
 dependencies = [
+ "libc",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -320,6 +322,7 @@ dependencies = [
  "ah-updater",
  "ah-updater-core",
  "chrono",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -448,7 +451,6 @@ dependencies = [
  "dialoguer",
  "fs2",
  "jsonc-parser",
- "libc",
  "predicates",
  "reqwest",
  "schemars",

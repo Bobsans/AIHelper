@@ -1,4 +1,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
+// Off Windows this crate compiles but cannot run: the update handoff is a
+// Windows mechanism, and every entry point refuses before it reaches the
+// helpers below - see `bounded_process`'s stub. Those helpers being unreachable
+// there is the design rather than an oversight, so the two lints that report it
+// are relaxed for that build only. On Windows, where the code is live, both
+// still apply.
+#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
 
 pub mod activation_command;
 #[cfg(windows)]

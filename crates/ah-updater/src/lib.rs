@@ -8,6 +8,13 @@
 //! The order of the steps is the safety argument: nothing is trusted until it
 //! is verified, nothing is replaced until a backup exists, and every state a
 //! crash can leave is one the recovery path can name.
+//!
+//! Off Windows an upgrade refuses with `UnsupportedPlatform` before it reaches
+//! any of that, so activation, installation and recovery are unreachable there
+//! by construction. The two lints that report it are relaxed for that build
+//! only; on Windows, where the code is live, both still apply.
+
+#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
 
 pub mod activate;
 pub mod candidate;

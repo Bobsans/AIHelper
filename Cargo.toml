@@ -67,6 +67,7 @@ command-group = "5.0.1"
 ed25519-dalek = "3"
 fs2 = "0.4.3"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+libc = "0.2.185"
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
 schemars = "1.2.2"
 semver = "1"
@@ -89,7 +90,6 @@ clap = { workspace = true, features = ["string"] }
 console = "0.16.4"
 dialoguer = "0.12.0"
 jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
-libc = "0.2.185"
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true

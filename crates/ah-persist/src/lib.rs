@@ -29,7 +29,9 @@ use ah_error::AppError;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const STALE_LOCK_AGE: Duration = Duration::from_secs(300);
-#[cfg(windows)]
+/// How long a replace waits for a reader to let go. Only Windows refuses a
+/// rename over an open file, so only there does the wait ever elapse - but the
+/// value is passed on every platform, because `replace_file` is not gated.
 const REPLACE_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub fn transaction<T>(

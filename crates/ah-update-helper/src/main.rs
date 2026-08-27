@@ -1,4 +1,8 @@
 #![forbid(unsafe_code)]
+// Off Windows `HandoffLease` is a unit stub with nothing to close, so the
+// `drop` that releases the inherited lock handle has nothing to release and
+// clippy says so. The call is the release point on the platform where it runs.
+#![cfg_attr(not(windows), allow(clippy::drop_non_drop))]
 
 use std::{env, io, process::ExitCode};
 
