@@ -167,15 +167,163 @@ the port has `cfg`.
    and PATH+PATHEXT resolution (three, which disagreed - one defaulted to
    `.exe` alone when `PATHEXT` was unset, and sorted its candidates
    alphabetically, so a `.bat` shim would beat a real `.exe`).
-3. Introduce `ServiceSpec` + `ServiceScheduler`; reimplement `WindowsTaskScheduler`
-   as a projection. The lifecycle tests already use fake schedulers, so this step is
-   well covered from day one.
-4. Remove the `cfg(windows)` gates from `lifecycle::execute` and the update helpers;
-   route the unsupported case through `UnsupportedScheduler` so the error text stays
-   identical on non-Windows.
-5. Add `SystemdUserScheduler`, then `LaunchdScheduler`; add `macos-latest` to CI.
-6. Make `ah-mcp-service` (the supervisor binary) Windows-only *at the build level*
-   (a target-gated `[[bin]]`), rather than compiling a stub that exits 1.
+3. ~~Introduce `ServiceSpec` + `ServiceScheduler`; reimplement
+   `WindowsTaskScheduler` as a projection.~~ **(done)** `spec.rs` holds the
+   neutral model, `scheduler.rs` the port, `windows_task.rs` the projection and
+   the 27-property comparison, and `windows_scheduler.rs` only the COM calls.
+   Three things the sketch above got wrong, each for the same reason - it was
+   written from the outside:
+
+   - **The five-method trait would have narrowed a safety check.**
+     `install/observe/start/stop/uninstall` cannot say "stop the one instance
+     whose id is X and whose engine pid is Y", which is how the lifecycle
+     avoids terminating a process it has not identified. The port kept its six
+     operations; what became neutral is their *types*.
+   - **Drift belongs to the adapter, behind an associated type.** Comparing a
+     desired `ServiceSpec` against an observation would only ever see the
+     properties the neutral model happens to name - six of twenty-seven. So
+     `ServiceScheduler::Native` carries the platform's own full reading,
+     `drift()` compares it against the adapter's own projection, and the
+     lifecycle only ever sees `Vec<DriftEntry>`.
+   - **`identity()` was the change that mattered.** The lifecycle asked Windows
+     who the current user was in five places (`current_user_sid`), which is
+     what actually pinned it to one platform - not the scheduler trait, which
+     was already generic. Asking the adapter instead is what let the tests
+     move.
+
+   The projection is data, not COM, so it compiles and is tested everywhere.
+   `command_line` reproduces the registered argument string byte for byte from
+   a `Vec<String>` by quoting only what could be re-split; the byte-identical
+   task the risk list demands is asserted directly, on any platform.
+4. ~~Remove the `cfg(windows)` gates from `lifecycle::execute`; route the
+   unsupported case through `UnsupportedScheduler`~~ **(done)** `lifecycle/`
+   went from 57 `cfg` attributes to none, and `ah-service` as a whole from 72
+   to 17 - `paths.rs`'s Windows API calls, and the one alias that names this
+   platform's adapter. The unsupported error text and code are unchanged: they
+   now come from `scheduler::unsupported_platform`, which the non-Windows
+   `ServicePaths::discover` also uses, so the four copies of that message
+   became one.
+
+   `ai/managed.rs` lost four of its five gates the same way - by asking
+   `is_supported()` for a value rather than branching at compile time. Its own
+   `AI_MANAGED_UNSUPPORTED` stayed: it is a different released diagnostic from
+   the scheduler's, and collapsing `detect()` naively would have changed which
+   code a non-Windows `ah ai install --transport managed` reports.
+
+   **The lifecycle's 57 tests now run on every platform.** They drove fake
+   schedulers already, but every one was `#[cfg(windows)]`, because `install`
+   reached past the fake for the user's SID. That is the acceptance criterion's
+   real content, and it is what proves the layer above the port is neutral: the
+   suite also compiles and passes with `UnsupportedScheduler` substituted for
+   the Windows adapter.
+
+   The update helpers keep their gates. They are `ah-updater`'s, the updater is
+   Windows-only as a whole, and a second implementation of `ServiceGuard` is
+   still the dead code phase 3 declined to write.
+5. ~~Add `SystemdUserScheduler`~~ **(done)**, then `LaunchdScheduler`; add
+   `macos-latest` to CI. **(the matrix already has macOS; see the acceptance
+   criteria below.)**
+
+   `systemd_unit.rs` is the projection and the comparison, data only and tested
+   on every platform; `systemd_scheduler.rs` runs `systemctl --user`. The split
+   is `windows_task` / `windows_scheduler` again, for the same reason.
+
+   Four design answers the Windows side did not have to give:
+
+   - **The unit file is the registration.** Windows hands a definition to the
+     Task Scheduler and reads it back through COM; systemd reads a file we own,
+     so the readback is that file - located through the manager's
+     `FragmentPath`, which is what proves the manager loaded *ours* rather than
+     one shadowing it from `/etc/systemd/user`.
+   - **The ownership marker lives in an `[X-AIHelper]` section.** systemd
+     ignores a section whose name begins with `X-` outright:
+     `systemd-analyze verify` exits 0 with no output and the journal is silent.
+     A marker in an unknown *key* would have produced a warning on every load.
+   - **`InvocationID` is the instance identity.** The lifecycle stops "the
+     invocation whose id is X and whose main pid is Y", and systemd's
+     per-start 128-bit `InvocationID` answers that exactly. This is the second
+     time the port's shape was decided by the stop path, and the second time it
+     turned out to fit.
+   - **`NeedDaemonReload` is drift.** A file the manager has not re-read is a
+     unit whose behaviour differs from what the file says, which the Windows
+     model has no equivalent for - the Task Scheduler holds one copy. It is a
+     compared property rather than a special case.
+
+   **The second adapter found three places where the "neutral" layer was still
+   Windows-shaped.** All three were invisible while there was one adapter:
+
+   | Where | What it did | Fix |
+   |-------|-------------|-----|
+   | `CurrentPointer::validate` | required `task_path` to start with `\`, so no unit name could ever be persisted | `scheduler::validate_registration_identity`, one rule per platform: rooted on Windows, a single path component elsewhere |
+   | `status::is_registration_drift` | a list of the ten field prefixes *Windows* produces, so `service.*` and `unit_file.*` were classified as not-registration drift - status said `installed` for a unit somebody had edited | the two exceptions (`lifecycle.`, `runtime.`) named instead, which says the same thing about Windows and cannot go stale |
+   | `ai::managed::is_supported` | `cfg!(windows)` | `ServiceScheduler::SUPPORTED`, an associated const only `UnsupportedScheduler` sets to false - so a platform gaining an adapter gains `ai install --transport managed` without an edit |
+
+   The middle one is the one worth remembering: a *classifier* keyed on a
+   platform's vocabulary reports the wrong status rather than failing, so
+   nothing would have caught it except a second vocabulary.
+
+   **The lifecycle tests now wear the host's projection.** The scripted
+   scheduler's `Native` is `TaskSpec` on Windows and `UnitSpec` elsewhere, and
+   the three tests that used to poke a Windows field ask the harness to
+   "introduce drift" and report which fields it changed. So the suite exercises
+   the real identity rule, the real registration shape and the real comparison
+   of whichever platform CI is on, and no test names a platform's property any
+   more.
+
+   One deliberate difference on Unix: uninstall leaves `instance.lock` and
+   `lifecycle.lock` behind. They are the lease, held while the uninstall runs;
+   unlinking a file whose `flock` you hold would let a concurrent process create
+   a new one and take a second "exclusive" lease. Windows has no such files
+   because its lease is a named mutex.
+
+   Verified against a real user manager (systemd 255): install, idempotent
+   reinstall, restart, stop, start, drift detection after a hand-edited
+   `Restart=`, repair by reinstall, uninstall, idempotent uninstall, and a
+   foreign unit at our name - which is refused with
+   `MCP_SERVICE_TASK_CONFLICT` and left untouched.
+
+   **Four things had to be fixed before this could be started, and all four
+   were found by building the workspace on Linux for the first time.** The CI
+   matrix has covered `ubuntu-latest` and `macos-latest` since phase 0, so
+   these were failing there and nobody had looked; everyone develops on
+   Windows.
+
+   | Defect                                                                    | Where it came from |
+   |---------------------------------------------------------------------------|--------------------|
+   | `libc::O_NOFOLLOW` used with no `libc` dependency                          | phase 3's `ah-observability` extraction: the code moved, the root crate's dependency did not |
+   | `REPLACE_RETRY_TIMEOUT` gated `#[cfg(windows)]` but used unconditionally    | phase 3's `ah-persist` extraction |
+   | 35 dead-code and unused-import errors under `-D warnings` in `ah-update-helper`, 71 in `ah-updater` | both crates are Windows-only in substance; only their entry points were gated |
+   | `FileLease` implemented for Windows only                                   | it always was - it is the *reason* the lifecycle tests could not run elsewhere |
+
+   The last one is the substantive one. `ah_platform::lease` now has a Unix
+   implementation: `flock` on a file, which the kernel releases when the
+   descriptor closes - the same "owned by the holder, gone when it dies"
+   property the Windows named mutex was chosen for, reached the other way
+   round. Two consequences worth naming:
+
+   - **Which of path and name is the identity now differs by platform.** On
+     Windows the mutex name is (two paths naming one mutex are one lease), on
+     Unix the path is. Every caller derives the name from the path, so the two
+     agree in practice; the module documentation says so rather than leaving it
+     to be discovered.
+   - **Taking a lock file writes, and `status` must not.** A lease whose
+     directory does not exist cannot be held, so `lock::is_free` answers
+     without opening anything in that case. The read-only-status test caught
+     this immediately, on the first Linux run - it had been asserting a real
+     invariant that Windows could not violate.
+
+   With those fixed, the 43 platform-neutral lifecycle tests pass on Linux, and
+   `cargo clippy --workspace --all-targets -- -D warnings` and the MSRV check
+   are clean there. What is left is three integration failures, recorded in
+   group 08.
+6. ~~Make `ah-mcp-service` (the supervisor binary) Windows-only *at the build
+   level* (a target-gated `[[bin]]`)~~ **- not possible as written.** Cargo has
+   no `[target.'cfg(windows)'.bin]`; a `[[bin]]` is built for every target.
+   The two workarounds are worse than the stub: `required-features` would let
+   an ordinary `cargo build` on Windows omit the worker and break
+   `require_managed_service_executable` at install time, and a separate crate
+   is still built by the workspace. The `main` that exits 1 stays, and this row
+   is closed rather than carried.
 
 ## Risks and invariants
 
@@ -192,7 +340,21 @@ the port has `cfg`.
 
 ## Acceptance criteria
 
-- `lifecycle::execute` contains no `cfg` attributes.
-- A second scheduler adapter exists and passes the same lifecycle test suite.
-- One module resolves every AIHelper path; no plugin reads `XDG_*` or `APPDATA`.
-- CI covers Linux, Windows and macOS.
+- ~~`lifecycle::execute` contains no `cfg` attributes.~~ **(met)** Nor does
+  anything else in `lifecycle/`.
+- ~~A second scheduler adapter exists and passes the same lifecycle test
+  suite.~~ **(met.)** `SystemdUserScheduler` is the second working adapter, and
+  the suite runs against the host's own projection rather than a Windows-shaped
+  fake - so on Linux CI it is the systemd identity, unit and comparison under
+  test. `UnsupportedScheduler` remains the third, for platforms with no
+  implementation.
+- ~~One module resolves every AIHelper path; no plugin reads `XDG_*` or
+  `APPDATA`.~~ **(met in phase 3.)**
+- CI covers Linux, Windows and macOS. **The matrix has since phase 0; what was
+  missing is that it passed.** Linux and Windows are now clean end to end -
+  format, clippy `-D warnings`, MSRV, build and the whole suite, with the
+  managed service exercised against a real systemd user manager. macOS is the
+  one platform still taken on trust: it is Unix, so the lease and the lifecycle
+  suite should behave as Linux does, and what is left unverified is its path
+  canonicalisation, `keyring`'s `apple-native`, and - once
+  `LaunchdScheduler` exists - launchd itself.

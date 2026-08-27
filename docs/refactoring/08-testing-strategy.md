@@ -143,14 +143,45 @@ down from 7.6k.
 - **Fuzz targets must not become required CI blockers** on first introduction; run
   them nightly until stable, then gate.
 
-## Open flakes
+## Non-Windows failures in the process-level suite ~~(open)~~ **(fixed)**
 
-- `ah_plugin_ollama::tests::invalid_json_response_has_stable_error_code` failed
-  twice during full-workspace runs and has not been reproduced since, in either
-  direction: fourteen runs passed after the mock server's accept deadline was
-  raised, and eight more passed after reverting it. The failing assertion was
-  never captured, so the cause is unknown. If it recurs, capture the actual
-  `error_code` before changing anything.
+Found by running the suite on Linux for the first time (see group 06, migration
+step 5). **None of the three was a defect in the code under test.** All three
+were the suite itself assuming the platform its author was on, which is the
+argument for step 6 above stated by example.
+
+| Test | What it turned out to be |
+|------|--------------------------|
+| `ai::ai_status_waits_for_a_slow_agent_probe` | The test replaces `PATH` with the project directory so only its shim is findable - and its shim then calls `sleep`, which lives on the `PATH` it just removed. `sh` reported the failure to a stderr nobody read, skipped the wait, and printed `[]`; `ah` correctly waited for a probe that returned in 3 ms. The Windows arm had never had the problem because it names `ping.exe` absolutely. The shim now sets its own `PATH`. |
+| `mcp::http_transport_rejects_hostile_host_origin_and_oversized_body` | Both outcomes are correct refusals: answer `413`, or stop reading and close - and the second is the better one, because draining an attacker's body is the denial of service. Which happens depends on whether the socket buffers swallow the body before the close arrives. The test now accepts either and adds the assertion that was actually missing: the server still answers afterwards, which is what distinguishes a refusal from a crash. |
+| `postgres::postgres_ping_uses_vault_credential_without_exposing_it` | `cargo test` has no reason to *link* a `cdylib`-only member - nothing depends on it at compile time - so it produced only the metadata. The test was passing on developer machines because a `cargo build` had happened at some point, which means it was asserting on ambient state. CI now builds the workspace before testing, because the suite genuinely needs the plugin libraries on disk. |
+
+Two things worth keeping from this. The first test had been failing on two of
+the three CI platforms since it was written, and its failure message
+("status returned before the slow probe") pointed at the product rather than at
+itself. And the third was the suite's dependency on ambient build state, which
+no assertion had ever stated: `cargo test --workspace --all-targets` alone is
+not enough to run this suite.
+
+## Open flakes ~~(one open)~~ **(the ollama flake is fixed)**
+
+The Ollama plugin's mock server set its listener non-blocking and never put the
+*accepted* socket back into blocking mode. **On Windows an accepted socket
+inherits the listener's non-blocking flag; POSIX does not**, so the first
+`read_line` raced the client's request bytes and failed with `WouldBlock` - only
+ever on Windows, and only when the timing went the wrong way.
+
+It reproduced during this phase as
+`ask_posts_generate_request_and_returns_json_output`, which is why the earlier
+report named a different test: any test using that mock server could lose the
+race. The two lines that fix it were **already present in the GitHub and GitLab
+plugins' mock servers** - somebody hit this before, fixed their copy, and had no
+way to carry it back. Three hand-written copies of `MockServer`, one missing a
+fix, is the same lesson as group 02: the next candidate for the SDK is the test
+harness itself.
+
+The earlier note said the cause was unknown and that the accept deadline had
+been raised and reverted; neither touched the real cause.
 
 ## Acceptance criteria
 

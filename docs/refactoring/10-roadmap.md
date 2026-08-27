@@ -305,14 +305,166 @@ Only now is this cheap.
 
 | Work                                                                                 | Group  |
 |--------------------------------------------------------------------------------------|--------|
-| Platform-neutral `ServiceSpec` + `ServiceScheduler`; Windows adapter as a projection | 06     |
-| `SystemdUserScheduler`, `LaunchdScheduler`                                           | 06     |
-| `Forge` abstraction; collapse GitHub/GitLab duplication into a shared core           | 02     |
+| ~~Platform-neutral `ServiceSpec` + `ServiceScheduler`; Windows adapter as a projection~~ **(done)** | 06     |
+| ~~`SystemdUserScheduler`~~ **(done)**, `LaunchdScheduler`                            | 06     |
+| ~~`Forge` abstraction~~; **collapse GitHub/GitLab duplication into a shared core** *(the two duplicated loops done; see below)* | 02     |
 | Cross-version updater compatibility fixtures                                         | 07, 08 |
 | Convert the integration suite to a deliberate thin contract layer                    | 08     |
 
 **Exit criterion:** the managed service runs on three platforms with one lifecycle
 test suite; a new forge plugin is a few hundred lines.
+
+**The scheduler port landed, and the seam that was sealed shut was not the one
+group 06 named.** `LifecycleService<S, R>` was already generic; what pinned it
+to Windows was that it asked Windows who the user was, five times, through
+`current_user_sid`. `ServiceScheduler::identity` replaced those calls, and the
+lifecycle's 57 tests - which already drove fakes - lost the `#[cfg(windows)]`
+that had kept them from ever running anywhere else. The whole suite also
+compiles and passes with `UnsupportedScheduler` in place of the Windows
+adapter, which is the check that the layer above the port is genuinely neutral.
+
+`lifecycle/` went from 57 `cfg` attributes to zero and `ah-service` from 72 to
+17; the remainder is `paths.rs` calling Windows APIs plus the one alias that
+names this platform's adapter.
+
+**Then the row's second half turned out to be blocked on Linux not building at
+all,** which only became visible once the lifecycle tests stopped being
+`#[cfg(windows)]` and someone actually ran them there. Four defects, three of
+them left by phase 3's extractions and all four sitting in a CI matrix that has
+covered Linux and macOS since phase 0:
+
+| Defect | Fix |
+|--------|-----|
+| `ah-observability` used `libc::O_NOFOLLOW` with no `libc` dependency | `libc` became a workspace dependency, declared by the two crates that use it |
+| `ah-persist`'s `REPLACE_RETRY_TIMEOUT` was `cfg(windows)` but used unconditionally | ungated; only Windows ever waits, but the value is always passed |
+| 106 dead-code and unused-import errors under `-D warnings` across `ah-update-helper` and `ah-updater` | one `cfg_attr(not(windows), allow(...))` per crate, with the reason: off Windows both refuse before reaching any of it |
+| `FileLease` was Windows-only, so every lifecycle operation failed off Windows | `flock` on Unix, which the kernel releases with the descriptor - the property the named mutex was chosen for |
+
+The lease is the one with consequences. Taking a lock file *writes*, and
+`status` is read-only - so `lock::is_free` answers "nobody holds it" without
+opening anything when the lease's directory does not exist. The read-only-status
+test caught that on the first Linux run, which is the argument for the whole
+exercise: the invariant was already written down, and only a platform where the
+lease is a file could violate it.
+
+**Linux is now clean end to end** - `cargo fmt --check`, `cargo clippy
+--workspace --all-targets -- -D warnings`, the MSRV check, `cargo build
+--workspace`, and the whole test suite including all 207 process-level tests. 43
+lifecycle tests run there where none did before.
+
+The last three failures were in the process-level suite and none was a defect in
+the code under test; each is recorded in group 08 with what it turned out to be.
+The pattern across all three: a test that asserts about the product while
+actually depending on its author's platform - a shim that calls `sleep` after
+deleting `PATH`, a client that assumes a refusal always arrives as a status
+code, and an assertion on a build artifact the test's own command does not
+produce. CI now runs `cargo build --workspace` before `cargo test`, because the
+suite loads plugins as dynamic libraries and `cargo test` never links a
+`cdylib`-only member.
+
+Three notes worth keeping about the port itself, because each is a place the
+target design had to be argued with rather than transcribed:
+
+- **The proposed five-method trait would have narrowed a safety check.**
+  `install/observe/start/stop/uninstall` cannot express "stop the instance whose
+  id is X and whose engine pid is Y", which is how a stop avoids terminating a
+  process it has not identified. Invariant 5 says security checks may be
+  deduplicated, never narrowed; the port kept all six operations and made their
+  *types* neutral instead.
+- **Drift had to become the adapter's, behind an associated type.** A generic
+  comparison of `ServiceSpec` against an observation sees only the properties
+  the neutral model names - six of the twenty-seven Windows compares. So
+  `Native` carries the platform's own reading, `drift()` compares it against
+  the adapter's own projection, and the lifecycle sees only `DriftEntry`.
+- **Cargo cannot target-gate a `[[bin]]`,** so the last migration step of group
+  06 is closed as impossible rather than carried: `required-features` would let
+  an ordinary Windows build omit the worker binary and fail at install time,
+  and a separate crate is still built. The stub `main` that exits 1 stays.
+
+The Windows task is byte-identical, asserted rather than assumed: the
+projection builds the argument string from a `Vec<String>` and a unit test pins
+the result, on any platform. No snapshot moved.
+
+**Then the second adapter landed, and it paid for the port twice over.** The
+managed MCP service now installs, starts, stops, restarts, reports drift and
+uninstalls on Linux as a systemd user unit - verified against a real user
+manager, not simulated. `systemd_unit.rs` is the projection and the comparison
+(data, tested on every platform), `systemd_scheduler.rs` runs
+`systemctl --user`, and the lifecycle above them did not change.
+
+What the second adapter was worth is what it found. Three places were still
+Windows-shaped while calling themselves neutral, and none could have been
+noticed with one adapter:
+
+| Where | What it did |
+|-------|-------------|
+| `CurrentPointer::validate` | required the persisted registration identity to start with `\`, so no unit name could be stored at all |
+| `status::is_registration_drift` | matched the ten field prefixes *Windows* produces, so a second adapter's drift was classified as not-registration drift and status reported `installed` for a unit somebody had edited |
+| `ai::managed::is_supported` | `cfg!(windows)`, so `ai install --transport managed` refused on a platform that now has a service |
+
+The middle one is the lesson: a classifier keyed on one platform's vocabulary
+does not fail when a second arrives, it answers wrongly. It is now expressed as
+the two exceptions rather than the ten matches, which says the same thing about
+Windows and cannot go stale when an adapter compares a new property. The third
+became `ServiceScheduler::SUPPORTED`, an associated const, so the next platform
+to gain an adapter gains the `ai` route with it.
+
+Two smaller things worth keeping:
+
+- **The lifecycle tests now wear the host's projection.** The scripted
+  scheduler's `Native` is `TaskSpec` on Windows and `UnitSpec` elsewhere, and
+  the three tests that poked a Windows field now ask the harness to introduce
+  drift and report which fields it changed. The suite tests whichever platform
+  CI is on, and no test names a platform's property.
+- **Unix uninstall leaves the two lock files.** They are the lease, held while
+  the uninstall runs; unlinking a file whose `flock` you hold would let a
+  concurrent process take a second "exclusive" lease. Windows has no such files
+  because its lease is a named mutex. Recorded in group 06 rather than fixed.
+
+`LaunchdScheduler` and macOS acceptance are what remain of this row. It is
+deliberately not attempted here: there is no macOS to run `launchctl` against,
+and an unverified service manager is worse for a macOS user than the honest
+refusal they get today. What can land without a Mac is the plist projection,
+and it has no consumer until the adapter exists.
+
+**The `Forge` row was started from the other end, and the row's own sketch
+turned out to be wrong.** A `trait Forge` with `issues()`/`logs()` describes the
+product surface, which is exactly where the two plugins genuinely differ -
+GitHub pages past pull requests and has a search API, GitLab has neither;
+GitHub unzips a log archive, GitLab streams a trace. Their `execute_issues`
+functions are thirty lines each and share almost no control flow.
+
+What was still duplicated, after phases 1-3 had taken out credentials, HTTP and
+rendering, was two loops, and both are now in the SDK:
+
+- `sdk::logs::scan_lines` - read a stream against a byte budget, strip the
+  runner's control sequences, keep the lines `--grep`/`--warnings-only` select,
+  stop at the line limit and report that it stopped. Fifty-five lines,
+  near-verbatim in both. The budget is a value, so GitHub spends one
+  `--max-expanded-bytes` across every archive entry; the failures are returned
+  rather than rendered, so each plugin keeps its own diagnostic codes.
+- `sdk::poll::until_ready` - the wait loop. **The two copies had drifted:**
+  GitLab re-checked the deadline after sleeping and GitHub did not, so
+  `github.run.wait` could issue one more request after `--timeout` had passed.
+
+239 lines left the two plugins and 161 came back, and both loops now have unit
+tests of their own. Two further findings:
+
+- **The state/status style tables were left alone, deliberately.** Same shape,
+  different vocabularies - `open` vs `opened`, `cancelled` vs `canceled`,
+  non-overlapping pending sets. Merging them would either lie about both forges
+  or narrow the styling, and the shared part is a six-line `match`. Recorded in
+  group 02 so the next reader does not "finish the job".
+- **The last of the cancellation row went with it:** five copies of
+  `cancelled_response`, differing only in the domain name and the one-line
+  summary, became one function in `ah_plugin_api::cancellation`.
+
+And a flake the program had written off got its cause: the Ollama mock server
+never put its *accepted* socket back into blocking mode, and on Windows an
+accepted socket inherits the listener's non-blocking flag while on POSIX it does
+not. The fix was already in the GitHub and GitLab mock servers - somebody hit it
+before and had no way to carry the fix back. Three hand-written `MockServer`
+copies, one missing a fix, is group 02's lesson applied to the test harness.
 
 ## Cross-cutting invariants
 

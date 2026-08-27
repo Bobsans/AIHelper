@@ -28,16 +28,25 @@ releases, CI runs and logs — with parallel, separately written code:
 | ~~ambient-token policy~~ | `credentials::TokenPolicy`, per-forge data only | |
 | ~~JSON request wrapper~~ | `ah_plugin_sdk::http::JsonApi`, shared with Ollama too | |
 | ~~response/error mapping~~ | `ah_plugin_sdk::http::JsonApi` | |
-| log/trace fetch with byte caps | `lib.rs:1902`, `lib.rs:2001` | `lib.rs:1827` |
+| ~~log/trace fetch with byte caps~~ | `ah_plugin_sdk::logs` | |
 | ~~ANSI stripping~~ | `ah_plugin_sdk::render` — **the two copies had diverged** | |
 | ~~error truncation~~ | `ah_plugin_sdk::render` | |
-| warning-line heuristic | `lib.rs:2091` | `lib.rs:2072` |
+| ~~warning-line heuristic~~ | `ah_plugin_sdk::logs`, byte-identical in both | |
+| ~~wait-for-completion loop~~ | `ah_plugin_sdk::poll` — **the two copies had diverged** | |
 | ~~success rendering~~ | `ah_plugin_sdk::render`, shared by all four plugins | |
-| state/status styling | `lib.rs:2305–2349` | `lib.rs:2428–2460` |
+| state/status styling — **kept separate, deliberately** | per-forge vocabulary | |
 | ~~manual example builder~~ | `ManualExample::new` in `ah-plugin-api`, shared with the host | |
 
 Two independent copies means two places to fix every credential-handling bug —
 and credential handling is exactly the code that must not diverge.
+
+**The state/status style tables are not duplication and were not merged.** The
+two `match` arms have the same shape but different *vocabularies*: GitHub says
+`open`, GitLab says `opened`; GitHub `cancelled`, GitLab `canceled`; their
+pending sets do not overlap. Sharing them would mean either a union table that
+lies about both forges or a narrower one that loses styling, and the shared part
+is a six-line `match` — not the cost. This is the same call as
+`credentials::TokenPolicy`: shared mechanism, per-forge data.
 
 ### 2.2 Cross-cutting concerns are copy-pasted, not provided
 
@@ -166,12 +175,49 @@ implementation, not a merged product surface.
    Add a shared test suite that runs against both.~~ **(done)** — the shared suite lives
    with the code it tests, in the SDK; each plugin keeps only the assertions about its
    own policy, and makes them against the policy value the plugin actually builds.
-3. Add the runtime cancellation token; migrate the three built-in domains and the
-   GitHub plugin; delete the globals.
+3. ~~Add the runtime cancellation token; migrate the three built-in domains and
+   the GitHub plugin; delete the globals.~~ **(done)** The five registries
+   became `ah_plugin_api::cancellation`, and the five `cancelled_response`
+   copies that went with them are now one function there too - they differed
+   only in the domain name and the one-line summary, both of which are
+   user-visible and stay each domain's own.
 4. ~~Add `sdk::process`; delete `AH_*_TEST_*` environment seams and rewrite those tests
    against the injected runner.~~ **(done by deletion; the seam had no tests)**
 5. Introduce `Forge` and migrate GitHub and GitLab behavior into `forge::core`,
    one command family at a time (issues → releases → pipelines/runs → logs).
+
+   **Started from the other end, and the sketch above needs correcting.** The
+   `trait Forge` with `issues()`/`pipeline_status()`/`logs()` describes the
+   *product surface*, which is where the two plugins genuinely differ - GitHub
+   pages past pull requests and has a search API, GitLab has neither; GitHub
+   unzips a log archive, GitLab streams a trace. Their `execute_issues`
+   functions are thirty lines each and share almost no control flow. Writing
+   that trait would have produced adapters that are longer than what they
+   replace.
+
+   What was actually duplicated, after phases 1-3 had already taken the
+   credentials, HTTP and rendering out, was two loops:
+
+   - **The log line scan** - read a stream against a byte budget, strip the
+     runner's terminal control sequences, keep the lines `--grep` or
+     `--warnings-only` selects, stop at the line limit and say so. Fifty-five
+     lines, near-verbatim in both. Now `sdk::logs::scan_lines`, with the budget
+     as a value so GitHub can spend one `--max-expanded-bytes` across every
+     archive entry, and with the failures returned rather than rendered so each
+     plugin keeps its own diagnostic codes and wording.
+   - **The wait loop** - ask, answer if terminal, give up at the deadline, sleep
+     until the next attempt or until cancelled. Now `sdk::poll::until_ready`.
+     **The two copies had drifted:** GitLab re-checked the deadline after
+     sleeping and GitHub did not, so `github.run.wait` could issue one more
+     request after `--timeout` had already passed. The shared loop checks, which
+     is what the flag promises.
+
+   Together: 239 lines out of the two plugins, 161 back in, and the two loops
+   have unit tests of their own for the first time - byte budgets, the line
+   limit, non-UTF-8 lines, a budget spanning several streams, and each of the
+   three wait outcomes. Releases and issues remain as they are; the honest
+   reading is that the 7.8k → 3.5k figure above counted duplication that
+   phases 1-3 have already removed.
 6. Adopt `sdk::render` in the host too; delete `render_plugins_table` column logic.
 
 ## Risks and invariants
@@ -190,7 +236,8 @@ implementation, not a merged product surface.
 ## Acceptance criteria
 
 - ~~No credential-handling code exists in more than one place.~~ **(met)**
-- No plugin defines its own cancellation registry.
+- ~~No plugin defines its own cancellation registry.~~ **(met)**, and none
+  defines its own cancellation *response* either.
 - No `AH_*_TEST_*` environment variable is read by production code paths.
 - A new plugin can be written without copying code from an existing plugin; the
   Ollama plugin serves as the reference and stays under ~400 lines.
