@@ -171,18 +171,7 @@ pub fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationResponse
 }
 
 fn cancelled_response(request: &TypedInvocationRequest) -> TypedInvocationResponse {
-    TypedInvocationResponse::error(CommandError::new(
-        Some("task".to_owned()),
-        Some(request.command.clone()),
-        "EXECUTION_CANCELLED",
-        "Task execution was cancelled",
-        format!(
-            "request '{}' was cancelled before handler execution",
-            request.context.request_id
-        ),
-        1,
-        false,
-    ))
+    ah_plugin_api::cancellation::cancelled_response("task", "Task execution was cancelled", request)
 }
 
 fn typed_execute(request: &TypedInvocationRequest) -> Result<domain::TaskResult, AppError> {

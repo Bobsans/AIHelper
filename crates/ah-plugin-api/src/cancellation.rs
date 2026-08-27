@@ -131,6 +131,35 @@ fn lock_unpoisoned() -> MutexGuard<'static, HashSet<String>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// The refusal a handler answers with when its request was cancelled before it
+/// ran.
+///
+/// Five domains wrote this out, differing only in the two strings below; the
+/// diagnostic code, the detail wording and the exit code are the contract and
+/// were identical in all five.
+///
+/// `domain` names the domain the command belongs to and `summary` is the
+/// one-line message the caller sees, which stays each domain's own wording.
+#[must_use]
+pub fn cancelled_response(
+    domain: &str,
+    summary: &str,
+    request: &crate::TypedInvocationRequest,
+) -> crate::TypedInvocationResponse {
+    crate::TypedInvocationResponse::error(crate::CommandError::new(
+        Some(domain.to_owned()),
+        Some(request.command.clone()),
+        "EXECUTION_CANCELLED",
+        summary,
+        format!(
+            "request '{}' was cancelled before handler execution",
+            request.context.request_id
+        ),
+        1,
+        false,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

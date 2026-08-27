@@ -968,6 +968,13 @@ mod tests {
         response: MockResponse,
         requests: &Arc<Mutex<Vec<CapturedRequest>>>,
     ) {
+        // On Windows an accepted socket inherits the listener's non-blocking
+        // mode, so the first read races the client's request bytes. POSIX does
+        // not inherit it, which is why this only ever failed on Windows - and
+        // why the same two lines are in the other two plugins' mock servers.
+        stream
+            .set_nonblocking(false)
+            .expect("accepted stream should be blocking");
         let mut reader = BufReader::new(stream.try_clone().expect("stream should clone"));
         let mut first_line = String::new();
         reader

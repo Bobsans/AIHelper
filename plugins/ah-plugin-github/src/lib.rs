@@ -1,13 +1,13 @@
 use std::{
     fs,
-    io::{BufRead, BufReader, Cursor, Read},
+    io::{BufReader, Cursor, Read},
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::{credentials, http, render};
+use ah_plugin_sdk::{credentials, http, logs, poll, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
@@ -1454,41 +1454,21 @@ fn wait_run(
     args: WaitRunArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let start = Instant::now();
-    let timeout = Duration::from_secs(args.timeout_secs.max(1));
-    let interval = Duration::from_secs(args.interval_secs.max(1));
-
-    loop {
-        let run = match get_run(context, args.run_id) {
-            Ok(value) => value,
-            Err(error) => return error,
-        };
-        if run.status == "completed" {
-            if args.fail_on_failure && run.conclusion.as_deref() != Some("success") {
-                return InvocationResponse::error(
-                    "GITHUB_RUN_FAILED",
-                    format!(
-                        "workflow run {} completed with conclusion {:?}",
-                        run.id, run.conclusion
-                    ),
-                );
-            }
-            let elapsed_secs = start.elapsed().as_secs();
-            let text = render_runs_text(std::slice::from_ref(&run), TextFormatter::stdout());
-            return render::render_success(
-                globals,
-                &WaitRunOutput {
-                    command: "github.run.wait",
-                    repository: context.repo.full_name(),
-                    run,
-                    elapsed_secs,
-                },
-                text,
-            );
-        }
-
-        let elapsed = start.elapsed();
-        if elapsed >= timeout {
+    let waited = poll::until_ready(
+        Duration::from_secs(args.timeout_secs.max(1)),
+        Duration::from_secs(args.interval_secs.max(1)),
+        || {
+            let run = get_run(context, args.run_id)?;
+            Ok(if run.status == "completed" {
+                poll::Poll::Ready(run)
+            } else {
+                poll::Poll::Pending
+            })
+        },
+    );
+    let run = match waited {
+        Ok(poll::Waited::Ready { value, elapsed }) => (value, elapsed.as_secs()),
+        Ok(poll::Waited::TimedOut) => {
             return InvocationResponse::error(
                 "GITHUB_RUN_TIMEOUT",
                 format!(
@@ -1497,15 +1477,35 @@ fn wait_run(
                 ),
             );
         }
-
-        let remaining = timeout - elapsed;
-        if ah_plugin_api::cancellation::wait_or_cancel(interval.min(remaining)) {
+        Ok(poll::Waited::Cancelled) => {
             return InvocationResponse::error(
                 "CANCELLED",
                 format!("workflow run wait {} was cancelled", args.run_id),
             );
         }
+        Err(error) => return error,
+    };
+    let (run, elapsed_secs) = run;
+    if args.fail_on_failure && run.conclusion.as_deref() != Some("success") {
+        return InvocationResponse::error(
+            "GITHUB_RUN_FAILED",
+            format!(
+                "workflow run {} completed with conclusion {:?}",
+                run.id, run.conclusion
+            ),
+        );
     }
+    let text = render_runs_text(std::slice::from_ref(&run), TextFormatter::stdout());
+    render::render_success(
+        globals,
+        &WaitRunOutput {
+            command: "github.run.wait",
+            repository: context.repo.full_name(),
+            run,
+            elapsed_secs,
+        },
+        text,
+    )
 }
 
 fn run_jobs(
@@ -1977,6 +1977,10 @@ fn github_response(
     api(context).send(method, path, body.as_ref())
 }
 
+/// The archive is downloaded whole, then each entry is scanned. Two budgets
+/// apply: `--max-body-bytes` to the compressed download and
+/// `--max-expanded-bytes` to everything read out of it, the latter spent across
+/// every entry rather than per entry.
 fn download_run_logs(
     context: &GithubContext,
     run_id: u64,
@@ -1998,10 +2002,13 @@ fn download_run_logs(
             format!("failed to open log archive for run {run_id}: {error}"),
         )
     })?;
-    let max_lines = line_limit.unwrap_or(usize::MAX);
-    let grep_lower = grep.map(str::to_lowercase);
+    let filter = logs::LineFilter {
+        grep,
+        warnings_only,
+        limit: line_limit,
+    };
+    let mut expanded = logs::ByteBudget::new(max_expanded_bytes);
     let mut matches = Vec::new();
-    let mut expanded_bytes = 0usize;
     for index in 0..archive.len() {
         let file = archive.by_index(index).map_err(|error| {
             InvocationResponse::error(
@@ -2014,66 +2021,40 @@ fn download_run_logs(
         }
         let file_name = file.name().to_owned();
         let mut reader = BufReader::new(file);
-        let mut line_bytes = Vec::new();
-        let mut line_number = 0usize;
-        loop {
-            line_bytes.clear();
-            let remaining = max_expanded_bytes.saturating_sub(expanded_bytes);
-            let read = reader
-                .by_ref()
-                .take(remaining.saturating_add(1) as u64)
-                .read_until(b'\n', &mut line_bytes)
-                .map_err(|error| {
-                    InvocationResponse::error(
-                        "GITHUB_RESPONSE_INVALID",
-                        format!("failed to read log archive entry {index}: {error}"),
-                    )
-                })?;
-            if read == 0 {
-                break;
-            }
-            expanded_bytes = expanded_bytes.saturating_add(read);
-            if expanded_bytes > max_expanded_bytes {
-                return Err(InvocationResponse::error(
-                    "GITHUB_RESPONSE_TOO_LARGE",
-                    format!(
-                        "expanded workflow logs exceed --max-expanded-bytes {max_expanded_bytes}"
-                    ),
-                ));
-            }
-
-            line_number += 1;
-            while line_bytes
-                .last()
-                .is_some_and(|byte| matches!(*byte, b'\n' | b'\r'))
-            {
-                line_bytes.pop();
-            }
-            let Ok(line) = std::str::from_utf8(&line_bytes) else {
-                continue;
-            };
-            let text = render::strip_ansi_sequences(line);
-            let selected = if warnings_only {
-                is_warning_like(&text)
-            } else if let Some(needle) = &grep_lower {
-                text.to_lowercase().contains(needle)
-            } else {
-                true
-            };
-            if !selected {
-                continue;
-            }
-            if matches.len() == max_lines {
-                return Ok((matches, true));
-            }
-            matches.push(LogLine {
+        let scan = logs::scan_lines(
+            &mut reader,
+            &mut expanded,
+            &filter,
+            &mut matches,
+            |line, text| LogLine {
                 file: file_name.clone(),
-                line: line_number,
+                line,
                 text,
-            });
+            },
+        )
+        .map_err(|error| expanded_log_failure(index, max_expanded_bytes, error))?;
+        if scan.truncated() {
+            return Ok((matches, true));
         }
     }
     Ok((matches, false))
+}
+
+fn expanded_log_failure(
+    index: usize,
+    max_expanded_bytes: usize,
+    error: logs::ScanError,
+) -> InvocationResponse {
+    match error {
+        logs::ScanError::BudgetExceeded => InvocationResponse::error(
+            "GITHUB_RESPONSE_TOO_LARGE",
+            format!("expanded workflow logs exceed --max-expanded-bytes {max_expanded_bytes}"),
+        ),
+        logs::ScanError::Read(error) => InvocationResponse::error(
+            "GITHUB_RESPONSE_INVALID",
+            format!("failed to read log archive entry {index}: {error}"),
+        ),
+    }
 }
 
 fn read_bounded_log_body(
@@ -2081,14 +2062,15 @@ fn read_bounded_log_body(
     run_id: u64,
     max_body_bytes: usize,
 ) -> Result<Vec<u8>, InvocationResponse> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_body_bytes as u64)
-    {
-        return Err(InvocationResponse::error(
+    let too_large = || {
+        InvocationResponse::error(
             "GITHUB_RESPONSE_TOO_LARGE",
             format!("workflow log archive exceeds --max-body-bytes {max_body_bytes}"),
-        ));
+        )
+    };
+    let budget = logs::ByteBudget::new(max_body_bytes);
+    if !budget.admits(response.content_length()) {
+        return Err(too_large());
     }
 
     let mut bytes = Vec::with_capacity(max_body_bytes.min(64 * 1024));
@@ -2103,10 +2085,7 @@ fn read_bounded_log_body(
             )
         })?;
     if bytes.len() > max_body_bytes {
-        return Err(InvocationResponse::error(
-            "GITHUB_RESPONSE_TOO_LARGE",
-            format!("workflow log archive exceeds --max-body-bytes {max_body_bytes}"),
-        ));
+        return Err(too_large());
     }
     Ok(bytes)
 }
@@ -2164,14 +2143,6 @@ fn resolve_required_text(
             format!("--{field_name} or --{field_name}-file is required"),
         )),
     }
-}
-
-fn is_warning_like(line: &str) -> bool {
-    let lower = line.to_lowercase();
-    lower.contains("warning")
-        || lower.contains("deprecated")
-        || lower.contains("deprecation")
-        || lower.contains("will be removed")
 }
 
 fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> String {
@@ -2556,6 +2527,7 @@ fn plugin_manual() -> PluginManual {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
     use std::{io::Write, process::Stdio};
 
     use std::{
@@ -2865,9 +2837,9 @@ mod tests {
 
     #[test]
     fn detects_warning_like_lines() {
-        assert!(is_warning_like("Node.js 20 actions are deprecated."));
-        assert!(is_warning_like("warning: output truncated"));
-        assert!(!is_warning_like("build completed successfully"));
+        assert!(logs::is_warning_like("Node.js 20 actions are deprecated."));
+        assert!(logs::is_warning_like("warning: output truncated"));
+        assert!(!logs::is_warning_like("build completed successfully"));
     }
 
     #[test]

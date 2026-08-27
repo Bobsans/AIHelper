@@ -8,4 +8,6 @@
 
 pub mod credentials;
 pub mod http;
+pub mod logs;
+pub mod poll;
 pub mod render;

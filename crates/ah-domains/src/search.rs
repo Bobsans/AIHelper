@@ -175,18 +175,11 @@ pub fn invoke_typed(request: &TypedInvocationRequest) -> TypedInvocationResponse
 }
 
 fn cancelled_response(request: &TypedInvocationRequest) -> TypedInvocationResponse {
-    TypedInvocationResponse::error(CommandError::new(
-        Some("search".to_owned()),
-        Some(request.command.clone()),
-        "EXECUTION_CANCELLED",
+    ah_plugin_api::cancellation::cancelled_response(
+        "search",
         "Search execution was cancelled",
-        format!(
-            "request '{}' was cancelled before handler execution",
-            request.context.request_id
-        ),
-        1,
-        false,
-    ))
+        request,
+    )
 }
 
 fn typed_text(request: &TypedInvocationRequest) -> Result<domain::SearchResult, AppError> {

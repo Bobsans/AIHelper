@@ -1,13 +1,13 @@
 use std::{
     fs,
-    io::{BufRead, BufReader, Read},
+    io::BufReader,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::{credentials, http, render};
+use ah_plugin_sdk::{credentials, http, logs, poll, render};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
@@ -1379,54 +1379,49 @@ fn wait_pipeline(
     args: WaitPipelineArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let start = Instant::now();
-    let timeout = Duration::from_secs(args.timeout_secs.max(1));
-    let interval = Duration::from_secs(args.interval_secs.max(1));
-
-    loop {
-        let pipeline = match get_pipeline(context, args.pipeline_id) {
-            Ok(value) => value,
-            Err(error) => return error,
-        };
-        if is_pipeline_terminal(&pipeline.status) {
-            if args.fail_on_failure && pipeline.status != "success" {
-                return InvocationResponse::error(
-                    "GITLAB_PIPELINE_FAILED",
-                    format!(
-                        "pipeline {} completed with status {}",
-                        pipeline.id, pipeline.status
-                    ),
-                );
-            }
-            let elapsed_secs = start.elapsed().as_secs();
-            let text =
-                render_pipelines_text(std::slice::from_ref(&pipeline), TextFormatter::stdout());
-            return render::render_success(
-                globals,
-                &WaitPipelineOutput {
-                    command: "gitlab.pipeline.wait",
-                    project: context.project.value.clone(),
-                    pipeline,
-                    elapsed_secs,
-                },
-                text,
-            );
-        }
-
-        let elapsed = start.elapsed();
-        if elapsed >= timeout {
-            return pipeline_timeout_response(&args);
-        }
-        if ah_plugin_api::cancellation::wait_or_cancel(interval.min(timeout - elapsed)) {
+    let waited = poll::until_ready(
+        Duration::from_secs(args.timeout_secs.max(1)),
+        Duration::from_secs(args.interval_secs.max(1)),
+        || {
+            let pipeline = get_pipeline(context, args.pipeline_id)?;
+            Ok(if is_pipeline_terminal(&pipeline.status) {
+                poll::Poll::Ready(pipeline)
+            } else {
+                poll::Poll::Pending
+            })
+        },
+    );
+    let (pipeline, elapsed_secs) = match waited {
+        Ok(poll::Waited::Ready { value, elapsed }) => (value, elapsed.as_secs()),
+        Ok(poll::Waited::TimedOut) => return pipeline_timeout_response(&args),
+        Ok(poll::Waited::Cancelled) => {
             return InvocationResponse::error(
                 "CANCELLED",
                 format!("pipeline wait {} was cancelled", args.pipeline_id),
             );
         }
-        if start.elapsed() >= timeout {
-            return pipeline_timeout_response(&args);
-        }
+        Err(error) => return error,
+    };
+    if args.fail_on_failure && pipeline.status != "success" {
+        return InvocationResponse::error(
+            "GITLAB_PIPELINE_FAILED",
+            format!(
+                "pipeline {} completed with status {}",
+                pipeline.id, pipeline.status
+            ),
+        );
     }
+    let text = render_pipelines_text(std::slice::from_ref(&pipeline), TextFormatter::stdout());
+    render::render_success(
+        globals,
+        &WaitPipelineOutput {
+            command: "gitlab.pipeline.wait",
+            project: context.project.value.clone(),
+            pipeline,
+            elapsed_secs,
+        },
+        text,
+    )
 }
 
 fn pipeline_timeout_response(args: &WaitPipelineArgs) -> InvocationResponse {
@@ -1934,77 +1929,37 @@ fn collect_job_trace(
         context.project.encoded()
     );
     let response = gitlab_response(context, Method::GET, &path, None)?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_body_bytes as u64)
-    {
-        return Err(InvocationResponse::error(
+    let too_large = || {
+        InvocationResponse::error(
             "GITLAB_RESPONSE_TOO_LARGE",
             format!("job trace exceeds --max-body-bytes {max_body_bytes}"),
-        ));
+        )
+    };
+    let mut budget = logs::ByteBudget::new(max_body_bytes);
+    if !budget.admits(response.content_length()) {
+        return Err(too_large());
     }
 
-    let max_lines = line_limit.unwrap_or(usize::MAX);
-    let grep_lower = grep.map(str::to_lowercase);
-    let mut reader = BufReader::new(response);
-    let mut body_bytes = 0usize;
-    let mut line_bytes = Vec::new();
-    let mut line_number = 0usize;
     let mut matches = Vec::new();
-    loop {
-        line_bytes.clear();
-        let remaining = max_body_bytes.saturating_sub(body_bytes);
-        let read = reader
-            .by_ref()
-            .take(remaining.saturating_add(1) as u64)
-            .read_until(b'\n', &mut line_bytes)
-            .map_err(|error| {
-                InvocationResponse::error(
-                    "GITLAB_RESPONSE_INVALID",
-                    format!("failed to read job trace for job {job_id}: {error}"),
-                )
-            })?;
-        if read == 0 {
-            break;
-        }
-        body_bytes = body_bytes.saturating_add(read);
-        if body_bytes > max_body_bytes {
-            return Err(InvocationResponse::error(
-                "GITLAB_RESPONSE_TOO_LARGE",
-                format!("job trace exceeds --max-body-bytes {max_body_bytes}"),
-            ));
-        }
-
-        line_number += 1;
-        while line_bytes
-            .last()
-            .is_some_and(|byte| matches!(*byte, b'\n' | b'\r'))
-        {
-            line_bytes.pop();
-        }
-        let Ok(line) = std::str::from_utf8(&line_bytes) else {
-            continue;
-        };
-        let text = render::strip_ansi_sequences(line);
-        let selected = if warnings_only {
-            is_warning_like(&text)
-        } else if let Some(needle) = &grep_lower {
-            text.to_lowercase().contains(needle)
-        } else {
-            true
-        };
-        if !selected {
-            continue;
-        }
-        if matches.len() == max_lines {
-            return Ok((matches, true));
-        }
-        matches.push(TraceLine {
-            line: line_number,
-            text,
-        });
-    }
-    Ok((matches, false))
+    let scan = logs::scan_lines(
+        &mut BufReader::new(response),
+        &mut budget,
+        &logs::LineFilter {
+            grep,
+            warnings_only,
+            limit: line_limit,
+        },
+        &mut matches,
+        |line, text| TraceLine { line, text },
+    )
+    .map_err(|error| match error {
+        logs::ScanError::BudgetExceeded => too_large(),
+        logs::ScanError::Read(error) => InvocationResponse::error(
+            "GITLAB_RESPONSE_INVALID",
+            format!("failed to read job trace for job {job_id}: {error}"),
+        ),
+    })?;
+    Ok((matches, scan.truncated()))
 }
 
 fn get_issue(context: &GitlabContext, iid: u64) -> Result<IssueResponse, InvocationResponse> {
@@ -2164,14 +2119,6 @@ fn resolve_required_text(
             format!("--{field_name} or --{field_name}-file is required"),
         )),
     }
-}
-
-fn is_warning_like(line: &str) -> bool {
-    let lower = line.to_lowercase();
-    lower.contains("warning")
-        || lower.contains("deprecated")
-        || lower.contains("deprecation")
-        || lower.contains("will be removed")
 }
 
 fn is_pipeline_terminal(status: &str) -> bool {
@@ -2660,6 +2607,7 @@ fn plugin_manual() -> PluginManual {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
     use std::{io::Write, process::Stdio};
 
     use std::{
