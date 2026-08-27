@@ -7,15 +7,15 @@
 //! by the `ah` that is being replaced, so both ends have to keep passing and
 //! accepting precisely this.
 //!
-//! What this covers is "an older `ah` drives today's helper", which is a real
-//! test because today's parser runs. The other direction - today's `ah` driving
-//! an older helper - cannot run the old parser, and the emitters
-//! (`ah_updater::activate`, `ah_updater::recovery`, `ah_updater::handoff`)
-//! build the argv from literals rather than from a shared list. Until they take
-//! it from one place, a change there is caught by nothing but review; that is
-//! the remaining gap in this row.
+//! Two directions, two kinds of test. *An older `ah` drives today's helper* is
+//! real: the frozen argv below is parsed by today's parser. *Today's `ah` drives
+//! an older helper* cannot run the old parser, so instead the command line `ah`
+//! builds is checked against the one this helper accepts - both come from
+//! `ah_updater_core`'s two builders now, and the round-trip below is what proves
+//! the emitters and the parser cannot drift apart. What remains untested is the
+//! Windows launcher's own handle plumbing, which no in-process test can reach.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use ah_update_helper::recovery_command::{
     RecoveryCommand, parse_activation_arguments, parse_recovery_arguments, parse_rollback_arguments,
@@ -24,9 +24,10 @@ use ah_updater_core::UpdaterError;
 
 type Parse = fn(&[OsString]) -> Result<RecoveryCommand, UpdaterError>;
 
-/// The flags, in the order the handoff passes them. Frozen: the helper reads
-/// them by index.
-const HANDOFF_FLAGS: [&str; 6] = [
+/// The flags, in the order the handoff passes them, frozen here so that a
+/// change to the shared list has to be made twice - once in the contract and
+/// once in this test.
+const FROZEN_FLAGS: [&str; 6] = [
     "--installation-root",
     "--installation-state-root",
     "--transaction-root",
@@ -35,22 +36,74 @@ const HANDOFF_FLAGS: [&str; 6] = [
     "--handoff-event",
 ];
 
+#[test]
+fn the_shared_flag_list_is_the_frozen_one() {
+    assert_eq!(ah_updater_core::HANDOFF_FLAGS, FROZEN_FLAGS);
+    assert_eq!(ah_updater_core::HANDOFF_ARGUMENT_COUNT, 14);
+}
+
+/// The command line `ah` builds is the command line this helper accepts.
+///
+/// `ah` produces it in two halves, from the two builders in the shared crate:
+/// the roots before the launch, and the inherited lease and event during it.
+/// Nothing else in this repository can put the halves together, which is why
+/// this test lives here rather than with either of them.
+#[test]
+fn the_command_line_ah_builds_is_the_one_the_helper_accepts() {
+    for operation in ["activate", "rollback", "recover"] {
+        let paths = ah_updater_core::handoff_paths_arguments(
+            OsStr::new(operation),
+            OsStr::new(r"C:\Program Files\AIHelper"),
+            OsStr::new(r"C:\ProgramData\AIHelper\state"),
+            OsStr::new(r"C:\ProgramData\AIHelper\state\transaction"),
+        );
+        let lease = ah_updater_core::handoff_lease_arguments(
+            OsStr::new(r"C:\ProgramData\AIHelper\state\lifecycle.lock"),
+            OsStr::new("4242"),
+            OsStr::new(EVENT),
+            OsStr::new("1234"),
+        );
+        let built = paths
+            .into_iter()
+            .chain(lease)
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            built,
+            argv(operation),
+            "{operation}: the built command line and the frozen one must agree"
+        );
+        let parse = match operation {
+            "activate" => parse_activation_arguments as Parse,
+            "rollback" => parse_rollback_arguments as Parse,
+            _ => parse_recovery_arguments as Parse,
+        };
+        parse(&built).unwrap_or_else(|error| {
+            panic!(
+                "{operation} should parse what `ah` builds: {}",
+                error.code()
+            )
+        });
+    }
+}
+
 const EVENT: &str = "Local\\AIHelper.Update.Handoff.11111111-1111-4111-8111-111111111111";
 
 fn argv(operation: &str) -> Vec<OsString> {
     [
         operation,
-        HANDOFF_FLAGS[0],
+        FROZEN_FLAGS[0],
         "C:\\Program Files\\AIHelper",
-        HANDOFF_FLAGS[1],
+        FROZEN_FLAGS[1],
         "C:\\ProgramData\\AIHelper\\state",
-        HANDOFF_FLAGS[2],
+        FROZEN_FLAGS[2],
         "C:\\ProgramData\\AIHelper\\state\\transaction",
-        HANDOFF_FLAGS[3],
+        FROZEN_FLAGS[3],
         "C:\\ProgramData\\AIHelper\\state\\lifecycle.lock",
-        HANDOFF_FLAGS[4],
+        FROZEN_FLAGS[4],
         "4242",
-        HANDOFF_FLAGS[5],
+        FROZEN_FLAGS[5],
         EVENT,
         "1234",
     ]

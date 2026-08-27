@@ -277,15 +277,12 @@ fn launch_transaction(
     } else {
         "activate"
     };
-    let arguments = [
+    let arguments = ah_updater_core::handoff_paths_arguments(
         OsStr::new(helper_operation),
-        OsStr::new("--installation-root"),
         paths.installation_root().as_os_str(),
-        OsStr::new("--installation-state-root"),
         paths.installation_state_root().as_os_str(),
-        OsStr::new("--transaction-root"),
         paths.transaction_root().as_os_str(),
-    ];
+    );
     let launch = if operation == UpdateOperation::Rollback {
         super::handoff::launch_rollback(&helper, &arguments, &hold)
     } else {

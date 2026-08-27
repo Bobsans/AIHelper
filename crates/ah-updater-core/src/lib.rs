@@ -19,8 +19,9 @@ pub use check::{
 };
 pub use error::{UpdaterError, UpdaterErrorCode};
 pub use helper::{
-    UPDATE_HELPER_PROTOCOL_VERSION, UPDATE_HELPER_SELF_CHECK_SCHEMA_VERSION,
-    UpdateHelperSelfCheckV1,
+    HANDOFF_ARGUMENT_COUNT, HANDOFF_FLAGS, UPDATE_HELPER_PROTOCOL_VERSION,
+    UPDATE_HELPER_SELF_CHECK_SCHEMA_VERSION, UpdateHelperSelfCheckV1, handoff_lease_arguments,
+    handoff_paths_arguments,
 };
 pub use installation::{
     INSTALLATION_IDENTITY_SCHEMA_VERSION, InstallationIdentityV1, lifecycle_mutex_name,

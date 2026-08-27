@@ -103,15 +103,12 @@ impl RecoveryHelperRunner for ProcessRecoveryRunner<'_> {
     fn launch(&self, helper: &Path, paths: &TransactionPaths) -> Result<HelperRun, AppError> {
         crate::handoff::launch_recovery(
             helper,
-            &[
+            &ah_updater_core::handoff_paths_arguments(
                 OsStr::new("recover"),
-                OsStr::new("--installation-root"),
                 paths.installation_root().as_os_str(),
-                OsStr::new("--installation-state-root"),
                 paths.installation_state_root().as_os_str(),
-                OsStr::new("--transaction-root"),
                 paths.transaction_root().as_os_str(),
-            ],
+            ),
             self.0,
         )
         .map_err(crate::handoff::LaunchFailure::into_error)?;

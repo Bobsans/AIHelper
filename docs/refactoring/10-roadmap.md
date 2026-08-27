@@ -433,10 +433,21 @@ are absent from an ordinary plan today.
 
 The command-line handoff is the more fragile contract, because the helper
 validates by position: the frozen argv test refuses a renamed flag at any of the
-six positions and a swapped pair. It covers an older `ah` driving today's
-helper. The other direction is not covered and is recorded rather than glossed:
-the three emitters build the argv from literals, so a change there is caught by
-review alone until they and the parser take the order from one list.
+six positions and a swapped pair.
+
+Both directions are covered. The order now lives once, in
+`ah_updater_core::HANDOFF_FLAGS`, with two builders beside it - the roots `ah`
+knows before the launch, and the inherited lease and event only the launcher
+knows. The parser validates against that list rather than against literals at
+hard-coded indices, and one test puts the two halves together and parses them.
+That pairing exists nowhere else in the repository: `ah` builds the halves in
+two different modules, one of them Windows-only, so before this there was no
+place where "what `ah` sends" and "what the helper accepts" could be compared.
+
+What no in-process test can reach is the Windows launcher's handle plumbing -
+duplicating the lease into the child, the attribute list, the acknowledgement
+wait. `scripts/release_smoke.py` is its cover, and that is stated rather than
+implied.
 
 `LaunchdScheduler` and macOS acceptance are what remain of the portability row.
 It is

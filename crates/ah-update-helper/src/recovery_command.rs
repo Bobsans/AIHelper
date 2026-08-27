@@ -4,7 +4,10 @@ use std::{
     time::Duration,
 };
 
-use ah_updater_core::{ReleaseTrust, TransactionStateV1, UpdaterError, UpdaterErrorCode};
+use ah_updater_core::{
+    HANDOFF_ARGUMENT_COUNT, HANDOFF_FLAGS, ReleaseTrust, TransactionStateV1, UpdaterError,
+    UpdaterErrorCode,
+};
 
 use crate::{
     apply::{TransactionPaths, load_recovery_transaction, recover_transaction},
@@ -45,15 +48,17 @@ fn parse_arguments(
     arguments: &[OsString],
     operation: &str,
 ) -> Result<RecoveryCommand, UpdaterError> {
-    if arguments.len() != 14
+    // The order is `ah_updater_core::HANDOFF_FLAGS`, which is also what `ah`
+    // builds the command line from. Validating against it rather than against
+    // literals is what keeps the two ends of a cross-version handoff from
+    // drifting apart.
+    if arguments.len() != HANDOFF_ARGUMENT_COUNT
         || arguments[0] != operation
-        || arguments[1] != "--installation-root"
-        || arguments[3] != "--installation-state-root"
-        || arguments[5] != "--transaction-root"
-        || arguments[7] != "--lifecycle-lock"
-        || arguments[9] != "--lifecycle-lock-handle"
-        || arguments[11] != "--handoff-event"
-        || arguments[13].to_str().is_none()
+        || arguments[HANDOFF_ARGUMENT_COUNT - 1].to_str().is_none()
+        || HANDOFF_FLAGS
+            .iter()
+            .enumerate()
+            .any(|(position, flag)| arguments[1 + position * 2] != *flag)
     {
         return Err(argument("update helper arguments are invalid"));
     }

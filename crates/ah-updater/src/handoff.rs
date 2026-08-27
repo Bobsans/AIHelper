@@ -83,15 +83,12 @@ fn launch_helper(
     let handle_value = (raw_lease as usize).to_string();
     let parent_pid = std::process::id().to_string();
     let mut argv = arguments.to_vec();
-    argv.extend([
-        OsStr::new("--lifecycle-lock"),
+    argv.extend(ah_updater_core::handoff_lease_arguments(
         hold.path().as_os_str(),
-        OsStr::new("--lifecycle-lock-handle"),
         OsStr::new(&handle_value),
-        OsStr::new("--handoff-event"),
         OsStr::new(&event_name),
         OsStr::new(&parent_pid),
-    ]);
+    ));
     let mut command_line =
         command_line(helper.as_os_str(), &argv, error_code).map_err(LaunchFailure::safe)?;
     let application = wide_null(

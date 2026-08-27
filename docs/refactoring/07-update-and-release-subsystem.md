@@ -150,12 +150,18 @@ A user or an agent must be able to tell that an invocation was consumed by recov
   copies - the inherited handle, the event name, the parent pid - are each
   refused when malformed.
 
-  That covers *an older `ah` driving today's helper*, because today's parser
-  runs. The other direction is not covered: `ah_updater::activate`,
-  `::recovery` and `::handoff` each build the argv from literals, so a change
-  there is caught by review alone. The fix is for the emitters and the parser to
-  take the order from one list; it is small, and it is the remaining work on
-  this row.
+  **Both directions are covered now.** The order lives in
+  `ah_updater_core::HANDOFF_FLAGS`, and the command line is produced by two
+  builders there - `handoff_paths_arguments` for the roots, which `ah` knows
+  before the launch, and `handoff_lease_arguments` for the inherited lease and
+  the acknowledgement event, which only the launcher knows. The parser validates
+  against the same list instead of against literals at hard-coded indices, and
+  the test puts the two halves together and parses them, which is the only place
+  in the repository where that pairing can be checked at all.
+
+  What is still untested is the Windows launcher's own handle plumbing -
+  duplicating the lease into the child, the attribute list, the acknowledgement
+  wait. No in-process test reaches it; `scripts/release_smoke.py` is its cover.
 - ~~**The journal is on-disk state that survives across versions.** Renaming Rust
   modules must not change serialized field names or the `TransactionStateV1`
   discriminants. Add a fixture-based compatibility test before step 1.~~

@@ -1,4 +1,6 @@
 use semver::Version;
+use std::ffi::OsStr;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{UpdaterError, UpdaterErrorCode};
@@ -14,6 +16,66 @@ pub struct UpdateHelperSelfCheckV1 {
     pub helper_version: String,
     pub target: String,
     pub architecture: String,
+}
+
+/// The flags the update handoff passes, in the order the helper reads them.
+///
+/// A cross-version contract: the `ah` of one release launches the helper of
+/// another, and the helper validates its arguments *by position*. `ah` builds
+/// the command line in two halves - the roots before the launch, the inherited
+/// lease and the acknowledgement event during it - so this is the one place the
+/// order is written down, and the two builders below are how both halves are
+/// produced.
+pub const HANDOFF_FLAGS: [&str; 6] = [
+    "--installation-root",
+    "--installation-state-root",
+    "--transaction-root",
+    "--lifecycle-lock",
+    "--lifecycle-lock-handle",
+    "--handoff-event",
+];
+
+/// The operation, one flag and value per entry above, and the parent pid.
+pub const HANDOFF_ARGUMENT_COUNT: usize = 2 + 2 * HANDOFF_FLAGS.len();
+
+/// The first half of the handoff command line: the operation and the three
+/// roots, known before the helper is launched.
+#[must_use]
+pub fn handoff_paths_arguments<'a>(
+    operation: &'a OsStr,
+    installation_root: &'a OsStr,
+    installation_state_root: &'a OsStr,
+    transaction_root: &'a OsStr,
+) -> [&'a OsStr; 7] {
+    [
+        operation,
+        OsStr::new(HANDOFF_FLAGS[0]),
+        installation_root,
+        OsStr::new(HANDOFF_FLAGS[1]),
+        installation_state_root,
+        OsStr::new(HANDOFF_FLAGS[2]),
+        transaction_root,
+    ]
+}
+
+/// The second half: the lease the child inherits, the event it acknowledges on,
+/// and the parent it waits for. Only the launcher knows these.
+#[must_use]
+pub fn handoff_lease_arguments<'a>(
+    lifecycle_lock: &'a OsStr,
+    lifecycle_lock_handle: &'a OsStr,
+    handoff_event: &'a OsStr,
+    parent_pid: &'a OsStr,
+) -> [&'a OsStr; 7] {
+    [
+        OsStr::new(HANDOFF_FLAGS[3]),
+        lifecycle_lock,
+        OsStr::new(HANDOFF_FLAGS[4]),
+        lifecycle_lock_handle,
+        OsStr::new(HANDOFF_FLAGS[5]),
+        handoff_event,
+        parent_pid,
+    ]
 }
 
 impl UpdateHelperSelfCheckV1 {
