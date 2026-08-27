@@ -1,36 +1,62 @@
-use std::fs;
+//! `ah search`, run in this process.
+//!
+//! Every test here was a subprocess asserting `contains` on stdout or stderr.
+//! The text assertions are the same strings against the captured output; the
+//! JSON ones index into the payload instead of looking for a quoted field
+//! somewhere in pretty-printed text; and the two refusals assert the whole
+//! rendered diagnostic, hint included, rather than fragments of it.
 
-use super::common::IsolatedAhCommand as Command;
-use predicates::prelude::PredicateBooleanExt;
-use predicates::str::contains;
+use std::{fs, path::Path};
+
+use aihelper::harness::Harness;
+use serde_json::Value;
 use tempfile::TempDir;
+
+fn search_text(args: &[&str]) -> String {
+    let mut argv = vec!["search"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).expect_success().to_owned()
+}
+
+fn search_json(args: &[&str]) -> Value {
+    let mut argv = vec!["--json", "search"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).json()
+}
+
+/// The rendered refusal, as `AppError::print` would have written it.
+fn search_refusal(args: &[&str]) -> String {
+    let mut argv = vec!["search"];
+    argv.extend_from_slice(args);
+    let run = Harness::new().run(&argv);
+    let _ = run.expect_failure();
+    run.diagnostic_text(&argv)
+}
+
+fn root_of(dir: &Path) -> String {
+    dir.to_string_lossy().into_owned()
+}
 
 #[test]
 fn search_path_not_found_error_is_rendered_without_nested_wrappers() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "customFieldValues", "Fixdigital"])
-        .assert()
-        .failure()
-        .stderr(contains("ah: path does not exist: Fixdigital"))
-        .stderr(contains(
-            "Hint: Check the path or set a different working directory with --cwd.",
-        ))
-        .stderr(predicates::str::contains("PATH_NOT_FOUND").not())
-        .stderr(predicates::str::contains("invalid argument: [").not());
+    let rendered = search_refusal(&["text", "customFieldValues", "Fixdigital"]);
+
+    assert_eq!(
+        rendered,
+        "ah: path does not exist: Fixdigital\n\n\
+         Hint: Check the path or set a different working directory with --cwd."
+    );
 }
 
 #[test]
 fn search_invalid_regex_error_is_concise() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "(", "src", "--regex"])
-        .assert()
-        .failure()
-        .stderr(contains("ah: invalid regular expression: unclosed group"))
-        .stderr(contains(
-            "Hint: Fix the expression or remove --regex to search literally.",
-        ))
-        .stderr(predicates::str::contains("REGEX_INVALID").not())
-        .stderr(predicates::str::contains("regex parse error").not());
+    let rendered = search_refusal(&["text", "(", "src", "--regex"]);
+
+    assert_eq!(
+        rendered,
+        "ah: invalid regular expression: unclosed group\n\n\
+         Hint: Fix the expression or remove --regex to search literally."
+    );
 }
 
 #[test]
@@ -39,13 +65,10 @@ fn search_text_plain_mode_treats_pattern_as_literal() {
     fs::write(temp_dir.path().join("notes.txt"), "a.c\nabc\n")
         .expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "a.c", &root])
-        .assert()
-        .success()
-        .stdout(contains("notes.txt:1:a.c"))
-        .stdout(predicates::str::contains("notes.txt:2:abc").not());
+    let output = search_text(&["text", "a.c", &root_of(temp_dir.path())]);
+
+    assert!(output.contains("notes.txt:1:a.c"), "{output}");
+    assert!(!output.contains("notes.txt:2:abc"), "{output}");
 }
 
 #[test]
@@ -54,13 +77,10 @@ fn search_text_regex_mode_matches_regex() {
     fs::write(temp_dir.path().join("app.log"), "id=42\nid=ab\n")
         .expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "id=\\d+", &root, "--regex"])
-        .assert()
-        .success()
-        .stdout(contains("app.log:1:id=42"))
-        .stdout(predicates::str::contains("app.log:2:id=ab").not());
+    let output = search_text(&["text", "id=\\d+", &root_of(temp_dir.path()), "--regex"]);
+
+    assert!(output.contains("app.log:1:id=42"), "{output}");
+    assert!(!output.contains("app.log:2:id=ab"), "{output}");
 }
 
 #[test]
@@ -72,14 +92,18 @@ fn search_text_with_context_includes_neighbor_lines() {
     )
     .expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "match", &root, "--context", "1"])
-        .assert()
-        .success()
-        .stdout(contains("notes.txt-1-before"))
-        .stdout(contains("notes.txt:2:match line"))
-        .stdout(contains("notes.txt-3-after"));
+    let output = search_text(&["text", "match", &root_of(temp_dir.path()), "--context", "1"]);
+
+    for expected in [
+        "notes.txt-1-before",
+        "notes.txt:2:match line",
+        "notes.txt-3-after",
+    ] {
+        assert!(
+            output.contains(expected),
+            "{expected} missing from {output}"
+        );
+    }
 }
 
 #[test]
@@ -91,17 +115,30 @@ fn search_text_context_does_not_include_extra_after_line() {
     )
     .expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "match-line", &root, "--context", "2"])
-        .assert()
-        .success()
-        .stdout(contains("notes.txt-1-before-1"))
-        .stdout(contains("notes.txt-2-before-2"))
-        .stdout(contains("notes.txt:3:match-line"))
-        .stdout(contains("notes.txt-4-after-1"))
-        .stdout(contains("notes.txt-5-after-2"))
-        .stdout(predicates::str::contains("notes.txt-6-after-3").not());
+    let output = search_text(&[
+        "text",
+        "match-line",
+        &root_of(temp_dir.path()),
+        "--context",
+        "2",
+    ]);
+
+    for expected in [
+        "notes.txt-1-before-1",
+        "notes.txt-2-before-2",
+        "notes.txt:3:match-line",
+        "notes.txt-4-after-1",
+        "notes.txt-5-after-2",
+    ] {
+        assert!(
+            output.contains(expected),
+            "{expected} missing from {output}"
+        );
+    }
+    assert!(
+        !output.contains("notes.txt-6-after-3"),
+        "the context is bounded: {output}"
+    );
 }
 
 #[test]
@@ -110,14 +147,11 @@ fn search_text_json_contains_mode_fields() {
     fs::write(temp_dir.path().join("one.txt"), "alpha\nbeta\n")
         .expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["--json", "search", "text", "alpha", &root])
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"search.text\""))
-        .stdout(contains("\"regex\": false"))
-        .stdout(contains("\"match_count\": 1"));
+    let payload = search_json(&["text", "alpha", &root_of(temp_dir.path())]);
+
+    assert_eq!(payload["command"], "search.text");
+    assert_eq!(payload["regex"], false);
+    assert_eq!(payload["match_count"], 1);
 }
 
 #[test]
@@ -133,14 +167,8 @@ fn search_uses_stable_ignore_aware_discovery() {
     fs::write(temp_dir.path().join(".hidden.txt"), "needle\n")
         .expect("hidden file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "search", "text", "needle", &root])
-        .assert()
-        .success();
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output");
+    let payload = search_json(&["text", "needle", &root_of(temp_dir.path())]);
+
     assert_eq!(payload["backend"], "ignore+rust");
     assert_eq!(payload["match_count"], 1);
     assert_eq!(payload["matches"][0]["path"], "visible.txt");
@@ -152,15 +180,8 @@ fn search_text_json_reports_character_column_for_unicode_lines() {
     fs::write(temp_dir.path().join("unicode.txt"), "a\u{00e9}needle\n")
         .expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "search", "text", "needle", &root])
-        .assert()
-        .success();
+    let payload = search_json(&["text", "needle", &root_of(temp_dir.path())]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["matches"][0]["column"], 3);
 }
 
@@ -176,23 +197,14 @@ fn search_text_json_reports_skipped_binary_and_large_files() {
     fs::write(temp_dir.path().join("huge.txt"), "match ".repeat(200))
         .expect("large file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args([
-            "--json",
-            "search",
-            "text",
-            "match",
-            &root,
-            "--max-bytes",
-            "32",
-        ])
-        .assert()
-        .success();
+    let payload = search_json(&[
+        "text",
+        "match",
+        &root_of(temp_dir.path()),
+        "--max-bytes",
+        "32",
+    ]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["command"], "search.text");
     assert_eq!(payload["match_count"], 1);
     let skipped_binary = payload["skipped_binary_files"]
@@ -212,14 +224,10 @@ fn search_text_accepts_multiple_paths() {
     fs::write(left.join("one.txt"), "needle in left\n").expect("left file should be written");
     fs::write(right.join("two.txt"), "needle in right\n").expect("right file should be written");
 
-    let left_root = left.to_string_lossy().to_string();
-    let right_root = right.to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "text", "needle", &left_root, &right_root])
-        .assert()
-        .success()
-        .stdout(contains("one.txt"))
-        .stdout(contains("two.txt"));
+    let output = search_text(&["text", "needle", &root_of(&left), &root_of(&right)]);
+
+    assert!(output.contains("one.txt"), "{output}");
+    assert!(output.contains("two.txt"), "{output}");
 }
 
 #[test]
@@ -231,14 +239,11 @@ fn search_files_returns_matching_paths() {
     fs::write(temp_dir.path().join("nested").join("alpha_notes.md"), "c")
         .expect("file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "files", "alpha", &root])
-        .assert()
-        .success()
-        .stdout(contains("alpha.txt"))
-        .stdout(contains("alpha_notes.md"))
-        .stdout(predicates::str::contains("beta.txt").not());
+    let output = search_text(&["files", "alpha", &root_of(temp_dir.path())]);
+
+    assert!(output.contains("alpha.txt"), "{output}");
+    assert!(output.contains("alpha_notes.md"), "{output}");
+    assert!(!output.contains("beta.txt"), "{output}");
 }
 
 #[test]
@@ -252,13 +257,9 @@ fn search_files_accepts_multiple_paths() {
     fs::write(right.join("alpha_right.txt"), "b").expect("right file should be written");
     fs::write(right.join("beta.txt"), "c").expect("beta file should be written");
 
-    let left_root = left.to_string_lossy().to_string();
-    let right_root = right.to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["search", "files", "alpha", &left_root, &right_root])
-        .assert()
-        .success()
-        .stdout(contains("alpha_left.txt"))
-        .stdout(contains("alpha_right.txt"))
-        .stdout(predicates::str::contains("beta.txt").not());
+    let output = search_text(&["files", "alpha", &root_of(&left), &root_of(&right)]);
+
+    assert!(output.contains("alpha_left.txt"), "{output}");
+    assert!(output.contains("alpha_right.txt"), "{output}");
+    assert!(!output.contains("beta.txt"), "{output}");
 }

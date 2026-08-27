@@ -197,6 +197,29 @@ down from 7.6k.
      thirty-four spawns remain, and the rest of this row is that same work, file
      by file.
 
+   **`git.rs` and `search.rs` are converted whole**, and they show what the
+   conversion is worth beyond speed:
+
+   - **The JSON assertions get stronger.** `contains("\"subject\": \"initial\"")`
+     matches that field *anywhere* in the pretty-printed payload. Indexing does
+     not, and two `git` tests failed on the first run because `subject` lives
+     under `commit` and under `latest_commit` - the old assertions would have
+     passed if the field had moved to a different object entirely.
+   - **A refusal can be asserted whole.** `search`'s two error tests asserted
+     four `contains` fragments each, including two `not()` checks that the
+     internal code had not leaked; they now compare the entire rendered
+     diagnostic, hint included, which says the same thing and more in one
+     assertion. Both passed unchanged on the first run, which is the evidence
+     that the harness renders what the process renders.
+   - **One assertion cannot move, and it is now made once.** Text output
+     carrying no terminal escape sequences is a property of `Emitter::stdio`
+     deciding it is not writing to a terminal; the captured emitter has colour
+     off by construction and cannot observe that decision. `git.rs` keeps one
+     process test for it instead of the three `contains("\u{1b}").not()` checks
+     it had.
+
+   `search.rs`'s thirteen tests went from thirteen subprocesses to 0.07s.
+
    The harness deliberately refuses what it cannot run: a command that is not a
    plugin-domain invocation panics naming itself, rather than asserting about
    something else.
