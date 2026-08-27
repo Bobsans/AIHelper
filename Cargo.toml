@@ -70,6 +70,7 @@ ed25519-dalek = "3"
 fs2 = "0.4.3"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 libc = "0.2.185"
+proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
 schemars = "1.2.2"
 semver = "1"

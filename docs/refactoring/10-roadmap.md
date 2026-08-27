@@ -29,7 +29,10 @@ Deliberately **not** done in phase 0:
   a safety-net phase.
 - A `cargo-fuzz` target for the redaction engine and the parsers. It needs a
   nightly toolchain and a separate CI lane; the generated-input tests cover the
-  leak property in the meantime.
+  leak property in the meantime. **Still deferred, and now for a narrower
+  reason:** all three have `proptest` properties on the pinned stable toolchain,
+  running on every CI platform, so what is missing is coverage guidance rather
+  than property coverage. Group 08 section C has the detail.
 
 A struck-through row is landed and verified. Everything else is open.
 

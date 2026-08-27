@@ -13,3 +13,6 @@ publish = false
 [dependencies]
 serde_json.workspace = true
 shell-words.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

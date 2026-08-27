@@ -48,8 +48,8 @@ files in group 05 look even more unmanageable than they are.
 | schema↔type agreement | **none** | the central drift risk of group 01; today only caught at runtime |
 | golden snapshot of command catalog / manuals | **none** | prerequisite for every refactor in this program |
 | golden snapshot of rendered text output | partial (a few in `src/output.rs`, `src/lib.rs`) | output determinism is a stated invariant |
-| property/fuzz tests for redaction | **none** | ~550 lines of security-critical heuristics |
-| ~~fuzz tests for the curl and JSONPath parsers~~ generated-input tests | both parsers are their own modules now and have fixed-seed corpora; `cargo-fuzz` still deferred |
+| ~~property/fuzz tests for redaction~~ property tests | `ah-redact/tests/redaction.rs` drives every carrier with generated secrets; `properties.rs` generates the *structure* with `proptest` and asserts leak, targeting and bounds |
+| ~~fuzz tests for the curl and JSONPath parsers~~ generated-input **and** property tests | both parsers are their own modules with a fixed-seed corpus each and a `proptest` property beside it; `cargo-fuzz` still deferred |
 | concurrency tests for parallel typed execution | minimal (`mcp_service/lifecycle/tests/concurrency.rs`, 54 lines) | the executor is the flagship path; the process-cwd issue (group 03) would be caught here |
 | docs freshness | ~~none~~ drift test | `docs/reference` is checked against the catalogs |
 | cross-version updater compatibility | manual (`scripts/release_smoke.py`) | highest-risk area (group 07) |
@@ -99,12 +99,36 @@ Introduce a snapshot layer (e.g. `insta`) covering:
 These snapshots are the mechanism that makes the rest of this program safe. They
 should land **before** any structural change.
 
-### C. Property and fuzz coverage where input is hostile
+### C. Property and fuzz coverage where input is hostile *(done, on stable)*
 
-- `ah-redact`: property test — for any generated input containing a marked secret,
-  the redacted output must not contain it. Plus a `cargo-fuzz` target.
-- curl parser and JSONPath parser: fuzz for panics and unbounded allocation.
+- ~~`ah-redact`: property test — for any generated input containing a marked
+  secret, the redacted output must not contain it.~~ **(done, twice over.)**
+  `tests/redaction.rs` does it for every carrier the engine knows about with
+  deterministic secrets. `tests/properties.rs` generates the *structure* with
+  `proptest` - arbitrary nesting, arbitrary key names, arrays of objects of
+  arrays - and asserts three separate properties: a credential under a sensitive
+  key never survives any nesting; redaction is *targeted*, so an engine that
+  passed the first property by emptying everything fails this one; and the output
+  is bounded whatever arrives, because a sink that can be made to receive an
+  unbounded payload is a way to exhaust memory through the log.
+- ~~curl parser and JSONPath parser: fuzz for panics and unbounded
+  allocation.~~ **(done as property tests.)** Each keeps its fixed-seed corpus
+  *and* gains a `proptest` property over the same alphabet. The two are not
+  redundant: 20 000 cases of a fixed corpus is what makes a report reproducible,
+  and `proptest` is what shrinks a failure to the shortest input that still
+  fails and writes it to a committed `proptest-regressions` file.
 - `read_bounded_*` helpers: property test that the bound always holds.
+
+**Why `proptest` and not `cargo-fuzz`.** `cargo-fuzz` needs nightly and a CI lane
+of its own, which is why the roadmap deferred it twice. `proptest` runs in the
+ordinary suite on the pinned stable toolchain, on all three CI platforms, and
+brings the thing the fixed-seed loops lacked: shrinking. What it does not bring is
+coverage guidance, so `cargo-fuzz` stays the right tool for a later lane rather
+than being written off.
+
+The suite runs 256 cases per property locally and 1 024 in CI, via
+`PROPTEST_CASES` in the workflow: 10s against 43s for the redaction properties,
+and the extra half-minute is affordable exactly once.
 
 ### D. Move tests out of god files
 
@@ -359,7 +383,13 @@ queued response - which none of the three copies ever had.
 
 - Output, error rendering and catalog shape are covered by reviewed snapshots.
 - No production code path reads a test-only environment variable.
-- Redaction and both parsers have property and fuzz coverage.
-- The process-level suite is a deliberate contract layer, not the default place to
-  write a test.
-- Full workspace test run stays under a few minutes on CI hardware.
+- ~~Redaction and both parsers have property and fuzz coverage.~~ **(property
+  coverage met; `cargo-fuzz` deferred, see section C.)** All three have
+  `proptest` properties on the pinned stable toolchain, running on every CI
+  platform. Coverage-guided fuzzing needs nightly and a lane of its own, and is
+  the one part of this criterion still open.
+- ~~The process-level suite is a deliberate contract layer, not the default place
+  to write a test.~~ **(met.)** Every plugin domain runs in process; 94 spawns
+  remain, in the files where a process is the thing under test.
+- ~~Full workspace test run stays under a few minutes on CI hardware.~~ **(met.)**
+  95s locally with the property tests included.

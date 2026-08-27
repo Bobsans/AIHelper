@@ -262,4 +262,8 @@ added) and a future fuzz target (group 08).
 - One conversion path from each error enum to `ErrorDiagnostic`; no duplicated
   match statements across crates.
 - `clippy::result_large_err` is enabled, not allowed.
-- Exactly one redaction implementation, with property and fuzz coverage.
+- ~~Exactly one redaction implementation, with property and fuzz coverage.~~
+  **(one implementation and property coverage met; `cargo-fuzz` deferred.)**
+  `ah-redact` is the single engine, and `tests/properties.rs` asserts the leak,
+  targeting and bounds properties over `proptest`-generated structure. Group 08
+  section C records why coverage-guided fuzzing stays for a later lane.
