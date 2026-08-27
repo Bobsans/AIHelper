@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::targets::{JsonConfig, ServerSpec};
 
@@ -93,7 +93,7 @@ pub fn remove(existing: Option<Value>, config: &JsonConfig, name: &str) -> Optio
 }
 
 pub fn write(path: &Path, document: &Value) -> Result<(), AppError> {
-    crate::persistence::atomic_write_json(path, document)
+    ah_persist::atomic_write_json(path, document)
 }
 
 #[cfg(test)]
@@ -101,7 +101,7 @@ mod tests {
     use serde_json::json;
 
     use super::{lookup, merge, read, remove, spec_from_entry};
-    use crate::ai::targets::{JsonConfig, ServerSpec};
+    use crate::targets::{JsonConfig, ServerSpec};
 
     fn config() -> JsonConfig {
         JsonConfig {

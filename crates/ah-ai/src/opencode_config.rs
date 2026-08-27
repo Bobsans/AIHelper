@@ -9,7 +9,7 @@ use jsonc_parser::{
 };
 use serde_json::Value;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::targets::{Scope, ServerSpec, home_dir};
 
@@ -80,7 +80,7 @@ pub fn merge(path: &Path, name: &str, spec: &ServerSpec) -> Result<(), AppError>
     } else {
         mcp.append(name, entry);
     }
-    crate::persistence::atomic_write(path, root.to_string().as_bytes())
+    ah_persist::atomic_write(path, root.to_string().as_bytes())
 }
 
 pub fn remove(scope: Scope, project_root: &Path, name: &str) -> Result<(), AppError> {
@@ -100,7 +100,7 @@ pub fn remove(scope: Scope, project_root: &Path, name: &str) -> Result<(), AppEr
             continue;
         };
         entry.remove();
-        crate::persistence::atomic_write(&path, root.to_string().as_bytes())?;
+        ah_persist::atomic_write(&path, root.to_string().as_bytes())?;
     }
     Ok(())
 }
@@ -210,7 +210,7 @@ fn spec_from_entry(entry: &Value) -> Option<ServerSpec> {
 #[cfg(test)]
 mod tests {
     use super::lookup_path;
-    use crate::ai::targets::ServerSpec;
+    use crate::targets::ServerSpec;
 
     #[test]
     fn managed_jsonc_file_can_be_inspected_directly() {

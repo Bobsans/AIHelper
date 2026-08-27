@@ -219,6 +219,17 @@ lines and holds the CLI, the plugin registration, the host commands and the
 snapshots. Every crate builds and its tests pass with `aihelper` absent from its
 graph.
 
+**One subsystem was missed, and group 09's size criterion is what found it.**
+`src/ai/` - 4 578 lines of registering `ah` as an MCP server with the assistants
+on the machine, with its own file formats, its own JSONC CST editing and its own
+progress rendering - is not CLI wiring, and it was half of what put the root
+crate at 14 206 lines. It is now `ah-ai`, and the root crate is 9 140. The
+extraction was mechanical: everything `src/ai/` reached for outside itself was
+already a crate behind a root-crate alias (`crate::error` is `ah_error`,
+`crate::persistence` is `ah_persist`, `crate::mcp_service` is `ah_service`), and
+nine items had to widen from `pub(crate)` to `pub` - which is the list of what
+the root crate actually calls.
+
 **`ServiceGuard` landed, with two notes.** The trait is `hold`/`capture`/`stop`/
 `restore`, and every method after `hold` takes the hold as a parameter, so what
 the three replaced functions said in their names (`*_while_locked`) is now

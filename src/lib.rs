@@ -1,4 +1,4 @@
-pub mod ai;
+pub use ah_ai as ai;
 pub mod cli;
 #[cfg(any(test, feature = "harness"))]
 pub mod harness;

@@ -44,6 +44,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-ai"
+version = "1.4.0"
+dependencies = [
+ "ah-error",
+ "ah-output",
+ "ah-paths",
+ "ah-persist",
+ "ah-platform",
+ "ah-plugin-api",
+ "ah-runtime",
+ "ah-service",
+ "console",
+ "dialoguer",
+ "jsonc-parser",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ah-config"
 version = "1.4.0"
 dependencies = [
@@ -433,6 +455,7 @@ dependencies = [
 name = "aihelper"
 version = "1.4.0"
 dependencies = [
+ "ah-ai",
  "ah-config",
  "ah-domains",
  "ah-error",

@@ -18,7 +18,8 @@ use std::{io::IsTerminal, path::PathBuf};
 use ah_runtime::PluginManager;
 use serde::Serialize;
 
-use crate::{cli::GlobalOptions, error::AppError, output::OutputMode};
+use ah_error::AppError;
+use ah_output::{GlobalOptions, OutputMode};
 
 use super::{
     json_config,
@@ -152,7 +153,7 @@ mod tests {
     };
 
     use super::{DEFAULT_HTTP_URL, StatusProgress, http_spec, parallel_map, status_target};
-    use crate::ai::targets::{Scope, ServerSpec};
+    use crate::targets::{Scope, ServerSpec};
 
     #[test]
     fn http_spec_defaults_to_the_managed_loopback_endpoint() {
@@ -218,7 +219,7 @@ mod tests {
         let mut events = Vec::new();
 
         status_target(
-            crate::ai::targets::find("cursor").unwrap(),
+            crate::targets::find("cursor").unwrap(),
             root.path(),
             true,
             |event| {

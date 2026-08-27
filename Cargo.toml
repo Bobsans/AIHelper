@@ -13,6 +13,7 @@ publish = false
 
 [workspace]
 members = [
+    "crates/ah-ai",
     "crates/ah-mcp",
     "crates/ah-observability",
     "crates/ah-output",
@@ -98,6 +99,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
+ah-ai = { path = "crates/ah-ai" }
 ah-observability = { path = "crates/ah-observability" }
 ah-output = { path = "crates/ah-output" }
 ah-paths = { path = "crates/ah-paths" }

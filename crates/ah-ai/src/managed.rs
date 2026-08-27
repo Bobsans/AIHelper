@@ -1,9 +1,7 @@
 use serde::Serialize;
 
-use crate::{
-    error::AppError,
-    mcp_service::output::{ReadinessStatus, RegistrationStatus, StatusOutput},
-};
+use ah_error::AppError;
+use ah_service::output::{ReadinessStatus, RegistrationStatus, StatusOutput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,8 +47,7 @@ impl Snapshot {
 /// The answer is the scheduler adapter's, not a `cfg!` of our own: when a
 /// platform gains an adapter, this follows without being edited.
 pub fn is_supported() -> bool {
-    <crate::mcp_service::scheduler::PlatformScheduler as
-        crate::mcp_service::scheduler::ServiceScheduler>::SUPPORTED
+    <ah_service::scheduler::PlatformScheduler as ah_service::scheduler::ServiceScheduler>::SUPPORTED
 }
 
 fn unsupported() -> AppError {
@@ -97,7 +94,7 @@ pub fn detect() -> Result<Snapshot, AppError> {
     if !is_supported() {
         return Err(unsupported());
     }
-    Ok(classify(&crate::mcp_service::lifecycle::snapshot_status()?))
+    Ok(classify(&ah_service::lifecycle::snapshot_status()?))
 }
 
 /// What `ensure_ready` had to do to reach a usable endpoint.
@@ -160,7 +157,7 @@ pub fn planned_action(snapshot: &Snapshot) -> ManagedAction {
 }
 
 pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppError> {
-    use crate::mcp_service::{
+    use ah_service::{
         model::{DEFAULT_MAX_ACTIVE, DEFAULT_PORT, DEFAULT_TIMEOUT_MS},
         operation::InstallSettings,
     };
@@ -172,7 +169,7 @@ pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppE
             ManagedAction::AlreadyRunning,
         )),
         ManagedState::Stopped => {
-            let output = crate::mcp_service::lifecycle::start_quietly()?;
+            let output = ah_service::lifecycle::start_quietly()?;
             Ok((output.endpoint, ManagedAction::Started))
         }
         ManagedState::NotInstalled => {
@@ -183,7 +180,7 @@ pub fn ensure_ready(snapshot: &Snapshot) -> Result<(String, ManagedAction), AppE
                 default_timeout_ms: DEFAULT_TIMEOUT_MS,
                 limit: None,
             };
-            let output = crate::mcp_service::lifecycle::install_quietly(&settings)?;
+            let output = ah_service::lifecycle::install_quietly(&settings)?;
             Ok((output.endpoint, ManagedAction::Installed))
         }
         ManagedState::NeedsRepair => Err(not_healthy(snapshot)),
@@ -195,7 +192,7 @@ mod tests {
     use super::{
         ManagedAction, ManagedState, classify, is_supported, planned_action, require_usable,
     };
-    use crate::mcp_service::output::{ReadinessStatus, RegistrationStatus, StatusOutput};
+    use ah_service::output::{ReadinessStatus, RegistrationStatus, StatusOutput};
 
     fn snapshot_of(
         registration: RegistrationStatus,

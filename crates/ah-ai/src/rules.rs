@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 pub const BEGIN_MARKER: &str = "<!-- ah:begin (managed by `ah ai install`) -->";
 pub const END_MARKER: &str = "<!-- ah:end -->";
@@ -100,7 +100,7 @@ pub fn read(path: &Path) -> Result<Option<String>, AppError> {
 }
 
 pub fn write(path: &Path, contents: &str) -> Result<(), AppError> {
-    crate::persistence::atomic_write(path, contents.as_bytes())
+    ah_persist::atomic_write(path, contents.as_bytes())
 }
 
 pub fn delete(path: &Path) -> Result<(), AppError> {

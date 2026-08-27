@@ -12,10 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    error::AppError,
-    output::{TextFormatter, TextStyle},
-};
+use ah_error::AppError;
+use ah_output::{TextFormatter, TextStyle};
 
 use super::targets::{self, Scope, Target, Transport};
 
@@ -446,12 +444,12 @@ mod tests {
     use ah_plugin_api::TextFormatter;
 
     use super::*;
-    use crate::ai::install::{StatusAction, StatusProgress};
+    use crate::install::{StatusAction, StatusProgress};
 
     #[test]
     fn pending_status_renders_each_supported_scope() {
         let targets = [LiveTarget::new(
-            crate::ai::targets::find("cursor").unwrap(),
+            crate::targets::find("cursor").unwrap(),
             true,
         )];
 
@@ -467,7 +465,7 @@ mod tests {
 
     #[test]
     fn live_status_replaces_ready_slots_without_waiting_for_mcp() {
-        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
+        let mut target = LiveTarget::new(crate::targets::find("cursor").unwrap(), true);
         target.apply(StatusProgress::Cli {
             cli: None,
             available: true,
@@ -493,7 +491,7 @@ mod tests {
 
     #[test]
     fn live_status_replaces_the_mcp_slot_when_its_probe_finishes() {
-        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
+        let mut target = LiveTarget::new(crate::targets::find("cursor").unwrap(), true);
         target.apply(StatusProgress::Mcp {
             scope: Scope::Project,
             report: ScopedMcpReport {
@@ -516,7 +514,7 @@ mod tests {
     #[test]
     fn the_rules_column_does_not_move_when_a_spinner_becomes_a_result() {
         let formatter = TextFormatter::with_color(false);
-        let mut target = LiveTarget::new(crate::ai::targets::find("cursor").unwrap(), true);
+        let mut target = LiveTarget::new(crate::targets::find("cursor").unwrap(), true);
         let pending = render_live_lines(std::slice::from_ref(&target), "*", formatter);
         target.apply(StatusProgress::Mcp {
             scope: Scope::User,

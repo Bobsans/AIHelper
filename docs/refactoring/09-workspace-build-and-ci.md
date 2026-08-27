@@ -164,4 +164,17 @@ and updater lifecycles.
 - `rust-toolchain.toml` present; MSRV declared and verified in CI.
 - Clippy runs with `-D warnings` and no crate-level lint allows remain.
 - CI covers Linux, Windows, macOS, release build, supply-chain audit, and docs freshness.
-- No crate exceeds ~10k lines.
+- ~~No crate exceeds ~10k lines.~~ **(met for the root crate; one crate stays
+  over, with the measurement below.)** `aihelper` was 14 206 lines, and 4 578 of
+  them were `src/ai/` - a subsystem, not the CLI wiring the phase-3 exit
+  criterion calls for. It is now `ah-ai`, and the root crate is 9 140. `ah-service`
+  sits at 10 017, which is the guideline's own noise.
+
+  **`ah-domains` stays at 16 467, deliberately.** Phase 3 chose one crate rather
+  than eight and named the condition for revisiting it: "if compile times ever
+  justify splitting further". They do not. Touching `ah-domains/src/lib.rs` costs
+  18s to rebuild that crate and 12s to rebuild the whole workspace - the crate is
+  not on the critical path, because everything it does not depend on builds
+  alongside it. Splitting it would buy nine manifests and enforce a separation
+  that one edge (`task` → `run::io`) is not violating. The seams are recorded in
+  phase 3 for when the number changes.

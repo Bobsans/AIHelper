@@ -1,0 +1,31 @@
+[package]
+name = "ah-ai"
+version = "1.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Registering AIHelper as an MCP server with AI coding assistants"
+# Distributed as signed binaries, not on crates.io. Publishing would also
+# require versioned path dependencies across the workspace.
+publish = false
+
+[dependencies]
+ah-error = { path = "../ah-error" }
+ah-output = { path = "../ah-output" }
+ah-paths = { path = "../ah-paths" }
+ah-persist = { path = "../ah-persist" }
+ah-platform = { path = "../ah-platform" }
+ah-plugin-api = { path = "../ah-plugin-api" }
+ah-runtime = { path = "../ah-runtime" }
+ah-service = { path = "../ah-service" }
+console = "0.16.4"
+dialoguer = "0.12.0"
+jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
+reqwest = { workspace = true, features = ["json"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

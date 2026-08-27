@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::Value;
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::{
     json_config, opencode_config,
@@ -358,8 +358,8 @@ mod tests {
         Invocation, ServerSpec, add_invocation, claude_spec, codex_spec, project_entry,
         remove_invocation, run,
     };
-    use crate::ai::targets::SERVER_NAME;
-    use crate::ai::targets::{Scope, find};
+    use crate::targets::SERVER_NAME;
+    use crate::targets::{Scope, find};
 
     fn stdio() -> ServerSpec {
         ServerSpec::Stdio {

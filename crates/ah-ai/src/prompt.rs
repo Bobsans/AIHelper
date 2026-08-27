@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 
-use crate::error::AppError;
+use ah_error::AppError;
 
 use super::{
     managed::{self, ManagedState, Snapshot},
@@ -164,7 +164,7 @@ pub fn confirm(summary: &str) -> Result<bool, AppError> {
 #[cfg(test)]
 mod tests {
     use super::{TransportChoice, transport_options};
-    use crate::ai::managed::{ManagedState, Snapshot};
+    use crate::managed::{ManagedState, Snapshot};
 
     fn snapshot(state: ManagedState) -> Snapshot {
         Snapshot {

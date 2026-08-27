@@ -1,11 +1,8 @@
 //! Rendering a finished `ai` report, and the shared vocabulary for naming and
 //! colouring an action.
 
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::{Emitter, TextStyle},
-};
+use ah_error::AppError;
+use ah_output::{Emitter, GlobalOptions, TextStyle};
 
 use super::rules::BlockAction as Action;
 

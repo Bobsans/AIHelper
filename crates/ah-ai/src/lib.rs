@@ -1,3 +1,27 @@
+//! Registering AIHelper as an MCP server with the AI assistants on this
+//! machine.
+//!
+//! `ah ai info` reports what it found; `ah ai install` writes the client
+//! configuration, and `status`/`uninstall` read and undo it. Every target has
+//! its own file format and its own idea of where configuration lives, which is
+//! what `targets` and the two `*_config` modules carry.
+//!
+//! Two properties are worth naming because they are why this is not a
+//! one-function job:
+//!
+//! - **A configuration file belongs to the user, not to `ah`.** `json_config`
+//!   reads a client's JSON, adds one server entry and writes it back; a file it
+//!   cannot parse is reported rather than overwritten. `opencode_config` goes
+//!   further because its format is JSONC: it edits through `jsonc-parser`'s CST,
+//!   so comments, trailing commas and key order survive the edit.
+//! - **The write is atomic.** Every file goes through `ah_persist`, so an
+//!   interrupted install leaves the previous configuration rather than half of
+//!   the new one.
+//!
+//! Extracted from the root crate because it is a subsystem rather than CLI
+//! wiring: 4 578 lines of it, which was half of what put `aihelper` over group
+//! 09's ~10k crate limit.
+
 pub mod install;
 mod json_config;
 pub mod managed;
@@ -20,11 +44,8 @@ use ah_runtime::PluginManager;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::{
-    cli::GlobalOptions,
-    error::AppError,
-    output::{Emitter, TextFormatter, TextStyle},
-};
+use ah_error::AppError;
+use ah_output::{Emitter, GlobalOptions, TextFormatter, TextStyle};
 
 pub fn execute_info(
     manager: &PluginManager,
@@ -62,7 +83,7 @@ pub fn execute_info(
     })
 }
 
-pub(crate) fn typed_info_value(
+pub fn typed_info_value(
     manager: &PluginManager,
     domain_filter: Option<&str>,
 ) -> Result<serde_json::Value, AppError> {
@@ -455,7 +476,7 @@ fn global_options_docs() -> Vec<GlobalOptionDoc> {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AiInfoOutput {
+pub struct AiInfoOutput {
     command: &'static str,
     domain_filter: Option<String>,
     global_options: Vec<GlobalOptionDoc>,
