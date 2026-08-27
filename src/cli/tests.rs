@@ -588,3 +588,146 @@ fn parser_parses_plugins_state_management_commands() {
     assert!(all);
     assert_eq!(domain, None);
 }
+
+/// What a user sees when a command does not exist, asserted where the text is
+/// produced rather than by spawning `ah`.
+///
+/// The process-level tests these replace asserted fragments with `contains`;
+/// these assert the whole string. They also cover the part those tests were
+/// really exercising: the resolution of a typo against the *real* domain list,
+/// which a bare `build_cli_command(&[])` cannot do because every built-in domain
+/// is a plugin here.
+///
+/// What is deliberately left to the process-level suite is the plugin dispatch
+/// path - `ah project versoin` and `ah search text` fail inside the plugin's own
+/// parser, and reaching that in-process needs a `PluginManager`, which is the
+/// next step of group 08 rather than this one.
+mod diagnostics {
+    use ah_error::AppError;
+    use ah_plugin_api::{PluginMetadata, TextFormatter};
+
+    use super::super::{parse_runtime_command, suggest_top_level_command};
+
+    /// The domains the shipped binary knows.
+    fn plugins() -> Vec<PluginMetadata> {
+        crate::plugins::builtins()
+            .into_iter()
+            .map(|plugin| plugin.metadata())
+            .collect()
+    }
+
+    /// The refusal the runtime produces for a domain nothing claims, built the
+    /// way `runtime_flow::invoke` builds it.
+    fn unknown_domain(domain: &str) -> String {
+        let error =
+            AppError::unknown_command(domain, suggest_top_level_command(domain, &plugins()));
+        error.console_text(&[domain.to_owned()], TextFormatter::with_color(false))
+    }
+
+    #[test]
+    fn an_alias_of_a_flag_is_suggested_as_that_flag() {
+        assert_eq!(
+            unknown_domain("version"),
+            "ah: 'version' is not a command.\n\n\
+             Did you mean:\n  ah --version    Show the AIHelper version\n\n\
+             Usage:\n  ah <domain> <command> [options]\n\n\
+             Run 'ah --help' for more information."
+        );
+    }
+
+    #[test]
+    fn a_misspelled_domain_is_resolved_against_the_real_domain_list() {
+        assert_eq!(
+            unknown_domain("serach"),
+            "ah: 'serach' is not a command.\n\n\
+             Did you mean:\n  ah search    Search utilities\n\n\
+             Usage:\n  ah <domain> <command> [options]\n\n\
+             Run 'ah --help' for more information."
+        );
+    }
+
+    /// Nothing is guessed for a name that resembles nothing: a wrong guess costs
+    /// the reader more than no guess. And no internal code leaks into the text.
+    #[test]
+    fn an_unrelated_name_is_not_guessed_at() {
+        let text = unknown_domain("something-unrelated");
+        assert_eq!(
+            text,
+            "ah: 'something-unrelated' is not a command.\n\n\
+             Usage:\n  ah <domain> <command> [options]\n\n\
+             Run 'ah --help' for more information."
+        );
+        assert!(!text.contains("Did you mean"));
+        assert!(!text.contains("DOMAIN_NOT_FOUND"));
+    }
+
+    /// The resolution on its own: which candidate wins, and when none does.
+    #[test]
+    fn only_a_near_enough_name_produces_a_suggestion() {
+        let plugins = plugins();
+        for (typed, expected) in [
+            (
+                "version",
+                Some(("ah --version", "Show the AIHelper version")),
+            ),
+            ("help", Some(("ah --help", "Show command help"))),
+            ("serach", Some(("ah search", "Search utilities"))),
+            ("something-unrelated", None),
+            ("", None),
+        ] {
+            let suggestion = suggest_top_level_command(typed, &plugins);
+            match expected {
+                Some((command, description)) => {
+                    let suggestion =
+                        suggestion.unwrap_or_else(|| panic!("'{typed}' should suggest {command}"));
+                    assert_eq!(suggestion.command, command, "{typed}");
+                    assert_eq!(
+                        suggestion.description.as_deref(),
+                        Some(description),
+                        "{typed}"
+                    );
+                }
+                None => assert!(suggestion.is_none(), "'{typed}' should not be guessed at"),
+            }
+        }
+    }
+
+    /// A host domain has a real subcommand tree, so its typo is caught while
+    /// parsing and carries the subcommand's own description.
+    #[test]
+    fn a_misspelled_host_subcommand_is_scoped_to_its_host_domain() {
+        let raw = ["ah", "plugins", "lsit"]
+            .into_iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        let Err(error) = parse_runtime_command(raw, &plugins()) else {
+            panic!("an unknown subcommand should be refused")
+        };
+
+        assert_eq!(
+            error.console_text(
+                &["plugins".to_owned(), "lsit".to_owned()],
+                TextFormatter::with_color(false)
+            ),
+            "ah: unrecognized subcommand 'lsit'.\n\n\
+             Did you mean:\n  ah plugins list    List registered plugins\n\n\
+             Usage:\n  ah plugins [OPTIONS] [COMMAND]\n\n\
+             Run 'ah plugins --help' for more information."
+        );
+    }
+
+    /// The machine-readable form of the same refusal. Which form `print` chooses
+    /// depends on a process-global, so that choice stays a process-level test.
+    #[test]
+    fn the_json_form_of_an_unknown_command_is_structured() {
+        let error = AppError::unknown_command("version", None);
+        let payload = serde_json::to_value(error.diagnostic()).expect("the diagnostic serializes");
+
+        assert_eq!(payload["domain"], "plugins");
+        assert_eq!(payload["operation"], "plugin.runtime");
+        assert_eq!(payload["code"], "DOMAIN_NOT_FOUND");
+        assert_eq!(payload["message"], "unknown command domain: version");
+        assert_eq!(payload["cause"], "unknown command domain: version");
+        assert_eq!(payload["exit_code_hint"], 1);
+    }
+}

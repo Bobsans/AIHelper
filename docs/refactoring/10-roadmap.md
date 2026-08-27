@@ -309,7 +309,7 @@ Only now is this cheap.
 | ~~`SystemdUserScheduler`~~ **(done)**, `LaunchdScheduler`                            | 06     |
 | ~~`Forge` abstraction~~; **collapse GitHub/GitLab duplication into a shared core** *(the two duplicated loops done; see below)* | 02     |
 | ~~Cross-version updater compatibility fixtures~~ **(on-disk done; the handoff argv half done)** | 07, 08 |
-| Convert the integration suite to a deliberate thin contract layer                    | 08     |
+| Convert the integration suite to a deliberate thin contract layer *(started; `help.rs` done)* | 08     |
 
 **Exit criterion:** the managed service runs on three platforms with one lifecycle
 test suite; a new forge plugin is a few hundred lines.
@@ -507,6 +507,36 @@ table that listed the codes its own tests used. Two of the three answered a
 ordering, header case-insensitivity, byte bodies, an empty response, and a
 queued response the code never asks for, which used to make `drop` wait out the
 whole 60-second accept timeout. None of the three copies had ever been tested.
+
+**Converting the integration suite has started, and the first file found what
+had been blocking it.** `AppError::print` renders with `eprintln!` and reads
+`std::env::args()`, so the text a user sees on a refusal could not be obtained
+without spawning `ah` - one instance of group 04's problem that the `Emitter`
+migration left behind. `AppError::console_text` returns the same string and
+`print` calls it, and with that six of `help.rs`'s nine tests moved in-process
+and now assert whole strings where they asserted fragments. Two of the six were
+pure redundancy: `cli-help.snap` had already frozen the entire help tree byte
+for byte.
+
+Two findings that will shape the rest of the row:
+
+- **A bare command tree is not the shipped one.** Every built-in domain is a
+  plugin, so `build_cli_command(&[])` does not know `search` or `project`, and a
+  typo against it resolves to nothing. The in-process tests build the real
+  metadata from `plugins::builtins()` - which a process-level test was supplying
+  implicitly, and which is part of why these tests lived there in the first
+  place.
+- **Where a parse error comes from decides where its test can live.** A *host*
+  domain has a clap subcommand tree, so `plugins lsit` fails during
+  `parse_runtime_command` and converts cleanly. A *plugin* domain parses its own
+  arguments, so `project versoin` and `search text` fail inside the plugin and
+  surface through the runtime; converting those needs an in-process
+  `PluginManager` harness, which is the next thing this row needs rather than
+  another file.
+
+`help.rs` is 129 lines down to 88, and what is left is what only a process can
+show: stderr rather than stdout, a failing exit code, the plugin dispatch path,
+and `--json` switching the form - which `print` decides from a process-global.
 
 ## Cross-cutting invariants
 

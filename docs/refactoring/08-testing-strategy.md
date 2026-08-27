@@ -130,6 +130,41 @@ down from 7.6k.
 5. Replace env-var test hooks with injected ports as `sdk::process` lands.
 6. Convert integration tests to in-process tests domain by domain, deleting the
    subprocess equivalents only once the in-process version asserts strictly more.
+
+   **Started with `help.rs`, 129 lines to 88, and the first conversion found the
+   thing that had been blocking every other one.** `AppError::print` renders to
+   `eprintln!` and reads `std::env::args()`, so the text a user sees on a
+   refusal could not be obtained without spawning `ah`. That is one instance of
+   group 04's problem left behind by the `Emitter` migration.
+   `AppError::console_text` returns the same string, and `print` calls it.
+
+   With that, six of the nine tests moved in-process and now assert *more*:
+
+   | Was | Is |
+   |-----|----|
+   | `--help` and `file --help` contain some names | already frozen whole, byte for byte, by `cli-help.snap` - the two tests were pure redundancy |
+   | three unknown-domain suggestions, by `contains` | `cli::tests::diagnostics`, whole-string, against the real domain list |
+   | a misspelled host subcommand, by `contains` | same, and it pinned a usage line the fragment assertions never checked |
+
+   Two things the conversion turned up:
+
+   - **A bare command tree is not the shipped one.** Every built-in domain is a
+     plugin, so `build_cli_command(&[])` does not know `search` or `project`,
+     and a typo against it resolves to nothing. The in-process tests build the
+     real metadata from `plugins::builtins()`; a process-level test was
+     supplying that implicitly, which is part of why these tests lived there.
+   - **Where the parse error comes from decides where the test can live.** A
+     *host* domain (`plugins`, `ai`, `secrets`, ...) has a clap subcommand tree,
+     so `plugins lsit` fails during `parse_runtime_command` and is testable in
+     process. A *plugin* domain parses its own arguments, so `project versoin`
+     and `search text` fail inside the plugin and surface through the runtime;
+     reaching those needs a `PluginManager`, and they stay process-level for now.
+
+   What is left in `help.rs` is what only a process can show: that a refusal
+   reaches stderr with a failing exit code and an empty stdout, that the plugin
+   dispatch path renders the plugin's own parse error, and that `--json`
+   switches the whole thing to a structured payload - which `print` decides from
+   a process-global.
 7. ~~Add cross-version updater fixtures (v1.4 journal → current recovery, and
    back).~~ **(done.)** The on-disk plan, journal and helper self-check are
    frozen as fixtures, and the handoff command line is produced and validated

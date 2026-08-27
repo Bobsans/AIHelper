@@ -161,13 +161,26 @@ impl AppError {
             return;
         }
 
-        let rendered = self.rendered();
-        let formatter = TextFormatter::stderr();
         let invocation = std::env::args().skip(1).collect::<Vec<_>>();
         eprintln!(
             "{}",
-            render_console_diagnostic(&self.console_diagnostic(&rendered, &invocation), formatter)
+            self.console_text(&invocation, TextFormatter::stderr())
         );
+    }
+
+    /// The text [`Self::print`] writes, as a value.
+    ///
+    /// `print` reads the process's own argv and writes to a stream, so the only
+    /// way to assert what a user sees was to spawn `ah`. Group 04's `Emitter`
+    /// migration left this one path behind; returning the string instead lets
+    /// the rendering be asserted where the error is produced.
+    ///
+    /// `invocation` is the command line without the program name, which is what
+    /// the diagnostic quotes back and scopes its help suggestion to.
+    #[must_use]
+    pub fn console_text(&self, invocation: &[String], formatter: TextFormatter) -> String {
+        let rendered = self.rendered();
+        render_console_diagnostic(&self.console_diagnostic(&rendered, invocation), formatter)
     }
 
     pub fn invalid_argument(message: impl Into<String>) -> Self {

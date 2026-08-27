@@ -1,72 +1,27 @@
+//! What the shipped binary does with a command line it cannot serve.
+//!
+//! Deliberately thin. Six of the nine tests that used to live here asserted
+//! text fragments with `contains`, and the same text is now asserted in full,
+//! where it is produced:
+//!
+//! | Was here | Now |
+//! |----------|-----|
+//! | `--help` and `file --help` contain some names | `tests/snapshots/cli-help.snap`, which freezes the whole help tree byte for byte |
+//! | three unknown-domain suggestions | `cli::tests::diagnostics`, whole-string, against the real domain list |
+//! | a misspelled host subcommand | `cli::tests::diagnostics`, including the usage line the `contains` version never pinned |
+//!
+//! What is left is what only a process can show: that a refusal reaches
+//! *stderr* with a failing exit code, that the plugin dispatch path renders the
+//! plugin's own parse error, and that `--json` switches the whole thing to a
+//! structured payload. Reaching the first two in-process needs a
+//! `PluginManager`; that is the next step of group 08's step 6, not this one.
+
 use super::common::IsolatedAhCommand as Command;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
-#[test]
-fn shows_top_level_help() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.arg("--help")
-        .assert()
-        .success()
-        .stdout(contains("AIHelper CLI toolbox"))
-        .stdout(contains("ai"))
-        .stdout(contains("file"))
-        .stdout(contains("search"))
-        .stdout(contains("ctx"))
-        .stdout(contains("git"))
-        .stdout(contains("http"))
-        .stdout(contains("project"))
-        .stdout(contains("run"))
-        .stdout(contains("task"))
-        .stdout(contains("upgrade"));
-}
-
-#[test]
-fn shows_file_subcommand_help() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "--help"])
-        .assert()
-        .success()
-        .stdout(contains("read"));
-}
-
-#[test]
-fn unknown_version_command_suggests_the_version_flag() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.arg("version")
-        .assert()
-        .failure()
-        .stderr(contains("ah: 'version' is not a command."))
-        .stderr(contains(
-            "Did you mean:\n  ah --version    Show the AIHelper version",
-        ))
-        .stderr(contains("Usage:\n  ah <domain> <command> [options]"))
-        .stderr(contains("Run 'ah --help' for more information."))
-        .stderr(contains("DOMAIN_NOT_FOUND").not());
-}
-
-#[test]
-fn misspelled_domain_suggests_a_known_command() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.arg("serach")
-        .assert()
-        .failure()
-        .stderr(contains("ah: 'serach' is not a command."))
-        .stderr(contains("Did you mean:\n  ah search    Search utilities"))
-        .stderr(contains("Run 'ah --help' for more information."));
-}
-
-#[test]
-fn unrelated_unknown_domain_does_not_guess() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.arg("something-unrelated")
-        .assert()
-        .failure()
-        .stderr(contains("ah: 'something-unrelated' is not a command."))
-        .stderr(contains("Did you mean:").not())
-        .stderr(contains("Run 'ah --help' for more information."));
-}
-
+/// A plugin domain parses its own arguments, so this typo is caught inside the
+/// plugin and rendered by the host - a path no in-process test reaches yet.
 #[test]
 fn misspelled_subcommand_keeps_clap_suggestion_and_scoped_help() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
@@ -85,19 +40,8 @@ fn misspelled_subcommand_keeps_clap_suggestion_and_scoped_help() {
         .stderr(contains("INVALID_ARGUMENT").not());
 }
 
-#[test]
-fn misspelled_host_subcommand_includes_its_description() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["plugins", "lsit"])
-        .assert()
-        .failure()
-        .stderr(contains("ah: unrecognized subcommand 'lsit'."))
-        .stderr(contains(
-            "Did you mean:\n  ah plugins list    List registered plugins",
-        ))
-        .stderr(contains("Run 'ah plugins --help' for more information."));
-}
-
+/// Same path, for the argument a plugin requires rather than the subcommand it
+/// does not have.
 #[test]
 fn missing_required_argument_shows_name_usage_and_scoped_help() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
@@ -113,6 +57,8 @@ fn missing_required_argument_shows_name_usage_and_scoped_help() {
         ));
 }
 
+/// `--json` is read from the environment by the error printer, so which of the
+/// two forms a refusal takes can only be observed from outside.
 #[test]
 fn unknown_command_json_contract_remains_structured() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
@@ -126,4 +72,17 @@ fn unknown_command_json_contract_remains_structured() {
     assert_eq!(payload["message"], "unknown command domain: version");
     assert_eq!(payload["cause"], "unknown command domain: version");
     assert_eq!(payload["exit_code_hint"], 1);
+}
+
+/// And that the text form goes to stderr rather than stdout, with a failing
+/// exit code. The wording itself is asserted in `cli::tests::diagnostics`.
+#[test]
+fn a_refused_command_writes_to_stderr_and_fails() {
+    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
+    cmd.arg("serach")
+        .assert()
+        .failure()
+        .stdout("")
+        .stderr(contains("ah: 'serach' is not a command."))
+        .stderr(contains("Did you mean:\n  ah search    Search utilities"));
 }
