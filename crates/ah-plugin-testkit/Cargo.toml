@@ -1,0 +1,12 @@
+[package]
+name = "ah-plugin-testkit"
+version = "1.4.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The HTTP mock server AIHelper's plugin tests share, so a fix to it reaches all of them"
+# A dev-dependency of the plugins and nothing else: no released binary links it.
+publish = false
+
+[dependencies]

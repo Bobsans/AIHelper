@@ -131,8 +131,17 @@ down from 7.6k.
 6. Convert integration tests to in-process tests domain by domain, deleting the
    subprocess equivalents only once the in-process version asserts strictly more.
 7. ~~Add cross-version updater fixtures (v1.4 journal → current recovery, and
-   back).~~ **(done for the on-disk formats, half done for the command line;
-   see group 07's risk list for exactly which half.)**
+   back).~~ **(done.)** The on-disk plan, journal and helper self-check are
+   frozen as fixtures, and the handoff command line is produced and validated
+   from one ordered list, so a test can put the two halves together. Group 07's
+   risk list says which part still has no in-process cover: the Windows
+   launcher's handle plumbing.
+9. ~~Share the plugins' HTTP mock server.~~ **(done as `ah-plugin-testkit`, a
+   dev-dependency.)** Three hand-written copies had drifted - only two put the
+   accepted socket back into blocking mode, only one bounded its accept loop,
+   one carried its body as a `String` rather than bytes, and the three status
+   reason tables listed different codes. The shared one is the union of every
+   guard, and it removes 588 lines from the plugins.
 8. ~~Add a CI job that regenerates `docs/reference` and fails on diff.~~ **(done as a
    drift test; generating it would rewrite prose)**
 
@@ -179,11 +188,32 @@ report named a different test: any test using that mock server could lose the
 race. The two lines that fix it were **already present in the GitHub and GitLab
 plugins' mock servers** - somebody hit this before, fixed their copy, and had no
 way to carry it back. Three hand-written copies of `MockServer`, one missing a
-fix, is the same lesson as group 02: the next candidate for the SDK is the test
-harness itself.
+fix, is the same lesson as group 02.
 
 The earlier note said the cause was unknown and that the accept deadline had
 been raised and reverted; neither touched the real cause.
+
+**So the copies are gone.** `crates/ah-plugin-testkit` is a dev-dependency of
+the three plugins and the only mock server left. It is the union of what the
+three had, because each was missing something another had:
+
+| | GitHub | GitLab | Ollama |
+|---|---|---|---|
+| accepted socket returned to blocking mode | yes | yes | **no - the flake** |
+| bounded accept loop | yes | **no** | **no** |
+| response body | bytes | bytes | **`String`, so no archive** |
+| status reason phrases | 200/201/204/404 | fewer | 200/500 |
+
+Two things the union added that none of them had. A `500` came back with the
+reason phrase `OK` in two copies, because their tables did not list it - nothing
+asserts on the phrase, but a mock that misreports its own status line is a bad
+place to start debugging. And a test that queues a response the code never asks
+for used to make `drop` wait out the whole 60-second accept timeout; the server
+now stops when it is dropped.
+
+588 lines left the plugins. The testkit has its own tests - ordering, header
+case-insensitivity, byte bodies, an empty response, and the never-asked-for
+queued response - which none of the three copies ever had.
 
 ## Acceptance criteria
 

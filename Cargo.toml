@@ -24,6 +24,7 @@ members = [
     "crates/ah-platform",
     "crates/ah-plugin-api",
     "crates/ah-plugin-sdk",
+    "crates/ah-plugin-testkit",
     "crates/ah-redact",
     "crates/ah-secrets",
     "crates/ah-service",

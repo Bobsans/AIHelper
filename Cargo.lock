@@ -176,6 +176,7 @@ version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
  "ah-plugin-sdk",
+ "ah-plugin-testkit",
  "clap",
  "reqwest",
  "schemars",
@@ -191,6 +192,7 @@ version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
  "ah-plugin-sdk",
+ "ah-plugin-testkit",
  "clap",
  "reqwest",
  "schemars",
@@ -205,6 +207,7 @@ version = "1.4.0"
 dependencies = [
  "ah-plugin-api",
  "ah-plugin-sdk",
+ "ah-plugin-testkit",
  "clap",
  "reqwest",
  "schemars",
@@ -238,6 +241,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "ah-plugin-testkit"
+version = "1.4.0"
 
 [[package]]
 name = "ah-redact"

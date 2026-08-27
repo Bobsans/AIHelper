@@ -21,3 +21,6 @@ reqwest = { workspace = true, features = ["json"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+ah-plugin-testkit = { path = "../../crates/ah-plugin-testkit" }

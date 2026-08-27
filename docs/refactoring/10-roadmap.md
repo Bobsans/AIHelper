@@ -495,6 +495,19 @@ not. The fix was already in the GitHub and GitLab mock servers - somebody hit it
 before and had no way to carry the fix back. Three hand-written `MockServer`
 copies, one missing a fix, is group 02's lesson applied to the test harness.
 
+**So the copies became one crate,** `ah-plugin-testkit`, a dev-dependency of the
+three plugins. It is deliberately the union, because each copy was missing
+something another had: the blocking-mode line (one lacked it - the flake), a
+bounded accept loop (two lacked it), a byte response body (one carried a
+`String`, so it could not express a log archive at all), and a status reason
+table that listed the codes its own tests used. Two of the three answered a
+`500` with the reason phrase `OK`.
+
+588 lines left the plugins, and the shared server has tests of its own -
+ordering, header case-insensitivity, byte bodies, an empty response, and a
+queued response the code never asks for, which used to make `drop` wait out the
+whole 60-second accept timeout. None of the three copies had ever been tested.
+
 ## Cross-cutting invariants
 
 Restating, because every phase is constrained by them:
