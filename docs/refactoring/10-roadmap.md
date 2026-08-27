@@ -309,7 +309,7 @@ Only now is this cheap.
 | ~~`SystemdUserScheduler`~~ **(done)**, `LaunchdScheduler`                            | 06     |
 | ~~`Forge` abstraction~~; **collapse GitHub/GitLab duplication into a shared core** *(the two duplicated loops done; see below)* | 02     |
 | ~~Cross-version updater compatibility fixtures~~ **(on-disk done; the handoff argv half done)** | 07, 08 |
-| Convert the integration suite to a deliberate thin contract layer *(`help.rs`, `git.rs`, `search.rs`, `project.rs`, `task.rs`, `ctx.rs` done; `file.rs`, `http.rs`, `run.rs` left)* | 08     |
+| ~~Convert the integration suite to a deliberate thin contract layer~~ **(done; every plugin domain converted, 172 spawns down to 94)** | 08     |
 
 **Exit criterion:** the managed service runs on three platforms with one lifecycle
 test suite; a new forge plugin is a few hundred lines.
@@ -582,10 +582,31 @@ times across the domains; and two `ctx` tests named
 `..._has_no_ansi_when_captured` are renamed to what they actually assert, because
 a test should not keep a name promising a check it no longer makes.
 
-`file.rs` (27 spawns), `http.rs` (18) and `run.rs` (15) are what is left to move.
-`startup.rs`, `logging.rs`, `mcp.rs` and `common.rs` stay: exit codes, stream
-identity, crash recovery, the event log and the managed service are process
-properties, and that is exactly the thin contract layer this row is aiming at.
+**The row is finished at 94 spawns from 172, and what is left is what the row
+was aiming at.** Every plugin domain is converted; `file.rs` - the file the
+conversion started from, because one helper was the choke point for thirteen of
+its tests - is the one with no subprocess left at all, 37 tests in 0.11s.
+
+A third wrong assertion fell out of the indexing, the same way the first two
+did: `http assert --report json` was checked with `contains("\"failed\": 0")`,
+and `failed` lives under `summary`. Three for three, each one a field that could
+have moved to an unrelated object without the old test noticing.
+
+The subprocesses that remain in a converted file now say in a doc comment why
+they are still there, because that is the question a reader will have: `--json`
+routing a refusal to stderr as JSON (`AppError::print` reads a process-global);
+an environment variable that has to be in `ah`'s own environment, or a replaced
+`PATH`, neither of which can be set in a test binary shared with 200 other
+tests; and `--cwd workspace`, relative, which resolves against a process's
+working directory. `startup.rs`, `logging.rs`, `mcp.rs`, `common.rs` and the
+vault half of `http.rs` stay whole: exit codes, stream identity, crash recovery,
+the event log, redaction in the log file, and the managed service are process
+properties.
+
+The child processes never left. `run check` spawns them, bounds their output and
+kills their descendants, and that is the behaviour under test - the timeout
+tests still measure wall clock against real children. What stopped being a
+process is `ah`.
 
 ## Cross-cutting invariants
 

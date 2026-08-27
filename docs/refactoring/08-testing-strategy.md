@@ -243,9 +243,33 @@ down from 7.6k.
      The timeout test still measures wall clock and still finishes under four
      seconds, because the five-second sleep it kills is a real child.
 
-   The three suites run in 0.05s, 1.07s and 1.41s. What is left that could still
-   move is `file.rs` (27), `http.rs` (18) and `run.rs` (15); `startup.rs`,
-   `logging.rs`, `mcp.rs` and `common.rs` are process-level by nature.
+   The three suites run in 0.05s, 1.07s and 1.41s.
+
+   **`file.rs`, `http.rs` and `run.rs` finish the domains**, and the suite is at
+   94 spawns from 172. `file.rs` is now the file with none left - its 37 tests
+   run in 0.11s, where 34 of them were subprocesses. A third wrong assertion fell
+   out of the indexing: `http assert --report json` was checked with
+   `contains("\"failed\": 0")`, and `failed` lives under `summary`.
+
+   The three that stay in `http.rs` and `run.rs` now carry the reason in a doc
+   comment, because "why is this still a subprocess" is the question a reader
+   will have:
+
+   - `--json` routing a refusal to stderr as JSON, which `AppError::print`
+     decides from a process-global.
+   - An environment variable that has to be in `ah`'s own environment - the test
+     proves the child does not inherit `AH_VAULT_MASTER_KEY`, and setting it in
+     the test process would put it in every other test's too. Same for the one
+     that replaces `PATH`.
+   - `--cwd workspace`, relative, which has to resolve against a process's own
+     working directory rather than the test binary's.
+
+   The child processes in these files stay real throughout: `run check` spawns
+   them, bounds their output and kills their descendants, and that is the
+   behaviour under test. What stopped being a process is `ah`.
+
+   `startup.rs`, `logging.rs`, `mcp.rs`, `common.rs` and the vault half of
+   `http.rs` are what the contract layer is meant to be.
 7. ~~Add cross-version updater fixtures (v1.4 journal → current recovery, and
    back).~~ **(done.)** The on-disk plan, journal and helper self-check are
    frozen as fixtures, and the handoff command line is produced and validated

@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::common::IsolatedAhCommand as Command;
+use aihelper::harness::Harness;
 use aihelper::secrets::{ExplicitMasterKey, NewSecret, VaultStore};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use predicates::{prelude::PredicateBooleanExt, str::contains};
@@ -23,6 +24,19 @@ struct MockResponse {
 }
 
 const TEST_MASTER_KEY: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+/// `http assert` (or `http run`) over a spec file, with its JSON report.
+fn assert_report(spec_path: &std::path::Path, command: &str) -> serde_json::Value {
+    Harness::new()
+        .run(&[
+            "http",
+            command,
+            &spec_path.to_string_lossy(),
+            "--report",
+            "json",
+        ])
+        .json()
+}
 
 #[test]
 fn http_get_uses_vault_basic_credential_without_exposing_it() {
@@ -356,26 +370,26 @@ fn http_get_supports_expectations() {
     }];
     let (base_url, handle) = spawn_mock_server(responses);
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
-        "http",
-        "get",
-        &format!("{base_url}/health"),
-        "--query",
-        "source=cli",
-        "--expect-status",
-        "200",
-        "--expect-header",
-        "x-env: dev",
-        "--expect-body-contains",
-        "ok",
-        "--expect-json",
-        "status:eq:ok",
-    ])
-    .assert()
-    .success()
-    .stdout(contains("\"status\":\"ok\""))
-    .stdout(contains("\u{1b}").not());
+    let output = Harness::new()
+        .run(&[
+            "http",
+            "get",
+            &format!("{base_url}/health"),
+            "--query",
+            "source=cli",
+            "--expect-status",
+            "200",
+            "--expect-header",
+            "x-env: dev",
+            "--expect-body-contains",
+            "ok",
+            "--expect-json",
+            "status:eq:ok",
+        ])
+        .expect_success()
+        .to_owned();
+
+    assert!(output.contains("\"status\":\"ok\""), "{output}");
 
     handle.join().expect("server thread should finish");
 }
@@ -400,19 +414,20 @@ fn http_get_retries_server_errors() {
     ];
     let (base_url, handle) = spawn_mock_server(responses);
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
-        "http",
-        "get",
-        &format!("{base_url}/unstable"),
-        "--retry",
-        "1",
-        "--expect-status",
-        "200",
-    ])
-    .assert()
-    .success()
-    .stdout(contains("ready"));
+    let output = Harness::new()
+        .run(&[
+            "http",
+            "get",
+            &format!("{base_url}/unstable"),
+            "--retry",
+            "1",
+            "--expect-status",
+            "200",
+        ])
+        .expect_success()
+        .to_owned();
+
+    assert!(output.contains("ready"), "{output}");
 
     handle.join().expect("server thread should finish");
 }
@@ -428,18 +443,18 @@ fn http_get_does_not_retry_client_errors() {
     }];
     let (base_url, handle) = spawn_mock_server(responses);
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
-        "http",
-        "get",
-        &format!("{base_url}/missing"),
-        "--retry",
-        "2",
-        "--expect-status",
-        "404",
-    ])
-    .assert()
-    .success();
+    // One queued response: a retry would find the server gone.
+    let _ = Harness::new()
+        .run(&[
+            "http",
+            "get",
+            &format!("{base_url}/missing"),
+            "--retry",
+            "2",
+            "--expect-status",
+            "404",
+        ])
+        .expect_success();
 
     handle.join().expect("server thread should finish");
 }
@@ -455,8 +470,7 @@ fn http_get_does_not_retry_assertion_failures() {
     }];
     let (base_url, handle) = spawn_mock_server(responses);
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
+    let run = Harness::new().run(&[
         "http",
         "get",
         &format!("{base_url}/healthy"),
@@ -464,10 +478,14 @@ fn http_get_does_not_retry_assertion_failures() {
         "2",
         "--expect-body-contains",
         "missing",
-    ])
-    .assert()
-    .failure()
-    .stderr(contains("request expectations failed"));
+    ]);
+
+    let _ = run.expect_failure();
+    assert!(
+        run.detail().contains("request expectations failed"),
+        "{}",
+        run.detail()
+    );
 
     handle.join().expect("server thread should finish");
 }
@@ -483,9 +501,8 @@ fn http_get_bounds_oversized_response_body() {
     }];
     let (base_url, handle) = spawn_mock_server(responses);
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let assert = cmd
-        .args([
+    let payload = Harness::new()
+        .run(&[
             "--json",
             "http",
             "get",
@@ -495,10 +512,7 @@ fn http_get_bounds_oversized_response_body() {
             "--expect-status",
             "200",
         ])
-        .assert()
-        .success();
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output");
+        .json();
     assert_eq!(payload["body"], "abcdefgh");
     assert_eq!(payload["body_truncated"], true);
     assert_eq!(payload["truncated"], true);
@@ -571,19 +585,10 @@ cases:
     )
     .expect("spec file should be written");
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
-        "http",
-        "assert",
-        &spec_path.to_string_lossy(),
-        "--report",
-        "json",
-    ])
-    .assert()
-    .success()
-    .stdout(contains("\"command\": \"http.assert\""))
-    .stdout(contains("\"failed\": 0"))
-    .stdout(contains("\u{1b}").not());
+    let report = assert_report(&spec_path, "assert");
+
+    assert_eq!(report["command"], "http.assert");
+    assert_eq!(report["summary"]["failed"], 0);
 
     handle.join().expect("server thread should finish");
 }
@@ -648,18 +653,21 @@ cases:
     )
     .expect("spec file should be written");
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
+    let run = Harness::new().run(&[
         "http",
         "assert",
         &spec_path.to_string_lossy(),
         "--report",
         "json",
-    ])
-    .assert()
-    .success()
-    .stdout(contains("\"failed\": 0"))
-    .stdout(contains("secret-token").not());
+    ]);
+    let report = run.json();
+
+    assert_eq!(report["summary"]["failed"], 0);
+    assert!(
+        !run.expect_success().contains("secret-token"),
+        "an extracted value never reaches the report: {}",
+        run.expect_success()
+    );
 
     handle.join().expect("server thread should finish");
 }
@@ -699,18 +707,25 @@ cases:
     )
     .expect("spec file should be written");
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args([
+    let run = Harness::new().run(&[
         "http",
         "assert",
         &spec_path.to_string_lossy(),
         "--report",
         "json",
-    ])
-    .assert()
-    .failure()
-    .stdout(contains("extract 'missing' failed"))
-    .stdout(contains("secret-token").not());
+    ]);
+
+    let _ = run.expect_failure();
+    assert!(
+        run.stdout().contains("extract 'missing' failed"),
+        "{}",
+        run.stdout()
+    );
+    assert!(
+        !run.stdout().contains("secret-token"),
+        "a partial extraction publishes nothing: {}",
+        run.stdout()
+    );
 
     handle.join().expect("server thread should finish");
 }
@@ -746,14 +761,21 @@ cases:
     )
     .expect("spec file should be written");
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["http", "run", &spec_path.to_string_lossy(), "--fail-fast"])
-        .assert()
-        .failure()
-        .stdout(contains("FAIL unhealthy"))
-        .stdout(contains("\u{1b}").not())
-        .stderr(contains("ah: 1 of 1 HTTP assertion case(s) failed"))
-        .stderr(contains("HTTP_ASSERTION_FAILED").not());
+    let argv = ["http", "run", &spec_path.to_string_lossy(), "--fail-fast"];
+    let run = Harness::new().run(&argv);
+
+    let _ = run.expect_failure();
+    assert!(run.stdout().contains("FAIL unhealthy"), "{}", run.stdout());
+    assert!(
+        run.diagnostic_text(&argv)
+            .starts_with("ah: 1 of 1 HTTP assertion case(s) failed"),
+        "{}",
+        run.diagnostic_text(&argv)
+    );
+    assert!(
+        !run.diagnostic_text(&argv).contains("HTTP_ASSERTION_FAILED"),
+        "no internal code leaks into the text"
+    );
 
     handle.join().expect("server thread should finish");
 }

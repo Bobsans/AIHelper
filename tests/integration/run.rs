@@ -1,24 +1,42 @@
+//! `ah run check`, mostly run in this process.
+//!
+//! The child processes are real - spawning them, bounding their output and
+//! killing their descendants is the behaviour under test. What stopped being a
+//! process is `ah` itself, so the `run.check` payload is read as a value.
+//!
+//! Two tests here still need a process of their own, and say why: one sets an
+//! environment variable to prove the child does not inherit it, and one
+//! replaces `PATH`. Both are process state, and setting either in the test
+//! process would leak into every other test in this binary.
+
 use super::common::IsolatedAhCommand as Command;
-use predicates::{prelude::PredicateBooleanExt, str::contains};
+use aihelper::harness::Harness;
+use predicates::str::contains;
+use serde_json::Value;
 use std::fs;
 #[cfg(windows)]
 use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-#[test]
-fn run_check_reports_successful_command() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let mut args = vec!["--json", "run", "check"];
-    args.extend(platform_exit_command(true));
-    cmd.args(args)
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"run.check\""))
-        .stdout(contains("\"success\": true"))
-        .stdout(contains("\"timed_out\": false"));
+/// `run check` answering in JSON, in this process.
+fn run_check_json(args: &[&str]) -> Value {
+    let mut argv = vec!["--json", "run", "check"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).json()
 }
 
+#[test]
+fn run_check_reports_successful_command() {
+    let payload = run_check_json(&platform_exit_command(true));
+
+    assert_eq!(payload["command"], "run.check");
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["timed_out"], false);
+}
+
+/// Process-level: the variable has to be in `ah`'s own environment, and setting
+/// it in the test process would put it in every other test's too.
 #[test]
 fn run_check_child_cannot_inherit_vault_master_key() {
     let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
@@ -35,63 +53,47 @@ fn run_check_child_cannot_inherit_vault_master_key() {
 
 #[test]
 fn run_check_text_output_preserves_plain_contract() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let mut args = vec!["run", "check"];
-    args.extend(platform_exit_command(true));
-    cmd.args(args)
-        .assert()
-        .success()
-        .stdout(contains(
-            "success=true exit_code=0 timed_out=false duration_ms=",
-        ))
-        .stdout(contains("\u{1b}").not());
+    let mut argv = vec!["run", "check"];
+    argv.extend(platform_exit_command(true));
+    let output = Harness::new().run(&argv).expect_success().to_owned();
+
+    assert!(
+        output.contains("success=true exit_code=0 timed_out=false duration_ms="),
+        "{output}"
+    );
 }
 
 #[test]
 fn run_check_reports_failing_command_without_failing_ah() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let mut args = vec!["--json", "run", "check"];
-    args.extend(platform_exit_command(false));
-    cmd.args(args)
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"run.check\""))
-        .stdout(contains("\"success\": false"))
-        .stdout(contains("\"timed_out\": false"));
+    let payload = run_check_json(&platform_exit_command(false));
+
+    assert_eq!(payload["command"], "run.check");
+    assert_eq!(payload["success"], false);
+    assert_eq!(payload["timed_out"], false);
 }
 
 #[cfg(windows)]
 #[test]
 fn run_check_preserves_exit_code_259() {
-    let output = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "run", "check", "cmd.exe", "/C", "exit 259"])
-        .output()
-        .expect("ah should run");
-    assert!(output.status.success(), "{output:?}");
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    let payload = run_check_json(&["cmd.exe", "/C", "exit 259"]);
+
     assert_eq!(payload["exit_code"], 259);
     assert_eq!(payload["timed_out"], false);
 }
 
 #[test]
 fn run_check_timeout_terminates_process_tree() {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let mut args = vec!["--json", "run", "check", "--timeout-secs", "1"];
+    let mut args = vec!["--timeout-secs", "1"];
     args.extend(platform_process_tree_command());
-    cmd.args(args);
 
     let started = Instant::now();
-    let output = cmd.output().expect("ah should run");
-    assert!(output.status.success(), "{output:?}");
+    let payload = run_check_json(&args);
+
     assert!(
         started.elapsed() < Duration::from_secs(4),
         "process tree outlived timeout: {:?}",
         started.elapsed()
     );
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
     assert_eq!(payload["timed_out"], true);
     assert_eq!(payload["success"], false);
 }
@@ -115,24 +117,15 @@ fn run_check_timeout_leaves_no_surviving_descendant() {
         script.display()
     );
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let output = cmd
-        .args([
-            "--json",
-            "run",
-            "check",
-            "--timeout-secs",
-            "1",
-            "powershell.exe",
-            "-NoProfile",
-            "-Command",
-            &launch,
-        ])
-        .output()
-        .expect("ah should run");
-    assert!(output.status.success(), "{output:?}");
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    let payload = run_check_json(&[
+        "--timeout-secs",
+        "1",
+        "powershell.exe",
+        "-NoProfile",
+        "-Command",
+        &launch,
+    ]);
+
     assert_eq!(payload["timed_out"], true);
 
     std::thread::sleep(Duration::from_secs(3));
@@ -149,13 +142,15 @@ fn run_check_preserves_batch_script_execution() {
     let script = temp.path().join("echo-result.cmd");
     fs::write(&script, "@echo batch-ok\r\n").expect("batch script should be written");
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["run", "check", script.to_string_lossy().as_ref()])
-        .assert()
-        .success()
-        .stdout(contains("batch-ok"));
+    let output = Harness::new()
+        .run(&["run", "check", script.to_string_lossy().as_ref()])
+        .expect_success()
+        .to_owned();
+
+    assert!(output.contains("batch-ok"), "{output}");
 }
 
+/// Process-level: it replaces `PATH`, which is process state.
 #[cfg(windows)]
 #[test]
 fn run_check_batch_uses_system_command_prompt() {
@@ -185,11 +180,12 @@ fn run_check_batch_accepts_verbatim_script_path() {
     fs::write(&script, "@echo verbatim-ok\r\n").expect("batch script should be written");
     let verbatim = format!(r"\\?\{}", script.display());
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["run", "check", &verbatim])
-        .assert()
-        .success()
-        .stdout(contains("verbatim-ok"));
+    let output = Harness::new()
+        .run(&["run", "check", &verbatim])
+        .expect_success()
+        .to_owned();
+
+    assert!(output.contains("verbatim-ok"), "{output}");
 }
 
 #[cfg(windows)]
@@ -210,15 +206,10 @@ fn run_check_batch_preserves_escaped_arguments() {
         .expect("batch script should run through std::process");
     assert!(baseline.status.success(), "{baseline:?}");
 
-    let output = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "run", "check", script.to_string_lossy().as_ref()])
-        .args(arguments)
-        .output()
-        .expect("ah should run");
-    assert!(output.status.success(), "{output:?}");
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    let mut args = vec![script.to_string_lossy().into_owned()];
+    args.extend(arguments.iter().map(|value| (*value).to_owned()));
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let payload = run_check_json(&args);
     let stdout = payload["stdout"].as_str().expect("stdout should be text");
     assert_eq!(stdout.as_bytes(), baseline.stdout);
 }
@@ -238,21 +229,8 @@ fn run_check_timeout_tracks_descendants_after_batch_root_exits() {
     )
     .expect("batch script should be written");
 
-    let output = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args([
-            "--json",
-            "run",
-            "check",
-            "--timeout-secs",
-            "1",
-            script.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .expect("ah should run");
-    assert!(output.status.success(), "{output:?}");
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    let payload = run_check_json(&["--timeout-secs", "1", script.to_string_lossy().as_ref()]);
+
     assert_eq!(payload["timed_out"], true);
 
     std::thread::sleep(Duration::from_secs(3));
@@ -262,6 +240,8 @@ fn run_check_timeout_tracks_descendants_after_batch_root_exits() {
     );
 }
 
+/// Process-level: `--cwd workspace` is relative, so it has to resolve against a
+/// process's own working directory rather than the test binary's.
 #[test]
 fn relative_cwd_is_applied_once() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
@@ -292,16 +272,12 @@ fn run_check_preserves_global_like_child_arguments() {
 }
 
 fn assert_child_arguments_preserved(explicit_delimiter: bool) {
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let mut args = vec!["--json", "run", "check"];
+    let mut args = Vec::new();
     if explicit_delimiter {
         args.push("--");
     }
     args.extend(platform_echo_arguments_command());
-    let output = cmd.args(args).output().expect("ah should run");
-    assert!(output.status.success(), "{output:?}");
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
+    let payload = run_check_json(&args);
     let argv = payload["argv"].as_array().expect("argv should be an array");
     for expected in ["--json", "--quiet", "--limit", "child", "--cwd", "nested"] {
         assert!(

@@ -1,10 +1,17 @@
+//! `ah file`, run in this process.
+//!
+//! This is the file the conversion started from, because one helper - the
+//! `file_json` below - was the choke point for thirteen of its tests. It is now
+//! the first one to have no subprocess left at all.
+//!
+//! Three `contains("\u{1b}").not()` checks are gone with the spawns: the
+//! captured emitter has colour off by construction, so it cannot observe what
+//! `Emitter::stdio` decides from `is_terminal`. That property is asserted once,
+//! in `git.rs`, where it belongs to the emitter rather than to a domain.
+
 use std::{collections::BTreeSet, fs, path::Path};
 
 use aihelper::harness::Harness;
-
-use super::common::IsolatedAhCommand as Command;
-use predicates::prelude::PredicateBooleanExt;
-use predicates::str::contains;
 use serde_json::Value;
 use tempfile::{NamedTempFile, TempDir};
 
@@ -46,9 +53,7 @@ fn path_arg(path: &Path) -> String {
 /// The `file` domain answering in JSON, in this process.
 ///
 /// Every assertion here is about what the domain renders for given arguments,
-/// which needs no process of its own now that the host chooses the sink. What
-/// remains process-level in this file is the two things a process is: the exit
-/// code, and which stream the text went to.
+/// which needs no process of its own now that the host chooses the sink.
 fn file_json(args: &[&str]) -> Value {
     let mut argv = vec!["--json", "file"];
     argv.extend_from_slice(args);
@@ -91,7 +96,7 @@ fn file_read_rejects_binary_file() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), [0u8, b'a', b'b', b'c']).expect("binary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
     assert!(
         file_error(&["read", &file_path]).contains("binary or non-UTF8 file is not supported"),
         "{}",
@@ -106,7 +111,7 @@ fn file_read_accepts_utf8_character_split_at_sniff_boundary() {
     content.extend_from_slice("а\n".as_bytes());
     fs::write(temp.path(), content).expect("UTF-8 content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
     assert!(file_text(&["read", &file_path]).contains("а"));
 }
 
@@ -115,7 +120,7 @@ fn file_read_respects_max_bytes() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "0123456789\n").expect("content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
     assert!(file_error(&["read", &file_path, "--max-bytes", "4"]).contains("file is too large"));
 }
 
@@ -124,7 +129,7 @@ fn file_read_rejects_zero_from() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "alpha\nbeta\n").expect("content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
     assert!(file_error(&["read", &file_path, "--from", "0"]).contains("--from must be >= 1"));
 }
 
@@ -133,7 +138,7 @@ fn file_read_rejects_zero_to() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "alpha\nbeta\n").expect("content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
     assert!(file_error(&["read", &file_path, "--to", "0"]).contains("--to must be >= 1"));
 }
 
@@ -142,7 +147,7 @@ fn file_read_rejects_to_before_from() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "alpha\nbeta\n").expect("content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
     assert!(
         file_error(&["read", &file_path, "--from", "3", "--to", "2"])
             .contains("--to must be >= --from")
@@ -162,21 +167,31 @@ fn file_line_commands_symlink_requires_follow_flag() {
 
     let link = path_arg(&link_path);
     for command in ["read", "head", "tail"] {
-        Command::cargo_bin("ah")
-            .expect("binary should compile")
-            .args(["file", command, &link])
-            .assert()
-            .failure()
-            .stderr(contains("ah: path is a symlink"))
-            .stderr(contains("Hint: Use --follow-symlinks"))
-            .stderr(contains("SYMLINK_TRAVERSAL_BLOCKED").not());
+        let argv = ["file", command, &link];
+        let run = Harness::new().run(&argv);
+        let _ = run.expect_failure();
+        assert!(
+            run.diagnostic_text(&argv)
+                .starts_with("ah: path is a symlink"),
+            "{}",
+            run.diagnostic_text(&argv)
+        );
+        assert!(
+            run.diagnostic_text(&argv)
+                .contains("Hint: Use --follow-symlinks"),
+            "{}",
+            run.diagnostic_text(&argv)
+        );
+        assert!(
+            !run.diagnostic_text(&argv)
+                .contains("SYMLINK_TRAVERSAL_BLOCKED"),
+            "no internal code leaks into the text"
+        );
 
-        Command::cargo_bin("ah")
-            .expect("binary should compile")
-            .args(["file", command, &link, "--follow-symlinks"])
-            .assert()
-            .success()
-            .stdout("hello via symlink\n");
+        assert_eq!(
+            file_text(&[command, &link, "--follow-symlinks"]),
+            "hello via symlink\n"
+        );
     }
 }
 
@@ -186,14 +201,16 @@ fn file_read_limit_sets_truncated_warning() {
     fs::write(temp.path(), "line-1\nline-2\nline-3\n")
         .expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["--limit", "2", "file", "read", &file_path])
-        .assert()
-        .success()
-        .stdout(contains("line-1\nline-2"))
-        .stdout(predicates::str::contains("line-3").not())
-        .stderr(contains("warning: output truncated by --limit"));
+    let file_path = path_arg(temp.path());
+    let run = Harness::new().run(&["--limit", "2", "file", "read", &file_path]);
+
+    assert_eq!(run.expect_success(), "line-1\nline-2\n");
+    assert!(
+        run.stderr()
+            .contains("warning: output truncated by --limit"),
+        "{}",
+        run.stderr()
+    );
 }
 
 #[test]
@@ -202,21 +219,15 @@ fn file_read_quiet_suppresses_output_and_warnings() {
     fs::write(temp.path(), "line-1\nline-2\nline-3\n")
         .expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--quiet", "--limit", "1", "file", "read", &file_path])
-        .assert()
-        .success();
+    let file_path = path_arg(temp.path());
+    let run = Harness::new().run(&["--quiet", "--limit", "1", "file", "read", &file_path]);
 
-    assert!(
-        assert.get_output().stdout.is_empty(),
-        "stdout should be empty in quiet mode"
+    assert_eq!(
+        run.expect_success(),
+        "",
+        "stdout should be empty when quiet"
     );
-    assert!(
-        assert.get_output().stderr.is_empty(),
-        "stderr should be empty in quiet mode"
-    );
+    assert_eq!(run.stderr(), "", "stderr should be empty when quiet");
 }
 
 #[test]
@@ -247,19 +258,18 @@ fn file_read_json_reports_truncation() {
         .expect("temporary content should be written");
 
     let file_path = path_arg(temp.path());
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "--limit", "2", "file", "read", &file_path])
-        .assert()
-        .success();
-    let payload: Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected");
+    let run = Harness::new().run(&["--json", "--limit", "2", "file", "read", &file_path]);
+    let payload = run.json();
 
     assert_object_fields(&payload, LINE_OUTPUT_FIELDS);
     assert_eq!(payload["line_count"], 2);
     assert_eq!(payload["truncated"], true);
     assert_eq!(payload["content"], "line-1\nline-2");
-    assert!(assert.get_output().stderr.is_empty());
+    assert_eq!(
+        run.stderr(),
+        "",
+        "the truncation is a JSON field, not a warning"
+    );
 }
 
 #[test]
@@ -268,13 +278,12 @@ fn reads_range_with_line_numbers() {
     fs::write(temp.path(), "alpha\nbeta\ngamma\ndelta\n")
         .expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "read", &file_path, "-n", "--from", "2", "--to", "3"])
-        .assert()
-        .success()
-        .stdout("   2: beta\n   3: gamma\n");
+    assert_eq!(
+        file_text(&["read", &file_path, "-n", "--from", "2", "--to", "3"]),
+        "   2: beta\n   3: gamma\n"
+    );
 }
 
 #[test]
@@ -282,7 +291,7 @@ fn file_read_emits_complete_json_contract() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "one\ntwo\n").expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
 
     let payload = file_json(&["read", &file_path, "--from", "1", "--to", "1"]);
 
@@ -303,13 +312,12 @@ fn reads_head_with_line_numbers() {
     fs::write(temp.path(), "alpha\nbeta\ngamma\ndelta\n")
         .expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "head", &file_path, "--lines", "2", "-n"])
-        .assert()
-        .success()
-        .stdout("   1: alpha\n   2: beta\n");
+    assert_eq!(
+        file_text(&["head", &file_path, "--lines", "2", "-n"]),
+        "   1: alpha\n   2: beta\n"
+    );
 }
 
 #[test]
@@ -336,15 +344,11 @@ fn file_head_zero_lines_returns_empty_output() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "alpha\nbeta\ngamma\n").expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "head", &file_path, "--lines", "0"])
-        .assert()
-        .success();
+    let file_path = path_arg(temp.path());
 
-    assert!(
-        assert.get_output().stdout.is_empty(),
+    assert_eq!(
+        file_text(&["head", &file_path, "--lines", "0"]),
+        "",
         "stdout should be empty when --lines is 0"
     );
 }
@@ -376,15 +380,11 @@ fn file_head_limit_takes_precedence_over_lines() {
     fs::write(temp.path(), "alpha\nbeta\ngamma\n").expect("temporary content should be written");
 
     let file_path = path_arg(temp.path());
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args([
+    let payload = Harness::new()
+        .run(&[
             "--json", "--limit", "1", "file", "head", &file_path, "--lines", "3",
         ])
-        .assert()
-        .success();
-    let payload: Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected");
+        .json();
     assert_eq!(payload["from"], 1);
     assert_eq!(payload["to"], 1);
     assert_eq!(payload["line_count"], 1);
@@ -398,13 +398,12 @@ fn reads_tail_with_line_numbers() {
     fs::write(temp.path(), "alpha\nbeta\ngamma\ndelta\n")
         .expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
+    let file_path = path_arg(temp.path());
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["file", "tail", &file_path, "--lines", "2", "-n"])
-        .assert()
-        .success()
-        .stdout("   3: gamma\n   4: delta\n");
+    assert_eq!(
+        file_text(&["tail", &file_path, "--lines", "2", "-n"]),
+        "   3: gamma\n   4: delta\n"
+    );
 }
 
 #[test]
@@ -432,15 +431,10 @@ fn file_tail_zero_lines_returns_empty_output() {
     let temp = NamedTempFile::new().expect("temporary file should be created");
     fs::write(temp.path(), "alpha\nbeta\ngamma\n").expect("temporary content should be written");
 
-    let file_path = temp.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "tail", &file_path, "--lines", "0"])
-        .assert()
-        .success();
-
-    assert!(
-        assert.get_output().stdout.is_empty(),
+    let file_path = path_arg(temp.path());
+    assert_eq!(
+        file_text(&["tail", &file_path, "--lines", "0"]),
+        "",
         "stdout should be empty when --lines is 0"
     );
 }
@@ -473,15 +467,11 @@ fn file_tail_limit_keeps_first_lines_of_tail_selection() {
         .expect("temporary content should be written");
 
     let file_path = path_arg(temp.path());
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args([
+    let payload = Harness::new()
+        .run(&[
             "--json", "--limit", "2", "file", "tail", &file_path, "--lines", "3",
         ])
-        .assert()
-        .success();
-    let payload: Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected");
+        .json();
     assert_eq!(payload["from"], 2);
     assert_eq!(payload["to"], 3);
     assert_eq!(payload["line_count"], 2);
@@ -496,19 +486,16 @@ fn file_line_commands_reject_missing_and_directory_paths() {
     let directory = path_arg(temp_dir.path());
 
     for command in ["read", "head", "tail"] {
-        Command::cargo_bin("ah")
-            .expect("binary should compile")
-            .args(["file", command, &missing])
-            .assert()
-            .failure()
-            .stderr(contains("failed to read file metadata"));
-
-        Command::cargo_bin("ah")
-            .expect("binary should compile")
-            .args(["file", command, &directory])
-            .assert()
-            .failure()
-            .stderr(contains("path is not a file"));
+        assert!(
+            file_error(&[command, &missing]).contains("failed to read file metadata"),
+            "{}",
+            file_error(&[command, &missing])
+        );
+        assert!(
+            file_error(&[command, &directory]).contains("path is not a file"),
+            "{}",
+            file_error(&[command, &directory])
+        );
     }
 }
 
@@ -523,19 +510,17 @@ fn file_head_and_tail_apply_binary_and_size_policies() {
     let large_path = path_arg(large.path());
 
     for command in ["head", "tail"] {
-        Command::cargo_bin("ah")
-            .expect("binary should compile")
-            .args(["file", command, &binary_path])
-            .assert()
-            .failure()
-            .stderr(contains("binary or non-UTF8 file is not supported"));
-
-        Command::cargo_bin("ah")
-            .expect("binary should compile")
-            .args(["file", command, &large_path, "--max-bytes", "4"])
-            .assert()
-            .failure()
-            .stderr(contains("file is too large"));
+        assert!(
+            file_error(&[command, &binary_path])
+                .contains("binary or non-UTF8 file is not supported"),
+            "{}",
+            file_error(&[command, &binary_path])
+        );
+        assert!(
+            file_error(&[command, &large_path, "--max-bytes", "4"]).contains("file is too large"),
+            "{}",
+            file_error(&[command, &large_path, "--max-bytes", "4"])
+        );
     }
 }
 
@@ -563,14 +548,7 @@ fn file_stat_emits_text_contract() {
     fs::write(temp.path(), "abc\n").expect("temporary content should be written");
     let file_path = path_arg(temp.path());
 
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "stat", &file_path])
-        .assert()
-        .success()
-        .stdout(contains("\u{1b}").not());
-    let stdout =
-        String::from_utf8(assert.get_output().stdout.clone()).expect("stdout should be UTF-8");
+    let stdout = file_text(&["stat", &file_path]);
     let lines = stdout.lines().collect::<Vec<_>>();
 
     assert_eq!(lines.len(), 6);
@@ -597,12 +575,11 @@ fn file_stat_reports_directory_kind_and_missing_path() {
     assert_eq!(payload["kind"], "directory");
 
     let missing = path_arg(&temp_dir.path().join("missing"));
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "stat", &missing])
-        .assert()
-        .failure()
-        .stderr(contains("failed to read file metadata"));
+    assert!(
+        file_error(&["stat", &missing]).contains("failed to read file metadata"),
+        "{}",
+        file_error(&["stat", &missing])
+    );
 }
 
 #[test]
@@ -616,14 +593,10 @@ fn file_stat_reports_symlink_kind() {
         return;
     }
 
-    let link = link_path.to_string_lossy().to_string();
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "file", "stat", &link])
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"file.stat\""))
-        .stdout(contains("\"kind\": \"symlink\""));
+    let payload = file_json(&["stat", &path_arg(&link_path)]);
+
+    assert_eq!(payload["command"], "file.stat");
+    assert_eq!(payload["kind"], "symlink");
 }
 
 #[test]
@@ -678,13 +651,11 @@ fn file_tree_text_output_is_deterministic() {
     fs::write(nested.join("deep.txt"), "deep").expect("deep file should be created");
 
     let root_path = path_arg(&root);
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "tree", &root_path])
-        .assert()
-        .success()
-        .stdout(contains("\u{1b}").not())
-        .stdout("root/\n  - alpha.txt\n  - Beta.txt\n  - nested/\n    - deep.txt\n");
+
+    assert_eq!(
+        file_text(&["tree", &root_path]),
+        "root/\n  - alpha.txt\n  - Beta.txt\n  - nested/\n    - deep.txt\n"
+    );
 }
 
 #[test]
@@ -700,12 +671,7 @@ fn file_tree_handles_depth_zero_and_single_file_roots() {
     assert_eq!(depth_zero["entries"][0]["name"], "root");
 
     let file_path = path_arg(&root.join("child.txt"));
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "tree", &file_path])
-        .assert()
-        .success()
-        .stdout("child.txt\n");
+    assert_eq!(file_text(&["tree", &file_path]), "child.txt\n");
 }
 
 /// `file tree` with no path lists the directory the request named.
@@ -717,14 +683,10 @@ fn file_tree_handles_depth_zero_and_single_file_roots() {
 #[test]
 fn file_tree_defaults_to_the_requested_directory() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = path_arg(temp_dir.path());
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--cwd", &cwd, "--json", "file", "tree", "--depth", "0"])
-        .assert()
-        .success();
-    let payload: Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected");
+    let payload = Harness::new()
+        .in_directory(temp_dir.path())
+        .run(&["--json", "file", "tree", "--depth", "0"])
+        .json();
 
     let root = temp_dir
         .path()
@@ -752,37 +714,27 @@ fn file_tree_limit_reports_truncation_in_text_and_json() {
     fs::write(root.join("beta.txt"), "beta").expect("beta file should be created");
     let root_path = path_arg(&root);
 
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--limit", "2", "file", "tree", &root_path])
-        .assert()
-        .success()
-        .stdout("root/\n  - alpha.txt\n")
-        .stderr("warning: output truncated by --limit\n");
+    let text = Harness::new().run(&["--limit", "2", "file", "tree", &root_path]);
+    assert_eq!(text.expect_success(), "root/\n  - alpha.txt\n");
+    assert_eq!(text.stderr(), "warning: output truncated by --limit\n");
 
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "--limit", "2", "file", "tree", &root_path])
-        .assert()
-        .success();
-    let payload: Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON output expected");
+    let json = Harness::new().run(&["--json", "--limit", "2", "file", "tree", &root_path]);
+    let payload = json.json();
     assert_eq!(payload["entry_count"], 2);
     assert_eq!(payload["truncated"], true);
     assert_eq!(payload["entries"][1]["name"], "alpha.txt");
-    assert!(assert.get_output().stderr.is_empty());
+    assert_eq!(json.stderr(), "");
 }
 
 #[test]
 fn file_tree_rejects_missing_path() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     let missing = path_arg(&temp_dir.path().join("missing"));
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "tree", &missing])
-        .assert()
-        .failure()
-        .stderr(contains("failed to read file metadata"));
+    assert!(
+        file_error(&["tree", &missing]).contains("failed to read file metadata"),
+        "{}",
+        file_error(&["tree", &missing])
+    );
 }
 
 #[test]
@@ -800,22 +752,17 @@ fn file_tree_symlink_directory_requires_follow_flag() {
         return;
     }
 
-    let root_path = root.to_string_lossy().to_string();
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "tree", &root_path])
-        .assert()
-        .success()
-        .stdout(contains("linked-target"))
-        .stdout(predicates::str::contains("inside.txt").not());
+    let root_path = path_arg(&root);
+    let unfollowed = file_text(&["tree", &root_path]);
+    assert!(unfollowed.contains("linked-target"), "{unfollowed}");
+    assert!(
+        !unfollowed.contains("inside.txt"),
+        "the link is not descended into: {unfollowed}"
+    );
 
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["file", "tree", &root_path, "--follow-symlinks"])
-        .assert()
-        .success()
-        .stdout(contains("linked-target"))
-        .stdout(contains("inside.txt"));
+    let followed = file_text(&["tree", &root_path, "--follow-symlinks"]);
+    assert!(followed.contains("linked-target"), "{followed}");
+    assert!(followed.contains("inside.txt"), "{followed}");
 }
 
 #[test]
