@@ -298,7 +298,7 @@ mod tests {
         let child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "tests::credential_helper_timeout_kills_the_child",
+                "context::tests::credential_helper_timeout_kills_the_child",
             ])
             .env("AH_GITHUB_TEST_CREDENTIAL_SLEEP", "1")
             .stdout(Stdio::null())
