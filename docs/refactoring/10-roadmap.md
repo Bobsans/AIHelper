@@ -156,6 +156,44 @@ What is still over 800, and why it stays:
   and phase 4 owns them: "convert the integration suite to a deliberate thin
   contract layer".
 
+**This table did not cover the four plugins, and that is where the criterion was
+actually failing.** Their `typed.rs` files were split; their `lib.rs` files were
+not, and three of them were the largest files in the workspace:
+
+| Was | Production lines | Now |
+|---|---|---|
+| `ah-plugin-postgres/src/lib.rs` | 3490 | 11 modules; largest 747, `lib.rs` 198 |
+| `ah-plugin-gitlab/src/lib.rs` | 2540 | 8 modules; largest 663, `lib.rs` 171 |
+| `ah-plugin-github/src/lib.rs` | 2467 | 8 modules; largest 718, `lib.rs` 156 |
+| `ah-domains/src/project/rules.rs` | 1268 | 196 + `rules/table.rs` (887) + `rules/fixtures.rs` |
+| `ah-domains/src/ctx/symbols.rs` | 839 | 270 + `symbols/table.rs` (538) + `symbols/fixtures.rs` |
+
+The three plugins now share one shape - `args`, `wire`, `context`, `api`,
+`commands`, `output`, `manual`, `typed` - so a difference between two forges is
+a difference between two files with the same name. `postgres` adds `tool`,
+`download` and `paths` for the `psql` it manages, and `sql` for the two rules
+that decide whether an object name becomes one quoted identifier or two
+statements; that file existing at all is the clearest win of the split.
+
+`ah-plugin-ollama/src/lib.rs` was on the earlier list at 846 lines and is *not*
+here: 352 of those are its test module, so its production half is 493 and the
+criterion never applied to it.
+
+**What is left over 800 is one file.** `project/rules/table.rs`, at 887, is the
+ordered rule table, and its module doc records why it stays whole: the order is
+published output - `classify_file` returns every matching rule in table order -
+and the groups interleave, so splitting by group would reorder it and splitting
+by line count would put an arbitrary cut through a list of literals. Everything
+else above the line is a test file, which the criterion excludes by its own
+wording.
+
+The moves also found a test that passed for the wrong reason. Both forge plugins
+have a `credential_helper_timeout_kills_the_child` that re-executes the test
+binary by test path so the child sleeps and gets killed; moving the test made
+that path match nothing, so the child ran zero tests and exited at once - and
+GitHub's assertion still held, because spawning a process takes longer than the
+20ms timeout. GitLab's failed, which is how it was found.
+
 Two things the splits turned up that the criterion did not ask for. Sixteen
 functions were reachable from outside their file with nothing outside using
 them; moving them one level deeper made the compiler reject the re-export, so

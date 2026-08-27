@@ -265,8 +265,19 @@ Ordering is chosen so that each split is mechanical and low-risk:
 
 ## Acceptance criteria
 
-- No source file in the workspace exceeds ~800 lines excluding tests.
-- Adding a language to `ctx_symbols` or a file type to `project/rules` is a
-  one-entry data change.
+- ~~No source file in the workspace exceeds ~800 lines excluding tests.~~
+  **(met, with one recorded exception.)** The four plugins were the last holdout
+  and the largest offenders - `postgres` at 3490 production lines, `gitlab` at
+  2540, `github` at 2467 - because phase 2's split table covered their `typed.rs`
+  and not their `lib.rs`. All three are now one module per kind of thing, sharing
+  a layout, with the largest file at 747 and each `lib.rs` under 200. The two big
+  `ah-domains` tables followed. The exception is
+  `project/rules/table.rs` (887): the table is ordered, that order is published
+  output, and the groups interleave, so any split either reorders it or cuts a
+  list of literals arbitrarily. Its module doc says so.
+- ~~Adding a language to `ctx_symbols` or a file type to `project/rules` is a
+  one-entry data change.~~ **(met, and now visibly so.)** Each table lives in its
+  own `table.rs` next to its own `fixtures.rs`, so the one-entry change and the
+  fixture that pins it are the only two files a contributor opens.
 - No HTML or CSS in `crates/ah-mcp`.
 - One documented module layout under `src/commands/`, with no alias shims.
