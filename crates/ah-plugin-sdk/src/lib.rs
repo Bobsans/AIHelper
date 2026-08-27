@@ -7,7 +7,9 @@
 //! still loads.
 
 pub mod credentials;
+pub mod git;
 pub mod http;
 pub mod logs;
 pub mod poll;
 pub mod render;
+pub mod text;

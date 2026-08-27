@@ -1,17 +1,17 @@
 use std::{
     fs,
     io::{BufReader, Cursor, Read},
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Duration,
 };
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::{credentials, http, logs, poll, render};
+use ah_plugin_sdk::{credentials, git, http, logs, poll, render, text};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
-    TextFormatter, TextStyle, noninteractive_command,
+    TextFormatter, TextStyle,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
@@ -1009,7 +1009,7 @@ fn create_issue(
     args: CreateIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let body_text = match resolve_optional_text(args.body, args.body_file, "body") {
+    let body_text = match text::optional(args.body, args.body_file, "body") {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1047,7 +1047,7 @@ fn update_issue(
     args: UpdateIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let body_text = match resolve_optional_text(args.body, args.body_file, "body") {
+    let body_text = match text::optional(args.body, args.body_file, "body") {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1102,7 +1102,7 @@ fn close_issue(
     args: CloseIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let comment = match resolve_optional_text(args.comment, args.comment_file, "comment") {
+    let comment = match text::optional(args.comment, args.comment_file, "comment") {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1140,7 +1140,7 @@ fn comment_issue(
     args: CommentIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let body = match resolve_required_text(args.body, args.body_file, "body") {
+    let body = match text::required(args.body, args.body_file, "body") {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1784,7 +1784,7 @@ fn resolve_repo(
             .ok_or_else(|| invalid_repo(repo));
     }
 
-    let remote_url = read_git_remote_url(&args.remote, args.cwd.as_deref())?;
+    let remote_url = git::remote_url(&args.remote, args.cwd.as_deref())?;
     parse_github_remote_url(&remote_url)
         .map(|slug| (slug, Some(remote_url.clone())))
         .ok_or_else(|| {
@@ -1796,30 +1796,6 @@ fn resolve_repo(
                 ),
             )
         })
-}
-
-fn read_git_remote_url(remote: &str, cwd: Option<&Path>) -> Result<String, InvocationResponse> {
-    let mut command = noninteractive_command("git");
-    command.args(["remote", "get-url", remote]);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let output = command.output().map_err(|error| {
-        InvocationResponse::error(
-            "COMMAND_EXECUTION_FAILED",
-            format!("failed to execute git remote get-url {remote}: {error}"),
-        )
-    })?;
-    if !output.status.success() {
-        return Err(InvocationResponse::error(
-            "COMMAND_FAILED",
-            format!(
-                "git remote get-url {remote} failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn parse_repo_slug(value: &str) -> Option<RepoSlug> {
@@ -2108,41 +2084,6 @@ fn parse_key_values(values: &[String], flag_name: &str) -> Result<Value, Invocat
         map.insert(key.to_owned(), Value::String(raw_value.to_owned()));
     }
     Ok(Value::Object(map))
-}
-
-fn resolve_optional_text(
-    inline: Option<String>,
-    file: Option<String>,
-    field_name: &str,
-) -> Result<Option<String>, InvocationResponse> {
-    match (inline, file) {
-        (Some(value), None) => Ok(Some(value)),
-        (None, Some(path)) => fs::read_to_string(&path).map(Some).map_err(|error| {
-            InvocationResponse::error(
-                "FILE_READ_FAILED",
-                format!("failed to read {field_name} file '{path}': {error}"),
-            )
-        }),
-        (None, None) => Ok(None),
-        (Some(_), Some(_)) => Err(InvocationResponse::error(
-            "INVALID_ARGUMENT",
-            format!("use either --{field_name} or --{field_name}-file, not both"),
-        )),
-    }
-}
-
-fn resolve_required_text(
-    inline: Option<String>,
-    file: Option<String>,
-    field_name: &str,
-) -> Result<String, InvocationResponse> {
-    match resolve_optional_text(inline, file, field_name)? {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(InvocationResponse::error(
-            "INVALID_ARGUMENT",
-            format!("--{field_name} or --{field_name}-file is required"),
-        )),
-    }
 }
 
 fn render_issues_text(issues: &[IssueResponse], formatter: TextFormatter) -> String {

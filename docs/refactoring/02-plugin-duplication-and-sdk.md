@@ -218,6 +218,27 @@ implementation, not a merged product surface.
    three wait outcomes. Releases and issues remain as they are; the honest
    reading is that the 7.8k → 3.5k figure above counted duplication that
    phases 1-3 have already removed.
+
+   **A sweep for what was left found three functions that were byte for byte
+   identical, and nothing else.** They are now `sdk::git::remote_url` (reading
+   `git remote get-url`, which both plugins call to infer the repository) and
+   `sdk::text::optional` / `sdk::text::required` (an argument the caller may pass
+   inline or point at a file: `--body`/`--body-file`, `--notes`/`--notes-file`).
+   59 lines left each plugin, and 220 came back with eight unit tests - which
+   none of the six copies had.
+
+   These two modules render their own failures, which is the opposite of what
+   `sdk::logs` does, and the module docs say why: the copies they replace had the
+   *same* codes and the same wording, so returning a typed error would have moved
+   the duplication into two `match` arms instead of removing it. Where the codes
+   genuinely differ per plugin, `logs`'s rule still holds.
+
+   **What the sweep deliberately left:** `github_json`/`gitlab_json` and
+   `github_response`/`gitlab_response` are identical apart from their context
+   type, about 21 lines each. Sharing them needs a trait over "a thing that
+   yields a `JsonApi`" - one trait and two impls, to save fifteen lines of
+   wrapper. That is the trade the `trait Forge` sketch already lost, at a
+   twentieth of the scale.
 6. Adopt `sdk::render` in the host too; delete `render_plugins_table` column logic.
 
 ## Risks and invariants

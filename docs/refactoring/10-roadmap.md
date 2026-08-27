@@ -307,7 +307,7 @@ Only now is this cheap.
 |--------------------------------------------------------------------------------------|--------|
 | ~~Platform-neutral `ServiceSpec` + `ServiceScheduler`; Windows adapter as a projection~~ **(done)** | 06     |
 | ~~`SystemdUserScheduler`~~ **(done)**, `LaunchdScheduler`                            | 06     |
-| ~~`Forge` abstraction~~; **collapse GitHub/GitLab duplication into a shared core** *(the two duplicated loops done; see below)* | 02     |
+| ~~`Forge` abstraction; collapse GitHub/GitLab duplication into a shared core~~ **(done; the row's own sketch was wrong - see below)** | 02     |
 | ~~Cross-version updater compatibility fixtures~~ **(on-disk done; the handoff argv half done)** | 07, 08 |
 | ~~Convert the integration suite to a deliberate thin contract layer~~ **(done; every plugin domain converted, 172 spawns down to 94)** | 08     |
 
@@ -477,7 +477,27 @@ rendering, was two loops, and both are now in the SDK:
   `github.run.wait` could issue one more request after `--timeout` had passed.
 
 239 lines left the two plugins and 161 came back, and both loops now have unit
-tests of their own. Two further findings:
+tests of their own.
+
+**Then a sweep for the remainder, which is what closes the row.** Comparing the
+two plugins function by function turned up exactly three that were byte for byte
+identical: reading `git remote get-url`, and the inline-or-file argument pair
+that `--body`/`--body-file` and `--notes`/`--notes-file` use. They are now
+`sdk::git::remote_url` and `sdk::text::{optional, required}`; 59 lines left each
+plugin and 220 came back with eight unit tests, which none of the six copies had.
+Both modules render their own diagnostics, unlike `sdk::logs`, because the copies
+they replace had the same codes *and* the same wording - a typed error would have
+moved the duplication into two `match` arms.
+
+Everything else the sweep found, it left, and the reasons are recorded in group
+02: `github_json`/`gitlab_json` and the two `*_response` wrappers are identical
+apart from their context type, and sharing 21 lines each needs a trait with two
+impls - the trade the `trait Forge` sketch already lost, at a twentieth of the
+scale. The rest of the two files is wire structs and output structs for products
+that genuinely differ: GitLab has designs and a GraphQL call, GitHub has
+artifacts and a search API, and neither has a counterpart.
+
+Two further findings from the loops:
 
 - **The state/status style tables were left alone, deliberately.** Same shape,
   different vocabularies - `open` vs `opened`, `cancelled` vs `canceled`,

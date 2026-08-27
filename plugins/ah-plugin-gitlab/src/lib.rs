@@ -1,17 +1,12 @@
-use std::{
-    fs,
-    io::BufReader,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{fs, io::BufReader, path::PathBuf, time::Duration};
 
 #[cfg(test)]
 use ah_plugin_api::InvocationRequest;
-use ah_plugin_sdk::{credentials, http, logs, poll, render};
+use ah_plugin_sdk::{credentials, git, http, logs, poll, render, text};
 
 use ah_plugin_api::{
     GlobalOptionsWire, InvocationResponse, ManualCommand, ManualExample, PluginManual,
-    TextFormatter, TextStyle, noninteractive_command,
+    TextFormatter, TextStyle,
 };
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use reqwest::{Method, blocking::Client};
@@ -1013,11 +1008,10 @@ fn create_issue(
     args: CreateIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let description =
-        match resolve_optional_text(args.description, args.description_file, "description") {
-            Ok(value) => value,
-            Err(error) => return error,
-        };
+    let description = match text::optional(args.description, args.description_file, "description") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
     let mut body = serde_json::Map::new();
     body.insert("title".to_owned(), Value::String(args.title));
     if let Some(description) = description {
@@ -1052,11 +1046,10 @@ fn update_issue(
     args: UpdateIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let description =
-        match resolve_optional_text(args.description, args.description_file, "description") {
-            Ok(value) => value,
-            Err(error) => return error,
-        };
+    let description = match text::optional(args.description, args.description_file, "description") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
     let mut body = serde_json::Map::new();
     if let Some(title) = args.title {
         body.insert("title".to_owned(), Value::String(title));
@@ -1112,7 +1105,7 @@ fn close_issue(
     args: CloseIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let comment = match resolve_optional_text(args.comment, args.comment_file, "comment") {
+    let comment = match text::optional(args.comment, args.comment_file, "comment") {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1151,7 +1144,7 @@ fn comment_issue(
     args: CommentIssueArgs,
     globals: &GlobalOptionsWire,
 ) -> InvocationResponse {
-    let body = match resolve_required_text(args.body, args.body_file, "body") {
+    let body = match text::required(args.body, args.body_file, "body") {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -1570,7 +1563,7 @@ fn resolve_host_and_project(
     if args.host.is_some() || args.project.is_some() {
         return Err(error);
     }
-    let Some(remote_url) = read_git_remote_url(&args.remote, args.cwd.as_deref()).ok() else {
+    let Some(remote_url) = git::remote_url(&args.remote, args.cwd.as_deref()).ok() else {
         return Err(error);
     };
     let Some(host) = remote_host(&remote_url).and_then(|host| normalize_host(&host).ok()) else {
@@ -1607,7 +1600,7 @@ fn resolve_project(
             .ok_or_else(|| invalid_project(project));
     }
 
-    let remote_url = read_git_remote_url(&args.remote, args.cwd.as_deref())?;
+    let remote_url = git::remote_url(&args.remote, args.cwd.as_deref())?;
     parse_gitlab_remote_url(&remote_url, host)
         .map(|project| (project, Some(remote_url.clone())))
         .ok_or_else(|| {
@@ -1619,30 +1612,6 @@ fn resolve_project(
                 ),
             )
         })
-}
-
-fn read_git_remote_url(remote: &str, cwd: Option<&Path>) -> Result<String, InvocationResponse> {
-    let mut command = noninteractive_command("git");
-    command.args(["remote", "get-url", remote]);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let output = command.output().map_err(|error| {
-        InvocationResponse::error(
-            "COMMAND_EXECUTION_FAILED",
-            format!("failed to execute git remote get-url {remote}: {error}"),
-        )
-    })?;
-    if !output.status.success() {
-        return Err(InvocationResponse::error(
-            "COMMAND_FAILED",
-            format!(
-                "git remote get-url {remote} failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn parse_project_ref(value: &str) -> Option<ProjectRef> {
@@ -2083,41 +2052,6 @@ fn gitlab_state_event(state: &str) -> &'static str {
     match state {
         "closed" => "close",
         _ => "reopen",
-    }
-}
-
-fn resolve_optional_text(
-    inline: Option<String>,
-    file: Option<String>,
-    field_name: &str,
-) -> Result<Option<String>, InvocationResponse> {
-    match (inline, file) {
-        (Some(value), None) => Ok(Some(value)),
-        (None, Some(path)) => fs::read_to_string(&path).map(Some).map_err(|error| {
-            InvocationResponse::error(
-                "FILE_READ_FAILED",
-                format!("failed to read {field_name} file '{path}': {error}"),
-            )
-        }),
-        (None, None) => Ok(None),
-        (Some(_), Some(_)) => Err(InvocationResponse::error(
-            "INVALID_ARGUMENT",
-            format!("use either --{field_name} or --{field_name}-file, not both"),
-        )),
-    }
-}
-
-fn resolve_required_text(
-    inline: Option<String>,
-    file: Option<String>,
-    field_name: &str,
-) -> Result<String, InvocationResponse> {
-    match resolve_optional_text(inline, file, field_name)? {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(InvocationResponse::error(
-            "INVALID_ARGUMENT",
-            format!("--{field_name} or --{field_name}-file is required"),
-        )),
     }
 }
 
