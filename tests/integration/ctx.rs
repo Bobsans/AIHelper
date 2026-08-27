@@ -1,9 +1,30 @@
+//! `ah ctx`, run in this process.
+//!
+//! Two tests here were named `..._has_no_ansi_when_captured`, and that is the
+//! one property the harness cannot observe: the captured emitter has colour off
+//! by construction, so it says nothing about what `Emitter::stdio` decides from
+//! `is_terminal`. Rather than keep a test whose name claims a check it no longer
+//! makes, both are renamed to what they do assert - the text a non-git
+//! directory and a packed file produce - and the colour property is asserted
+//! once, in `git.rs`, where it belongs to the emitter rather than to a domain.
+
 use std::fs;
 
-use super::common::IsolatedAhCommand as Command;
-use predicates::prelude::PredicateBooleanExt;
-use predicates::str::contains;
+use aihelper::harness::Harness;
+use serde_json::Value;
 use tempfile::TempDir;
+
+fn ctx_json(args: &[&str]) -> Value {
+    let mut argv = vec!["--json", "ctx"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).json()
+}
+
+fn ctx_text(args: &[&str]) -> String {
+    let mut argv = vec!["ctx"];
+    argv.extend_from_slice(args);
+    Harness::new().run(&argv).expect_success().to_owned()
+}
 
 #[test]
 fn ctx_symbols_extracts_rust_symbols() {
@@ -15,31 +36,22 @@ fn ctx_symbols_extracts_rust_symbols() {
     )
     .expect("test file should be written");
 
-    let file_path_str = file_path.to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["ctx", "symbols", &file_path_str])
-        .assert()
-        .success()
-        .stdout(contains("\u{1b}").not())
-        .stdout(contains("struct User"))
-        .stdout(contains("fn create_user"));
+    let output = ctx_text(&["symbols", &file_path.to_string_lossy()]);
+
+    assert!(output.contains("struct User"), "{output}");
+    assert!(output.contains("fn create_user"), "{output}");
 }
 
 #[test]
-fn ctx_pack_text_output_has_no_ansi_when_captured() {
+fn ctx_pack_text_output_names_its_preset_and_files() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     let file_path = temp_dir.path().join("lib.rs");
     fs::write(&file_path, "pub fn run() {}\n").expect("test file should be written");
 
-    let file_path = file_path.to_string_lossy().to_string();
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["ctx", "pack", &file_path])
-        .assert()
-        .success()
-        .stdout(contains("preset: review"))
-        .stdout(contains("file |"))
-        .stdout(contains("\u{1b}").not());
+    let output = ctx_text(&["pack", &file_path.to_string_lossy()]);
+
+    assert!(output.contains("preset: review"), "{output}");
+    assert!(output.contains("file |"), "{output}");
 }
 
 #[test]
@@ -48,38 +60,33 @@ fn ctx_pack_emits_json_summary() {
     let file_path = temp_dir.path().join("lib.rs");
     fs::write(&file_path, "pub fn run() {}\n").expect("test file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["--json", "ctx", "pack", &root, "--limit", "10"])
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"ctx.pack\""))
-        .stdout(contains("\"file_count\""))
-        .stdout(contains("\"symbol_count\""));
+    let payload = ctx_json(&["pack", &temp_dir.path().to_string_lossy(), "--limit", "10"]);
+
+    assert_eq!(payload["command"], "ctx.pack");
+    assert_eq!(payload["file_count"], 1);
+    assert!(payload["symbol_count"].is_u64(), "{payload}");
 }
 
 #[test]
 fn ctx_symbols_json_reports_skipped_binary_and_large_files() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     fs::write(temp_dir.path().join("ok.rs"), "fn good() {}\n")
-        .expect("rust file should be written");
-    fs::write(temp_dir.path().join("bin.bin"), [0u8, 1u8, 2u8])
+        .expect("text file should be written");
+    fs::write(temp_dir.path().join("bin.rs"), [0u8, b'f', b'n', b' '])
         .expect("binary file should be written");
     fs::write(
         temp_dir.path().join("huge.rs"),
-        "fn huge() {}\n".repeat(200),
+        "fn padded() {}\n".repeat(64),
     )
     .expect("large file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "ctx", "symbols", &root, "--max-bytes", "64"])
-        .assert()
-        .success();
+    let payload = ctx_json(&[
+        "symbols",
+        &temp_dir.path().to_string_lossy(),
+        "--max-bytes",
+        "64",
+    ]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["command"], "ctx.symbols");
     assert_eq!(payload["skipped_binary_files"], 1);
     assert_eq!(payload["skipped_large_files"], 1);
@@ -89,22 +96,15 @@ fn ctx_symbols_json_reports_skipped_binary_and_large_files() {
 fn ctx_symbols_skips_invalid_utf8_after_prefix_sniff() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
     fs::write(temp_dir.path().join("ok.rs"), "fn good() {}\n")
-        .expect("rust file should be written");
+        .expect("text file should be written");
     let mut invalid = vec![b' '; 8193];
     invalid.extend_from_slice(b"fn hidden() {}\n");
     invalid.push(0xff);
     fs::write(temp_dir.path().join("invalid.rs"), invalid)
         .expect("invalid UTF-8 file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "ctx", "symbols", &root])
-        .assert()
-        .success();
+    let payload = ctx_json(&["symbols", &temp_dir.path().to_string_lossy()]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["skipped_binary_files"], 1);
     assert_eq!(payload["file_count"], 1);
     assert_eq!(payload["files"][0]["symbols"][0]["name"], "good");
@@ -119,15 +119,8 @@ fn ctx_pack_skips_invalid_utf8_after_prefix_sniff() {
     invalid.push(0xff);
     fs::write(&invalid_path, invalid).expect("invalid UTF-8 file should be written");
 
-    let root = temp_dir.path().to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "ctx", "pack", &root])
-        .assert()
-        .success();
+    let payload = ctx_json(&["pack", &temp_dir.path().to_string_lossy()]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["skipped_binary_files"], 1);
     assert_eq!(payload["file_count"], 1);
     assert_eq!(payload["items"][0]["line_count"], 0);
@@ -137,29 +130,28 @@ fn ctx_pack_skips_invalid_utf8_after_prefix_sniff() {
 #[test]
 fn ctx_changed_reports_non_git_directory() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
 
-    let mut cmd = Command::cargo_bin("ah").expect("binary should compile");
-    cmd.args(["--json", "--cwd", &cwd, "ctx", "changed"])
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"ctx.changed\""))
-        .stdout(contains("\"in_git_repo\": false"))
-        .stdout(contains("\"changed_count\": 0"));
+    let payload = Harness::new()
+        .in_directory(temp_dir.path())
+        .run(&["--json", "ctx", "changed"])
+        .json();
+
+    assert_eq!(payload["command"], "ctx.changed");
+    assert_eq!(payload["in_git_repo"], false);
+    assert_eq!(payload["changed_count"], 0);
 }
 
 #[test]
-fn ctx_changed_text_output_has_no_ansi_when_captured() {
+fn ctx_changed_says_so_in_text_for_a_non_git_directory() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
 
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--cwd", &cwd, "ctx", "changed"])
-        .assert()
-        .success()
-        .stdout("not a git repository\n")
-        .stdout(contains("\u{1b}").not());
+    let output = Harness::new()
+        .in_directory(temp_dir.path())
+        .run(&["ctx", "changed"])
+        .expect_success()
+        .to_owned();
+
+    assert_eq!(output, "not a git repository\n");
 }
 
 #[test]
@@ -171,22 +163,13 @@ fn ctx_symbols_summary_preset_limits_symbols_per_file() {
         .collect::<String>();
     fs::write(&file_path, content).expect("test file should be written");
 
-    let file_path_str = file_path.to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args([
-            "--json",
-            "ctx",
-            "symbols",
-            &file_path_str,
-            "--preset",
-            "summary",
-        ])
-        .assert()
-        .success();
+    let payload = ctx_json(&[
+        "symbols",
+        &file_path.to_string_lossy(),
+        "--preset",
+        "summary",
+    ]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["command"], "ctx.symbols");
     assert_eq!(payload["preset"], "summary");
     let files = payload["files"]
@@ -205,22 +188,8 @@ fn ctx_pack_summary_preset_limits_symbol_preview() {
         .collect::<String>();
     fs::write(&file_path, content).expect("test file should be written");
 
-    let file_path_str = file_path.to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args([
-            "--json",
-            "ctx",
-            "pack",
-            &file_path_str,
-            "--preset",
-            "summary",
-        ])
-        .assert()
-        .success();
+    let payload = ctx_json(&["pack", &file_path.to_string_lossy(), "--preset", "summary"]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     assert_eq!(payload["command"], "ctx.pack");
     assert_eq!(payload["preset"], "summary");
     let items = payload["items"]
@@ -274,22 +243,15 @@ fn ctx_symbols_extracts_extended_language_symbols() {
     )
     .expect("terraform file should be written");
 
-    let cwd = root.to_string_lossy().to_string();
-    let assert = Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["--json", "ctx", "symbols", &cwd])
-        .assert()
-        .success();
+    let payload = ctx_json(&["symbols", &root.to_string_lossy()]);
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid json output expected");
     let mut names = Vec::new();
     for file in payload["files"].as_array().expect("files should be array") {
         for symbol in file["symbols"].as_array().expect("symbols should be array") {
             names.push(format!(
                 "{} {}",
-                symbol["kind"].as_str().unwrap(),
-                symbol["name"].as_str().unwrap()
+                symbol["kind"].as_str().unwrap_or_default(),
+                symbol["name"].as_str().unwrap_or_default()
             ));
         }
     }
@@ -342,17 +304,20 @@ fn ctx_symbols_extracts_config_and_script_symbols() {
         .expect("Dockerfile should be written");
     fs::write(root.join("Makefile"), "test:\n\tcargo test\n").expect("Makefile should be written");
 
-    let cwd = root.to_string_lossy().to_string();
-    Command::cargo_bin("ah")
-        .expect("binary should compile")
-        .args(["ctx", "symbols", &cwd])
-        .assert()
-        .success()
-        .stdout(contains("section package"))
-        .stdout(contains("section dependencies"))
-        .stdout(contains("key services"))
-        .stdout(contains("key volumes"))
-        .stdout(contains("function build"))
-        .stdout(contains("stage builder"))
-        .stdout(contains("target test"));
+    let output = ctx_text(&["symbols", &root.to_string_lossy()]);
+
+    for expected in [
+        "section package",
+        "section dependencies",
+        "key services",
+        "key volumes",
+        "function build",
+        "stage builder",
+        "target test",
+    ] {
+        assert!(
+            output.contains(expected),
+            "{expected} missing from {output}"
+        );
+    }
 }

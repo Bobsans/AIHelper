@@ -223,6 +223,29 @@ down from 7.6k.
    The harness deliberately refuses what it cannot run: a command that is not a
    plugin-domain invocation panics naming itself, rather than asserting about
    something else.
+
+   **`project.rs`, `task.rs` and `ctx.rs` are converted whole**, taking the
+   suite from 172 spawns to 141. Three notes from these three:
+
+   - **Indexing found a second wrong assertion.** `project detect` was checked
+     with `contains("CHANGELOG.md")`, and the file is reported under
+     `files.changelogs`, not `files.docs`; the indexed version has to name the
+     group, so the two groups are now asserted apart. Same class of bug as the
+     `git` `subject` fields, found the same way.
+   - **A test that cannot make its check should not keep its name.** `ctx.rs`
+     had two tests called `..._has_no_ansi_when_captured`, which is the one
+     property the captured emitter cannot observe. Both are renamed to what they
+     do assert - `ctx_pack_text_output_names_its_preset_and_files` and
+     `ctx_changed_says_so_in_text_for_a_non_git_directory` - rather than kept as
+     a name promising a check that moved to `git.rs`.
+   - **The child processes stay real.** `task run` spawns the recipe, and that
+     is the behaviour under test; what stopped being a process is `ah` itself.
+     The timeout test still measures wall clock and still finishes under four
+     seconds, because the five-second sleep it kills is a real child.
+
+   The three suites run in 0.05s, 1.07s and 1.41s. What is left that could still
+   move is `file.rs` (27), `http.rs` (18) and `run.rs` (15); `startup.rs`,
+   `logging.rs`, `mcp.rs` and `common.rs` are process-level by nature.
 7. ~~Add cross-version updater fixtures (v1.4 journal → current recovery, and
    back).~~ **(done.)** The on-disk plan, journal and helper self-check are
    frozen as fixtures, and the handoff command line is produced and validated

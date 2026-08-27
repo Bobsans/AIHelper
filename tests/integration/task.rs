@@ -1,6 +1,18 @@
-use super::common::IsolatedAhCommand as Command;
-use predicates::{prelude::PredicateBooleanExt, str::contains};
+//! `ah task`, run in this process.
+//!
+//! The child processes the tasks start are real - `task run` spawns them, and
+//! that is the behaviour under test. What is no longer a process is `ah`
+//! itself, so the recipe store, the output bounding and the timeout are
+//! asserted against values rather than against a subprocess's streams.
+//!
+//! The `contains("\u{1b}").not()` checks these had are gone: the captured
+//! emitter has colour off by construction. That property is asserted once, in
+//! `git.rs`, because it belongs to the emitter rather than to any domain.
+
 use std::time::{Duration, Instant};
+
+use aihelper::harness::Harness;
+use serde_json::Value;
 use tempfile::TempDir;
 
 fn task_echo_command() -> &'static str {
@@ -11,99 +23,78 @@ fn task_echo_command() -> &'static str {
     }
 }
 
+/// A harness rooted in its own directory, which is where the task store lives.
+fn harness(dir: &TempDir) -> Harness {
+    Harness::new().in_directory(dir.path())
+}
+
+fn save(dir: &TempDir, name: &str, command: &str) -> String {
+    harness(dir)
+        .run(&["task", "save", name, command])
+        .expect_success()
+        .to_owned()
+}
+
 #[test]
 fn task_save_and_list_json() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
 
-    let mut save_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    save_cmd
-        .args(["--cwd", &cwd, "task", "save", "hello", task_echo_command()])
-        .assert()
-        .success()
-        .stdout(contains("saved task 'hello'"))
-        .stdout(contains("\u{1b}").not());
+    let saved = save(&temp_dir, "hello", task_echo_command());
+    assert!(saved.contains("saved task 'hello'"), "{saved}");
 
-    let mut list_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    list_cmd
-        .args(["--json", "--cwd", &cwd, "task", "list"])
-        .assert()
-        .success()
-        .stdout(contains("\"command\": \"task.list\""))
-        .stdout(contains("\"name\": \"hello\""));
+    let payload = harness(&temp_dir).run(&["--json", "task", "list"]).json();
+    assert_eq!(payload["command"], "task.list");
+    let names = payload["tasks"]
+        .as_array()
+        .expect("tasks array")
+        .iter()
+        .filter_map(|task| task["name"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["hello"]);
 
-    let mut text_list_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    text_list_cmd
-        .args(["--cwd", &cwd, "task", "list"])
-        .assert()
-        .success()
-        .stdout(contains("hello =>"))
-        .stdout(contains("\u{1b}").not());
+    let text = harness(&temp_dir)
+        .run(&["task", "list"])
+        .expect_success()
+        .to_owned();
+    assert!(text.contains("hello =>"), "{text}");
 }
 
 #[test]
 fn task_run_executes_saved_command() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
+    save(&temp_dir, "echo", task_echo_command());
 
-    let mut save_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    save_cmd
-        .args(["--cwd", &cwd, "task", "save", "echo", task_echo_command()])
-        .assert()
-        .success();
+    let output = harness(&temp_dir)
+        .run(&["task", "run", "echo"])
+        .expect_success()
+        .to_owned();
 
-    let mut run_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    run_cmd
-        .args(["--cwd", &cwd, "task", "run", "echo"])
-        .assert()
-        .success()
-        .stdout(contains("task-ok"))
-        .stdout(contains("\u{1b}").not());
+    assert!(output.contains("task-ok"), "{output}");
 }
 
 #[test]
 fn task_run_unknown_task_fails() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
 
-    let mut run_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    run_cmd
-        .args(["--cwd", &cwd, "task", "run", "missing"])
-        .assert()
-        .failure()
-        .stderr(contains("ah: task not found: missing"))
-        .stderr(contains("Hint: Run 'ah task list' to see saved tasks."))
-        .stderr(contains("TASK_NOT_FOUND").not());
+    let run = harness(&temp_dir).run(&["task", "run", "missing"]);
+
+    let _ = run.expect_failure();
+    assert_eq!(
+        run.diagnostic_text(&["task", "run", "missing"]),
+        "ah: task not found: missing\n\n\
+         Hint: Run 'ah task list' to see saved tasks."
+    );
 }
 
 #[test]
 fn task_run_bounds_output_while_reading() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
+    save(&temp_dir, "noisy", task_noisy_command());
 
-    let mut save_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    save_cmd
-        .args(["--cwd", &cwd, "task", "save", "noisy", task_noisy_command()])
-        .assert()
-        .success();
+    let payload: Value = harness(&temp_dir)
+        .run(&["--json", "task", "run", "noisy", "--max-output-bytes", "32"])
+        .json();
 
-    let mut run_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    let output = run_cmd
-        .args([
-            "--json",
-            "--cwd",
-            &cwd,
-            "task",
-            "run",
-            "noisy",
-            "--max-output-bytes",
-            "32",
-        ])
-        .output()
-        .expect("task should run");
-    assert!(output.status.success(), "{output:?}");
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON output");
     assert_eq!(payload["truncated"], true);
     assert!(payload["stdout"].as_str().expect("stdout").len() <= 32);
 }
@@ -111,24 +102,23 @@ fn task_run_bounds_output_while_reading() {
 #[test]
 fn task_run_timeout_returns_stable_error() {
     let temp_dir = TempDir::new().expect("temporary dir should be created");
-    let cwd = temp_dir.path().to_string_lossy().to_string();
-
-    let mut save_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    save_cmd
-        .args(["--cwd", &cwd, "task", "save", "slow", task_slow_command()])
-        .assert()
-        .success();
+    save(&temp_dir, "slow", task_slow_command());
 
     let started = Instant::now();
-    let mut run_cmd = Command::cargo_bin("ah").expect("binary should compile");
-    run_cmd
-        .args(["--cwd", &cwd, "task", "run", "slow", "--timeout-secs", "1"])
-        .assert()
-        .failure()
-        .stderr(contains(
-            "ah: task 'slow' did not complete within 1 seconds",
-        ))
-        .stderr(contains("TASK_TIMEOUT").not());
+    let run = harness(&temp_dir).run(&["task", "run", "slow", "--timeout-secs", "1"]);
+
+    let _ = run.expect_failure();
+    assert!(
+        run.detail()
+            .contains("task 'slow' did not complete within 1 seconds"),
+        "{}",
+        run.detail()
+    );
+    assert!(
+        !run.diagnostic_text(&["task", "run", "slow"])
+            .contains("TASK_TIMEOUT"),
+        "no internal code leaks into the text"
+    );
     assert!(started.elapsed() < Duration::from_secs(4));
 }
 

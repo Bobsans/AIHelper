@@ -309,7 +309,7 @@ Only now is this cheap.
 | ~~`SystemdUserScheduler`~~ **(done)**, `LaunchdScheduler`                            | 06     |
 | ~~`Forge` abstraction~~; **collapse GitHub/GitLab duplication into a shared core** *(the two duplicated loops done; see below)* | 02     |
 | ~~Cross-version updater compatibility fixtures~~ **(on-disk done; the handoff argv half done)** | 07, 08 |
-| Convert the integration suite to a deliberate thin contract layer *(started; `help.rs` done)* | 08     |
+| Convert the integration suite to a deliberate thin contract layer *(`help.rs`, `git.rs`, `search.rs`, `project.rs`, `task.rs`, `ctx.rs` done; `file.rs`, `http.rs`, `run.rs` left)* | 08     |
 
 **Exit criterion:** the managed service runs on three platforms with one lifecycle
 test suite; a new forge plugin is a few hundred lines.
@@ -565,6 +565,27 @@ now has two pairs of entry points, and a fake that overrode the old
 `invoke_observed` had its outcome silently dropped once the runtime started
 calling `invoke_observed_into`. The doc on each now says which of the pair is
 the override point.
+
+**Six files in, the row is paying in correctness rather than in seconds.**
+`git.rs`, `search.rs`, `project.rs`, `task.rs` and `ctx.rs` are converted whole,
+and the suite is at 141 spawns from 172. Every `contains("\"field\": …")` that
+became an index into the payload had to name where the field lives, and twice
+the old assertion was wrong about that: `git`'s `subject` sits under `commit` in
+one command and `latest_commit` in another, and `project detect` reports
+`CHANGELOG.md` under `files.changelogs` rather than `files.docs`. Both would
+have kept passing if the field had moved to an unrelated object.
+
+Two things the conversion cannot carry, both now settled: a text output carrying
+no terminal escapes is `Emitter::stdio` reading `is_terminal`, which the captured
+emitter has off by construction - asserted once in `git.rs` rather than five
+times across the domains; and two `ctx` tests named
+`..._has_no_ansi_when_captured` are renamed to what they actually assert, because
+a test should not keep a name promising a check it no longer makes.
+
+`file.rs` (27 spawns), `http.rs` (18) and `run.rs` (15) are what is left to move.
+`startup.rs`, `logging.rs`, `mcp.rs` and `common.rs` stay: exit codes, stream
+identity, crash recovery, the event log and the managed service are process
+properties, and that is exactly the thin contract layer this row is aiming at.
 
 ## Cross-cutting invariants
 
