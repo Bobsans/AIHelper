@@ -224,6 +224,15 @@ pub(crate) enum Route {
 pub(crate) struct Startup {
     /// `--version` or `-V` on their own, answered without loading anything.
     pub(crate) version_only: bool,
+    /// `--json`, read straight out of argv, because the recovery report is
+    /// produced before the plugin-aware parse that would otherwise decide it.
+    ///
+    /// A raw scan cannot tell the global flag from the same spelling passed to a
+    /// child - `ah run check -- --json` - and deliberately does not try: the only
+    /// thing it decides is the form of the recovery report, so the cost of a
+    /// false positive is JSON where a sentence was expected on an invocation
+    /// that did not run the command anyway.
+    pub(crate) json: bool,
     pub(crate) handoff: Option<Handoff>,
     pub(crate) route: Route,
 }
@@ -263,6 +272,7 @@ fn detect_in(
 
     Ok(Startup {
         version_only,
+        json: has_flag(raw_args, "--json"),
         handoff: handoff(raw_args, &positionals, version_only, environment)?,
         route: route(&positionals, raw_args),
     })

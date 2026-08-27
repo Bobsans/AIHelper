@@ -54,12 +54,16 @@ and hands off across processes via the `AH_UPDATER_MCP_RESTORE` environment vari
 cannot be tested without a scheduler, and the service cannot be reasoned about
 without reading the updater.
 
-### 7.5 Recovery runs before parsing, silently
+### 7.5 Recovery runs before parsing, silently *(fixed)*
 
 `recover_before_startup` (`src/runtime_flow.rs:40`) runs on essentially every
 invocation, before argument parsing, and on the recovery path emits a warning and
 returns `Ok(())` — so `ah git status` can exit successfully having done something
 entirely different. The behavior is defensible; its invisibility is not.
+
+**Fixed.** The outcome is structured, always logged, and reported as JSON when
+JSON was asked for. Section D below has the shape and the three things it had to
+get right.
 
 ## Why it hurts
 
@@ -112,11 +116,49 @@ The cross-process handoff (`AH_UPDATER_MCP_RESTORE`) becomes a hidden subcommand
 per group 03, so it is parsed, validated, redacted and tested like any other entry
 point.
 
-### D. Make recovery observable
+### D. Make recovery observable *(done)*
 
-`recover_before_startup` should return a structured outcome that is always logged
+~~`recover_before_startup` should return a structured outcome that is always logged
 (`EventLogger`) and always reported in `--json` mode, not only as a stderr warning.
-A user or an agent must be able to tell that an invocation was consumed by recovery.
+A user or an agent must be able to tell that an invocation was consumed by recovery.~~
+
+`EarlyRecoveryOutcome::RecoveryLaunched` now carries a `RecoveryReport` with the
+three fields the three questions need: *which* update was interrupted
+(`transaction_id`), what it was doing (`operation`), and how far it got (`state` -
+the journal state recovery found on disk). The bare flag could not answer any of
+them.
+
+`runtime_flow::report_recovery` sends it to two sinks, for two readers:
+
+- **The event log, whatever the output mode.** One `system` record, severity
+  `warning`, code `UPDATE_RECOVERY_CONSUMED_INVOCATION`, with the redacted argv
+  and the report as context. This is the sink that answers "why did this command
+  do nothing at 03:14" afterwards.
+- **stdout as JSON when `--json` was asked for**, otherwise the same stderr
+  sentence this has always printed. The payload's `consumed_invocation: true` is
+  the field that matters: it is how a caller tells "the command ran and printed
+  nothing" from "the command never ran".
+
+Three things the change had to get right, and each is a comment in the code:
+
+- **`--json` is read straight out of argv**, because the report is produced
+  before the plugin-aware parse. A raw scan cannot tell the global flag from the
+  same spelling passed to a child (`ah run check -- --json`) and does not try:
+  all it decides is the *form* of a report on an invocation that did not run the
+  command anyway.
+- **The base directory is resolved before the logger opens**, the way
+  `Session::open` does it, because a relative `AH_CONFIG_DIR` is taken relative to
+  `--cwd` and the logger is the first thing to open that directory. Best effort:
+  a `--cwd` this process cannot enter is a failure the commands that reach
+  `Session::open` report, and it must not stop recovery being logged.
+- **A detached helper owns the transaction directory.** The test that covers the
+  launched path asserts the directory still exists, because cleaning up behind a
+  process that is still using it is the bug this path can grow.
+
+The launched path had no test before, because the one fake runner recovered
+inline and so always reported `Continue`. `DetachedRunner` returns `Launched`
+like the real Windows one, and the test asserts the report against the
+transaction the fixture actually wrote.
 
 ## Migration
 
@@ -131,7 +173,7 @@ A user or an agent must be able to tell that an invocation was consumed by recov
    move does not have to drag a `mcp_service` dependency with it.
 5. Convert `AH_UPDATER_MCP_RESTORE` / `AH_UPDATER_INSTALLED_SMOKE` into hidden
    subcommands, with a one-release deprecation window (see group 03 risks).
-6. Add structured recovery reporting.
+6. ~~Add structured recovery reporting.~~ **(done.)**
 
 ## Risks and invariants
 
@@ -196,4 +238,4 @@ A user or an agent must be able to tell that an invocation was consumed by recov
 - One implementation of each filesystem hardening primitive.
 - `ah-updater` builds and its tests pass without `mcp_service` in the dependency graph.
 - No module named `transaction.rs` in two crates.
-- Every recovery-consumed invocation is visible in the event log and in JSON output.
+- ~~Every recovery-consumed invocation is visible in the event log and in JSON output.~~ **(met.)** One `system` record with code `UPDATE_RECOVERY_CONSUMED_INVOCATION` whatever the output mode, plus a payload on stdout under `--json` whose `consumed_invocation` field is what distinguishes "printed nothing" from "never ran". See section D.

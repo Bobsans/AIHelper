@@ -9,7 +9,10 @@ use ah_update_helper::apply::{
     TransactionPaths, inspect_transaction, load_recovery_transaction, recover_transaction,
     remove_completed_transaction,
 };
-use ah_updater_core::{InstallationIdentityV1, ReleaseTrust, TransactionStateV1, UpdaterError};
+use ah_updater_core::{
+    InstallationIdentityV1, ReleaseTrust, TransactionStateV1, UpdateOperation, UpdaterError,
+};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -19,10 +22,32 @@ const MAX_IDENTITY_BYTES: usize = 16 * 1024;
 const MAX_TRANSACTION_DIRECTORIES: usize = 8;
 const RECOVERY_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// What an invocation consumed by crash recovery did.
+///
+/// Recovery runs before argument parsing, and when it launches the helper the
+/// command the user typed never runs - `ah git status` exits successfully having
+/// done something else entirely. The behaviour is deliberate; its invisibility
+/// was not, so the outcome is structured rather than a bare flag and the caller
+/// both logs it and reports it.
+///
+/// Three fields, because three questions follow: *which* update was interrupted
+/// (`transaction_id`), what it was doing (`operation`), and how far it got
+/// (`state`). The last is the journal state recovery found on disk, which is the
+/// point the interrupted run stopped at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RecoveryReport {
+    pub transaction_id: Uuid,
+    pub operation: UpdateOperation,
+    pub state: TransactionStateV1,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EarlyRecoveryOutcome {
+    /// Nothing was pending, or what was pending did not need this invocation.
     Continue,
-    RecoveryLaunched,
+    /// The helper was launched and this invocation is over. The report is what
+    /// the caller has to make visible.
+    RecoveryLaunched(RecoveryReport),
 }
 
 pub fn recover_before_startup(
@@ -152,7 +177,11 @@ fn recover_pending_for(
             .map_err(map_updater_error)?;
             let helper = recovery_helper_path(&transaction)?;
             match runner.launch(&helper, &paths)? {
-                HelperRun::Launched => Ok(EarlyRecoveryOutcome::RecoveryLaunched),
+                HelperRun::Launched => Ok(EarlyRecoveryOutcome::RecoveryLaunched(RecoveryReport {
+                    transaction_id: inspected.journal().transaction_id,
+                    operation: inspected.plan().operation,
+                    state: inspected.journal().state,
+                })),
                 HelperRun::Completed => {
                     remove_completed_transaction(&paths, trust).map_err(map_updater_error)?;
                     Ok(EarlyRecoveryOutcome::Continue)
@@ -457,6 +486,42 @@ mod tests {
         assert_eq!(runner.launches.get(), 1);
     }
 
+    /// The real Windows runner spawns a detached helper and returns, which is
+    /// the path that consumes the invocation. The report it produces is what
+    /// the caller logs and prints, so its three fields have to name the
+    /// transaction actually found on disk rather than a default.
+    #[test]
+    fn a_detached_helper_reports_the_transaction_it_was_launched_for() {
+        let fixture = Fixture::new();
+        fixture.prepare();
+        let expected = inspect_transaction(&fixture.paths, &fixture.trust).unwrap();
+        let expected_id = expected.journal().transaction_id;
+        let expected_operation = expected.plan().operation;
+        let expected_state = expected.journal().state;
+        let runner = DetachedRunner::default();
+
+        let outcome = recover_pending_for(
+            &fixture.executable,
+            &fixture.updater_root,
+            &fixture.trust,
+            &runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            EarlyRecoveryOutcome::RecoveryLaunched(RecoveryReport {
+                transaction_id: expected_id,
+                operation: expected_operation,
+                state: expected_state,
+            })
+        );
+        assert_eq!(runner.launches.get(), 1);
+        // A detached helper owns the transaction directory: the caller must not
+        // clean up behind a process that is still using it.
+        assert!(fixture.paths.transaction_root().exists());
+    }
+
     #[test]
     fn prepared_transaction_runs_helper_before_cleanup() {
         let fixture = Fixture::new();
@@ -502,6 +567,21 @@ mod tests {
             self.helper.replace(Some(helper.to_path_buf()));
             recover_transaction(paths, &self.trust).map_err(map_updater_error)?;
             Ok(HelperRun::Completed)
+        }
+    }
+
+    /// Launches and returns, the way the Windows runner does with a detached
+    /// process. `InProcessRunner` above recovers inline instead, which is what
+    /// makes it report `Continue`.
+    #[derive(Default)]
+    struct DetachedRunner {
+        launches: Cell<usize>,
+    }
+
+    impl RecoveryHelperRunner for DetachedRunner {
+        fn launch(&self, _helper: &Path, _paths: &TransactionPaths) -> Result<HelperRun, AppError> {
+            self.launches.set(self.launches.get() + 1);
+            Ok(HelperRun::Launched)
         }
     }
 

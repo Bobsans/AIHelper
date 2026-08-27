@@ -106,6 +106,34 @@ only when a previously ready managed MCP must be restored by the helper.
 Rollback results use `operation=rollback`, `source=permanent_backup`, and
 `rollback=launched`.
 
+## When recovery consumes the command
+
+An interrupted update leaves a journalled transaction behind, and the next `ah`
+of any kind finishes it before running what you typed. When that happens the
+command you asked for **does not run**, and the invocation reports why:
+
+```json
+{
+  "command": "update.recovery",
+  "consumed_invocation": true,
+  "message": "update recovery started; rerun the command after recovery completes",
+  "transaction_id": "0f1c...",
+  "operation": "upgrade",
+  "state": "commit_started"
+}
+```
+
+`consumed_invocation` is the field to check: it distinguishes an invocation that
+ran and printed nothing from one that never ran. `state` is where the interrupted
+update was when recovery found it. Without `--json` the same event is a warning
+line on standard error, and the exit code is 0 either way — recovery succeeded,
+your command simply has to be repeated.
+
+Either way one `system` record is written to the event log, severity `warning`,
+diagnostic code `UPDATE_RECOVERY_CONSUMED_INVOCATION`, so an invocation that did
+something other than what was asked is auditable after the fact. See
+[logging](logging.md).
+
 Errors use deterministic `UPDATER_<CATEGORY>` diagnostic codes. Categories
 include `UNSUPPORTED_PLATFORM`, `NETWORK`, `RELEASE_CONTRACT`, `TRUST`,
 `COMPATIBILITY`, `CANDIDATE`, `INSTALLATION`, `ACTIVATION`, `ROLLBACK`, and

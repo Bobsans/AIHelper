@@ -48,6 +48,15 @@ separate `system` records. Other successful result data, stdout, stderr, and
 child argv are not stored. A non-zero child exit keeps the outer command status
 at `success` and records `outcome.success: false`.
 
+One `system` record has no `command.completed` beside it, because the command
+never ran. When an interrupted update is recovered before startup, the invocation
+is consumed by that recovery and writes a record with component
+`update-recovery`, severity `warning` and diagnostic code
+`UPDATE_RECOVERY_CONSUMED_INVOCATION`, whose context carries the redacted argv
+and the transaction it acted on. It is written whatever the output mode, so an
+invocation that did something other than what was asked is auditable after the
+fact. See [upgrade](upgrade.md).
+
 ## Redaction
 
 AIHelper redacts recognized passwords, tokens, authorization values, cookies,

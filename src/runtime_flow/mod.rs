@@ -35,7 +35,7 @@ use crate::{
         model::ExitKind,
         runner::{ManagedPreflight, ManagedRunner},
     },
-    output::{emit_muted_stderr, emit_warning},
+    output::{Emitter, GlobalOptions, OutputMode, emit_muted_stderr, emit_warning},
     plugin_settings::PluginSettings,
     plugins,
 };
@@ -67,7 +67,7 @@ pub(crate) fn run() -> Result<(), AppError> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let entry = crate::entry::detect(&raw_args)?;
 
-    match answer_before_startup(&entry)? {
+    match answer_before_startup(&entry, &raw_args)? {
         Step::Done(outcome) => return outcome,
         Step::Continue(()) => {}
     }
@@ -87,21 +87,22 @@ pub(crate) fn run() -> Result<(), AppError> {
 /// Recovery runs here, before the plugin-aware parse, because it must not
 /// depend on the command being valid. A handoff skips it: the updater is
 /// already mid-transaction and a second recovery would fight it.
-fn answer_before_startup(entry: &crate::entry::Startup) -> Result<Step<()>, AppError> {
+fn answer_before_startup(
+    entry: &crate::entry::Startup,
+    raw_args: &[OsString],
+) -> Result<Step<()>, AppError> {
     if entry.handoff == Some(crate::entry::Handoff::InstalledSmoke) {
         println!("ah {}", env!("CARGO_PKG_VERSION"));
         return Ok(Step::Done(Ok(())));
     }
     if entry.handoff.is_none()
-        && matches!(
+        && let ah_updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched(report) =
             ah_updater::recovery::recover_before_startup(
                 matches!(entry.route, crate::entry::Route::ManagedServe),
                 &ManagedMcpGuard,
-            )?,
-            ah_updater::recovery::EarlyRecoveryOutcome::RecoveryLaunched
-        )
+            )?
     {
-        emit_warning("update recovery started; rerun the command after recovery completes");
+        report_recovery(raw_args, entry.json, &report)?;
         return Ok(Step::Done(Ok(())));
     }
     if entry.version_only {
@@ -109,6 +110,86 @@ fn answer_before_startup(entry: &crate::entry::Startup) -> Result<Step<()>, AppE
         return Ok(Step::Done(Ok(())));
     }
     Ok(Step::Continue(()))
+}
+
+/// What a user or an agent is told when recovery consumed the invocation.
+///
+/// Two sinks, for two readers. The event log answers "why did this command do
+/// nothing at 03:14" afterwards, and is written whatever the output mode. The
+/// rendered report is for the caller waiting now: the same sentence on stderr
+/// that this has always printed, or the same facts as JSON on stdout for a
+/// caller that asked for JSON and cannot read prose.
+///
+/// This runs before the plugin-aware parse, so the options are the ones
+/// [`crate::entry`] reads straight out of argv rather than a parsed
+/// [`GlobalOptions`]. That is also why the base directory is resolved here: the
+/// logger is the first thing to open the configuration directory, a relative
+/// `AH_CONFIG_DIR` is taken relative to `--cwd`, and `Session::open` - which
+/// normally does this - is reached only by commands that run.
+fn report_recovery(
+    raw_args: &[OsString],
+    json: bool,
+    report: &ah_updater::recovery::RecoveryReport,
+) -> Result<(), AppError> {
+    const MESSAGE: &str = "update recovery started; rerun the command after recovery completes";
+
+    // Best effort. A `--cwd` this process cannot enter is a failure the commands
+    // that reach `Session::open` report; it must not stop recovery being logged.
+    if let Ok(Some(cwd)) = cli::initial_cwd_from_raw_args(raw_args) {
+        crate::config::set_base_dir(cwd);
+    }
+    if let Some(logger) = EventLogger::new() {
+        logger.record_system_event(
+            "update-recovery",
+            SystemEventSeverity::Warning,
+            EventDiagnostic::new("UPDATE_RECOVERY_CONSUMED_INVOCATION", MESSAGE, 0),
+            serde_json::json!({
+                "argv": logged_argv(raw_args),
+                "recovery": report,
+            }),
+        );
+    }
+    if json {
+        let mut emitter = Emitter::stdio(&GlobalOptions {
+            output: OutputMode::Json,
+            quiet: false,
+            limit: None,
+            cwd: None,
+        });
+        emitter.value(&recovery_payload(MESSAGE, report), |_| String::new())
+    } else {
+        emit_warning(MESSAGE);
+        Ok(())
+    }
+}
+
+/// The `--json` form of a recovery-consumed invocation.
+///
+/// `consumed_invocation` is the field that matters and the reason this payload
+/// exists: it is how a caller distinguishes "the command ran and printed
+/// nothing" from "the command never ran". The other fields name the transaction
+/// so the same caller can look it up.
+fn recovery_payload(
+    message: &str,
+    report: &ah_updater::recovery::RecoveryReport,
+) -> serde_json::Value {
+    serde_json::json!({
+        "command": "update.recovery",
+        "consumed_invocation": true,
+        "message": message,
+        "transaction_id": report.transaction_id,
+        "operation": report.operation,
+        "state": report.state,
+    })
+}
+
+/// The argv an event-log record carries: redacted, and without the program name.
+fn logged_argv(raw_args: &[OsString]) -> Vec<String> {
+    cli::redact_secret_command_argv(raw_args)
+        .iter()
+        .skip(1)
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// The redacted argv and the logger, established once so every later failure
@@ -125,12 +206,7 @@ impl Session {
     /// The failure is recorded before it is returned, because nothing later in
     /// the run will get the chance.
     fn open(raw_args: &[OsString]) -> Result<Self, AppError> {
-        let logged_raw_args = cli::redact_secret_command_argv(raw_args);
-        let logged_argv = logged_raw_args
-            .iter()
-            .skip(1)
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        let logged_argv = logged_argv(raw_args);
         // Resolved before the logger, because a relative `AH_CONFIG_DIR` is
         // taken relative to this directory and the logger is the first thing
         // that opens it.
@@ -358,7 +434,7 @@ mod tests {
 
     use super::{
         Step, answer_before_startup, extract_credential_args, map_mcp_transport_error,
-        resolve_invocation_command, shutdown_runtime,
+        recovery_payload, resolve_invocation_command, shutdown_runtime,
     };
 
     /// The updater's smoke handoff answers before crash recovery is even
@@ -372,11 +448,13 @@ mod tests {
     fn the_smoke_handoff_answers_before_recovery_is_consulted() {
         let entry = crate::entry::Startup {
             version_only: true,
+            json: false,
             handoff: Some(crate::entry::Handoff::InstalledSmoke),
             route: crate::entry::Route::Full,
         };
 
-        let step = answer_before_startup(&entry).expect("the handoff answers");
+        let step = answer_before_startup(&entry, &[std::ffi::OsString::from("ah")])
+            .expect("the handoff answers");
 
         assert!(matches!(step, Step::Done(Ok(()))));
     }
@@ -387,13 +465,41 @@ mod tests {
     fn the_restore_handoff_continues_without_recovery() {
         let entry = crate::entry::Startup {
             version_only: false,
+            json: false,
             handoff: Some(crate::entry::Handoff::ManagedRestore),
             route: crate::entry::Route::Full,
         };
 
-        let step = answer_before_startup(&entry).expect("the handoff continues");
+        let step = answer_before_startup(&entry, &[std::ffi::OsString::from("ah")])
+            .expect("the handoff continues");
 
         assert!(matches!(step, Step::Continue(())));
+    }
+
+    /// The `--json` report is a published contract: an agent reads
+    /// `consumed_invocation` to tell "the command printed nothing" from "the
+    /// command never ran", so the field names are frozen and the test says so.
+    #[test]
+    fn a_recovery_consumed_invocation_reports_the_transaction_it_acted_on() {
+        let report = ah_updater::recovery::RecoveryReport {
+            transaction_id: uuid::Uuid::nil(),
+            operation: ah_updater_core::UpdateOperation::Upgrade,
+            state: ah_updater_core::TransactionStateV1::CommitStarted,
+        };
+
+        let payload = recovery_payload("recovery started", &report);
+
+        assert_eq!(payload["command"], "update.recovery");
+        assert_eq!(payload["consumed_invocation"], true);
+        assert_eq!(payload["message"], "recovery started");
+        assert_eq!(
+            payload["transaction_id"],
+            "00000000-0000-0000-0000-000000000000"
+        );
+        // The two enums serialise as snake_case, and recovery dispatches on
+        // these spellings - a rename here is a wire break, not a rewording.
+        assert_eq!(payload["operation"], "upgrade");
+        assert_eq!(payload["state"], "commit_started");
     }
 
     #[test]
