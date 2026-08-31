@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "ah-ai"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-error",
  "ah-output",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "ah-config"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-error",
  "ah-paths",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "ah-domains"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-config",
  "ah-error",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "ah-error"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-plugin-api",
  "serde_json",
@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "ah-mcp"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-plugin-api",
  "ah-redact",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "ah-observability"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-config",
  "ah-error",
@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "ah-output"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-error",
  "ah-plugin-api",
@@ -162,11 +162,11 @@ dependencies = [
 
 [[package]]
 name = "ah-paths"
-version = "1.4.0"
+version = "1.5.0"
 
 [[package]]
 name = "ah-persist"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-error",
  "ah-platform",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "ah-platform"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-api"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "schemars",
  "serde",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-github"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-plugin-api",
  "ah-plugin-sdk",
@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-gitlab"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-plugin-api",
  "ah-plugin-sdk",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-ollama"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-plugin-api",
  "ah-plugin-sdk",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-postgres"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-paths",
  "ah-platform",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-sdk"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-plugin-api",
  "reqwest",
@@ -267,11 +267,11 @@ dependencies = [
 
 [[package]]
 name = "ah-plugin-testkit"
-version = "1.4.0"
+version = "1.5.0"
 
 [[package]]
 name = "ah-redact"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "proptest",
  "serde_json",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "ah-release-manifest"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "ah-release-tool"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-release-manifest",
  "assert_cmd",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "ah-runtime"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-output",
  "ah-plugin-api",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "ah-secrets"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "aes-gcm",
  "ah-config",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "ah-service"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-config",
  "ah-error",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "ah-setup-ui"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "axum",
  "serde",
@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "ah-update-helper"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-platform",
  "ah-release-manifest",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "ah-updater"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-error",
  "ah-paths",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "ah-updater-core"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-release-manifest",
  "base64",
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "aihelper"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ah-ai",
  "ah-config",

@@ -7,6 +7,59 @@ Versioning.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-31
+
+### Added
+
+- `ah mcp service install`, `start`, `stop`, `restart`, `status`, and `uninstall`
+  work on Linux, where the managed HTTP server is registered as the systemd
+  **user** unit `aihelper-managed-mcp.service` wanted by `default.target`. The
+  support is experimental: it needs a reachable `systemctl --user` manager
+  (`XDG_RUNTIME_DIR` and a running user manager), and running the unit with
+  nobody logged in still requires `loginctl enable-linger`, which AIHelper does
+  not enable. macOS continues to report `MCP_SERVICE_UNSUPPORTED_PLATFORM`.
+- `ah ai install`, `ah ai uninstall`, and `ah ai status` support the `opencode`
+  target, registering the `aihelper` MCP server in OpenCode's JSON/JSONC
+  configuration with its comments preserved. `ah ai status` reports every
+  supported system, user, project, and local environment instead of one scope
+  per target.
+- An invocation consumed by update recovery reports itself. The event log gets
+  one system record, severity warning, code
+  `UPDATE_RECOVERY_CONSUMED_INVOCATION`, carrying the redacted argv, the
+  interrupted transaction id, the operation, and the journal state found on
+  disk; with `--json` the payload's `consumed_invocation` field distinguishes a
+  command that never ran from one that ran and printed nothing.
+
+### Changed
+
+- Published JSON Schemas are derived from the Rust types they describe rather
+  than hand-written, across every built-in domain, the host commands, and all
+  four dynamic plugins. The resulting shape differs in four ways that carry no
+  meaning: `required` is alphabetical, a nullable field spells itself
+  `type: [T, "null"]` instead of `oneOf: [T, null]`, array arguments advertise
+  `"default": []`, and an empty `required` is omitted rather than published as
+  `[]`. Property names, types and constraints are unchanged.
+- `file.stat.kind` and `plugins.list.source`/`state` were documented in prose
+  only; they now publish their `enum` values. The three `plugins.*` mutations
+  publish `const` on `command`.
+- Ollama's decode failure said `failed to decode response from '<url>'` and now
+  says `failed to decode ollama response for '<path>'`, matching the GitHub and
+  GitLab wording. `OLLAMA_RESPONSE_INVALID` is unchanged.
+- A write to stdout that the stream refuses is now reported as
+  `OUTPUT_WRITE_FAILED` instead of panicking the process.
+- The managed rules block written by `ah ai install` states the invariants no
+  per-command description can carry: `context.cwd` over MCP, closed argument
+  schemas, long work belonging to `ah.job.*`, paths that must already exist, a
+  missing secret being the user's to add, and `401`/`403` meaning a missing
+  scope rather than something to retry. Rerun `ah ai install` to refresh an
+  existing block.
+
+### Removed
+
+- `AH_POSTGRES_TEST_SYSTEM_PATH` no longer overrides `psql` resolution. It was
+  named as a test seam but shipped in the plugin, ahead of `PATH` itself, and no
+  test referenced it.
+
 ### Fixed
 
 - `gitlab.issues` and `gitlab.pipelines` published an output schema that
@@ -26,30 +79,22 @@ Versioning.
 - `postgres.exec` published its `yes` confirmation flag as optional and relied
   on the handler to refuse; it is now required by the schema. `postgres.describe`
   did not require `object` although the extractor errored without it.
-
-### Changed
-
-- Published JSON Schemas are derived from the Rust types they describe rather
-  than hand-written, across every built-in domain, the host commands, and all
-  four dynamic plugins. The resulting shape differs in four ways that carry no
-  meaning: `required` is alphabetical, a nullable field spells itself
-  `type: [T, "null"]` instead of `oneOf: [T, null]`, array arguments advertise
-  `"default": []`, and an empty `required` is omitted rather than published as
-  `[]`. Property names, types and constraints are unchanged.
-- `file.stat.kind` and `plugins.list.source`/`state` were documented in prose
-  only; they now publish their `enum` values. The three `plugins.*` mutations
-  publish `const` on `command`.
-- Ollama's decode failure said `failed to decode response from '<url>'` and now
-  says `failed to decode ollama response for '<path>'`, matching the GitHub and
-  GitLab wording. `OLLAMA_RESPONSE_INVALID` is unchanged.
-- A write to stdout that the stream refuses is now reported as
-  `OUTPUT_WRITE_FAILED` instead of panicking the process.
-
-### Removed
-
-- `AH_POSTGRES_TEST_SYSTEM_PATH` no longer overrides `psql` resolution. It was
-  named as a test seam but shipped in the plugin, ahead of `PATH` itself, and no
-  test referenced it.
+- `github release create` and `gitlab release create` sent every unset option as
+  an explicit `null`. GitHub rejected the request with `nil is not a string` and
+  GitLab read it as a request to clear the field. Unset options are now omitted,
+  so each API applies its own default; without `--target`, GitHub uses the
+  repository's default branch.
+- Over MCP, `github.*` and `gitlab.*` calls that name their own `repo` or
+  `project` and read no file input (`body_file`, `comment_file`,
+  `description_file`, `notes_file`) no longer require `context.cwd`.
+- A git remote pointing at a self-managed GitLab now supplies the host when
+  `--host` is omitted, instead of failing with `GITLAB_PROJECT_UNDETECTED` while
+  addressing `gitlab.com`. An explicit `--host` or `--project` is never
+  overridden this way.
+- The workspace builds, tests, and lints cleanly on Linux and macOS. `libc` was
+  used without being declared, a Windows-only constant was passed
+  unconditionally, and the two updater crates produced dead-code errors under
+  `-D warnings` on the platforms where they refuse to update at all.
 
 ## [1.4.0] - 2026-08-25
 
@@ -493,7 +538,9 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Bobsans/AIHelper/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/Bobsans/AIHelper/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Bobsans/AIHelper/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Bobsans/AIHelper/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Bobsans/AIHelper/compare/v1.2.1...v1.3.0
