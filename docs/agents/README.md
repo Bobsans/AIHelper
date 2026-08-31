@@ -13,6 +13,7 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 - [Write changelog entries and GitHub release notes](recipes/release-notes.md)
 - [Wire AIHelper into an AI agent](recipes/agent-install.md)
 - [Use AIHelper as an MCP stdio server](recipes/mcp-stdio.md)
+- [Serve MCP over local HTTP, or as a managed service](recipes/mcp-http.md)
 - [Run retryable HTTP workflows with extracted variables](recipes/http.md)
 - [Check for a trusted AIHelper update](recipes/upgrade-check.md)
 - [Read file with line numbers](recipes/file-read.md)

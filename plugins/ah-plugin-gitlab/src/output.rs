@@ -341,6 +341,12 @@ pub(crate) fn render_jobs_text(jobs: &[JobResponse], formatter: TextFormatter) -
         + "\n"
 }
 
+/// Deliberately not shared with the GitHub plugin's equivalent.
+///
+/// The two tables have the same shape and different vocabularies - `open` vs
+/// `opened`, `cancelled` vs `canceled`, non-overlapping pending sets. Merging
+/// them would either claim a state one forge does not have or drop styling the
+/// other does, and the genuinely common part is a six-line `match`.
 pub(crate) fn issue_state_style(state: &str) -> TextStyle {
     match state {
         "opened" | "open" => TextStyle::Success,

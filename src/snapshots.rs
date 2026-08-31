@@ -1,4 +1,4 @@
-//! Golden snapshots of the artifacts the refactoring program must not change
+//! Golden snapshots of the artifacts a refactor must not change
 //! by accident: the typed command catalog, the plugin manuals, the rendered CLI
 //! help tree, and the error-code table.
 //!

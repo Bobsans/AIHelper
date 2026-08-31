@@ -22,50 +22,33 @@ These instructions apply to the entire repository.
 
 ## Project Overview
 
-AIHelper is a Rust workspace that provides the `ah <domain> <command>` CLI. It uses a plugin-oriented architecture with in-process dispatch.
+AIHelper is a Rust workspace that provides the `ah <domain> <command>` CLI. It
+uses a plugin-oriented architecture with in-process dispatch.
 
-- `src/`: root CLI, runtime bootstrap, built-in plugin adapters, and core domain implementations.
-- `crates/ah-plugin-api/`: stable plugin request/response and C ABI contracts.
-- `crates/ah-plugin-sdk/`: shared implementation support for plugins - credential
-  policy, the JSON API client, and text-output primitives.
-- `crates/ah-setup-ui/`: the browser pages for entering a secret, and the
-  response headers that harden them.
-- `crates/ah-runtime/`: plugin registry, manager, and dynamic loader.
+- `src/`: the root binary - CLI, bootstrap, built-in plugin adapters, host
+  commands, and the `upgrade`/`mcp service` routes.
+- `crates/`: every library the binary is assembled from.
 - `plugins/`: dynamic plugin crates.
 - `tests/`: integration tests.
 - `docs/agents/`: AI-oriented recipes.
 - `docs/developers/`: architecture and contributor guidance.
 - `docs/reference/`: user-facing command reference.
+- `docs/decisions/`: architecture decision records.
+
+Which crate owns what is in
+[`docs/developers/architecture.md`](docs/developers/architecture.md). Read it
+before changing a runtime contract; do not restate its crate list here.
 
 ## Development Rules
 
-- Keep text and JSON output deterministic.
-- Preserve released JSON field names and plugin ABI compatibility unless an explicit breaking change is requested.
-- Add or update tests for both success and failure paths when behavior changes.
-- For user-facing command changes, update the relevant command reference and AI recipe documentation.
-- Keep command behavior domain-scoped and follow existing error and output conventions.
-- Prefer focused changes; do not modify generated output or unrelated files.
+The repository standards, the compatibility rules, and the required checks are
+stated once, in
+[`docs/developers/contributing.md`](docs/developers/contributing.md). Follow
+them. Two agent-specific additions:
 
-## Validation
+- Run each check through `ah run check` rather than a bare shell invocation, so
+  the run is bounded and its output is captured.
+- Report any check that could not be run, and why, instead of omitting it.
 
-Use the smallest relevant check while iterating, then run the applicable workspace checks before handoff:
-
-```text
-ah run check cargo fmt --all -- --check
-ah run check cargo clippy --workspace --all-targets --locked -- -D warnings
-ah run check cargo test --workspace --all-targets --locked
-ah run check cargo build --locked
-```
-
-The golden snapshots in `tests/snapshots/` fail whenever the command catalog,
-the manuals, the CLI help tree, or an error code changes. Regenerate them with
-`AH_UPDATE_SNAPSHOTS=1 cargo test --lib snapshots` and state the reason for the
-diff; never regenerate them to make a failing check pass.
-
-For release-sensitive work, also run:
-
-```text
-ah run check cargo build --release --locked
-```
-
-Report any check that could not be run and why.
+Use the smallest relevant check while iterating, then run the applicable
+workspace checks before handoff.

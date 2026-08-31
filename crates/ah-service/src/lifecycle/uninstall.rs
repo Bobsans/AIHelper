@@ -1,5 +1,11 @@
 //! Removing the service: prove it inactive, then delete only what this
 //! installation owns.
+//!
+//! On Unix the two lock files survive an uninstall, deliberately. They *are* the
+//! lease, held for the duration of the operation, and `flock` is per open
+//! descriptor: unlinking a file whose lock you hold lets a concurrent process
+//! create the path again and take a second "exclusive" lease. Windows leaves
+//! nothing behind because its lease is a named mutex rather than a file.
 
 use super::*;
 

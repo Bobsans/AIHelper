@@ -5,9 +5,27 @@ contracts. Add success, failure, and boundary coverage whenever behavior changes
 
 ## Test Layers
 
-Domain-level CLI contracts belong in `tests/integration/<domain>.rs`. These tests
-execute the compiled `ah` binary with `assert_cmd` so argument parsing, runtime
-dispatch, output rendering, and process exit behavior are covered together.
+Domain-level CLI contracts belong in `tests/integration/<domain>.rs`. Prefer the
+in-process harness (`src/harness.rs`, behind the `harness` feature the package
+enables for itself as a dev-dependency): it builds the registry the shipped
+binary builds, parses argv with the production parser, dispatches through the
+production manager, and hands back what the command rendered. A test that only
+asserts about argv in and rendered text out needs no subprocess.
+
+Spawn the compiled binary only for what a process *is*, and say in a doc comment
+which of these it is:
+
+- the exit code, and which stream the text reached
+- `--json` routing a refusal to stderr, which `AppError::print` decides from a
+  process-global
+- an environment variable that must be in `ah`'s own environment, or a replaced
+  `PATH`
+- a relative `--cwd`, which resolves against a process working directory
+- crash recovery, the event log and its redaction, and the managed service
+
+Child processes under test are not the same thing: `run check` spawns them,
+bounds their output and kills their descendants, and that is the behavior being
+measured.
 
 Keep focused unit tests for internal parsing and state transitions. Use black-box
 integration tests for behavior visible to CLI and agent consumers.
@@ -98,6 +116,17 @@ The default test suite must stay offline and require no credentials, live databa
 downloads, elevated privileges, or fixed host ports.
 
 Test HTTP-based plugins with deterministic loopback servers bound to port zero.
+Use `ah-plugin-testkit` rather than a per-plugin mock server: three hand-written
+copies had each drifted from the others, and the one missing a blocking-mode
+call produced a Windows-only flake nobody could carry a fix back for.
+
+## Property Coverage
+
+The redaction engine and the two parsers carry `proptest` properties on the
+pinned stable toolchain, so they run on every CI platform. A `cargo-fuzz` target
+would need a nightly toolchain and a CI lane of its own and is deliberately not
+set up; what is missing there is coverage guidance, not the leak property
+itself.
 Assert the complete outbound method, path, query, headers, and body before checking
 the stable response contract. Use explicit deadlines and avoid long sleeps.
 

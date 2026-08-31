@@ -37,6 +37,16 @@ cargo run --bin ah -- --help
 - Treat every handler as concurrent: multiple calls to the same command may
   overlap, and cancellation may run concurrently with invocation. Protect
   shared state and make polling loops and child processes cancellation-aware.
+- Keep command behavior domain-scoped and follow the existing error and output
+  conventions.
+- Keep changes focused: do not edit generated output or unrelated files.
+- Updater on-disk journals and cross-process handoffs must interoperate across at
+  least one release in both directions. A field added since v1 must be
+  `skip_serializing_if`, because an older reader rejects a document carrying a
+  field it does not know.
+- A security check may be deduplicated, never narrowed. Where two checks differ,
+  the union of them is the requirement; a shared helper that performs fewer
+  checks than one of its callers did is a regression, not a cleanup.
 
 ## Suggested workflow
 

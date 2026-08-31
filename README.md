@@ -188,7 +188,7 @@ before granting broad tool approvals.
 
 ## Signed updates and rollback
 
-AIHelper v1.2 adds a built-in, Windows x64 updater for signed GitHub releases:
+AIHelper has a built-in, Windows x64 updater for signed GitHub releases:
 
 ```powershell
 ah upgrade --check
@@ -248,16 +248,10 @@ cargo build --locked
 
 ## How it is built
 
-- `src/` contains the root CLI, built-in domain implementations, updater, and
-  plugin adapters.
-- `crates/ah-plugin-api/` defines the stable request/response and C ABI
-  contracts.
-- `crates/ah-runtime/` owns plugin discovery, validation, and in-process
-  dispatch.
-- `crates/ah-mcp/` maps enabled commands to typed stdio and Streamable HTTP MCP
-  tools.
-- `plugins/` contains the dynamic GitHub, GitLab, Ollama, and PostgreSQL plugin
-  crates.
+A Rust workspace: `src/` is the binary and its adapters, `crates/` holds the
+libraries it is assembled from - the plugin contract and runtime, the command
+domains, the MCP surface, the managed service and the updater - and `plugins/`
+holds the dynamic GitHub, GitLab, Ollama, and PostgreSQL crates.
 
 Start with the [architecture guide](docs/developers/architecture.md) and
 [plugin guide](docs/developers/plugins.md) before changing runtime contracts.
@@ -270,8 +264,9 @@ Start with the [architecture guide](docs/developers/architecture.md) and
 - [MCP reference](docs/reference/mcp.md)
 - [Plugin architecture](docs/developers/plugins.md)
 - [Invocation logging](docs/reference/logging.md)
-- [v1.2.0 release notes](docs/releases/v1.2.0.md)
 - [Changelog](CHANGELOG.md)
+- [Release notes](https://github.com/Bobsans/AIHelper/releases)
+- [Architecture decisions](docs/decisions/README.md)
 - [Contributing](CONTRIBUTING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security policy](SECURITY.md)

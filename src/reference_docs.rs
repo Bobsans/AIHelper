@@ -180,3 +180,129 @@ fn expand_alternatives(heading: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// Every Markdown file in the repository, excluding build output and VCS data.
+fn markdown_files() -> Vec<PathBuf> {
+    fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if !matches!(name.as_ref(), "target" | ".git" | "node_modules") {
+                    walk(&path, found);
+                }
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+                found.push(path);
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(&repo_path(""), &mut found);
+    found.sort();
+    found
+}
+
+/// The path a reference points at, or `None` when it is not one this check can
+/// resolve: an external URL, a bare anchor, or a spelling that stands for a
+/// family of files rather than one of them.
+fn resolvable(target: &str) -> Option<&str> {
+    if target.contains("://") || target.starts_with("mailto:") {
+        return None;
+    }
+    let target = target.split('#').next().unwrap_or(target);
+    // A `path.rs:40` citation points at a line of the file, not at a path.
+    let target = match target.rsplit_once(':') {
+        Some((path, line))
+            if !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            path
+        }
+        _ => target,
+    };
+    if target.is_empty() || target.contains('*') || target.contains('<') || target.contains(' ') {
+        return None;
+    }
+    Some(target)
+}
+
+/// `](target)` — the inline link and image form, which is the only one this
+/// repository uses.
+fn markdown_link_targets(text: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("](") {
+        rest = &rest[open + 2..];
+        if let Some(close) = rest.find(')') {
+            targets.push(&rest[..close]);
+            rest = &rest[close..];
+        }
+    }
+    targets
+}
+
+/// A backticked path into the repository, as ``` `crates/ah-domains/src/git.rs` ```.
+/// Only the directories that hold code and documentation count, so a backticked
+/// `plugins.json` or `Cargo.toml` is not mistaken for one.
+///
+/// The dot-directories are deliberately absent: `docs/reference/ai.md` names
+/// `.github/copilot-instructions.md` and `.cursor/rules/ah.mdc` as paths in the
+/// *user's* project, which this repository has no opinion about.
+fn inline_repository_paths(text: &str) -> Vec<&str> {
+    const ROOTS: &[&str] = &[
+        "src/", "crates/", "plugins/", "tests/", "docs/", "scripts/", ".agents/",
+    ];
+
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| ROOTS.iter().any(|root| span.starts_with(root)))
+        .collect()
+}
+
+#[test]
+fn documentation_points_at_files_that_exist() {
+    let root = repo_path("");
+    let mut dangling = Vec::new();
+
+    for page in markdown_files() {
+        // The changelog records what the repository used to contain, so its
+        // paths are history rather than claims about the tree today.
+        if page.file_name().and_then(|name| name.to_str()) == Some("CHANGELOG.md") {
+            continue;
+        }
+        let directory = page.parent().expect("a file has a parent").to_owned();
+        let relative = page
+            .strip_prefix(&root)
+            .unwrap_or(&page)
+            .display()
+            .to_string();
+        let text = fs::read_to_string(&page).expect("page should be readable");
+
+        let links = markdown_link_targets(&text)
+            .into_iter()
+            .filter_map(resolvable)
+            .map(|target| (directory.join(target), target));
+        let paths = inline_repository_paths(&text)
+            .into_iter()
+            .filter_map(resolvable)
+            .map(|target| (root.join(target), target));
+
+        for (resolved, target) in links.chain(paths) {
+            if !resolved.exists() {
+                dangling.push(format!("{relative}: {target}"));
+            }
+        }
+    }
+
+    dangling.sort();
+    dangling.dedup();
+    assert!(
+        dangling.is_empty(),
+        "documentation points at files that do not exist: {dangling:#?}"
+    );
+}

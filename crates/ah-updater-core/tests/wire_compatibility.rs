@@ -1,6 +1,6 @@
 //! The on-disk and cross-process forms of an update, frozen.
 //!
-//! Invariant 4 of the refactoring program: an installed helper from one release
+//! Updater cross-version compatibility: an installed helper from one release
 //! may hand off to a newly installed `ah`, and a new helper may have to recover
 //! a transaction an older one left behind. Both directions are covered here,
 //! and they need different kinds of test:
