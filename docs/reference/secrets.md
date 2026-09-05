@@ -14,9 +14,11 @@ Use global `--json` for machine-readable output. List and mutation output contai
 
 ## Secret fields
 
-`add` and `edit` read values from hidden terminal prompts. Values are never accepted through argv.
+`add` and `edit` read values from protected terminal prompts. PostgreSQL
+connection settings use ordinary text input; all other terminal values are
+hidden. Values are never accepted through argv.
 
-- `postgres`: `password`
+- `postgres`: required `host`, `user`, and `password`; optional `port`, `database`, and `sslmode`
 - `http-basic`: `username`, `password`
 - `ssh-key`: `private_key`, optional `passphrase`
 - `github-token`: `token`
@@ -27,7 +29,8 @@ GitLab, so a shared kind would buy no reuse while letting an agent pick the wron
 service's token out of one `secrets.list` result; separate kinds make that a
 `SECRET_KIND_MISMATCH` instead.
 
-During `edit`, submit an empty field to retain its stored value.
+During `edit`, submit an empty field to retain its stored value. SSH private keys
+are read as hidden lines; enter `.` on its own line after the final key line.
 
 ## Protected browser setup
 
@@ -46,8 +49,8 @@ when automatic opening is unavailable. The capability expires after ten
 minutes, is accepted only by the matching create/edit form, and is consumed only
 after a successful POST. The page never reads or pre-fills an existing value;
 an empty edit field retains its stored value. SSH private keys use a multiline
-textarea; all other fields remain password inputs. Responses contain only
-redacted metadata.
+textarea; PostgreSQL host, port, database, user, and SSL mode use text inputs;
+all other fields use password inputs. Responses contain only redacted metadata.
 
 A successful browser submission renders a confirmation page with the saved
 `id`, `kind`, `label`, and `description`, plus a Close button. The button calls
@@ -102,7 +105,7 @@ The declared slots are:
 `--credential SLOT=ID` works on the direct CLI for every domain in that table:
 
 ```bash
-ah postgres query --database app --credential database=billing --sql "select 1"
+ah postgres query --credential database=billing --sql "select 1"
 ah github issues --credential token=work-github
 ```
 

@@ -7,6 +7,30 @@ Versioning.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-05
+
+### Added
+
+- Terminal `ssh-key` setup accepts hidden multiline private keys terminated by
+  a line containing only `.`, without placing key material in argv or a
+  temporary file.
+
+### Changed
+
+- **Breaking:** New PostgreSQL vault credentials require `host`, `user`, and
+  `password`; `port`, `database`, and `sslmode` remain optional. Operational
+  `postgres.*` commands fill unset connection arguments from the credential,
+  while explicit arguments still win. Existing password-only entries remain
+  usable with explicit connection arguments or libpq defaults.
+
+### Fixed
+
+- Protected browser edit forms allow every value field to remain empty so the
+  stored value is retained instead of being blocked by HTML `required`
+  validation.
+- `ah ai info` documents all five supported secret kinds, including
+  `github-token` and `gitlab-token`.
+
 ## [1.5.0] - 2026-08-31
 
 ### Added
@@ -538,7 +562,8 @@ Versioning.
 - Runtime and integration smoke coverage protects plugin loading, edge-case text
   handling, and safety behavior.
 
-[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Bobsans/AIHelper/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Bobsans/AIHelper/compare/v1.5.0...v2.0.0
 [1.5.0]: https://github.com/Bobsans/AIHelper/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Bobsans/AIHelper/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Bobsans/AIHelper/compare/v1.3.1...v1.3.2

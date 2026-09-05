@@ -192,10 +192,16 @@ impl SecretSetupService for VaultSetupService {
             .inspect(capability)
             .map_err(capability_error)?;
         let (id, kind) = target_identity(&target);
+        let mut fields = setup_fields(kind);
+        if matches!(&target, SecretSetupTarget::Edit { .. }) {
+            for field in &mut fields {
+                field.optional = true;
+            }
+        }
         Ok(SecretSetupForm {
             id: id.to_owned(),
             kind: kind.to_string(),
-            fields: setup_fields(kind),
+            fields,
         })
     }
 
@@ -220,6 +226,14 @@ impl SecretSetupService for VaultSetupService {
         if values.keys().any(|name| !allowed.contains(&name.as_str())) {
             return Err(invalid_submission());
         }
+        values.retain(|_, value| !value.is_empty());
+        if matches!(target, SecretSetupTarget::Create { .. })
+            && setup_fields(kind)
+                .iter()
+                .any(|field| !field.optional && !values.contains_key(field.name))
+        {
+            return Err(invalid_submission());
+        }
 
         let metadata = match &target {
             SecretSetupTarget::Create {
@@ -227,20 +241,18 @@ impl SecretSetupService for VaultSetupService {
                 kind,
                 label,
                 description,
-            } => {
-                values.retain(|_, value| !value.is_empty());
-                self.vault
-                    .put(
-                        NewSecret::new(
-                            id.clone(),
-                            label.clone().unwrap_or_else(|| id.clone()),
-                            *kind,
-                            values,
-                        )
-                        .with_description(description.clone()),
+            } => self
+                .vault
+                .put(
+                    NewSecret::new(
+                        id.clone(),
+                        label.clone().unwrap_or_else(|| id.clone()),
+                        *kind,
+                        values,
                     )
-                    .map_err(vault_setup_error)?
-            }
+                    .with_description(description.clone()),
+                )
+                .map_err(vault_setup_error)?,
             SecretSetupTarget::Edit {
                 id,
                 kind,
@@ -290,11 +302,38 @@ fn target_identity(target: &SecretSetupTarget) -> (&str, SecretKind) {
 
 fn setup_fields(kind: SecretKind) -> Vec<SecretSetupField> {
     match kind {
-        SecretKind::Postgres => vec![SecretSetupField {
-            name: "password",
-            label: "PostgreSQL password",
-            optional: false,
-        }],
+        SecretKind::Postgres => vec![
+            SecretSetupField {
+                name: "host",
+                label: "PostgreSQL host",
+                optional: false,
+            },
+            SecretSetupField {
+                name: "port",
+                label: "PostgreSQL port",
+                optional: true,
+            },
+            SecretSetupField {
+                name: "database",
+                label: "PostgreSQL database",
+                optional: true,
+            },
+            SecretSetupField {
+                name: "user",
+                label: "PostgreSQL user",
+                optional: false,
+            },
+            SecretSetupField {
+                name: "password",
+                label: "PostgreSQL password",
+                optional: false,
+            },
+            SecretSetupField {
+                name: "sslmode",
+                label: "PostgreSQL SSL mode",
+                optional: true,
+            },
+        ],
         SecretKind::HttpBasic => vec![
             SecretSetupField {
                 name: "username",
@@ -373,7 +412,7 @@ mod tests {
     use ah_mcp::{SecretSetupRequest, SecretSetupService};
 
     use super::{SecretSetupCapabilities, SecretSetupTarget, VaultSetupService};
-    use crate::{KeyProvider, SecretKind, VaultError, VaultStore};
+    use crate::{KeyProvider, NewSecret, SecretKind, VaultError, VaultStore};
 
     struct FixedKey;
 
@@ -444,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_submission_keeps_capability_and_success_consumes_it() {
+    fn postgres_create_requires_connection_fields_and_success_consumes_capability() {
         let directory = tempfile::tempdir().unwrap();
         let vault = Arc::new(VaultStore::at(directory.path(), Arc::new(FixedKey)));
         vault.initialize().unwrap();
@@ -458,21 +497,61 @@ mod tests {
             })
             .unwrap();
 
-        assert!(setup.submit(&token, BTreeMap::new()).is_err());
+        assert!(
+            setup
+                .submit(
+                    &token,
+                    BTreeMap::from([("password".to_owned(), "browser-secret".to_owned(),)]),
+                )
+                .is_err()
+        );
         let metadata = setup
             .submit(
                 &token,
-                BTreeMap::from([("password".to_owned(), "browser-secret".to_owned())]),
+                BTreeMap::from([
+                    ("database".to_owned(), "app".to_owned()),
+                    ("host".to_owned(), "db.internal".to_owned()),
+                    ("password".to_owned(), "browser-secret".to_owned()),
+                    ("port".to_owned(), "5433".to_owned()),
+                    ("sslmode".to_owned(), "require".to_owned()),
+                    ("user".to_owned(), "app-user".to_owned()),
+                ]),
             )
             .unwrap();
         assert_eq!(metadata.id, "qa-lms");
-        assert_eq!(
-            vault.resolve("qa-lms").unwrap().values["password"],
-            "browser-secret"
-        );
+        let values = vault.resolve("qa-lms").unwrap().values;
+        assert_eq!(values["host"], "db.internal");
+        assert_eq!(values["user"], "app-user");
+        assert_eq!(values["password"], "browser-secret");
         assert_eq!(
             setup.submit(&token, BTreeMap::new()).unwrap_err().code,
             "VAULT_SETUP_CAPABILITY_INVALID"
         );
+    }
+
+    #[test]
+    fn edit_form_allows_empty_fields_to_retain_legacy_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Arc::new(VaultStore::at(directory.path(), Arc::new(FixedKey)));
+        vault.initialize().unwrap();
+        vault
+            .put(NewSecret::postgres(
+                "legacy-db",
+                "Legacy database",
+                "legacy-password",
+            ))
+            .unwrap();
+        let setup = VaultSetupService::new(vault);
+        let token = setup
+            .issue(SecretSetupRequest::Edit {
+                id: "legacy-db".to_owned(),
+                label: None,
+                description: None,
+            })
+            .unwrap();
+
+        let form = setup.form(&token).unwrap();
+
+        assert!(form.fields.iter().all(|field| field.optional));
     }
 }

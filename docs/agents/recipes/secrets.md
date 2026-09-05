@@ -6,7 +6,7 @@ Initialize the local encrypted vault once:
 ah secrets init
 ```
 
-Add or edit secrets interactively. Values are entered only through hidden prompts, never through argv:
+Add or edit secrets interactively. Values are never accepted through argv; password-like values use hidden prompts:
 
 ```bash
 ah secrets add billing --kind postgres --label Billing
@@ -28,13 +28,20 @@ Use the reference directly from supported CLI commands without placing plaintext
 credentials in argv:
 
 ```bash
-ah postgres ping --database billing --credential database=billing
+ah postgres ping --credential database=billing
 ah http get https://api.example.test/private --credential basic=service-api
 ```
 
 The slot names are command contracts: PostgreSQL uses `database`; HTTP
 `request|get|post|replay` use `basic`. Do not combine a vault mapping with the
 corresponding legacy plaintext or environment-backed authentication option.
+
+New PostgreSQL entries require `host`, `user`, and `password`. They may also
+store `port`, `database`, and `sslmode`. Explicit connection flags override
+stored values. Existing password-only entries remain valid for compatibility.
+
+Terminal SSH private-key entry reads hidden lines until a line containing only
+`.`. The protected browser form provides a multiline textarea instead.
 
 Remove an obsolete reference explicitly:
 

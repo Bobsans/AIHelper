@@ -245,6 +245,9 @@ fn validate(secret: &NewSecret) -> Result<(), VaultError> {
         SecretKind::GithubToken | SecretKind::GitlabToken => ["token"].into_iter().collect(),
     };
     let allowed: BTreeSet<&str> = match secret.kind {
+        SecretKind::Postgres => ["host", "port", "database", "user", "password", "sslmode"]
+            .into_iter()
+            .collect(),
         SecretKind::SshKey => ["private_key", "passphrase"].into_iter().collect(),
         _ => required.clone(),
     };
@@ -256,6 +259,20 @@ fn validate(secret: &NewSecret) -> Result<(), VaultError> {
     if !required.is_subset(&present)
         || !present.is_subset(&allowed)
         || secret.values.values().any(|value| value.is_empty())
+    {
+        return Err(VaultError::invalid_secret());
+    }
+    if secret.kind == SecretKind::Postgres
+        && (secret
+            .values
+            .get("port")
+            .is_some_and(|value| value.parse::<u16>().ok().filter(|port| *port > 0).is_none())
+            || secret.values.get("sslmode").is_some_and(|value| {
+                !matches!(
+                    value.as_str(),
+                    "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full"
+                )
+            }))
     {
         return Err(VaultError::invalid_secret());
     }
@@ -342,6 +359,59 @@ mod tests {
             store.resolve("qa-lms").unwrap().values.get("password"),
             Some(&"sample-password".to_owned())
         );
+    }
+
+    #[test]
+    fn postgres_connection_fields_round_trip() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = VaultStore::at(directory.path(), Arc::new(FixedKey([8; 32])));
+        store.initialize().unwrap();
+        let values = BTreeMap::from([
+            ("database".to_owned(), "app".to_owned()),
+            ("host".to_owned(), "db.internal".to_owned()),
+            ("password".to_owned(), "sample-password".to_owned()),
+            ("port".to_owned(), "5433".to_owned()),
+            ("sslmode".to_owned(), "verify-full".to_owned()),
+            ("user".to_owned(), "app-user".to_owned()),
+        ]);
+
+        store
+            .put(NewSecret::new(
+                "app-db",
+                "Application database",
+                SecretKind::Postgres,
+                values.clone(),
+            ))
+            .unwrap();
+
+        assert_eq!(store.resolve("app-db").unwrap().values, values);
+    }
+
+    #[test]
+    fn postgres_connection_fields_reject_invalid_port_and_sslmode() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = VaultStore::at(directory.path(), Arc::new(FixedKey([6; 32])));
+        store.initialize().unwrap();
+
+        for (field, value) in [
+            ("port", "0"),
+            ("port", "65536"),
+            ("port", "not-a-port"),
+            ("sslmode", "sometimes"),
+        ] {
+            let error = store
+                .put(NewSecret::new(
+                    format!("invalid-{field}-{value}"),
+                    "Invalid connection",
+                    SecretKind::Postgres,
+                    BTreeMap::from([
+                        ("password".to_owned(), "sample-password".to_owned()),
+                        (field.to_owned(), value.to_owned()),
+                    ]),
+                ))
+                .unwrap_err();
+            assert_eq!(error.code(), "VAULT_INVALID_SECRET");
+        }
     }
 
     #[test]

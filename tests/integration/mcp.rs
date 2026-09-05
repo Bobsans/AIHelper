@@ -815,7 +815,12 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
         Some("same-origin")
     );
     let form = form.text().unwrap();
+    assert!(form.contains("name=\"host\""));
+    assert!(form.contains("name=\"port\""));
+    assert!(form.contains("name=\"database\""));
+    assert!(form.contains("name=\"user\""));
     assert!(form.contains("name=\"password\""));
+    assert!(form.contains("name=\"sslmode\""));
     assert!(!form.contains(&token));
 
     let secret = "browser-form-secret";
@@ -824,7 +829,9 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
         .header("Origin", &process.origin)
         .header("Accept", "text/html,application/xhtml+xml")
         .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(format!("password={secret}"))
+        .body(format!(
+            "host=db.internal&port=5433&database=app&user=app-user&password={secret}&sslmode=require"
+        ))
         .send()
         .unwrap();
     assert!(submitted.status().is_success());
@@ -835,6 +842,13 @@ fn http_secret_setup_is_one_use_and_redacts_token_and_body_from_logs() {
     assert!(body.contains("browser-db"));
     assert!(!body.contains(secret));
     assert!(!body.contains(&token));
+    let saved = store.resolve("browser-db").unwrap().values;
+    assert_eq!(saved["host"], "db.internal");
+    assert_eq!(saved["port"], "5433");
+    assert_eq!(saved["database"], "app");
+    assert_eq!(saved["user"], "app-user");
+    assert_eq!(saved["password"], secret);
+    assert_eq!(saved["sslmode"], "require");
 
     let reused = client
         .post(&setup_url)

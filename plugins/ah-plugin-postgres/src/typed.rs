@@ -240,13 +240,13 @@ fn resolve_path(path: PathBuf, cwd: &Path) -> PathBuf {
     }
 }
 
-/// Fill in what the caller cannot supply: the credential from the vault, and the
-/// timeouts bounded by the request deadline.
+/// Fill in what the caller did not supply from the vault, then bound timeouts by
+/// the request deadline.
 fn apply_context(
     mut connection: ConnectionArgs,
     request: &TypedInvocationRequest,
 ) -> Result<ConnectionArgs, CommandError> {
-    connection.resolved_password = resolved_database_password(request)?;
+    bind_resolved_database_connection(&mut connection, request)?;
     let unbounded = request.context.remaining_timeout_ms == u64::MAX;
     if !unbounded {
         let remaining_ms = request.context.remaining_timeout_ms.max(1);
@@ -264,9 +264,10 @@ fn apply_context(
     Ok(connection)
 }
 
-fn resolved_database_password(
+fn bind_resolved_database_connection(
+    connection: &mut ConnectionArgs,
     request: &TypedInvocationRequest,
-) -> Result<Option<SecretValue>, CommandError> {
+) -> Result<(), CommandError> {
     let credentials = request
         .arguments
         .get("credentials")
@@ -298,10 +299,10 @@ fn resolved_database_password(
             false,
         ));
     }
-    let password = password_from_resolved_secrets(&request.resolved_secrets)
+    let resolved = bind_connection_from_resolved_secrets(connection, &request.resolved_secrets)
         .map_err(|error| invocation_to_command_error(request, error))?;
-    match (public_id, &password) {
-        (None, None) | (Some(_), Some(_)) => {}
+    match (public_id, resolved) {
+        (None, false) | (Some(_), true) => {}
         _ => {
             return Err(command_error(
                 request,
@@ -323,14 +324,15 @@ fn resolved_database_password(
             false,
         ));
     }
-    Ok(password)
+    Ok(())
 }
 
 /// Shared by the typed and direct CLI paths: validates the slot and shape of the
 /// credential the host resolved.
-pub(super) fn password_from_resolved_secrets(
+pub(super) fn bind_connection_from_resolved_secrets(
+    connection: &mut ConnectionArgs,
     secrets: &std::collections::BTreeMap<String, ah_plugin_api::ResolvedSecret>,
-) -> Result<Option<SecretValue>, InvocationResponse> {
+) -> Result<bool, InvocationResponse> {
     if let Some(slot) = secrets.keys().find(|slot| slot.as_str() != "database") {
         return Err(InvocationResponse::error(
             "INVALID_ARGUMENT",
@@ -338,7 +340,7 @@ pub(super) fn password_from_resolved_secrets(
         ));
     }
     let Some(resolved) = secrets.get("database") else {
-        return Ok(None);
+        return Ok(false);
     };
     if resolved.kind != "postgres" {
         return Err(InvocationResponse::error(
@@ -352,7 +354,53 @@ pub(super) fn password_from_resolved_secrets(
             "Resolved PostgreSQL credential has no password",
         )
     })?;
-    Ok(Some(SecretValue::new(password)))
+    let port = resolved
+        .values
+        .get("port")
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or_else(|| {
+                    InvocationResponse::error(
+                        "SECRET_REQUIRED",
+                        "Resolved PostgreSQL credential has an invalid port",
+                    )
+                })
+        })
+        .transpose()?;
+    let sslmode = resolved.values.get("sslmode");
+    if sslmode.is_some_and(|value| {
+        !matches!(
+            value.as_str(),
+            "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full"
+        )
+    }) {
+        return Err(InvocationResponse::error(
+            "SECRET_REQUIRED",
+            "Resolved PostgreSQL credential has an invalid SSL mode",
+        ));
+    }
+    if connection.service.is_none() {
+        if connection.host.is_none() {
+            connection.host = resolved.values.get("host").cloned();
+        }
+        if connection.port.is_none() {
+            connection.port = port;
+        }
+        if connection.database.is_none() {
+            connection.database = resolved.values.get("database").cloned();
+        }
+        if connection.user.is_none() {
+            connection.user = resolved.values.get("user").cloned();
+        }
+        if connection.sslmode.is_none() {
+            connection.sslmode = sslmode.cloned();
+        }
+    }
+    connection.resolved_password = Some(SecretValue::new(password));
+    Ok(true)
 }
 
 fn invocation_to_command_error(
@@ -603,13 +651,11 @@ mod tests {
     }
 
     #[test]
-    fn direct_cli_binds_a_resolved_password_without_exposing_it() {
+    fn direct_cli_binds_a_resolved_connection_without_exposing_its_password() {
         use ah_plugin_api::{BindResolvedSecrets, ResolvedSecret};
 
         let mut cli = parse_args(&[
             "query".to_owned(),
-            "--database".to_owned(),
-            "app".to_owned(),
             "--sql".to_owned(),
             "select 1".to_owned(),
         ])
@@ -620,10 +666,14 @@ mod tests {
             ResolvedSecret {
                 id: "app-db".to_owned(),
                 kind: "postgres".to_owned(),
-                values: std::collections::BTreeMap::from([(
-                    "password".to_owned(),
-                    "direct-cli-sentinel".to_owned(),
-                )]),
+                values: std::collections::BTreeMap::from([
+                    ("database".to_owned(), "app".to_owned()),
+                    ("host".to_owned(), "db.internal".to_owned()),
+                    ("password".to_owned(), "direct-cli-sentinel".to_owned()),
+                    ("port".to_owned(), "5433".to_owned()),
+                    ("sslmode".to_owned(), "require".to_owned()),
+                    ("user".to_owned(), "app-user".to_owned()),
+                ]),
             },
         )]))
         .expect("resolved credential should bind");
@@ -634,6 +684,11 @@ mod tests {
             .as_ref()
             .expect("password should be bound");
         assert_eq!(password.expose(), "direct-cli-sentinel");
+        assert_eq!(cli.connection.host.as_deref(), Some("db.internal"));
+        assert_eq!(cli.connection.port, Some(5433));
+        assert_eq!(cli.connection.database.as_deref(), Some("app"));
+        assert_eq!(cli.connection.user.as_deref(), Some("app-user"));
+        assert_eq!(cli.connection.sslmode.as_deref(), Some("require"));
         assert!(!format!("{:?}", cli.connection).contains("direct-cli-sentinel"));
     }
 
@@ -699,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_connection_uses_matching_resolved_database_password() {
+    fn typed_connection_uses_matching_resolved_database_connection() {
         let request = TypedInvocationRequest::new(
             "postgres.ping",
             json!({"credentials": {"database": "qa-db"}}),
@@ -710,10 +765,17 @@ mod tests {
             ResolvedSecret {
                 id: "qa-db".to_owned(),
                 kind: "postgres".to_owned(),
-                values: BTreeMap::from([(
-                    "password".to_owned(),
-                    "postgres-private-sentinel".to_owned(),
-                )]),
+                values: BTreeMap::from([
+                    ("database".to_owned(), "app".to_owned()),
+                    ("host".to_owned(), "db.internal".to_owned()),
+                    (
+                        "password".to_owned(),
+                        "postgres-private-sentinel".to_owned(),
+                    ),
+                    ("port".to_owned(), "5433".to_owned()),
+                    ("sslmode".to_owned(), "verify-full".to_owned()),
+                    ("user".to_owned(), "app-user".to_owned()),
+                ]),
             },
         )]));
 
@@ -726,6 +788,73 @@ mod tests {
                 .map(SecretValue::expose),
             Some("postgres-private-sentinel")
         );
+        assert_eq!(cli.connection.host.as_deref(), Some("db.internal"));
+        assert_eq!(cli.connection.port, Some(5433));
+        assert_eq!(cli.connection.database.as_deref(), Some("app"));
+        assert_eq!(cli.connection.user.as_deref(), Some("app-user"));
+        assert_eq!(cli.connection.sslmode.as_deref(), Some("verify-full"));
+    }
+
+    #[test]
+    fn typed_connection_rejects_invalid_resolved_port() {
+        let request = TypedInvocationRequest::new(
+            "postgres.ping",
+            json!({"credentials": {"database": "qa-db"}}),
+            ExecutionContextWire::new("postgres-secret-invalid", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "database".to_owned(),
+            ResolvedSecret {
+                id: "qa-db".to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([
+                    ("password".to_owned(), "private-password".to_owned()),
+                    ("port".to_owned(), "not-a-port".to_owned()),
+                ]),
+            },
+        )]));
+
+        let error = typed_cli(&request).expect_err("invalid resolved port must fail");
+
+        assert_eq!(error.code, "SECRET_REQUIRED");
+    }
+
+    #[test]
+    fn explicit_connection_arguments_override_resolved_values() {
+        let request = TypedInvocationRequest::new(
+            "postgres.ping",
+            json!({
+                "host": "override.internal",
+                "port": 6432,
+                "user": "override-user",
+                "sslmode": "disable",
+                "credentials": {"database": "qa-db"}
+            }),
+            ExecutionContextWire::new("postgres-secret-override", ".", None, 1_000),
+        )
+        .with_resolved_secrets(BTreeMap::from([(
+            "database".to_owned(),
+            ResolvedSecret {
+                id: "qa-db".to_owned(),
+                kind: "postgres".to_owned(),
+                values: BTreeMap::from([
+                    ("database".to_owned(), "app".to_owned()),
+                    ("host".to_owned(), "stored.internal".to_owned()),
+                    ("password".to_owned(), "private-password".to_owned()),
+                    ("port".to_owned(), "5433".to_owned()),
+                    ("sslmode".to_owned(), "verify-full".to_owned()),
+                    ("user".to_owned(), "stored-user".to_owned()),
+                ]),
+            },
+        )]));
+
+        let cli = typed_cli(&request).expect("resolved credential should bind");
+
+        assert_eq!(cli.connection.host.as_deref(), Some("override.internal"));
+        assert_eq!(cli.connection.port, Some(6432));
+        assert_eq!(cli.connection.database.as_deref(), Some("app"));
+        assert_eq!(cli.connection.user.as_deref(), Some("override-user"));
+        assert_eq!(cli.connection.sslmode.as_deref(), Some("disable"));
     }
 
     #[test]

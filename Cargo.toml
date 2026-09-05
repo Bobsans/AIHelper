@@ -1,6 +1,6 @@
 [package]
 name = "aihelper"
-version = "1.5.0"
+version = "2.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -144,6 +144,7 @@ ah-domains = { path = "crates/ah-domains", features = ["fixtures"] }
 # cannot see a `cfg(test)` module.
 aihelper = { path = ".", features = ["harness"] }
 ah-release-manifest = { path = "crates/ah-release-manifest" }
+ah-plugin-testkit = { path = "crates/ah-plugin-testkit" }
 assert_cmd.workspace = true
 base64.workspace = true
 # The log rotation test takes the same lock the event log does.

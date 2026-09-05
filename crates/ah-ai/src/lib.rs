@@ -410,7 +410,8 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
             name: "secrets.list".to_owned(),
             summary: "List redacted secret metadata. Agents should discover secret IDs through the typed/MCP secrets.list command and may filter by kind."
                 .to_owned(),
-            usage: "secrets list [--kind <postgres|http-basic|ssh-key>]".to_owned(),
+            usage: "secrets list [--kind <postgres|http-basic|ssh-key|github-token|gitlab-token>]"
+                .to_owned(),
             examples: vec![HostCommandExample {
                 description: "Discover PostgreSQL secret IDs without reading values".to_owned(),
                 command: "ah secrets list --kind postgres --json".to_owned(),
@@ -418,12 +419,12 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
         },
         HostCommandDoc {
             name: "secrets.add".to_owned(),
-            summary: "Add a secret through hidden terminal prompts; values are never accepted through argv."
+            summary: "Add a secret through protected terminal prompts; values are never accepted through argv."
                 .to_owned(),
-            usage: "secrets add <id> --kind <postgres|http-basic|ssh-key> [--label TEXT] [--description TEXT] [--open]".to_owned(),
+            usage: "secrets add <id> --kind <postgres|http-basic|ssh-key|github-token|gitlab-token> [--label TEXT] [--description TEXT] [--open]".to_owned(),
             examples: vec![
                 HostCommandExample {
-                    description: "Add PostgreSQL credentials using a hidden password prompt".to_owned(),
+                    description: "Add PostgreSQL connection settings and password interactively".to_owned(),
                     command: "ah secrets add billing --kind postgres --label Billing".to_owned(),
                 },
                 HostCommandExample {
@@ -434,7 +435,7 @@ fn host_command_docs() -> Vec<HostCommandDoc> {
         },
         HostCommandDoc {
             name: "secrets.edit".to_owned(),
-            summary: "Edit secret metadata and values through hidden terminal prompts.".to_owned(),
+            summary: "Edit secret metadata and values through protected terminal prompts.".to_owned(),
             usage: "secrets edit <id> [--label TEXT] [--description TEXT] [--open]".to_owned(),
             examples: vec![HostCommandExample {
                 description: "Edit a secret without exposing values in argv".to_owned(),
@@ -506,4 +507,20 @@ struct HostCommandDoc {
 struct HostCommandExample {
     description: String,
     command: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_manual_lists_every_supported_kind() {
+        let docs = host_command_docs();
+
+        for command in ["secrets.list", "secrets.add"] {
+            let usage = &docs.iter().find(|item| item.name == command).unwrap().usage;
+            assert!(usage.contains("github-token"), "{command}: {usage}");
+            assert!(usage.contains("gitlab-token"), "{command}: {usage}");
+        }
+    }
 }

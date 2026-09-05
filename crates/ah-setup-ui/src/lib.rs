@@ -190,8 +190,17 @@ pub fn render_secret_setup_form(form: &SecretSetupForm, nonce: &str) -> String {
                     html_escape(field.name),
                 )
             } else {
+                let (input_type, autocomplete) =
+                    if matches!(
+                        field.name,
+                        "username" | "password" | "passphrase" | "token"
+                    ) {
+                        ("password", "new-password")
+                    } else {
+                        ("text", "off")
+                    };
                 format!(
-                    "<label>{label}<input type=\"password\" name=\"{}\" autocomplete=\"new-password\"{required}></label>",
+                    "<label>{label}<input type=\"{input_type}\" name=\"{}\" autocomplete=\"{autocomplete}\"{required}></label>",
                     html_escape(field.name),
                 )
             }
@@ -274,6 +283,64 @@ mod tests {
         assert!(!html.contains("type=\"password\" name=\"private_key\""));
         assert!(html.contains("<input type=\"password\" name=\"passphrase\""));
         assert!(html.contains("(optional)"));
+    }
+
+    #[test]
+    fn postgres_connection_fields_use_text_inputs_and_password_stays_hidden() {
+        let html = render_secret_setup_form(
+            &SecretSetupForm {
+                id: "app-db".to_owned(),
+                kind: "postgres".to_owned(),
+                fields: vec![
+                    SecretSetupField {
+                        name: "host",
+                        label: "PostgreSQL host",
+                        optional: false,
+                    },
+                    SecretSetupField {
+                        name: "user",
+                        label: "PostgreSQL user",
+                        optional: false,
+                    },
+                    SecretSetupField {
+                        name: "password",
+                        label: "PostgreSQL password",
+                        optional: false,
+                    },
+                ],
+            },
+            "test-nonce",
+        );
+
+        assert!(html.contains("<input type=\"text\" name=\"host\""));
+        assert!(html.contains("<input type=\"text\" name=\"user\""));
+        assert!(html.contains("<input type=\"password\" name=\"password\""));
+    }
+
+    #[test]
+    fn http_basic_username_remains_hidden() {
+        let html = render_secret_setup_form(
+            &SecretSetupForm {
+                id: "service-api".to_owned(),
+                kind: "http-basic".to_owned(),
+                fields: vec![
+                    SecretSetupField {
+                        name: "username",
+                        label: "HTTP basic username",
+                        optional: false,
+                    },
+                    SecretSetupField {
+                        name: "password",
+                        label: "HTTP basic password",
+                        optional: false,
+                    },
+                ],
+            },
+            "test-nonce",
+        );
+
+        assert!(html.contains("<input type=\"password\" name=\"username\""));
+        assert!(html.contains("<input type=\"password\" name=\"password\""));
     }
 
     #[test]

@@ -115,7 +115,7 @@ impl ah_plugin_api::BindResolvedSecrets for PostgresCli {
             )
             .with_error_domain(DOMAIN));
         }
-        self.connection.resolved_password = typed::password_from_resolved_secrets(secrets)
+        typed::bind_connection_from_resolved_secrets(&mut self.connection, secrets)
             .map_err(|error| error.with_error_domain(DOMAIN))?;
         Ok(())
     }
