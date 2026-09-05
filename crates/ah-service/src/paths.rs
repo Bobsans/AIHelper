@@ -492,11 +492,10 @@ mod tests {
 
     #[test]
     fn paths_derive_the_complete_store_layout() {
-        let base = if cfg!(windows) {
-            PathBuf::from(r"C:\Temp\AIHelper\managed-mcp")
-        } else {
-            PathBuf::from("/tmp/AIHelper/managed-mcp")
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let base = normalize_absolute_path(temp.path(), None)
+            .unwrap()
+            .join("managed-mcp");
         let paths = ServicePaths::from_base(base.clone()).unwrap();
         assert_eq!(paths.current, base.join("current.json"));
         assert_eq!(paths.runtime, base.join("runtime.json"));
