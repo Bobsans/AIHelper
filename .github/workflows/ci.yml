@@ -28,10 +28,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      # No `toolchain:` input: the version comes from rust-toolchain.toml so the
-      # pin lives in one place.
+      # Rustup installs the toolchain and components from rust-toolchain.toml.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        run: rustup show active-toolchain
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
 
       - name: Format Check
         run: cargo fmt --all -- --check
@@ -71,6 +74,9 @@ jobs:
         with:
           toolchain: "1.88"
 
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
+
       # `+1.88` is required: rust-toolchain.toml otherwise overrides the
       # toolchain the step above installed.
       - name: Check against the declared MSRV
@@ -87,7 +93,10 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        run: rustup show active-toolchain
+
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
 
       - name: Build API documentation
         run: cargo doc --workspace --no-deps --locked
@@ -107,7 +116,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        run: rustup show active-toolchain
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -125,7 +134,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        run: rustup show active-toolchain
 
       # Built from source rather than pulled from a third-party action so the
       # workflow keeps its two-action dependency surface.

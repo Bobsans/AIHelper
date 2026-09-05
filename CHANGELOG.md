@@ -16,6 +16,8 @@ Versioning.
   for retry, and repeated Save clicks do not duplicate the request.
 - Secret entry fields suppress browser credential saving and generation hints
   while retaining masked input. Password managers may override these hints.
+- CI installs the pinned Rust toolchain and the Linux D-Bus build dependencies
+  required by the test, documentation, and MSRV checks.
 
 ## [2.0.0] - 2026-09-05
 
