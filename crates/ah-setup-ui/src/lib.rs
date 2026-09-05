@@ -93,10 +93,10 @@ pub fn no_store(response: Response) -> Response {
 /// keeps the capability out of every referrer that leaves this server.
 ///
 /// The nonce-based policy pins the page to its own inline style and script and
-/// blocks every outbound load, so nothing on a secret entry page can reach out.
+/// allows submissions only to this origin and blocks third-party resources.
 pub fn no_store_form(mut response: Response, nonce: &str) -> Response {
     let policy = format!(
-        "default-src 'none'; style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; form-action 'self'; base-uri 'none'"
+        "default-src 'none'; style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; connect-src 'self'; form-action 'self'; base-uri 'none'"
     );
     if let Ok(value) = HeaderValue::from_str(&policy) {
         response
@@ -159,14 +159,55 @@ dd{margin:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-brea
 .hint{margin:14px 0 0;font-size:.8125rem;color:var(--muted);text-align:center}\
 [hidden]{display:none}";
 
+// Keep submission in the original document: a POST navigation adds history and
+// makes browser-opened tabs no longer script-closable.
+const SETUP_PAGE_SCRIPT: &str = r#"
+document.addEventListener('click', function(event) {
+    if (event.target.id === 'close') {
+        window.close();
+        document.getElementById('hint').hidden = false;
+    }
+});
+const form = document.querySelector('form');
+if (form) form.addEventListener('submit', async function(event) {
+    event.preventDefault();
+    const button = form.querySelector('button');
+    if (button.disabled) return;
+    button.disabled = true;
+    const error = document.getElementById('error');
+    error.hidden = true;
+    try {
+        const response = await fetch(form.action, {
+            method: 'POST',
+            headers: { Accept: 'text/html' },
+            body: new URLSearchParams(new FormData(form)),
+            redirect: 'error'
+        });
+        if (!response.ok) throw new Error('submission failed');
+        const result = new DOMParser().parseFromString(await response.text(), 'text/html');
+        const main = result.querySelector('main');
+        if (!main || !main.querySelector('#close')) throw new Error('invalid response');
+        form.reset();
+        document.querySelector('main').replaceWith(main);
+        document.title = result.title;
+        document.getElementById('close').focus();
+    } catch {
+        error.textContent = 'Could not confirm saving. Check the local server and try again; if already saved or expired, open a new setup link.';
+        error.hidden = false;
+        button.disabled = false;
+    }
+});
+"#;
+
 pub fn setup_page(nonce: &str, title: &str, body: &str) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
 <meta name=\"referrer\" content=\"same-origin\"><title>{}</title>\
-<style nonce=\"{}\">{SETUP_PAGE_STYLE}</style></head><body><main>{body}</main></body></html>",
+<style nonce=\"{nonce}\">{SETUP_PAGE_STYLE}</style></head><body><main>{body}</main>\
+<script nonce=\"{nonce}\">{SETUP_PAGE_SCRIPT}</script></body></html>",
         html_escape(title),
-        html_escape(nonce),
+        nonce = html_escape(nonce),
     )
 }
 
@@ -195,12 +236,13 @@ pub fn render_secret_setup_form(form: &SecretSetupForm, nonce: &str) -> String {
                         field.name,
                         "username" | "password" | "passphrase" | "token"
                     ) {
-                        ("password", "new-password")
+                        // This is vault entry, not a browser login or password change.
+                        ("password", "one-time-code")
                     } else {
                         ("text", "off")
                     };
                 format!(
-                    "<label>{label}<input type=\"{input_type}\" name=\"{}\" autocomplete=\"{autocomplete}\"{required}></label>",
+                    "<label>{label}<input type=\"{input_type}\" name=\"{}\" autocomplete=\"{autocomplete}\" spellcheck=\"false\" autocapitalize=\"off\"{required}></label>",
                     html_escape(field.name),
                 )
             }
@@ -211,7 +253,8 @@ pub fn render_secret_setup_form(form: &SecretSetupForm, nonce: &str) -> String {
         "AIHelper secret setup",
         &format!(
             "<h1>Set up {}</h1><span class=\"kind\">{}</span>\
-<form method=\"post\">{fields}<button type=\"submit\">Save</button></form>",
+<form method=\"post\" autocomplete=\"off\">{fields}<button type=\"submit\">Save</button>\
+<p class=\"hint\" id=\"error\" role=\"alert\" hidden></p></form>",
             html_escape(&form.id),
             html_escape(&form.kind),
         ),
@@ -236,17 +279,10 @@ stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hid
 <h1>{}</h1><span class=\"kind\">{}</span>\
 <dl><dt>Label</dt><dd>{}</dd>{description}</dl>\
 <button type=\"button\" id=\"close\">Close</button>\
-<p class=\"hint\" id=\"hint\" hidden>This tab can be closed now.</p>\
-<script nonce=\"{}\">\
-document.getElementById('close').addEventListener('click',function(){{\
-window.close();\
-document.getElementById('hint').hidden=false;\
-}});\
-</script>",
+<p class=\"hint\" id=\"hint\" hidden>The browser blocked closing this tab. Close it using the tab bar.</p>",
             html_escape(&metadata.id),
             html_escape(&metadata.kind),
             html_escape(&metadata.label),
-            html_escape(nonce),
         ),
     )
 }
@@ -274,6 +310,33 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue, header::ACCEPT};
 
     use super::*;
+
+    #[test]
+    fn setup_suppresses_credential_autofill_without_unmasking_secrets() {
+        let html = render_secret_setup_form(&ssh_key_form(), "test-nonce");
+
+        assert!(html.contains("<form method=\"post\" autocomplete=\"off\""));
+        assert!(
+            html.contains("type=\"password\" name=\"passphrase\" autocomplete=\"one-time-code\"")
+        );
+        assert!(!html.contains("new-password"));
+        assert!(html.contains("spellcheck=\"false\""));
+    }
+
+    #[test]
+    fn setup_submission_does_not_navigate_and_csp_allows_only_local_fetch() {
+        let html = render_secret_setup_form(&ssh_key_form(), "test-nonce");
+        let response = no_store_form(Response::default(), "test-nonce");
+        let policy = response.headers()[CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+
+        assert!(html.contains("event.preventDefault()"));
+        assert!(html.contains("fetch("));
+        assert!(policy.contains("connect-src 'self';"));
+        assert!(policy.contains("default-src 'none';"));
+        assert!(policy.contains("script-src 'nonce-test-nonce';"));
+    }
 
     #[test]
     fn private_key_setup_field_uses_a_multiline_textarea() {
@@ -357,7 +420,7 @@ mod tests {
         );
 
         assert!(form.contains("<style nonce=\"form-nonce\">"));
-        assert!(!form.contains("<script"));
+        assert!(form.contains("<script nonce=\"form-nonce\">"));
         assert!(success.contains("<style nonce=\"success-nonce\">"));
         assert!(success.contains("<script nonce=\"success-nonce\">"));
     }

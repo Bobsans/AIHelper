@@ -7,6 +7,16 @@ Versioning.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-05
+
+### Fixed
+
+- Browser secret setup saves without adding a history entry, allowing Close to
+  dismiss a newly opened tab after saving. Failed submissions preserve the form
+  for retry, and repeated Save clicks do not duplicate the request.
+- Secret entry fields suppress browser credential saving and generation hints
+  while retaining masked input. Password managers may override these hints.
+
 ## [2.0.0] - 2026-09-05
 
 ### Added

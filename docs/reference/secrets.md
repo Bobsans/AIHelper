@@ -50,20 +50,25 @@ minutes, is accepted only by the matching create/edit form, and is consumed only
 after a successful POST. The page never reads or pre-fills an existing value;
 an empty edit field retains its stored value. SSH private keys use a multiline
 textarea; PostgreSQL host, port, database, user, and SSL mode use text inputs;
-all other fields use password inputs. Responses contain only redacted metadata.
+all other fields use password inputs. Autocomplete is disabled on the form;
+masked inputs use `one-time-code` instead of `new-password` to suppress browser
+credential saving and generation heuristics without revealing their contents.
+Password managers may override these hints. Responses contain only redacted metadata.
 
-A successful browser submission renders a confirmation page with the saved
+A successful browser submission updates the current document with the saved
 `id`, `kind`, `label`, and `description`, plus a Close button. The button calls
-`window.close()` and falls back to a "This tab can be closed now." hint when the
-browser refuses to close a tab it did not open. Callers that do not send an
+`window.close()`. Saving uses a same-origin fetch instead of a POST navigation,
+so a newly opened tab retains its single history entry and can close. Browsers
+can still refuse to close a reused tab with earlier history; in that case the
+page explains how to close it manually. Callers that do not send an
 `Accept` header containing `text/html` keep receiving the redacted-metadata JSON
-response. Reloading the confirmation page re-posts a spent capability and fails
+response. Reloading after success requests the spent setup capability and fails
 with `VAULT_SETUP_CAPABILITY_INVALID`; mint a new one with `--open`.
 
-Both pages are self-contained: styles and the close script are inline, and the
+Both pages are self-contained: styles and the setup script are inline, and the
 response carries `Content-Security-Policy: default-src 'none'` with a per-response
-nonce for that one style block and script, so nothing on a secret entry page can
-load or reach anything else.
+nonce for that one style block and script. `connect-src 'self'` permits the
+submission request to the local server; third-party resources remain blocked.
 
 The pages are served with `Referrer-Policy: same-origin` rather than
 `no-referrer`. Under `no-referrer` a browser sends `Origin: null` when the form

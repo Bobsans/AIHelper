@@ -43,6 +43,11 @@ stored values. Existing password-only entries remain valid for compatibility.
 Terminal SSH private-key entry reads hidden lines until a line containing only
 `.`. The protected browser form provides a multiline textarea instead.
 
+Browser setup suppresses credential autocomplete and saves without navigating,
+so Close can dismiss a newly opened tab. A reused tab with earlier history may
+still require manual closing. On a submission error, the form retains the input
+for retry; never copy that input into agent messages or commands.
+
 Remove an obsolete reference explicitly:
 
 ```bash
