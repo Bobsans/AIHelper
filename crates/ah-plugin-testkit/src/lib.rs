@@ -169,7 +169,7 @@ impl MockServer {
     /// What the server was asked, once it has finished answering.
     ///
     /// Waits for the server thread so that a test reading this does not race the
-    /// last request, and gives up after [`DRAIN_TIMEOUT`] rather than hanging -
+    /// last request, and gives up after `DRAIN_TIMEOUT` rather than hanging -
     /// a test that queued more responses than the code makes requests would
     /// otherwise wait for the accept timeout.
     #[must_use]
