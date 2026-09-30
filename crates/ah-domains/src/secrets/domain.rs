@@ -61,8 +61,8 @@ pub fn execute(
     let store = VaultStore::new(config, resolve_key_provider().map_err(vault_error)?);
     let values = prompt_values(&store, &request)?;
     let output = apply(&store, request, values)?;
-    Emitter::stdio(&options).report(|_| match options.output {
-        OutputMode::Text => Ok(render_text(&output)),
+    Emitter::stdio(&options).report(|formatter| match options.output {
+        OutputMode::Text => Ok(render_text(&output, formatter)),
         OutputMode::Json => render_json(&output),
     })
 }
@@ -199,7 +199,7 @@ pub(super) fn vault_error(error: VaultError) -> AppError {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use ah_output::OutputMode;
+    use ah_output::{OutputMode, TextFormatter};
     use ah_secrets::{KeyProvider, SecretKind, VaultError, VaultStore};
 
     use super::{SecretsCommand, apply, validate_setup_url};
@@ -298,9 +298,9 @@ mod tests {
 
         for output in [
             render_json(&added).unwrap(),
-            render_text(&added),
+            render_text(&added, TextFormatter::with_color(false)),
             render_json(&edited).unwrap(),
-            render_text(&edited),
+            render_text(&edited, TextFormatter::with_color(false)),
         ] {
             assert!(!output.contains(original));
             assert!(!output.contains(replacement));

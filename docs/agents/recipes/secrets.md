@@ -24,6 +24,9 @@ Agents discover references through the read-only typed/MCP command:
 
 The result contains only `id`, `kind`, `label`, and `description`. Keep the selected ID as a reference; this discovery command does not resolve or expose secret values.
 
+The CLI text list uses aligned columns and automatic terminal colors. Use the
+typed/MCP result or global `--json` when consuming metadata programmatically.
+
 Use the reference directly from supported CLI commands without placing plaintext
 credentials in argv:
 

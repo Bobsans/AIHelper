@@ -12,6 +12,11 @@ ah secrets remove <id>
 
 Use global `--json` for machine-readable output. List and mutation output contains only `id`, `kind`, `label`, and nullable `description`; values and field-state information are never returned.
 
+Text `list` output aligns the `id`, `kind`, `label`, and `description` columns
+with spaces; a missing description is shown as `-`. In an interactive terminal,
+IDs are cyan, kinds are bold cyan, and descriptions are dimmed. `NO_COLOR`
+disables these styles. Piped or redirected output remains plain; JSON is unchanged.
+
 ## Secret fields
 
 `add` and `edit` read values from protected terminal prompts. PostgreSQL

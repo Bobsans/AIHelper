@@ -49,6 +49,16 @@ fn secrets_init_and_list_use_isolated_vault() {
         ))
         .stdout(predicate::str::contains(secret_value).not());
 
+    Command::cargo_bin("ah")
+        .expect("ah binary should build")
+        .env("AH_CONFIG_DIR", config_dir.path())
+        .env("APPDATA", "")
+        .env("AH_VAULT_MASTER_KEY", TEST_MASTER_KEY)
+        .args(["secrets", "list", "--kind", "postgres"])
+        .assert()
+        .success()
+        .stdout("billing  postgres  Billing  Production billing database\n");
+
     for args in [
         vec![
             "secrets",
