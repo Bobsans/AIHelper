@@ -7,6 +7,36 @@ Versioning.
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-10-15
+
+### Changed
+
+- `ah upgrade` reports readable results and progress, with terminal colors for
+  stages, versions, warnings, and errors. JSON and quiet modes do not emit
+  progress, and automatic coloring respects terminal output and `NO_COLOR`.
+- `ah secrets list` aligns its columns and uses terminal colors while keeping
+  redirected output plain and the JSON format unchanged.
+- Managed PostgreSQL tools on Windows default to version 18.6. Explicit 18.4
+  downloads and fallback to an existing 18.4 cache remain supported.
+
+### Fixed
+
+- Windows upgrade and rollback transactions support long journal and
+  replacement paths, including paths longer than the traditional Win32 limit.
+- Windows `run check` and `task run` complete after the main process and its
+  output streams finish, cleaning up background descendants while preserving
+  the main process exit code.
+- HTTP MCP `ah.secrets.list` calls work without `context.cwd`.
+- HTTP specification parsing uses a maintained YAML parser with coverage for
+  existing scalar, alias, and validation behavior.
+- The HTTP MCP security test checks server readiness on a fresh connection
+  after refusing an oversized upload.
+
+### Security
+
+- Update `rustls` to 0.23.46 to address RUSTSEC-2026-0346, RUSTSEC-2026-0347,
+  RUSTSEC-2026-0348, and RUSTSEC-2026-0349.
+
 ## [2.0.1] - 2026-09-05
 
 ### Fixed
