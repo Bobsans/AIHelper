@@ -60,38 +60,40 @@ repository = "https://github.com/Bobsans/AIHelper"
 # override the version.
 [workspace.dependencies]
 aes-gcm = { version = "0.10.3", features = ["aes"] }
-assert_cmd = "2.0.17"
+assert_cmd = "2.2.2"
 axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 base64 = "0.22"
 chrono = { version = "0.4.45", default-features = false, features = ["now", "std"] }
-clap = { version = "4.5.39", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 command-group = "5.0.1"
+console = "0.16.6"
 dialoguer = { version = "0.12.0", default-features = false }
 ed25519-dalek = "3"
 fs2 = "0.4.3"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-libc = "0.2.185"
+jsonc-parser = { version = "0.33.2", features = ["cst", "serde_json"] }
+libc = "0.2.189"
 proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
 schemars = "1.2.2"
 semver = "1"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 yaml_serde = "0.10.7"
 sha2 = "0.11"
 shell-words = "1.1.0"
 tempfile = "3.20.0"
-thiserror = "2.0.12"
-tokio = "1.52.1"
+thiserror = "2.0.21"
+tokio = "1.53.1"
 url = "2"
 urlencoding = "2.1.3"
-uuid = { version = "1.24.0", features = ["serde", "v4"] }
+uuid = { version = "1.26.1", features = ["serde", "v4"] }
 windows-sys = "0.61.2"
 zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dependencies]
 clap = { workspace = true, features = ["string"] }
-console = "0.16.4"
+console.workspace = true
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true

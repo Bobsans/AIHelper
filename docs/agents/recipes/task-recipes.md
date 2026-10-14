@@ -22,6 +22,7 @@ ah task run quick-diff
 - `task run --json`: exit status + captured stdout/stderr
 - task output is byte-bounded while read; timeout terminates descendant processes
 - Windows task commands do not create visible console windows
+- On Windows, completed shells with closed stdout/stderr do not wait for background helpers; the owned process tree is cleaned up before returning the shell's exit code
 
 ## When To Use
 - Standardize repetitive AI support workflows

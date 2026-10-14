@@ -22,6 +22,9 @@ Agents discover references through the read-only typed/MCP command:
 }
 ```
 
+This command reads the global vault and needs no `context.cwd`, including over
+HTTP MCP.
+
 The result contains only `id`, `kind`, `label`, and `description`. Keep the selected ID as a reference; this discovery command does not resolve or expose secret values.
 
 The CLI text list uses aligned columns and automatic terminal colors. Use the

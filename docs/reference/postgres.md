@@ -17,7 +17,7 @@ colors explicitly.
 
 ```bash
 ah postgres tool status
-ah postgres tool download [--version 18.4] [--force]
+ah postgres tool download [--version 18.6] [--force]
 ah postgres tool use --path PATH
 ah postgres tool cleanup [--version VERSION]
 ```
@@ -32,7 +32,10 @@ Tool resolution order:
 4. managed AIHelper cache
 5. system `PATH`, only if `psql` is new enough
 
-On Windows x64, `tool download` supports the PostgreSQL 18.4 ZIP binary archive from EDB and verifies the pinned SHA256 checksum before extraction.
+On Windows x64, `tool download` defaults to PostgreSQL 18.6 and verifies the
+pinned SHA256 checksum of the EDB ZIP archive before extraction. Explicit
+`--version 18.4` downloads remain supported. Tool resolution prefers the 18.6
+managed cache and falls back to an existing 18.4 cache before searching `PATH`.
 
 ## Connection Flags
 

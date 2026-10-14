@@ -1389,6 +1389,48 @@ fn stdio_job_tools_return_repeatable_terminal_result_without_waiting_on_start() 
 }
 
 #[test]
+fn http_secrets_list_works_without_cwd() {
+    const MASTER_KEY: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+    let config_dir = TempDir::new().expect("temporary config dir should be created");
+    let secret_value = "http-secrets-list-test-password";
+    let store = VaultStore::at(
+        config_dir.path(),
+        Arc::new(ExplicitMasterKey::parse(MASTER_KEY.to_owned()).unwrap()),
+    );
+    store.initialize().unwrap();
+    store
+        .put(
+            NewSecret::postgres("billing", "Billing", secret_value)
+                .with_description(Some("Production billing database".to_owned())),
+        )
+        .unwrap();
+    let process = HttpMcpProcess::start_with_master_key(&config_dir, MASTER_KEY);
+    let client = HttpMcpClient::connect(&process.url, "secrets-list-client");
+
+    for (id, arguments) in [(2, json!({})), (3, json!({"kind": "postgres"}))] {
+        let response = client.call(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "ah.secrets.list", "arguments": arguments}
+        }));
+        assert_eq!(response["id"], id);
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"secrets": [{
+                "id": "billing",
+                "kind": "postgres",
+                "label": "Billing",
+                "description": "Production billing database"
+            }]})
+        );
+        assert!(!response.to_string().contains(secret_value));
+    }
+    process.stop();
+}
+
+#[test]
 fn http_sessions_share_jobs_but_keep_working_directories_explicit() {
     let config_dir = TempDir::new().expect("temporary config dir should be created");
     let first_workspace = TempDir::new().expect("first workspace should be created");

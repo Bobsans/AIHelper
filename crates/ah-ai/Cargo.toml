@@ -19,9 +19,9 @@ ah-platform = { path = "../ah-platform" }
 ah-plugin-api = { path = "../ah-plugin-api" }
 ah-runtime = { path = "../ah-runtime" }
 ah-service = { path = "../ah-service" }
-console = "0.16.4"
+console.workspace = true
 dialoguer.workspace = true
-jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
+jsonc-parser.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 schemars.workspace = true
 serde.workspace = true

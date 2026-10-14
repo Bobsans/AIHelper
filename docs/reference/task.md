@@ -44,6 +44,7 @@ ah task run <name> [--timeout-secs SECONDS] [--max-output-bytes BYTES] [--limit 
 Behavior:
 - Windows: runs command through `powershell -NoProfile -Command` without creating a visible console window
 - Unix-like: runs command through `sh -lc`
+- Windows completion uses the [shared process cleanup behavior](run.md): after the shell exits and both output streams close, remaining background descendants are terminated
 - `--timeout-secs` terminates the task process tree after the deadline (default: `600`)
 - `--max-output-bytes` bounds stdout and stderr separately while reading (default: `65536`)
 - global `--limit` truncates captured stdout/stderr lines

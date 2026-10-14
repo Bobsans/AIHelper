@@ -206,17 +206,25 @@ pub(crate) struct DownloadManifest {
 }
 
 pub(crate) fn download_manifest(version: &str) -> Option<DownloadManifest> {
-    if version == DEFAULT_POSTGRES_VERSION
-        && cfg!(target_os = "windows")
-        && cfg!(target_arch = "x86_64")
-    {
-        return Some(DownloadManifest {
-            url: POSTGRES_18_4_WINDOWS_X64_URL,
-            sha256: POSTGRES_18_4_WINDOWS_X64_SHA256,
-            platform: "windows-x64",
-        });
+    if !cfg!(target_os = "windows") || !cfg!(target_arch = "x86_64") {
+        return None;
     }
-    None
+    let (url, sha256) = match version {
+        "18.6" => (
+            POSTGRES_18_6_WINDOWS_X64_URL,
+            POSTGRES_18_6_WINDOWS_X64_SHA256,
+        ),
+        "18.4" => (
+            POSTGRES_18_4_WINDOWS_X64_URL,
+            POSTGRES_18_4_WINDOWS_X64_SHA256,
+        ),
+        _ => return None,
+    };
+    Some(DownloadManifest {
+        url,
+        sha256,
+        platform: "windows-x64",
+    })
 }
 
 pub(crate) fn download_archive(
@@ -399,4 +407,24 @@ pub(crate) fn remove_cache_dir(cache_root: &Path, target: &Path) -> Result<(), I
             format!("failed to remove '{}': {error}", target.display()),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_manifest_supports_current_and_previous_tools() {
+        assert!(download_manifest("unsupported").is_none());
+        for version in [DEFAULT_POSTGRES_VERSION, "18.4"] {
+            let manifest = download_manifest(version);
+            if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+                let manifest = manifest.expect("published Windows tools must remain downloadable");
+                assert!(manifest.url.contains(&format!("postgresql-{version}-")));
+                assert_eq!(manifest.sha256.len(), 64);
+            } else {
+                assert!(manifest.is_none());
+            }
+        }
+    }
 }

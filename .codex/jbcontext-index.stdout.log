@@ -1,0 +1,3 @@
+This Early Access build of Air Context requires accepting the Air Context CLI EAP User Agreement:
+  https://www.jetbrains.com/legal/docs/terms/jetbrains-context-cli-eap/
+Accept it in an interactive terminal, or set JBCONTEXT_ACCEPT_EAP_TERMS=1 (plus JBCONTEXT_ACCEPT_EAP_EMAIL=<email> to record it) to accept non-interactively (e.g. in CI).

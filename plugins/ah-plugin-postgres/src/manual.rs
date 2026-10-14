@@ -23,8 +23,8 @@ pub(crate) fn plugin_manual() -> PluginManual {
                 summary: "Download a managed PostgreSQL toolchain.".to_owned(),
                 usage: "tool download [--version VERSION] [--force]".to_owned(),
                 examples: vec![ManualExample::new(
-                    "Download PostgreSQL 18.4 tools",
-                    &["tool", "download", "--version", "18.4"],
+                    "Download PostgreSQL 18.6 tools",
+                    &["tool", "download", "--version", "18.6"],
                 )],
             },
             ManualCommand {
@@ -41,8 +41,8 @@ pub(crate) fn plugin_manual() -> PluginManual {
                 summary: "Remove managed PostgreSQL toolchain cache.".to_owned(),
                 usage: "tool cleanup [--version VERSION]".to_owned(),
                 examples: vec![ManualExample::new(
-                    "Remove managed PostgreSQL 18.4 tools",
-                    &["tool", "cleanup", "--version", "18.4"],
+                    "Remove managed PostgreSQL 18.6 tools",
+                    &["tool", "cleanup", "--version", "18.6"],
                 )],
             },
             ManualCommand {

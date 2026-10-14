@@ -21,6 +21,7 @@ Behavior:
 - place host-global flags such as `--json`, `--quiet`, `--limit`, and `--cwd` before the child command
 - captures stdout and stderr separately
 - bounds stdout and stderr while they are read, so child output cannot grow memory without limit
+- on Windows, once the main process exits and both output streams close, terminates remaining background descendants and preserves the main process's exit code
 - on timeout, terminates the command and its descendant process tree
 - reports `success`, `timed_out`, `exit_code`, and `duration_ms`
 - `ah` exits successfully even when the checked command fails; inspect `success=false`

@@ -1169,7 +1169,7 @@ fn call_uses_default_context() {
 
 #[test]
 fn http_context_uses_defaults_for_stateless_commands() {
-    for command in ["ai.info", "postgres.ping", "http.get"] {
+    for command in ["ai.info", "secrets.list", "postgres.ping", "http.get"] {
         let arguments = Map::new();
         let context = extract_context(
             &mut arguments.clone(),

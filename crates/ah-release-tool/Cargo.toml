@@ -16,7 +16,7 @@ semver.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-zeroize = "1"
+zeroize = "1.9.0"
 zip.workspace = true
 
 [dev-dependencies]

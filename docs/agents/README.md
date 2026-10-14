@@ -23,3 +23,4 @@ This folder is optimized for AI-agent workflows with minimal token cost.
 - [Summarize git changes](recipes/git-changes.md)
 - [Reuse command recipes](recipes/task-recipes.md)
 - [Manage and discover secret references](recipes/secrets.md)
+- [Inspect and manage PostgreSQL tools](recipes/postgres-tools.md)

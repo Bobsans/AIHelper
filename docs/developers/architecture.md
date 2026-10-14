@@ -244,6 +244,11 @@ pipes. Unix process groups and Windows Job Objects provide the platform-specific
 termination boundary, so descendants cannot outlive a timeout or keep readers
 blocked beyond it.
 
+On Windows, root-process exit plus EOF on both captured streams completes the
+command. Remaining background descendants are terminated through the same Job
+Object before returning the root exit code, so compiler helpers cannot turn a
+completed build into a timeout.
+
 HTTP response bodies are also capped during the read. A truncated response keeps
 status and header metadata, but body- and JSON-derived assertions require a
 complete body and therefore fail explicitly. Callers can distinguish truncation

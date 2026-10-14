@@ -6,5 +6,5 @@
 # lower: it is the oldest toolchain the crates are expected to compile on, and
 # it is verified by the `msrv` CI job.
 [toolchain]
-channel = "1.97.1"
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]

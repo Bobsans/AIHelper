@@ -60,10 +60,21 @@ impl Child {
         self.stderr.take()
     }
 
-    pub(super) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+    pub(super) fn try_wait(&mut self, output_finished: bool) -> io::Result<Option<ExitStatus>> {
         self.refresh_root_status()?;
-        if self.root_status.is_some() && active_processes(self.job.raw())? == 0 {
-            Ok(self.root_status)
+        let Some(status) = self.root_status else {
+            return Ok(None);
+        };
+        if active_processes(self.job.raw())? == 0 {
+            Ok(Some(status))
+        } else if output_finished {
+            // Compiler helpers can outlive the root without holding its output pipes.
+            if let Err(error) = self.kill()
+                && error.kind() != io::ErrorKind::InvalidInput
+            {
+                return Err(error);
+            }
+            self.wait().map(Some)
         } else {
             Ok(None)
         }

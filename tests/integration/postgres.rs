@@ -11,6 +11,43 @@ use super::common::IsolatedAhCommand as Command;
 const TEST_MASTER_KEY: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
 #[test]
+fn postgres_tools_prefer_current_cache_and_keep_previous_cache_usable() {
+    assert!(postgres_plugin_path().is_file());
+    let tool_dir = TempDir::new().unwrap();
+    let psql = write_fake_psql(&tool_dir, "unused");
+    for current_cached in [false, true] {
+        let cache = TempDir::new().unwrap();
+        let tools = cache.path().join("tools/postgres");
+        for version in ["18.4", "18.6"] {
+            if version == "18.6" && !current_cached {
+                continue;
+            }
+            let bin = tools.join(version).join("pgsql/bin");
+            fs::create_dir_all(&bin).unwrap();
+            fs::copy(&psql, bin.join(psql.file_name().unwrap())).unwrap();
+        }
+        let output = Command::cargo_bin("ah")
+            .unwrap()
+            .env("AH_CACHE_DIR", cache.path())
+            .env_remove("AH_POSTGRES_TOOL_PATH")
+            .args(["--json", "postgres", "tool", "status"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let status: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(status["target_version"], "18.6");
+        assert_eq!(status["selected"]["source"], "managed-cache");
+        let version = if current_cached { "18.6" } else { "18.4" };
+        assert_eq!(
+            PathBuf::from(status["selected"]["path"].as_str().unwrap()),
+            tools.join(version)
+        );
+    }
+}
+
+#[test]
 fn postgres_ping_uses_vault_credential_without_exposing_it() {
     assert!(
         postgres_plugin_path().is_file(),

@@ -1,0 +1,10 @@
+
+
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "pwsh -NoProfile -NonInteractive -Command \"Start-Process -WindowStyle Hidden -FilePath 'C:/Program Files/PowerShell/7/pwsh.exe' -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','JABmAGEAaQBsAGUAZAAgAD0AIAAwADsAIABmAG8AcgBlAGEAYwBoACAAKAAkAHAAcgBvAGoAZQBjAHQAUABhAHQAaAAgAGkAbgAgAEAAKAAnAC4AJwApACkAIAB7ACAAJgAgAGoAYgBjAG8AbgB0AGUAeAB0ACAAaQBuAGQAZQB4ACAALQAtAHAAcgBvAGoAZQBjAHQALQBwAGEAdABoACAAJABwAHIAbwBqAGUAYwB0AFAAYQB0AGgAIAAtAC0AcwBpAGwAZQBuAHQAOwAgAGkAZgAgACgAJABMAEEAUwBUAEUAWABJAFQAQwBPAEQARQAgAC0AbgBlACAAMAApACAAewAgACQAZgBhAGkAbABlAGQAIAA9ACAAJABMAEEAUwBUAEUAWABJAFQAQwBPAEQARQAgAH0AIAB9ADsAIABlAHgAaQB0ACAAJABmAGEAaQBsAGUAZAA=' -WorkingDirectory (Get-Location).Path -RedirectStandardOutput '.codex/jbcontext-index.stdout.log' -RedirectStandardError '.codex/jbcontext-index.stderr.log'\""
+statusMessage = "jbcontext: indexing project"
+timeout = 5

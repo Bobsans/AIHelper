@@ -26,7 +26,7 @@ impl ExplicitMasterKey {
             return Err(VaultError::key_unavailable());
         }
         let mut key = [0_u8; 32];
-        for (byte, pair) in key.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        for (byte, pair) in key.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
             let pair = std::str::from_utf8(pair).map_err(|_| VaultError::key_unavailable())?;
             *byte = u8::from_str_radix(pair, 16).map_err(|_| VaultError::key_unavailable())?;
         }

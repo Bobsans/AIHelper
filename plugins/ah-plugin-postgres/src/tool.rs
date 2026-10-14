@@ -392,10 +392,12 @@ pub(crate) fn inspect_tool_candidates(args: &ToolResolverArgs) -> Vec<CandidateS
         candidates.push(candidate_status(ToolSource::Configured, path));
         return candidates;
     }
-    if let Ok(path) = managed_tool_path(DEFAULT_POSTGRES_VERSION)
-        && path.exists()
-    {
-        candidates.push(candidate_status(ToolSource::ManagedCache, path));
+    for version in [DEFAULT_POSTGRES_VERSION, "18.4"] {
+        if let Ok(path) = managed_tool_path(version)
+            && path.exists()
+        {
+            candidates.push(candidate_status(ToolSource::ManagedCache, path));
+        }
     }
     if let Some(path) = find_psql_in_path() {
         candidates.push(candidate_status(ToolSource::SystemPath, path));
@@ -596,7 +598,7 @@ mod tests {
 
     #[test]
     fn parses_psql_major_version() {
-        assert_eq!(parse_psql_major("psql (PostgreSQL) 18.4"), Some(18));
+        assert_eq!(parse_psql_major("psql (PostgreSQL) 18.6"), Some(18));
         assert_eq!(parse_psql_major("psql (PostgreSQL) 14.12"), Some(14));
     }
 }

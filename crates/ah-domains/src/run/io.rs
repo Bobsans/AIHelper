@@ -86,8 +86,10 @@ pub fn run_program(
 
     let mut timed_out = false;
     let status = loop {
+        let output_finished = stdout_handle.as_ref().is_none_or(JoinHandle::is_finished)
+            && stderr_handle.as_ref().is_none_or(JoinHandle::is_finished);
         if let Some(status) = child
-            .try_wait()
+            .try_wait(output_finished)
             .map_err(|source| AppError::command_execution(command_label.to_owned(), source))?
         {
             break status;
@@ -161,12 +163,14 @@ impl ManagedChild {
         }
     }
 
-    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+    fn try_wait(&mut self, output_finished: bool) -> io::Result<Option<std::process::ExitStatus>> {
+        #[cfg(not(windows))]
+        let _ = output_finished;
         match self {
             #[cfg(not(windows))]
             Self::Group(child) => child.try_wait(),
             #[cfg(windows)]
-            Self::Windows(child) => child.try_wait(),
+            Self::Windows(child) => child.try_wait(output_finished),
         }
     }
 
@@ -436,9 +440,122 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use std::fs;
+    use std::{fs, os::windows::io::AsRawHandle, process::Stdio};
+
+    use windows_sys::Win32::{
+        Foundation::{
+            CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, HANDLE_FLAG_INHERIT,
+            SetHandleInformation, WAIT_OBJECT_0,
+        },
+        System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+    };
 
     use super::*;
+
+    #[test]
+    fn completed_root_reaps_descendants_with_closed_output() {
+        const ROLE: &str = "AH_RUN_EXIT_PROBE_ROLE";
+        const PID_PATH: &str = "AH_RUN_EXIT_PROBE_PID_PATH";
+        const EXIT_CODE: &str = "AH_RUN_EXIT_PROBE_CODE";
+        let arguments = [
+            "--exact",
+            "run::io::windows_tests::completed_root_reaps_descendants_with_closed_output",
+            "--nocapture",
+        ];
+        match std::env::var(ROLE).ok().as_deref() {
+            Some("descendant") => {
+                thread::sleep(Duration::from_secs(10));
+                std::process::exit(0);
+            }
+            Some("root") => {
+                for handle in [
+                    std::io::stdout().as_raw_handle(),
+                    std::io::stderr().as_raw_handle(),
+                ] {
+                    assert_ne!(
+                        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) },
+                        0
+                    );
+                }
+                let descendant =
+                    ah_plugin_api::noninteractive_command(std::env::current_exe().unwrap())
+                        .args(arguments)
+                        .env(ROLE, "descendant")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .unwrap();
+                fs::write(
+                    std::env::var_os(PID_PATH).unwrap(),
+                    descendant.id().to_string(),
+                )
+                .unwrap();
+                println!("root-complete");
+                std::process::exit(std::env::var(EXIT_CODE).unwrap().parse().unwrap());
+            }
+            _ => {}
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let pid_path = directory.path().join("descendant.pid");
+        let executable = std::env::current_exe().unwrap();
+        let arguments = arguments.map(str::to_owned);
+        for exit_code in [0, 7] {
+            let code = exit_code.to_string();
+            let environment = [
+                EnvironmentOverride {
+                    name: OsStr::new(ROLE),
+                    value: OsStr::new("root"),
+                },
+                EnvironmentOverride {
+                    name: OsStr::new(PID_PATH),
+                    value: pid_path.as_os_str(),
+                },
+                EnvironmentOverride {
+                    name: OsStr::new(EXIT_CODE),
+                    value: OsStr::new(&code),
+                },
+            ];
+            let output = run_program(
+                &executable,
+                &arguments,
+                RunCommandOptions {
+                    timeout: Duration::from_secs(2),
+                    command_label: "completed root with detached output descendant",
+                    max_output_bytes: 4096,
+                    tail_lines: None,
+                    cwd: Some(directory.path()),
+                    environment: &environment,
+                    cancelled: || false,
+                },
+            )
+            .unwrap();
+
+            assert_eq!(output.exit_code, Some(exit_code));
+            assert!(
+                !output.timed_out,
+                "completed root waited for a background process"
+            );
+            assert!(
+                String::from_utf8(output.stdout.bytes)
+                    .unwrap()
+                    .contains("root-complete")
+            );
+            let pid: u32 = fs::read_to_string(&pid_path).unwrap().parse().unwrap();
+            let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+            if !process.is_null() {
+                let status = unsafe { WaitForSingleObject(process, 1000) };
+                unsafe { CloseHandle(process) };
+                assert_eq!(
+                    status, WAIT_OBJECT_0,
+                    "background process survived completion"
+                );
+            } else {
+                assert_eq!(unsafe { GetLastError() }, ERROR_INVALID_PARAMETER);
+            }
+        }
+    }
 
     /// An npm shim exists only as `.cmd`, and the request directory is
     /// searched before PATH.

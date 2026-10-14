@@ -51,7 +51,7 @@ const DOMAIN: &str = "postgres";
 const PLUGIN_NAME: &str = "external-postgres";
 const DESCRIPTION: &str = "PostgreSQL database workflow plugin (dynamic)";
 const SETTINGS_VERSION: u32 = 1;
-const DEFAULT_POSTGRES_VERSION: &str = "18.4";
+const DEFAULT_POSTGRES_VERSION: &str = "18.6";
 const MIN_POSTGRES_MAJOR: u32 = 14;
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_DOWNLOAD_TIMEOUT_SECS: u64 = 1800;
@@ -60,6 +60,10 @@ const POSTGRES_18_4_WINDOWS_X64_URL: &str =
     "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-windows-x64-binaries.zip";
 const POSTGRES_18_4_WINDOWS_X64_SHA256: &str =
     "7effe34c0bf89027b3f171447d351cbc460f4566c8d0f643daec67f140787858";
+const POSTGRES_18_6_WINDOWS_X64_URL: &str =
+    "https://get.enterprisedb.com/postgresql/postgresql-18.6-1-windows-x64-binaries.zip";
+const POSTGRES_18_6_WINDOWS_X64_SHA256: &str =
+    "fbe23da234ee31547bf8a36d29dfd81e82b849df2d2b78d2eecb43d360252f8c";
 
 static PLUGIN_NAME_C: &[u8] = b"external-postgres\0";
 static DOMAIN_C: &[u8] = b"postgres\0";

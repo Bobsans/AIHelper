@@ -21,6 +21,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-std", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-util = { version = "0.7.18", features = ["rt"] }
-tower-http = { version = "0.6", features = ["limit"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+tower-http = { version = "0.6.11", features = ["limit"] }
 uuid.workspace = true

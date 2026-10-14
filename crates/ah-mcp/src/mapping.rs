@@ -202,6 +202,7 @@ pub(crate) fn requires_explicit_cwd(
         "ai.info" | "plugins.list" | "plugins.enable" | "plugins.disable" | "plugins.reset" => {
             false
         }
+        "secrets.list" => false,
         command if command.starts_with("ollama.") => false,
         command if command.starts_with("postgres.") => {
             has_relative_path(arguments, "tool_path")
