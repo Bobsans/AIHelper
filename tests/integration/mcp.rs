@@ -2045,7 +2045,11 @@ fn http_transport_rejects_hostile_host_origin_and_oversized_body() {
             "an oversized body must be refused, not mishandled: {error}"
         ),
     }
-    let after_oversized = client
+    // Refusing the upload can close its pooled socket, so probe on a fresh connection.
+    let after_oversized = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("readiness HTTP client should build")
         .get(&process.readiness_url)
         .send()
         .expect("the server should survive refusing an oversized body");
