@@ -88,7 +88,7 @@ def main():
     launch = json.loads(run(executable, ["upgrade", "--json"], environment))
     assert launch["status"] == "activation_launched", launch
     installation_id = wait_installed(executable, state, CURRENT, environment)
-    backup = state / "backup" / installation_id
+    backup = state.parent / "backup" / installation_id
     assert backup.is_dir(), "Successful update must preserve its rollback backup"
     print(f"Installed version verified: {CURRENT}", flush=True)
     rollback = json.loads(run(executable, ["upgrade", "--rollback", "--json"], environment))
