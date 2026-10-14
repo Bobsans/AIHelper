@@ -21,10 +21,10 @@ use uuid::Uuid;
 
 use ah_error::AppError;
 
-use crate::Host;
+use crate::{Host, UpgradeProgress};
 
 use super::{
-    candidate::prepare_candidate,
+    candidate::prepare_candidate_with_progress,
     github::GitHubReleaseClient,
     installation::{load_current_managed_installation, resolve_current_managed_installation},
     map_updater_error,
@@ -142,9 +142,19 @@ fn execute_windows(
         });
     }
 
-    let prepared = prepare_candidate(&source, verified, installation.state_root())
-        .and_then(|prepared| run_offline_smoke(prepared, host.smoke))
-        .map_err(map_updater_error)?;
+    (host.progress)(UpgradeProgress::Version {
+        current: current_version.to_string(),
+        selected: selected_version_text.clone(),
+    });
+    let prepared = prepare_candidate_with_progress(
+        &source,
+        verified,
+        installation.state_root(),
+        host.progress,
+    )
+    .map_err(map_updater_error)?;
+    (host.progress)(UpgradeProgress::Testing);
+    let prepared = run_offline_smoke(prepared, host.smoke).map_err(map_updater_error)?;
     launch_transaction(
         operation,
         &installation,
@@ -176,6 +186,10 @@ fn execute_rollback(host: &Host<'_>) -> Result<UpgradeLaunchResult, AppError> {
         ))
     })?;
     let selected_version = backup.manifest().release.version.clone();
+    (host.progress)(UpgradeProgress::Version {
+        current: installation.manifest().release.version.clone(),
+        selected: selected_version.clone(),
+    });
     launch_transaction(
         UpdateOperation::Rollback,
         &installation,
@@ -204,6 +218,7 @@ fn launch_transaction(
     trust: &ah_updater_core::ReleaseTrust,
     host: &Host<'_>,
 ) -> Result<UpgradeLaunchResult, AppError> {
+    (host.progress)(UpgradeProgress::Preparing);
     let transaction_id = Uuid::new_v4();
     let transactions = installation.state_root().join("transactions");
     ensure_directory(&transactions).map_err(map_updater_error)?;
@@ -253,6 +268,9 @@ fn launch_transaction(
             return Err(map_updater_error(error));
         }
     };
+    if mcp_state.was_running {
+        (host.progress)(UpgradeProgress::StoppingMcp);
+    }
     let stopped = match host.service.stop(&hold) {
         Ok(stopped) => stopped,
         Err(error) => {
@@ -272,6 +290,7 @@ fn launch_transaction(
         ));
     }
 
+    (host.progress)(UpgradeProgress::Launching);
     let helper_operation = if operation == UpdateOperation::Rollback {
         "rollback"
     } else {

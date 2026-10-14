@@ -82,6 +82,10 @@ two callers had already given different ones.
   is relative to.
 - `ah-persist` — atomic, single-writer JSON state files.
 - `ah-platform` — the platform-specific primitives, behind one signature each.
+  Native file replacement converts long Windows drive and UNC paths to the
+  extended-length namespace without resolving symlinks or requiring the
+  destination to exist. Ordinary short paths retain Win32 name interpretation;
+  the updater's replacement still uses `MOVEFILE_WRITE_THROUGH`.
 
 ### The MCP surface
 

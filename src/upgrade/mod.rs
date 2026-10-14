@@ -22,6 +22,7 @@ use crate::{
     mcp_service::lifecycle::ManagedMcpGuard,
 };
 
+mod progress;
 mod render;
 pub(crate) mod route;
 
@@ -34,12 +35,14 @@ pub(crate) fn execute(
     request: ah_updater::request::UpgradeRequest,
     options: GlobalOptions,
 ) -> Result<(), AppError> {
-    let host = Host {
-        service: &ManagedMcpGuard,
-        smoke: &BoundedSmokeRunner,
-    };
-    let outcome = ah_updater::execute(request, &host)?;
-    render::outcome(&outcome, options)
+    progress::execute(request.clone(), options, |progress| {
+        let host = Host {
+            service: &ManagedMcpGuard,
+            smoke: &BoundedSmokeRunner,
+            progress,
+        };
+        ah_updater::execute(request, &host)
+    })
 }
 
 /// How long the candidate gets to answer one smoke command.

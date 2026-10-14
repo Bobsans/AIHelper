@@ -158,9 +158,25 @@ fn report_recovery(
         });
         emitter.value(&recovery_payload(MESSAGE, report), |_| String::new())
     } else {
-        emit_warning(MESSAGE);
+        let mut emitter = Emitter::stdio(&GlobalOptions {
+            output: OutputMode::Text,
+            quiet: false,
+            limit: None,
+            cwd: None,
+        });
+        emitter.raw_err(&format!("{}\n", recovery_message(emitter.err_formatter())));
         Ok(())
     }
+}
+
+fn recovery_message(formatter: ah_output::TextFormatter) -> String {
+    format!(
+        "{}\n\nRecovery has started.\nRun your command again after recovery finishes.",
+        formatter.paint(
+            ah_output::TextStyle::Warning,
+            "! An interrupted update was detected."
+        ),
+    )
 }
 
 /// The `--json` form of a recovery-consumed invocation.
@@ -434,8 +450,20 @@ mod tests {
 
     use super::{
         Step, answer_before_startup, extract_credential_args, map_mcp_transport_error,
-        recovery_payload, resolve_invocation_command, shutdown_runtime,
+        recovery_message, recovery_payload, resolve_invocation_command, shutdown_runtime,
     };
+
+    #[test]
+    fn recovery_text_reports_a_launch_and_a_required_retry() {
+        let plain = recovery_message(ah_output::TextFormatter::with_color(false));
+        assert_eq!(
+            plain,
+            "! An interrupted update was detected.\n\nRecovery has started.\nRun your command again after recovery finishes."
+        );
+        let colored = recovery_message(ah_output::TextFormatter::with_color(true));
+        assert_eq!(console::strip_ansi_codes(&colored), plain);
+        assert!(colored.starts_with("\u{1b}[33m! "));
+    }
 
     /// The updater's smoke handoff answers before crash recovery is even
     /// consulted, because the updater is mid-transaction and a second recovery

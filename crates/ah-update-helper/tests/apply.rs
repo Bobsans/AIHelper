@@ -108,6 +108,36 @@ fn refuses_modified_candidate_without_creating_transaction_state() {
     assert_tree_matches(&fixture.installation_root, &fixture.old_files);
 }
 
+#[cfg(windows)]
+#[test]
+fn long_transaction_paths_support_activation_rollback_and_recovery() {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    let root = TempDir::new().unwrap();
+    let mut directory = root.path().to_path_buf();
+    while directory.as_os_str().encode_wide().count() < 160 {
+        directory.push("long-transaction-path");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let fixture = Fixture::in_temporary(tempfile::tempdir_in(&directory).unwrap());
+    assert!(
+        fixture
+            .paths
+            .transaction_root()
+            .join("journal.json")
+            .as_os_str()
+            .encode_wide()
+            .count()
+            > 260
+    );
+
+    fixture.prepare().unwrap();
+    activate_transaction(&fixture.paths, &fixture.trust).unwrap();
+    rollback_transaction(&fixture.paths, &fixture.trust).unwrap();
+    recover_transaction(&fixture.paths, &fixture.trust).unwrap();
+    fixture.assert_old_active();
+}
+
 #[test]
 fn refuses_add_collision_without_changing_user_file() {
     let fixture = Fixture::new();
@@ -552,7 +582,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let temporary = TempDir::new().unwrap();
+        Self::in_temporary(TempDir::new().unwrap())
+    }
+
+    fn in_temporary(temporary: TempDir) -> Self {
         let installation_root = temporary.path().join("installation");
         let candidate_source = temporary.path().join("candidate-source");
         fs::create_dir_all(&installation_root).unwrap();

@@ -296,6 +296,15 @@ impl Emitter {
         write!(self.out, "{text}").map_err(write_failed)
     }
 
+    /// Flush an in-place progress frame without adding a newline.
+    ///
+    /// # Errors
+    ///
+    /// [`AppError`] if stdout cannot be flushed.
+    pub fn flush(&mut self) -> Result<(), AppError> {
+        self.out.flush().map_err(write_failed)
+    }
+
     /// Write captured child output to stderr verbatim, best-effort.
     pub fn raw_err(&mut self, text: &str) {
         if self.quiet || !self.is_text() || text.is_empty() {

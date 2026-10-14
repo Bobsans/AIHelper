@@ -10,6 +10,8 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use zip::{CompressionMethod, ZipArchive};
 
+use crate::UpgradeProgress;
+
 const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MANAGED_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 1024 * 1024 * 1024;
@@ -48,6 +50,16 @@ pub fn prepare_candidate(
     verified_release: VerifiedReleaseV1,
     staging_parent: &Path,
 ) -> Result<PreparedCandidate, UpdaterError> {
+    prepare_candidate_with_progress(source, verified_release, staging_parent, &|_| {})
+}
+
+pub(crate) fn prepare_candidate_with_progress(
+    source: &impl CandidateArchiveSource,
+    verified_release: VerifiedReleaseV1,
+    staging_parent: &Path,
+    progress: &dyn Fn(UpgradeProgress),
+) -> Result<PreparedCandidate, UpdaterError> {
+    progress(UpgradeProgress::Downloading);
     ensure_real_directory(staging_parent)?;
     let staging = tempfile::Builder::new()
         .prefix(".ah-candidate-")
@@ -67,6 +79,7 @@ pub fn prepare_candidate(
     }
     let mut download = BoundedHashWriter::new(archive_file, expected_archive.size);
     source.download_archive(&verified_release.discovered().assets.archive, &mut download)?;
+    progress(UpgradeProgress::Verifying);
     let (archive_file, archive_size, archive_sha256) = download.finish()?;
     drop(archive_file);
     if archive_size != expected_archive.size {
@@ -509,7 +522,7 @@ impl CandidateArchiveSource for super::github::GitHubReleaseClient {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::io::Cursor;
 
     use ah_release_manifest::{
@@ -543,7 +556,16 @@ mod tests {
         let sentinel = staging.path().join("user-owned.txt");
         fs::write(&sentinel, b"unchanged").unwrap();
 
-        let prepared = prepare_candidate(&source, fixture.verified, staging.path()).unwrap();
+        let progress = RefCell::new(Vec::new());
+        let prepared =
+            prepare_candidate_with_progress(&source, fixture.verified, staging.path(), &|event| {
+                progress.borrow_mut().push(event)
+            })
+            .unwrap();
+        assert_eq!(
+            *progress.borrow(),
+            [UpgradeProgress::Downloading, UpgradeProgress::Verifying]
+        );
 
         assert_eq!(source.downloads.get(), 1);
         assert_eq!(
@@ -636,12 +658,18 @@ mod tests {
 
         let mut corrupt = archive.clone();
         corrupt[0] ^= 1;
-        let error = prepare_candidate(
+        let progress = RefCell::new(Vec::new());
+        let error = prepare_candidate_with_progress(
             &FakeSource::new(corrupt),
             fixture.verified.clone(),
             staging.path(),
+            &|event| progress.borrow_mut().push(event),
         )
         .unwrap_err();
+        assert_eq!(
+            *progress.borrow(),
+            [UpgradeProgress::Downloading, UpgradeProgress::Verifying]
+        );
         assert_eq!(error.code(), UpdaterErrorCode::Candidate);
         assert_eq!(fs::read_dir(staging.path()).unwrap().count(), 0);
 

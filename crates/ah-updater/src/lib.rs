@@ -45,6 +45,22 @@ use ah_error::AppError;
 pub struct Host<'a> {
     pub service: &'a dyn service::ServiceGuard,
     pub smoke: &'a dyn smoke::SmokeRunner,
+    /// Best-effort observations; reporting must never interrupt a transaction.
+    pub progress: &'a dyn Fn(UpgradeProgress),
+}
+
+/// In-process observations for a human-facing adapter, never persisted or serialized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpgradeProgress {
+    Checking,
+    CheckingBackup,
+    Version { current: String, selected: String },
+    Downloading,
+    Verifying,
+    Testing,
+    Preparing,
+    StoppingMcp,
+    Launching,
 }
 
 /// The updater's errors, reported under the code the core assigned them.

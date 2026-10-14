@@ -6,6 +6,14 @@ Use the built-in read-only updater check:
 ah upgrade --check --json
 ```
 
+Use `--json` for automation: the default text output is a human-facing sequence
+of progress stages, animated only in a terminal. `--quiet` suppresses progress
+and the final result. The JSON schema and helper-handoff boundary are unchanged.
+Successful text checks show a compact availability result and, when an update
+is available, the `ah upgrade` command. Terminal colors honor `NO_COLOR` and are
+disabled for redirected output. Human error summaries retain the original
+diagnostic codes and details in JSON.
+
 Read these stable fields:
 
 - `status`: `up_to_date`, `update_available`, or `current_newer`;
@@ -22,11 +30,18 @@ The check is safe to run while managed MCP is active: it does not download the
 archive, modify files or service state, acquire lifecycle locks, or stop a
 process.
 
+Journal and managed-file replacement on Windows handles paths longer than
+`MAX_PATH`, including deep updater state directories. Long-path support does
+not relax signed-path, ownership or recovery validation.
+
 To install after a successful check, run `ah upgrade --json`, or use
 `ah upgrade --version <VERSION> --json` for an exact stable non-downgrade
 release. Treat `activation_launched` as successful helper handoff, not as proof
 that the asynchronous activation has already finished; the next `ah` startup
 performs any required durable recovery before loading configuration or plugins.
+The text result says `Update started` or `Rollback started`, never that
+installation has already completed. If recovery consumes an invocation, wait
+for recovery to finish and then repeat the command you requested.
 
 After a successful update, `ah upgrade --rollback --json` restores and consumes
 the one verified permanent backup without network access. If rollback fails, the

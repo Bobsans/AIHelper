@@ -44,11 +44,63 @@ and verified backup before stopping a process.
 
 On Windows x64 the command copies the verified helper outside the installation,
 hands it the lifecycle lock without a gap, and exits after the helper
-acknowledges. A successful launch reports `status=activation_launched`; final
+acknowledges. A successful JSON launch reports `status=activation_launched`; final
 activation then runs out of process. The helper replaces only signed managed
 paths, verifies permanent hashes and the installed version, commits the exact
 signed installed-release record, and automatically rolls back post-mutation
 failures.
+
+Text output reports each stage as it starts: checking the release, downloading,
+verifying, testing the new version, preparing the installation,
+stopping a previously running MCP service, and starting the installer. In a
+terminal the active row animates; finished stages remain marked with `✓` and a
+failed stage with `✗`, followed by the normal error diagnostic. Redirected output
+contains sequential lines without animation or terminal control codes.
+
+After helper acknowledgement, the final message says `Update started` and
+`Installation will finish in the background.` It mentions the automatic MCP
+restart only when restoration is pending. This is not a claim that activation
+has already completed. Rollback uses the same display with backup verification
+and no download stages. `--check` reports a readable availability result.
+`--json` retains the existing structured result without progress lines;
+`--quiet` suppresses progress and the final result. Successful checks keep only
+the availability result; an already installed exact version is reported as such.
+
+Colors follow the shared terminal formatter: green for success, cyan for
+versions and the active spinner, yellow for warnings, and red for errors.
+`NO_COLOR` disables colors. Redirected output and JSON have no ANSI styling.
+
+Examples (versions are illustrative):
+
+```text
+✓ AIHelper 2.0.1 is up to date.
+```
+
+```text
+↑ AIHelper update available: 2.0.1 → 2.1.0
+
+Run ah upgrade to install it.
+```
+
+```text
+AIHelper update · 2.0.1 → 2.1.0
+
+  ✓ Checking for updates
+  ✓ Downloading update
+  ✓ Verifying update
+  ✓ Testing the new version
+  ✓ Preparing installation
+  ✓ Starting the installer
+
+✓ Update started: 2.0.1 → 2.1.0
+
+Installation will finish in the background.
+```
+
+The MCP stop stage and automatic restart note appear when MCP was running.
+Network, trust verification, missing-backup and downgrade errors use readable
+summaries and applicable retry instructions; JSON keeps their original codes
+and diagnostic details.
 
 If managed MCP was ready before the update, its previous instance identity is
 bound into the durable transaction. After activation or rollback, the helper
@@ -126,8 +178,17 @@ command you asked for **does not run**, and the invocation reports why:
 `consumed_invocation` is the field to check: it distinguishes an invocation that
 ran and printed nothing from one that never ran. `state` is where the interrupted
 update was when recovery found it. Without `--json` the same event is a warning
-line on standard error, and the exit code is 0 either way — recovery succeeded,
-your command simply has to be repeated.
+block on standard error:
+
+```text
+! An interrupted update was detected.
+
+Recovery has started.
+Run your command again after recovery finishes.
+```
+
+The exit code is 0 either way: the recovery helper was launched, and your
+command has to be repeated after recovery finishes.
 
 Either way one `system` record is written to the event log, severity `warning`,
 diagnostic code `UPDATE_RECOVERY_CONSUMED_INVOCATION`, so an invocation that did
@@ -139,6 +200,11 @@ include `UNSUPPORTED_PLATFORM`, `NETWORK`, `RELEASE_CONTRACT`, `TRUST`,
 `COMPATIBILITY`, `CANDIDATE`, `INSTALLATION`, `ACTIVATION`, `ROLLBACK`, and
 `RECOVERY`. Diagnostics do not include response bodies, signatures, or untrusted
 key IDs.
+
+On Windows, replacing journals, managed files and release records supports
+paths longer than `MAX_PATH` through the extended-length namespace. This does
+not require changing the system's long-path registry setting and retains
+write-through replacement.
 
 ## Network limits
 

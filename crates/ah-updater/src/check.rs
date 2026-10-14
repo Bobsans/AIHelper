@@ -26,6 +26,11 @@ pub trait ReleaseCheckSource {
 }
 
 pub fn execute(request: UpgradeRequest, host: &Host<'_>) -> Result<UpgradeOutcome, AppError> {
+    (host.progress)(if request == UpgradeRequest::Rollback {
+        crate::UpgradeProgress::CheckingBackup
+    } else {
+        crate::UpgradeProgress::Checking
+    });
     match request {
         // A check mutates nothing, so it needs neither port.
         UpgradeRequest::Check => execute_check().map(UpgradeOutcome::Checked),

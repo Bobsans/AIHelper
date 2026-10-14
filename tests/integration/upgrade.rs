@@ -24,5 +24,23 @@ fn upgrade_rollback_routes_before_configuration_and_plugins() {
 
     assertion
         .stderr(contains("CONFIG_INVALID").not())
-        .stdout("");
+        .stdout(contains("AIHelper rollback"))
+        .stdout(contains("✗ Verifying backup"))
+        .stdout(contains("\u{1b}").not());
+}
+
+#[test]
+fn upgrade_failure_json_and_quiet_have_no_progress_output() {
+    for flags in [vec!["--json"], vec!["--quiet"], vec!["--json", "--quiet"]] {
+        let output = Command::cargo_bin("ah")
+            .unwrap()
+            .args(["upgrade", "--rollback"])
+            .args(flags)
+            .env("AH_CONFIG_DIR", "")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("Verifying backup"));
+    }
 }

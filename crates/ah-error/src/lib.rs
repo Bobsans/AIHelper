@@ -32,7 +32,7 @@ use render::{
     ConsoleDiagnostic, RenderedContext, RenderedError, classify_invalid_argument,
     console_diagnostic_from_invalid_argument, human_error_message, human_hint, infer_domain,
     infer_operation, render_console_diagnostic, render_external, render_invalid_argument,
-    wants_json_error_output,
+    render_updater_error, wants_json_error_output,
 };
 
 #[derive(Debug, Error)]
@@ -180,6 +180,9 @@ impl AppError {
     #[must_use]
     pub fn console_text(&self, invocation: &[String], formatter: TextFormatter) -> String {
         let rendered = self.rendered();
+        if let Some(message) = render_updater_error(&rendered, formatter) {
+            return message;
+        }
         render_console_diagnostic(&self.console_diagnostic(&rendered, invocation), formatter)
     }
 
@@ -641,6 +644,67 @@ mod tests {
         assert_eq!(
             render_console_diagnostic(&diagnostic, formatter),
             "\u{1b}[1;31mah:\u{1b}[0m plugin domain is disabled: file\n\n\u{1b}[33mHint:\u{1b}[0m Enable the plugin domain or choose another command."
+        );
+    }
+
+    #[test]
+    fn updater_errors_are_readable_and_keep_structured_diagnostics() {
+        for (code, detail, title, reason) in [
+            (
+                "UPDATER_NETWORK",
+                "GitHub Releases request timed out",
+                "Update request failed.",
+                "The connection to GitHub timed out.",
+            ),
+            (
+                "UPDATER_TRUST",
+                "release manifest signature verification failed",
+                "Update verification failed.",
+                "The release signature is invalid.",
+            ),
+            (
+                "UPDATER_ROLLBACK",
+                "no verified permanent backup is available",
+                "Cannot roll back AIHelper.",
+                "No verified backup is available.",
+            ),
+            (
+                "UPDATER_COMPATIBILITY",
+                "requested release would downgrade the installed version",
+                "Cannot install an older release.",
+                "Installing an older release is not supported.",
+            ),
+        ] {
+            let error = AppError::external(code, detail);
+            let text = error.console_text(&[], TextFormatter::with_color(false));
+            assert!(text.starts_with(&format!("✗ {title}\n\n")), "{text}");
+            assert!(text.contains(reason), "{text}");
+            assert!(!text.contains(code));
+            let diagnostic = error.diagnostic();
+            assert_eq!(diagnostic.code, code);
+            assert_eq!(diagnostic.message, detail);
+            let colored = error.console_text(&[], TextFormatter::with_color(true));
+            assert!(colored.starts_with("\u{1b}[1;31m✗ "));
+        }
+    }
+
+    #[test]
+    fn updater_errors_do_not_misdiagnose_other_trust_or_rollback_failures() {
+        let error = AppError::external("UPDATER_TRUST", "unknown signing key");
+        let text = error.console_text(&[], TextFormatter::with_color(false));
+        assert!(text.contains("unknown signing key"));
+        assert!(!text.contains("signature is invalid"));
+        let error = AppError::external("UPDATER_ROLLBACK", "verified backup is corrupt");
+        assert!(
+            error
+                .console_text(&[], TextFormatter::with_color(false))
+                .contains("verified backup is corrupt")
+        );
+        let error = AppError::external("UPDATER_RECOVERY", "failed to start recovery helper");
+        assert!(
+            !error
+                .console_text(&[], TextFormatter::with_color(false))
+                .contains("Recovery has started")
         );
     }
 

@@ -219,8 +219,8 @@ pub fn replace(source: &Path, destination: &Path) -> io::Result<()> {
             MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
         };
 
-        let source = wide(source);
-        let destination = wide(destination);
+        let source = wide(source)?;
+        let destination = wide(destination)?;
         // SAFETY: both buffers are NUL-terminated and outlive the call.
         let succeeded = unsafe {
             MoveFileExW(
@@ -300,10 +300,39 @@ pub fn sync_directory(directory: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn wide(path: &Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt as _;
+fn wide(path: &Path) -> io::Result<Vec<u16>> {
+    use std::{
+        os::windows::ffi::OsStrExt as _,
+        path::{Component, Prefix},
+    };
 
-    path.as_os_str().encode_wide().chain(Some(0)).collect()
+    // Rust filesystem APIs support long paths; the direct Win32 call needs
+    // the same extended namespace without resolving symlinks or requiring existence.
+    let absolute = std::path::absolute(path)?;
+    let encoded = absolute.as_os_str().encode_wide();
+    if encoded.clone().any(|unit| unit == 0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path contains NUL",
+        ));
+    }
+    if encoded.clone().count() < 260 && path.as_os_str().encode_wide().count() < 260 {
+        // Keep ordinary Win32 name interpretation for short paths.
+        return Ok(path.as_os_str().encode_wide().chain(Some(0)).collect());
+    }
+    let (prefix, skip) = match absolute.components().next() {
+        Some(Component::Prefix(component)) => match component.kind() {
+            Prefix::Disk(_) => (r"\\?\", 0),
+            Prefix::UNC(..) => (r"\\?\UNC\", 2),
+            _ => ("", 0),
+        },
+        _ => ("", 0),
+    };
+    Ok(prefix
+        .encode_utf16()
+        .chain(encoded.skip(skip))
+        .chain(Some(0))
+        .collect())
 }
 
 #[cfg(test)]
@@ -391,6 +420,69 @@ mod tests {
             "new contents"
         );
         assert!(!source.exists(), "the source is consumed by the move");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replacing_supports_paths_beyond_max_path() {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut directory = temp.path().to_path_buf();
+        while directory.as_os_str().encode_wide().count() < 280 {
+            directory.push("long-path-component");
+        }
+        fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("new.json");
+        let destination = directory.join("journal.json");
+        fs::write(&source, b"new contents").unwrap();
+        fs::write(&destination, b"old contents").unwrap();
+
+        replace(&source, &destination).expect("long-path replacement should succeed");
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new contents");
+        assert!(!source.exists());
+        fs::write(&source, b"first contents").unwrap();
+        fs::remove_file(&destination).unwrap();
+        replace(&source, &destination).expect("a new long-path destination should succeed");
+        assert_eq!(fs::read(&destination).unwrap(), b"first contents");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replacement_paths_preserve_short_and_verbatim_paths_and_support_long_unc() {
+        for (path, expected) in [
+            (r"C:\folder\sub\..\file.json", r"C:\folder\sub\..\file.json"),
+            (
+                r"\\server\share\folder\file.json",
+                r"\\server\share\folder\file.json",
+            ),
+            (r"\\?\C:\folder\file.json", r"\\?\C:\folder\file.json"),
+            (
+                r"\\?\UNC\server\share\file.json",
+                r"\\?\UNC\server\share\file.json",
+            ),
+        ] {
+            let encoded = wide(Path::new(path)).unwrap();
+            assert_eq!(encoded.last(), Some(&0));
+            assert_eq!(
+                String::from_utf16(&encoded[..encoded.len() - 1]).unwrap(),
+                expected
+            );
+        }
+        let directories = ["directory"; 40].join("\\");
+        let unc = format!(r"\\server\share\{directories}\file.json");
+        let encoded = wide(Path::new(&unc)).unwrap();
+        assert_eq!(
+            String::from_utf16(&encoded[..encoded.len() - 1]).unwrap(),
+            format!(r"\\?\UNC\server\share\{directories}\file.json")
+        );
+        assert_eq!(
+            wide(Path::new("\\\\?\\C:\\file\0other"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
     }
 
     /// A failure the retry cannot fix is returned immediately rather than

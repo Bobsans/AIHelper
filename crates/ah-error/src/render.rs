@@ -153,6 +153,55 @@ pub(super) fn human_hint(code: &str) -> Option<&'static str> {
     }
 }
 
+pub(super) fn render_updater_error(
+    error: &RenderedError,
+    formatter: TextFormatter,
+) -> Option<String> {
+    let (title, reason, hint) = match (error.code.as_str(), error.message.as_str()) {
+        ("UPDATER_NETWORK", detail) => (
+            "Update request failed.",
+            match detail {
+                "GitHub Releases request timed out" => "The connection to GitHub timed out.",
+                "GitHub Releases request failed" => "Could not connect to GitHub.",
+                _ => detail,
+            },
+            Some("Check your connection and retry the command.".to_owned()),
+        ),
+        ("UPDATER_TRUST", detail) => (
+            "Update verification failed.",
+            if detail == "release manifest signature verification failed" {
+                "The release signature is invalid."
+            } else {
+                detail
+            },
+            None,
+        ),
+        ("UPDATER_ROLLBACK", "no verified permanent backup is available") => (
+            "Cannot roll back AIHelper.",
+            "No verified backup is available.",
+            None,
+        ),
+        ("UPDATER_COMPATIBILITY", "requested release would downgrade the installed version") => (
+            "Cannot install an older release.",
+            "You already have a newer version installed.\nInstalling an older release is not supported.",
+            Some(format!(
+                "To restore the previous backup, run {}.",
+                formatter.paint(TextStyle::Key, "ah upgrade --rollback")
+            )),
+        ),
+        _ => return None,
+    };
+    let mut text = format!(
+        "{}\n\n{reason}",
+        formatter.paint(TextStyle::Error, format!("✗ {title}"))
+    );
+    if let Some(hint) = hint {
+        text.push_str("\n\n");
+        text.push_str(&hint);
+    }
+    Some(text)
+}
+
 pub(super) fn console_diagnostic_from_invalid_argument(
     raw: &str,
     invocation: &[String],
