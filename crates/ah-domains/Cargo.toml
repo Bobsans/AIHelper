@@ -27,7 +27,7 @@ ah-runtime = { path = "../ah-runtime" }
 ah-secrets = { path = "../ah-secrets" }
 clap = { workspace = true, features = ["string"] }
 command-group.workspace = true
-dialoguer = "0.12.0"
+dialoguer = { workspace = true, features = ["password"] }
 globset = "0.4.16"
 ignore = "0.4.27"
 regex = "1.11.1"
@@ -35,7 +35,7 @@ reqwest = { workspace = true, features = ["blocking", "json"] }
 schemars.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-serde_yaml.workspace = true
+yaml_serde.workspace = true
 shell-words.workspace = true
 walkdir = "2.5.0"
 

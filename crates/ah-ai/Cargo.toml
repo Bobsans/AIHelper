@@ -20,7 +20,7 @@ ah-plugin-api = { path = "../ah-plugin-api" }
 ah-runtime = { path = "../ah-runtime" }
 ah-service = { path = "../ah-service" }
 console = "0.16.4"
-dialoguer = "0.12.0"
+dialoguer.workspace = true
 jsonc-parser = { version = "0.33.1", features = ["cst", "serde_json"] }
 reqwest = { workspace = true, features = ["json"] }
 schemars.workspace = true

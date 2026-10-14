@@ -97,11 +97,11 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "serde_yaml",
  "shell-words",
  "tempfile",
  "walkdir",
  "windows-sys 0.61.2",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -125,7 +125,6 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
- "shell-words",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -302,10 +301,10 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "semver",
- "serde_yaml",
  "sha2",
  "tempfile",
  "thiserror",
+ "yaml_serde",
  "zeroize",
  "zip",
 ]
@@ -329,7 +328,6 @@ version = "2.0.1"
 dependencies = [
  "aes-gcm",
  "ah-config",
- "ah-error",
  "ah-mcp",
  "ah-persist",
  "ah-plugin-api",
@@ -464,17 +462,13 @@ dependencies = [
  "ah-mcp",
  "ah-observability",
  "ah-output",
- "ah-paths",
  "ah-persist",
- "ah-platform",
  "ah-plugin-api",
  "ah-plugin-testkit",
  "ah-redact",
- "ah-release-manifest",
  "ah-runtime",
  "ah-secrets",
  "ah-service",
- "ah-update-helper",
  "ah-updater",
  "ah-updater-core",
  "aihelper",
@@ -483,9 +477,7 @@ dependencies = [
  "clap",
  "command-group",
  "console",
- "dialoguer",
  "fs2",
- "jsonc-parser",
  "predicates",
  "reqwest",
  "schemars",
@@ -493,7 +485,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
  "uuid",
  "windows-sys 0.61.2",
@@ -1053,7 +1044,6 @@ checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
  "console",
  "shell-words",
- "tempfile",
  "zeroize",
 ]
 
@@ -1854,6 +1844,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2521,9 +2517,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "once_cell",
  "ring",
@@ -2545,9 +2541,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -2724,19 +2720,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -3133,12 +3116,6 @@ dependencies = [
  "crypto-common 0.1.7",
  "subtle",
 ]
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
@@ -3778,6 +3755,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
+]
+
+[[package]]
 name = "yoke"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3905,7 +3895,6 @@ dependencies = [
  "flate2",
  "indexmap",
  "memchr",
- "zopfli",
 ]
 
 [[package]]
@@ -3919,15 +3908,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[package]]
-name = "zopfli"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
-dependencies = [
- "bumpalo",
- "crc32fast",
- "log",
- "simd-adler32",
-]

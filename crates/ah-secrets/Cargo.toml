@@ -13,7 +13,6 @@ publish = false
 [dependencies]
 aes-gcm = { workspace = true, features = ["aes"] }
 ah-config = { path = "../ah-config" }
-ah-error = { path = "../ah-error" }
 ah-mcp = { path = "../ah-mcp" }
 ah-persist = { path = "../ah-persist" }
 ah-plugin-api = { path = "../ah-plugin-api" }

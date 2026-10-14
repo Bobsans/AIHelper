@@ -1,4 +1,4 @@
-use serde_yaml::{Mapping, Value};
+use yaml_serde::{Mapping, Value};
 
 const WORKFLOW: &str = include_str!("../../../.github/workflows/release.yml");
 
@@ -73,7 +73,7 @@ fn windows_archive_builds_packages_and_smokes_update_helper() {
 }
 
 fn jobs() -> &'static Mapping {
-    let workflow = serde_yaml::from_str::<Value>(WORKFLOW).expect("release workflow must be YAML");
+    let workflow = yaml_serde::from_str::<Value>(WORKFLOW).expect("release workflow must be YAML");
     Box::leak(Box::new(workflow))["jobs"]
         .as_mapping()
         .expect("release workflow must define jobs")
@@ -101,5 +101,5 @@ fn job_needs(jobs: &Mapping, name: &str) -> Vec<String> {
 }
 
 fn serialized(value: &Value) -> String {
-    serde_yaml::to_string(value).expect("workflow section must serialize")
+    yaml_serde::to_string(value).expect("workflow section must serialize")
 }

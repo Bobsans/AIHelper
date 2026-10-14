@@ -125,11 +125,123 @@ pub(crate) fn read_spec_file(path: &Path) -> Result<HttpSpec, AppError> {
             ))
         })
     } else {
-        serde_yaml::from_str(&raw).map_err(|error| {
+        yaml_serde::from_str(&raw).map_err(|error| {
             AppError::invalid_argument(format!(
                 "failed to parse spec YAML '{}': {error}",
                 path.display()
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_yaml(input: &str) -> Result<HttpSpec, AppError> {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scenario.http.yaml");
+        std::fs::write(&path, input).unwrap();
+        read_spec_file(&path)
+    }
+
+    #[test]
+    fn yaml_specs_preserve_scalar_types_and_aliases() {
+        let spec = read_yaml(
+            r#"
+version: 1
+vars:
+  country: NO
+  switch: on
+  count: 42
+  leading: 0123
+  message: "Привет: # YAML"
+defaults:
+  base_url: &origin https://example.test
+  headers: &headers
+    X-Flag: off
+    X-Count: 42
+cases:
+  - name: scalar-contract
+    request:
+      url: *origin
+      headers: *headers
+      body: |
+        line one
+        line two
+      json:
+        plain: on
+        boolean: true
+        quoted: "true"
+        leading: 0123
+        binary: 0b11
+        maximum: 18446744073709551615
+        overflow: 1e999
+        list: [null, false, "NO"]
+    expect:
+      status: "2xx"
+      body_contains: [ready, "Привет"]
+      json:
+        - path: boolean
+          eq: true
+          exists: false
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(spec.version, 1);
+        assert_eq!(spec.vars["country"], "NO");
+        assert_eq!(spec.vars["switch"], "on");
+        assert_eq!(spec.vars["count"], "42");
+        assert_eq!(spec.vars["leading"], "0123");
+        assert_eq!(spec.vars["message"], "Привет: # YAML");
+        assert_eq!(spec.cases.len(), 1);
+        let case = &spec.cases[0];
+        assert_eq!(case.request.url, spec.defaults.base_url);
+        assert_eq!(case.request.headers, spec.defaults.headers);
+        assert_eq!(case.request.headers["X-Count"], "42");
+        assert_eq!(case.request.headers["X-Flag"], "off");
+        assert_eq!(case.request.body.as_deref(), Some("line one\nline two\n"));
+        assert_eq!(
+            case.request.json,
+            Some(serde_json::json!({
+                "plain": "on",
+                "boolean": true,
+                "quoted": "true",
+                "leading": "0123",
+                "binary": 3,
+                "maximum": u64::MAX,
+                "overflow": "1e999",
+                "list": [null, false, "NO"],
+            }))
+        );
+        assert!(matches!(
+            case.expect.status.as_ref(),
+            Some(SpecStatusValue::Text(value)) if value == "2xx"
+        ));
+        assert_eq!(case.expect.json[0].eq, Some(Value::Bool(true)));
+        assert_eq!(case.expect.json[0].exists, Some(false));
+    }
+
+    #[test]
+    fn yaml_specs_keep_last_duplicate_map_value() {
+        let spec = read_yaml("version: 1\nvars:\n  token: first\n  token: second\n").unwrap();
+        assert_eq!(spec.vars["token"], "second");
+    }
+
+    #[test]
+    fn yaml_specs_reject_invalid_documents_without_changing_error_code() {
+        for input in [
+            "version: 1\ncases: [\n",
+            "version: 1\nversion: 2\n",
+            "version: 1\n---\nversion: 1\n",
+            "version: 1\nvars:\n  ? [one, two]\n  : value\n",
+            "version: 1\ncases:\n  - name: tagged\n    request:\n      json: !Custom value\n",
+            "version: 1\ncases:\n  - name: invalid-extract\n    request: {}\n    extract:\n      token:\n        json: $.token\n        unknown: true\n",
+        ] {
+            let error = read_yaml(input).unwrap_err();
+            assert_eq!(error.code(), "INVALID_ARGUMENT", "{input}");
+            assert!(error.detail_message().contains("failed to parse spec YAML"));
+        }
     }
 }
